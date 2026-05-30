@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+dist/
+src-tauri/target/
+.playwright-mcp/
+__pycache__/
+*.log
+.env
+.env.*

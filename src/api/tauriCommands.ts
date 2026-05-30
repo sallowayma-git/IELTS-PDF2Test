@@ -1,0 +1,129 @@
+import type {
+  AuthoringPatch,
+  BuildPackInput,
+  CreateJobInput,
+  DocumentIr,
+  ExportResult,
+  ImportJob,
+  JobFilter,
+  JobMetaPatch,
+  LlmProfilePublic,
+  LlmSuggestion,
+  LlmTestResult,
+  PackBuildResult,
+  ParseOptions,
+  PreviewAssets,
+  ReadingAuthoringIr,
+  SaveLlmProfileInput,
+  SourceFile,
+  SourceFileRole,
+  SplitCandidates,
+  ValidationReport
+} from "../types";
+import { devFallbackInvoke, type JobDetail } from "../services/devFallbackBackend";
+
+const isTauriRuntime = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+async function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
+  if (isTauriRuntime()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<T>(name, args);
+  }
+  return devFallbackInvoke<T>(name, args);
+}
+
+export async function createImportJob(input: CreateJobInput): Promise<ImportJob> {
+  return command("create_import_job", { input });
+}
+
+export async function listJobs(filter: JobFilter = {}): Promise<ImportJob[]> {
+  return command("list_jobs", { filter });
+}
+
+export async function getJob(jobId: string): Promise<JobDetail> {
+  return command("get_job", { jobId });
+}
+
+export async function updateJobMeta(jobId: string, patch: JobMetaPatch): Promise<ImportJob> {
+  return command("update_job_meta", { jobId, patch });
+}
+
+export async function deleteJob(jobId: string): Promise<void> {
+  return command("delete_job", { jobId });
+}
+
+export async function importSourceFile(jobId: string, filePath: string, role: SourceFileRole, sizeBytes = 0): Promise<SourceFile> {
+  return command("import_source_file", { jobId, filePath, role, sizeBytes });
+}
+
+export async function parseDocument(jobId: string, options: ParseOptions): Promise<DocumentIr> {
+  return command("parse_document", { jobId, options });
+}
+
+export async function rerunOcr(jobId: string, pageIndices: number[]): Promise<DocumentIr> {
+  return command("rerun_ocr", { jobId, pageIndices });
+}
+
+export async function runRuleSplit(jobId: string): Promise<SplitCandidates> {
+  return command("run_rule_split", { jobId });
+}
+
+export async function saveSplitAdjustments(jobId: string, patch: SplitCandidates): Promise<SplitCandidates> {
+  return command("save_split_adjustments", { jobId, patch });
+}
+
+export async function buildAuthoringIr(jobId: string): Promise<ReadingAuthoringIr> {
+  return command("build_authoring_ir", { jobId });
+}
+
+export async function updateAuthoringIr(jobId: string, patch: AuthoringPatch): Promise<ReadingAuthoringIr> {
+  return command("update_authoring_ir", { jobId, patch });
+}
+
+export async function renderGroupHtml(jobId: string, groupId: string): Promise<{ groupId: string; bodyHtml: string }> {
+  return command("render_group_html", { jobId, groupId });
+}
+
+export async function listLlmProfiles(): Promise<LlmProfilePublic[]> {
+  return command("list_llm_profiles");
+}
+
+export async function saveLlmProfile(input: SaveLlmProfileInput): Promise<LlmProfilePublic> {
+  return command("save_llm_profile", { input });
+}
+
+export async function testLlmProfile(profileId: string): Promise<LlmTestResult> {
+  return command("test_llm_profile", { profileId });
+}
+
+export async function llmClassifyGroup(jobId: string, groupId: string, profileId: string): Promise<LlmSuggestion> {
+  return command("llm_classify_group", { jobId, groupId, profileId });
+}
+
+export async function llmExtractGroup(jobId: string, groupId: string, profileId: string): Promise<LlmSuggestion> {
+  return command("llm_extract_group", { jobId, groupId, profileId });
+}
+
+export async function applyLlmSuggestion(jobId: string, suggestionId: string, selectedPaths: string[]): Promise<ReadingAuthoringIr> {
+  return command("apply_llm_suggestion", { jobId, suggestionId, selectedPaths });
+}
+
+export async function validateAuthoringIr(jobId: string): Promise<ValidationReport> {
+  return command("validate_authoring_ir", { jobId });
+}
+
+export async function generatePreviewAssets(jobId: string): Promise<PreviewAssets> {
+  return command("generate_preview_assets", { jobId });
+}
+
+export async function runPreviewE2e(jobId: string): Promise<ValidationReport> {
+  return command("run_preview_e2e", { jobId });
+}
+
+export async function exportReadingAssets(jobId: string, exportDir = "local://exports"): Promise<ExportResult> {
+  return command("export_reading_assets", { jobId, exportDir });
+}
+
+export async function buildPack(input: BuildPackInput): Promise<PackBuildResult> {
+  return command("build_pack", { input });
+}
