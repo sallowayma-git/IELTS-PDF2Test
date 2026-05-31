@@ -50,7 +50,7 @@ export function Settings({ refresh }: { refresh: () => void }) {
         <section className="form-section contrast">
           <h3>新建 Profile</h3>
           <label>Name<input value={form.name} onChange={(event) => update("name", event.target.value)} /></label>
-          <label>Provider<select value={form.provider} onChange={(event) => update("provider", event.target.value as LlmProvider)}><option>OpenAiCompatible</option><option>AnthropicCompatible</option><option>Ollama</option><option>Custom</option></select></label>
+          <label>Provider<select value={form.provider} onChange={(event) => update("provider", event.target.value as LlmProvider)}><option>OpenAiCompatible</option></select><small>当前 gateway 只实现 OpenAI-compatible chat completions；其他 provider 需要新增 adapter 后再开放。</small></label>
           <label>Base URL<input value={form.baseUrl} onChange={(event) => update("baseUrl", event.target.value)} /></label>
           <label>Model<input value={form.model} onChange={(event) => update("model", event.target.value)} /></label>
           <label>API Key<input type="password" value={form.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder="优先写入 macOS Keychain，不进入 profile JSON" /></label>

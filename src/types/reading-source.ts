@@ -35,7 +35,7 @@ export interface ReadingExamSourceV1 {
   audit: {
     matchStatus: "author_verified" | "needs_review";
     matchConfidence: number;
-    verifiedAt: string;
+    verifiedAt: string | null;
     notes: string;
   };
   questionOrder: string[];

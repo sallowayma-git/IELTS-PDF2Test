@@ -43,7 +43,7 @@ export interface DocumentAsset {
 export interface ParserInfo {
   provider: string;
   version: string;
-  mode: "auto" | "text" | "ocr";
+  mode: "auto" | "text" | "ocr" | "manual";
   warnings: string[];
 }
 
@@ -55,6 +55,29 @@ export interface DocumentIr {
   parser: ParserInfo;
 }
 
+export interface SourceReview {
+  schemaVersion: "SourceReviewV1";
+  jobId: string;
+  required: boolean;
+  resolved: boolean;
+  stale: boolean;
+  fingerprint: string;
+  parserWarnings: string[];
+  lowConfidenceBlocks: string[];
+  resolvedAt?: string | null;
+  note?: string | null;
+}
+
 export interface ParseOptions {
-  mode: "auto" | "text" | "ocr";
+  mode: "auto" | "text" | "ocr" | "manual";
+}
+
+export interface ManualTranscriptionInput {
+  text: string;
+  note?: string;
+}
+
+export interface VisionTranscriptionInput {
+  profileId?: string;
+  note?: string;
 }

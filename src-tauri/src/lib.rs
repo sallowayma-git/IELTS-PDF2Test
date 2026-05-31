@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -114,9 +115,6 @@ pub struct JobMetaPatch {
     pub tags: Option<Vec<String>>,
     #[serde(rename = "activeLlmProfileId")]
     pub active_llm_profile_id: Option<String>,
-    pub status: Option<JobStatus>,
-    #[serde(rename = "currentStep")]
-    pub current_step: Option<WorkflowStep>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -124,11 +122,36 @@ pub struct ParseOptions {
     pub mode: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ManualTranscriptionInput {
+    pub text: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct VisionTranscriptionInput {
+    #[serde(rename = "profileId")]
+    pub profile_id: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct AutoPipelineInput {
+    #[serde(rename = "profileId")]
+    pub profile_id: Option<String>,
+    #[serde(rename = "confidenceThreshold")]
+    pub confidence_threshold: Option<f64>,
+    #[serde(rename = "parseMode")]
+    pub parse_mode: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct JobDetail {
     pub job: ImportJob,
     #[serde(rename = "documentIr")]
     pub document_ir: Option<Value>,
+    #[serde(rename = "sourceReview")]
+    pub source_review: Option<Value>,
     #[serde(rename = "splitCandidates")]
     pub split_candidates: Option<Value>,
     #[serde(rename = "authoringIr")]
@@ -137,6 +160,10 @@ pub struct JobDetail {
     pub validation_report: Option<Value>,
     #[serde(rename = "previewAssets")]
     pub preview_assets: Option<Value>,
+    #[serde(rename = "pipelineReport")]
+    pub pipeline_report: Option<Value>,
+    #[serde(rename = "llmSuggestions")]
+    pub llm_suggestions: Vec<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -219,6 +246,13 @@ fn write_text(path: &Path, value: &str) -> CommandResult<()> {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     fs::write(path, value).map_err(|error| format!("write_text:{}:{}", path.display(), error))
+}
+
+fn write_bytes(path: &Path, value: &[u8]) -> CommandResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(path, value).map_err(|error| format!("write_bytes:{}:{}", path.display(), error))
 }
 
 fn crc32(bytes: &[u8]) -> u32 {
@@ -470,6 +504,15 @@ fn sanitize_filename(name: &str) -> String {
         .to_string()
 }
 
+fn safe_json_filename(value: &str) -> String {
+    let sanitized = sanitize_filename(value);
+    if sanitized.is_empty() {
+        "unknown".to_string()
+    } else {
+        sanitized
+    }
+}
+
 fn bytes_to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
 }
@@ -486,8 +529,7 @@ fn hash_file_or_path(path: &Path) -> CommandResult<(String, u64, Option<Vec<u8>>
         let size = bytes.len() as u64;
         Ok((hash_bytes(&bytes), size, Some(bytes)))
     } else {
-        let fallback = path.to_string_lossy().as_bytes().to_vec();
-        Ok((hash_bytes(&fallback), 0, None))
+        Err(format!("source_file_not_readable:{}", path.display()))
     }
 }
 
@@ -495,7 +537,13 @@ fn main_source_file(job: &ImportJob) -> Option<&SourceFile> {
     job.source_files
         .iter()
         .find(|source| source.role == "MainQuestion")
-        .or_else(|| job.source_files.first())
+}
+
+fn answer_key_sources(job: &ImportJob) -> Vec<&SourceFile> {
+    job.source_files
+        .iter()
+        .filter(|source| source.role == "AnswerKey")
+        .collect()
 }
 
 fn role_hint_for_text(text: &str) -> Option<&'static str> {
@@ -645,6 +693,82 @@ fn text_document_ir(job: &ImportJob, source: &SourceFile, content: &str, mode: &
     })
 }
 
+fn manual_transcription_document_ir(job: &ImportJob, content: &str, note: Option<&str>) -> Value {
+    let source = main_source_file(job)
+        .cloned()
+        .unwrap_or_else(|| SourceFile {
+            file_id: "manual-source".to_string(),
+            original_name: "manual-transcription.txt".to_string(),
+            stored_name: "manual-transcription.txt".to_string(),
+            file_type: "txt".to_string(),
+            sha256: hash_bytes(content.as_bytes()),
+            size_bytes: content.len() as u64,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        });
+    let mut ir = text_document_ir(job, &source, content, "manual");
+    if let Some(parser) = ir.get_mut("parser").and_then(Value::as_object_mut) {
+        parser.insert("provider".to_string(), json!("manual-transcription"));
+        parser.insert("version".to_string(), json!("0.3.0"));
+        parser.insert("mode".to_string(), json!("manual"));
+        parser.insert(
+            "warnings".to_string(),
+            json!(["manual transcription supplied by operator; verify against source PDF before publish"]),
+        );
+        if let Some(note) = note.filter(|value| !value.trim().is_empty()) {
+            parser.insert("note".to_string(), json!(note));
+        }
+    }
+    ir
+}
+
+fn vision_transcription_document_ir(
+    job: &ImportJob,
+    content: &str,
+    confidence: f64,
+    warnings: Vec<String>,
+    evidence: Value,
+    note: Option<&str>,
+) -> Value {
+    let source = main_source_file(job)
+        .cloned()
+        .unwrap_or_else(|| SourceFile {
+            file_id: "vision-source".to_string(),
+            original_name: "vision-transcription.txt".to_string(),
+            stored_name: "vision-transcription.txt".to_string(),
+            file_type: "txt".to_string(),
+            sha256: hash_bytes(content.as_bytes()),
+            size_bytes: content.len() as u64,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        });
+    let mut ir = text_document_ir(job, &source, content, "ocr");
+    let normalized_confidence = confidence.clamp(0.0, 1.0);
+    for block in dynamic_document_blocks_mut(&mut ir) {
+        if let Some(obj) = block.as_object_mut() {
+            obj.insert("confidence".to_string(), json!(normalized_confidence));
+        }
+    }
+    if let Some(parser) = ir.get_mut("parser").and_then(Value::as_object_mut) {
+        parser.insert("provider".to_string(), json!("vision-llm-transcription"));
+        parser.insert("version".to_string(), json!("0.1.0"));
+        parser.insert("mode".to_string(), json!("ocr"));
+        let mut parser_warnings =
+            vec!["vision LLM transcription; verify against source PDF before publish".to_string()];
+        parser_warnings.extend(
+            warnings
+                .into_iter()
+                .filter(|warning| !warning.trim().is_empty()),
+        );
+        parser.insert("warnings".to_string(), json!(parser_warnings));
+        parser.insert("evidence".to_string(), evidence);
+        if let Some(note) = note.filter(|value| !value.trim().is_empty()) {
+            parser.insert("note".to_string(), json!(note));
+        }
+    }
+    ir
+}
+
 fn append_parser_warning(ir: &mut Value, warning: String) {
     if let Some(parser) = ir.get_mut("parser").and_then(Value::as_object_mut) {
         let warnings = parser.entry("warnings").or_insert_with(|| json!([]));
@@ -681,6 +805,33 @@ fn parse_with_python_sidecar(
     read_json(output_path)
 }
 
+fn extract_pdf_images_with_python_sidecar(
+    job_id: &str,
+    input_path: &Path,
+    output_path: &Path,
+    asset_dir: &Path,
+) -> CommandResult<Value> {
+    let script = find_sidecar("sidecars/python-parser/parser.py")
+        .ok_or_else(|| "python_parser_sidecar_missing".to_string())?;
+    let output = Command::new("python3")
+        .arg(&script)
+        .arg("extract_pdf_images")
+        .arg("--input")
+        .arg(input_path)
+        .arg("--output")
+        .arg(output_path)
+        .arg("--job-id")
+        .arg(job_id)
+        .arg("--asset-dir")
+        .arg(asset_dir)
+        .output()
+        .map_err(|error| format!("python_parser_spawn_failed:{}:{}", script.display(), error))?;
+    if !output.status.success() {
+        return Err(command_failure("python-parser:extract_pdf_images", &output));
+    }
+    read_json(output_path)
+}
+
 fn parse_source_document(
     job: &ImportJob,
     source: &SourceFile,
@@ -691,26 +842,106 @@ fn parse_source_document(
     match parse_with_python_sidecar(&job.job_id, upload_path, output_path, mode) {
         Ok(ir) => Ok(ir),
         Err(error) => {
-            let mut ir = if matches!(source.file_type.as_str(), "txt" | "md") {
-                let content = fs::read_to_string(upload_path).map_err(|read_error| {
-                    format!("read_source_text:{}:{}", upload_path.display(), read_error)
-                })?;
-                text_document_ir(job, source, &content, mode)
+            if matches!(source.file_type.as_str(), "txt" | "md") {
+                match fs::read_to_string(upload_path) {
+                    Ok(content) => {
+                        let mut ir = text_document_ir(job, source, &content, mode);
+                        append_parser_warning(
+                            &mut ir,
+                            format!(
+                                "python parser sidecar fallback for {}: {}",
+                                source.file_type, error
+                            ),
+                        );
+                        Ok(ir)
+                    }
+                    Err(read_error) => Ok(parser_failure_document_ir(
+                        job,
+                        source,
+                        mode,
+                        &format!(
+                            "python parser failed and text fallback could not read source: {}; {}",
+                            error, read_error
+                        ),
+                    )),
+                }
             } else {
-                sample_document_ir(job, mode)
-            };
-            append_parser_warning(
-                &mut ir,
-                format!(
-                    "python parser sidecar fallback for {}: {}",
-                    source.file_type, error
-                ),
-            );
-            Ok(ir)
+                Ok(parser_failure_document_ir(job, source, mode, &error))
+            }
         }
     }
 }
 
+fn parser_failure_document_ir(
+    job: &ImportJob,
+    source: &SourceFile,
+    mode: &str,
+    error: &str,
+) -> Value {
+    let warning = format!(
+        "parser failed for {} source {}; manual review required: {}",
+        source.file_type, source.original_name, error
+    );
+    json!({
+        "schemaVersion": "DocumentIRV1",
+        "jobId": job.job_id,
+        "pages": [{
+            "pageIndex": 1,
+            "width": 595,
+            "height": 842,
+            "blocks": [{
+                "blockId": "parser-failure",
+                "blockType": "paragraph",
+                "text": format!("[Parser failed for {}. Manual review required.]", source.original_name),
+                "html": format!("<p>{}</p>", html_escape(&format!("[Parser failed for {}. Manual review required.]", source.original_name))),
+                "bbox": [72, 72, 520, 120],
+                "confidence": 0.0,
+                "roleHint": "ignore"
+            }]
+        }],
+        "assets": [],
+        "parser": {
+            "provider": "python-parser-sidecar:failure",
+            "version": "0.3.0",
+            "mode": mode,
+            "warnings": [warning, "no-sample-content-generated"],
+            "sourceFileId": source.file_id,
+            "sourceStoredName": source.stored_name
+        }
+    })
+}
+
+fn missing_source_document_ir(job: &ImportJob, mode: &str, reason: &str) -> Value {
+    json!({
+        "schemaVersion": "DocumentIRV1",
+        "jobId": job.job_id,
+        "pages": [{
+            "pageIndex": 1,
+            "width": 595,
+            "height": 842,
+            "blocks": [{
+                "blockId": "source-missing",
+                "blockType": "paragraph",
+                "text": "[No main source file is available. Manual import/review required.]",
+                "html": "<p>[No main source file is available. Manual import/review required.]</p>",
+                "bbox": [72, 72, 520, 120],
+                "confidence": 0.0,
+                "roleHint": "ignore"
+            }]
+        }],
+        "assets": [],
+        "parser": {
+            "provider": "local-parser:source-missing",
+            "version": "0.3.0",
+            "mode": mode,
+            "warnings": [format!("main source unavailable; manual review required: {}", reason), "no-sample-content-generated"],
+            "sourceFileId": null,
+            "sourceStoredName": null
+        }
+    })
+}
+
+#[cfg(test)]
 fn sample_document_ir(job: &ImportJob, mode: &str) -> Value {
     json!({
         "schemaVersion": "DocumentIRV1",
@@ -781,6 +1012,20 @@ fn dynamic_document_blocks(doc: Option<&Value>) -> Vec<Value> {
                 .flatten()
         })
         .cloned()
+        .collect()
+}
+
+fn dynamic_document_blocks_mut(doc: &mut Value) -> Vec<&mut Value> {
+    doc.get_mut("pages")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+        .flat_map(|page| {
+            page.get_mut("blocks")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+        })
         .collect()
 }
 
@@ -1278,6 +1523,397 @@ fn dynamic_answer_map_from_split(split: &Value) -> serde_json::Map<String, Value
     answers
 }
 
+fn parse_answer_source_candidates(
+    root: &Path,
+    job: &ImportJob,
+    mode: &str,
+) -> CommandResult<Vec<Value>> {
+    let mut candidates = Vec::new();
+    for source in answer_key_sources(job) {
+        let upload_path = job_dir(root, &job.job_id)
+            .join("uploads")
+            .join(&source.stored_name);
+        if !upload_path.exists() {
+            candidates.push(json!({
+                "source": format!("answer-source-missing:{}", source.file_id),
+                "sourceFileId": source.file_id,
+                "sourceStoredName": source.stored_name,
+                "answers": {},
+                "warnings": [format!("Answer key source file missing: {}", source.original_name)]
+            }));
+            continue;
+        }
+        if !matches!(source.file_type.as_str(), "txt" | "md" | "pdf" | "docx") {
+            candidates.push(json!({
+                "source": format!("answer-source-unsupported:{}", source.file_id),
+                "sourceFileId": source.file_id,
+                "sourceStoredName": source.stored_name,
+                "answers": {},
+                "warnings": [format!("Unsupported answer key source type: {}", source.file_type)]
+            }));
+            continue;
+        }
+        let parser_output = root.join("cache").join("parser").join(format!(
+            "{}-answer-{}-document-ir.json",
+            job.job_id, source.file_id
+        ));
+        let answer_doc = parse_source_document(job, source, &upload_path, &parser_output, mode)?;
+        let mut answers = serde_json::Map::new();
+        for block in dynamic_document_blocks(Some(&answer_doc)) {
+            for (key, value) in parse_dynamic_answer_text(&dynamic_block_text(&block)) {
+                answers.insert(key, value);
+            }
+        }
+        let warnings = parser_warnings(Some(&answer_doc));
+        candidates.push(json!({
+            "source": format!("answer-source:{}", source.file_id),
+            "sourceFileId": source.file_id,
+            "sourceStoredName": source.stored_name,
+            "provider": answer_doc.pointer("/parser/provider").cloned().unwrap_or(Value::Null),
+            "answers": answers,
+            "warnings": warnings
+        }));
+    }
+    Ok(candidates)
+}
+
+fn merge_answer_source_candidates(split: &mut Value, answer_candidates: Vec<Value>) {
+    if answer_candidates.is_empty() {
+        return;
+    }
+    if let Some(obj) = split.as_object_mut() {
+        let has_any_answers = answer_candidates.iter().any(|candidate| {
+            candidate
+                .get("answers")
+                .and_then(Value::as_object)
+                .map(|answers| !answers.is_empty())
+                .unwrap_or(false)
+        });
+        let candidates = obj
+            .entry("answerKeyCandidates".to_string())
+            .or_insert_with(|| json!([]));
+        if !candidates.is_array() {
+            *candidates = json!([]);
+        }
+        if let Some(items) = candidates.as_array_mut() {
+            for candidate in answer_candidates {
+                items.push(candidate);
+            }
+        }
+        if has_any_answers {
+            let issues = obj
+                .get("issues")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|issue| {
+                    issue.as_str()
+                        != Some("No answer key detected; answers must be entered manually.")
+                })
+                .collect::<Vec<_>>();
+            obj.insert("issues".to_string(), Value::Array(issues));
+        }
+    }
+}
+
+fn parser_warnings(doc: Option<&Value>) -> Vec<String> {
+    doc.and_then(|value| value.pointer("/parser/warnings"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn low_confidence_block_ids(doc: Option<&Value>, threshold: f64) -> Vec<String> {
+    dynamic_document_blocks(doc)
+        .iter()
+        .filter(|block| {
+            block
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                < threshold
+        })
+        .map(dynamic_block_id)
+        .collect()
+}
+
+fn source_review_path(root: &Path, job_id: &str) -> PathBuf {
+    job_dir(root, job_id).join("source-review.json")
+}
+
+fn source_review_fingerprint(doc: Option<&Value>) -> String {
+    let payload = json!({
+        "sourceFileId": doc.and_then(|value| value.pointer("/parser/sourceFileId")).cloned().unwrap_or(Value::Null),
+        "sourceStoredName": doc.and_then(|value| value.pointer("/parser/sourceStoredName")).cloned().unwrap_or(Value::Null),
+        "provider": doc.and_then(|value| value.pointer("/parser/provider")).cloned().unwrap_or(Value::Null),
+        "mode": doc.and_then(|value| value.pointer("/parser/mode")).cloned().unwrap_or(Value::Null),
+        "parserWarnings": parser_warnings(doc),
+        "lowConfidenceBlocks": dynamic_document_blocks(doc)
+            .iter()
+            .filter(|block| block.get("confidence").and_then(Value::as_f64).unwrap_or(1.0) < 0.5)
+            .map(|block| json!({
+                "blockId": dynamic_block_id(block),
+                "confidence": block.get("confidence").cloned().unwrap_or(Value::Null),
+                "roleHint": block.get("roleHint").cloned().unwrap_or(Value::Null),
+                "textHash": hash_bytes(dynamic_block_text(block).as_bytes())
+            }))
+            .collect::<Vec<_>>()
+    });
+    serde_json::to_vec(&payload)
+        .map(|bytes| hash_bytes(&bytes))
+        .unwrap_or_else(|_| hash_bytes(b"source-review-fingerprint-error"))
+}
+
+fn source_review_status(root: &Path, job_id: &str, doc: Option<&Value>) -> CommandResult<Value> {
+    let parser_warnings = parser_warnings(doc);
+    let low_confidence_blocks = low_confidence_block_ids(doc, 0.5);
+    let required = !parser_warnings.is_empty() || !low_confidence_blocks.is_empty();
+    let fingerprint = source_review_fingerprint(doc);
+    let saved = read_json_opt(&source_review_path(root, job_id))?;
+    let saved_fingerprint = saved
+        .as_ref()
+        .and_then(|value| value.get("fingerprint"))
+        .and_then(Value::as_str);
+    let saved_resolved = saved
+        .as_ref()
+        .and_then(|value| value.get("resolved"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let stale = required && saved_resolved && saved_fingerprint != Some(fingerprint.as_str());
+    let resolved = !required || (saved_resolved && !stale);
+    Ok(json!({
+        "schemaVersion": "SourceReviewV1",
+        "jobId": job_id,
+        "required": required,
+        "resolved": resolved,
+        "stale": stale,
+        "fingerprint": fingerprint,
+        "parserWarnings": parser_warnings,
+        "lowConfidenceBlocks": low_confidence_blocks,
+        "resolvedAt": saved.as_ref().and_then(|value| value.get("resolvedAt")).cloned().unwrap_or(Value::Null),
+        "note": saved.as_ref().and_then(|value| value.get("note")).cloned().unwrap_or(Value::Null)
+    }))
+}
+
+fn write_source_review_status(
+    root: &Path,
+    job_id: &str,
+    doc: Option<&Value>,
+    resolved: bool,
+    note: Option<String>,
+) -> CommandResult<Value> {
+    let mut review = source_review_status(root, job_id, doc)?;
+    if let Some(obj) = review.as_object_mut() {
+        obj.insert(
+            "resolved".to_string(),
+            json!(
+                resolved
+                    || !obj
+                        .get("required")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+            ),
+        );
+        obj.insert("stale".to_string(), json!(false));
+        obj.insert(
+            "resolvedAt".to_string(),
+            if resolved {
+                json!(Utc::now().to_rfc3339())
+            } else {
+                Value::Null
+            },
+        );
+        obj.insert(
+            "note".to_string(),
+            note.map(Value::String).unwrap_or(Value::Null),
+        );
+    }
+    write_json(&source_review_path(root, job_id), &review)?;
+    Ok(review)
+}
+
+fn source_review_issues(review: &Value) -> Vec<Value> {
+    let required = review
+        .get("required")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let resolved = review
+        .get("resolved")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !required || resolved {
+        return Vec::new();
+    }
+
+    let mut issues = Vec::new();
+    for warning in review
+        .get("parserWarnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        issues.push(json_issue(
+            "AuthoringIR",
+            "$.sourceReview.parserWarnings",
+            &format!(
+                "Parser warning must be manually resolved before publish: {}",
+                warning
+            ),
+        ));
+    }
+    for block_id in review
+        .get("lowConfidenceBlocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        issues.push(json_issue(
+            "AuthoringIR",
+            &format!("$.sourceReview.lowConfidenceBlocks[{}]", block_id),
+            "Low-confidence parsed block requires source review before publish",
+        ));
+    }
+    if issues.is_empty() {
+        issues.push(json_issue(
+            "AuthoringIR",
+            "$.sourceReview.resolved",
+            "Source document review must be resolved before publish",
+        ));
+    }
+    issues
+}
+
+fn answer_is_empty(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => true,
+        Some(Value::String(text)) => text.trim().is_empty(),
+        Some(Value::Array(items)) => {
+            items.is_empty() || items.iter().all(|item| answer_is_empty(Some(item)))
+        }
+        Some(Value::Object(items)) => items.is_empty(),
+        Some(_) => false,
+    }
+}
+
+fn value_confidence(value: &Value) -> f64 {
+    value
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+}
+
+fn value_verified(value: &Value) -> bool {
+    value
+        .get("verified")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
+    let mut needs_review = 0u32;
+    let mut total_questions = 0u32;
+    let mut verified_questions = 0u32;
+    let mut empty_answers = 0u32;
+
+    if let Some(groups) = ir.get_mut("groups").and_then(Value::as_array_mut) {
+        for group in groups {
+            let mut group_question_count = 0u32;
+            let mut group_verified_questions = 0u32;
+            if let Some(questions) = group.get_mut("questions").and_then(Value::as_array_mut) {
+                for question in questions {
+                    total_questions += 1;
+                    group_question_count += 1;
+                    if value_verified(question) {
+                        verified_questions += 1;
+                        group_verified_questions += 1;
+                    }
+                    if answer_is_empty(question.get("answer")) {
+                        empty_answers += 1;
+                        needs_review += 1;
+                    }
+                    if value_confidence(question) < 0.85 && !value_verified(question) {
+                        needs_review += 1;
+                    }
+                }
+            }
+            let all_group_questions_verified =
+                group_question_count > 0 && group_question_count == group_verified_questions;
+            if let Some(obj) = group.as_object_mut() {
+                obj.insert("verified".to_string(), json!(all_group_questions_verified));
+            }
+            if value_confidence(group) < 0.85 && !all_group_questions_verified {
+                needs_review += 1;
+            }
+        }
+    }
+
+    if let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) {
+        audit.insert(
+            "humanVerified".to_string(),
+            json!(
+                total_questions > 0 && total_questions == verified_questions && empty_answers == 0
+            ),
+        );
+        audit.insert("updatedAt".to_string(), json!(Utc::now().to_rfc3339()));
+    }
+
+    needs_review
+}
+
+fn authoring_review_issues(ir: &Value) -> Vec<Value> {
+    let mut issues = Vec::new();
+    for group in ir
+        .get("groups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let group_id = group
+            .get("groupId")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown-group");
+        if value_confidence(group) < 0.85 && !value_verified(group) {
+            issues.push(json_issue(
+                "AuthoringIR",
+                &format!("$.groups[{}].verified", group_id),
+                "Low-confidence group requires human verification before publish",
+            ));
+        }
+        for question in group
+            .get("questions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let qid = question
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown-question");
+            if answer_is_empty(question.get("answer")) {
+                issues.push(json_issue(
+                    "AuthoringIR",
+                    &format!("$.answerKey.{}", qid),
+                    "Question answer is empty; fill or verify the answer before publish",
+                ));
+            }
+            if value_confidence(question) < 0.85 && !value_verified(question) {
+                issues.push(json_issue(
+                    "AuthoringIR",
+                    &format!("$.groups[{}].questions[{}].verified", group_id, qid),
+                    "Low-confidence question requires human verification before publish",
+                ));
+            }
+        }
+    }
+    issues
+}
+
 fn dynamic_range_from_candidate(candidate: &Value) -> (u32, u32) {
     let values = candidate
         .get("questionRange")
@@ -1463,7 +2099,17 @@ fn make_dynamic_authoring_ir(job: &ImportJob, split: &Value, doc: Option<&Value>
             "title": job.title,
             "category": job.category.clone().unwrap_or_else(|| "P1".to_string()),
             "frequency": job.frequency.clone().unwrap_or_else(|| "medium".to_string()),
-            "tags": job.tags
+            "tags": job.tags,
+            "sourceFiles": job.source_files.iter().map(|source| json!({
+                "fileId": source.file_id,
+                "originalName": source.original_name,
+                "storedName": source.stored_name,
+                "fileType": source.file_type,
+                "sha256": source.sha256,
+                "sizeBytes": source.size_bytes,
+                "role": source.role,
+                "importedAt": source.imported_at.to_rfc3339()
+            })).collect::<Vec<_>>()
         },
         "passage": {
             "title": passage_title,
@@ -1610,6 +2256,16 @@ fn display_map_from_authoring(authoring: &Value) -> Value {
     Value::Object(map)
 }
 
+fn authoring_source_file(authoring: &Value) -> Option<Value> {
+    authoring
+        .pointer("/exam/sourceFiles")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|source| source.get("role").and_then(Value::as_str) == Some("MainQuestion"))
+        .cloned()
+}
+
 fn reading_source(authoring: &Value) -> Value {
     let groups = authoring
         .get("groups")
@@ -1637,6 +2293,34 @@ fn reading_source(authoring: &Value) -> Value {
         })
         .collect::<Vec<_>>();
 
+    let source_file = authoring_source_file(authoring);
+    let pdf_filename = source_file
+        .as_ref()
+        .and_then(|source| source.get("originalName"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("source.pdf");
+    let stored_name = source_file
+        .as_ref()
+        .and_then(|source| source.get("storedName"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("source.pdf");
+    let source_file_id = source_file
+        .as_ref()
+        .and_then(|source| source.get("fileId"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown-source");
+    let source_sha256 = source_file
+        .as_ref()
+        .and_then(|source| source.get("sha256"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown-sha256");
+    let human_verified = authoring
+        .pointer("/audit/humanVerified")
+        .and_then(Value::as_bool)
+        == Some(true);
+
     json!({
         "schemaVersion":"ReadingExamSourceV1",
         "examId": authoring.pointer("/exam/examId").and_then(Value::as_str).unwrap_or("local-authoring-exam"),
@@ -1644,7 +2328,7 @@ fn reading_source(authoring: &Value) -> Value {
             "title": authoring.pointer("/exam/title").and_then(Value::as_str).unwrap_or("Untitled Reading"),
             "category": authoring.pointer("/exam/category").and_then(Value::as_str).unwrap_or("P1"),
             "frequency": authoring.pointer("/exam/frequency").and_then(Value::as_str).unwrap_or("medium"),
-            "pdfFilename": "source.pdf",
+            "pdfFilename": pdf_filename,
             "legacyPath": "",
             "legacyFilename": "",
             "questionIntroHtml": "<h3>Questions</h3>"
@@ -1652,8 +2336,8 @@ fn reading_source(authoring: &Value) -> Value {
         "passage": {"blocks": authoring.pointer("/passage/htmlBlocks").cloned().unwrap_or(json!([{"blockId":"passage-main","kind":"html","html":""}]))},
         "questionGroups": groups,
         "answerKey": answer_key_from_authoring(authoring),
-        "sourceRefs": {"primaryHtml": format!("author-imports/{}/intermediate.html", authoring.get("jobId").and_then(Value::as_str).unwrap_or("job")), "primaryProvider":"author_web", "shuiHtml": null, "shuiPdf":"uploads/source.pdf", "ieltsHtml": null},
-        "audit": {"matchStatus":"author_verified", "matchConfidence":1, "verifiedAt":Utc::now().to_rfc3339(), "notes":"provider:author_tauri;signature:radio,text,table"},
+        "sourceRefs": {"primaryHtml": format!("author-imports/{}/intermediate.html", authoring.get("jobId").and_then(Value::as_str).unwrap_or("job")), "primaryProvider":"author_web", "shuiHtml": null, "shuiPdf": format!("uploads/{}", stored_name), "ieltsHtml": null},
+        "audit": {"matchStatus": if human_verified { "author_verified" } else { "needs_review" }, "matchConfidence": if human_verified { 1.0 } else { 0.0 }, "verifiedAt": if human_verified { json!(Utc::now().to_rfc3339()) } else { Value::Null }, "notes": format!("provider:author_tauri;sourceFileId:{};sourceSha256:{};signature:radio,text,table", source_file_id, source_sha256)},
         "questionOrder": question_order_from_authoring(authoring),
         "questionDisplayMap": display_map_from_authoring(authoring)
     })
@@ -1720,6 +2404,10 @@ fn build_pack_manifest(input: &Value, sources: &[Value]) -> Value {
     })
 }
 
+fn qid_sort_key(qid: &str) -> Option<u32> {
+    qid.strip_prefix('q')?.parse::<u32>().ok()
+}
+
 fn validate_authoring(job_id: &str, authoring: Option<&Value>) -> Value {
     let mut issues = Vec::new();
     if let Some(ir) = authoring {
@@ -1747,7 +2435,88 @@ fn validate_authoring(job_id: &str, authoring: Option<&Value>) -> Value {
                 "At least one question group is required",
             ));
         }
-        for qid in question_order_from_authoring(ir) {
+        let question_order = question_order_from_authoring(ir);
+        let mut seen_qids = HashSet::new();
+        let mut duplicate_qids = HashSet::new();
+        for qid in &question_order {
+            if !seen_qids.insert(qid.clone()) {
+                duplicate_qids.insert(qid.clone());
+            }
+        }
+        for qid in duplicate_qids {
+            issues.push(json_issue(
+                "AuthoringIR",
+                "$.questionOrder",
+                &format!("Duplicate question id in questionOrder: {}", qid),
+            ));
+        }
+
+        let mut numeric_order = question_order
+            .iter()
+            .filter_map(|qid| qid_sort_key(qid))
+            .collect::<Vec<_>>();
+        numeric_order.sort_unstable();
+        numeric_order.dedup();
+        if let (Some(first), Some(last)) = (
+            numeric_order.first().copied(),
+            numeric_order.last().copied(),
+        ) {
+            let expected_len = (last - first + 1) as usize;
+            if expected_len != numeric_order.len() {
+                issues.push(json_issue(
+                    "ReadingExamSourceV1",
+                    "$.questionOrder",
+                    &format!(
+                        "questionOrder must be numerically continuous from q{} to q{}",
+                        first, last
+                    ),
+                ));
+            }
+        }
+
+        let mut display_seen: HashMap<String, String> = HashMap::new();
+        for question in ir
+            .get("groups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|group| {
+                group
+                    .get("questions")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+        {
+            if let Some(qid) = question.get("id").and_then(Value::as_str) {
+                let display = question
+                    .get("displayNumber")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                if display.is_empty() {
+                    issues.push(json_issue(
+                        "ReadingExamSourceV1",
+                        &format!("$.questionDisplayMap.{}", qid),
+                        "questionDisplayMap display number cannot be empty",
+                    ));
+                } else if let Some(existing_qid) =
+                    display_seen.insert(display.clone(), qid.to_string())
+                {
+                    issues.push(json_issue(
+                        "ReadingExamSourceV1",
+                        "$.questionDisplayMap",
+                        &format!(
+                            "Duplicate display number {} for {} and {}",
+                            display, existing_qid, qid
+                        ),
+                    ));
+                }
+            }
+        }
+
+        for qid in question_order {
             let source = reading_source(ir);
             let found = source
                 .get("questionGroups")
@@ -1921,6 +2690,9 @@ fn merge_sidecar_validation(base: &mut Value, sidecar: Value) {
     base_obj.insert("passed".to_string(), json!(merged_issues.is_empty()));
     base_obj.insert("layers".to_string(), json!(layers));
     base_obj.insert("issues".to_string(), json!(merged_issues));
+    if let Some(runtime) = sidecar.get("runtime") {
+        base_obj.insert("runtime".to_string(), runtime.clone());
+    }
 }
 
 fn preview_assets_for_source(
@@ -1950,8 +2722,7 @@ fn resolve_external_unified_html() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    let default = PathBuf::from("/Users/maziheng/Downloads/0.3.1 working/assets/generated/reading-exams/reading-practice-unified.html");
-    default.exists().then_some(default)
+    None
 }
 
 fn resolve_external_unified_python() -> Option<PathBuf> {
@@ -1961,11 +2732,25 @@ fn resolve_external_unified_python() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    let default = PathBuf::from("/Users/maziheng/Downloads/0.3.1 working/.venv/bin/python");
-    default.exists().then_some(default)
+    None
 }
 
-fn validate_for_runtime_gate(root: &Path, job_id: &str, ir: &Value) -> CommandResult<Value> {
+fn runtime_gate_strict_mode() -> bool {
+    env::var("EPIC8_RUNTIME_GATE_STRICT")
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
+        })
+        .unwrap_or(true)
+}
+
+fn validate_for_runtime_gate(
+    root: &Path,
+    job_id: &str,
+    ir: &Value,
+    require_real_runtime: bool,
+) -> CommandResult<Value> {
     let source = reading_source(ir);
     let mut report = validate_authoring(job_id, Some(ir));
     match validate_with_node_sidecar(root, job_id, &source) {
@@ -2021,12 +2806,153 @@ fn validate_for_runtime_gate(root: &Path, job_id: &str, ir: &Value) -> CommandRe
                 );
             }
         }
+        if require_real_runtime {
+            let runtime = report.get("runtime").cloned().unwrap_or(Value::Null);
+            let mode = runtime
+                .get("mode")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            if mode != "real" {
+                let reason = runtime
+                    .get("fallbackReason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("real runtime did not pass");
+                merge_sidecar_validation(
+                    &mut report,
+                    json!({
+                        "layers": [{"layer":"RuntimePreview"}],
+                        "issues": [{
+                            "issueId": format!("issue-{}", Uuid::new_v4().simple()),
+                            "severity": "error",
+                            "layer": "RuntimePreview",
+                            "path": "runtime.mode",
+                            "message": format!("Strict runtime gate requires real unified runtime mode; got '{}': {}", mode, reason),
+                            "fixHint": "Set EPIC8_UNIFIED_HTML_PATH and EPIC8_UNIFIED_PYTHON to a valid unified runtime environment and re-run E2E."
+                        }]
+                    }),
+                );
+            }
+        }
     }
     write_json(
         &job_dir(root, job_id).join("validation-report.json"),
         &report,
     )?;
     Ok(report)
+}
+
+fn merge_validation_issues(report: &mut Value, extra_issues: Vec<Value>) {
+    if extra_issues.is_empty() {
+        return;
+    }
+    let Some(obj) = report.as_object_mut() else {
+        return;
+    };
+    let mut issues = obj
+        .get("issues")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    issues.extend(extra_issues);
+    let layers = [
+        "AuthoringIR",
+        "ReadingExamSourceV1",
+        "DomProtocol",
+        "RuntimePreview",
+    ]
+    .iter()
+    .map(|layer| {
+        let count = issues
+            .iter()
+            .filter(|issue| issue.get("layer").and_then(Value::as_str) == Some(*layer))
+            .count();
+        json!({"layer": layer, "passed": count == 0, "issueCount": count})
+    })
+    .collect::<Vec<_>>();
+    obj.insert("passed".to_string(), json!(issues.is_empty()));
+    obj.insert("layers".to_string(), json!(layers));
+    obj.insert("issues".to_string(), json!(issues));
+}
+
+fn publish_readiness_gate(
+    root: &Path,
+    job_id: &str,
+    ir: &Value,
+    mut runtime_report: Value,
+) -> CommandResult<Value> {
+    let job = load_job(root, job_id)?;
+    let dir = job_dir(root, job_id);
+    let document_ir = read_json_opt(&dir.join("document-ir.json"))?;
+    let source_review = source_review_status(root, job_id, document_ir.as_ref())?;
+    let human_verified = ir.pointer("/audit/humanVerified").and_then(Value::as_bool) == Some(true);
+    let mut issues = Vec::new();
+
+    if job.status == JobStatus::NeedsHumanReview {
+        issues.push(json_issue(
+            "AuthoringIR",
+            "$.job.status",
+            "Job is still marked NeedsHumanReview; complete manual review before publish",
+        ));
+    }
+    issues.extend(source_review_issues(&source_review));
+    if !human_verified {
+        issues.push(json_issue(
+            "AuthoringIR",
+            "$.audit.humanVerified",
+            "All questions and answers must be human verified before publish",
+        ));
+    }
+    issues.extend(authoring_review_issues(ir));
+
+    merge_validation_issues(&mut runtime_report, issues);
+    write_json(&dir.join("publish-readiness-report.json"), &runtime_report)?;
+    Ok(runtime_report)
+}
+
+fn apply_preview_e2e_job_state(
+    root: &Path,
+    job_id: &str,
+    report: &Value,
+    readiness_passed: bool,
+) -> CommandResult<()> {
+    let report_passed = report
+        .get("passed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let issues = report
+        .get("issues")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    update_job(root, job_id, |job| {
+        job.status = if report_passed {
+            if readiness_passed {
+                JobStatus::ExportReady
+            } else {
+                JobStatus::PreviewReady
+            }
+        } else {
+            JobStatus::ValidationFailed
+        };
+        job.current_step = if report_passed {
+            if readiness_passed {
+                WorkflowStep::Export
+            } else {
+                WorkflowStep::Preview
+            }
+        } else {
+            WorkflowStep::Preview
+        };
+        job.issue_counts.errors = issues
+            .iter()
+            .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("error"))
+            .count() as u32;
+        job.issue_counts.warnings = issues
+            .iter()
+            .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("warning"))
+            .count() as u32;
+    })?;
+    Ok(())
 }
 
 fn profiles_path(root: &Path) -> PathBuf {
@@ -2144,11 +3070,6 @@ fn file_delete_secret(root: &Path, profile_id: &str) -> CommandResult<()> {
     Ok(())
 }
 
-fn profile_has_secret(root: &Path, profile_id: &str) -> bool {
-    matches!(keychain_load_secret(profile_id), Ok(Some(_)))
-        || file_load_secret(root, profile_id).is_some()
-}
-
 fn redact_profile_for_ui(root: &Path, mut profile: Value) -> Value {
     let Some(profile_id) = profile
         .get("profileId")
@@ -2194,22 +3115,12 @@ fn save_profile_secret(
     api_key: Option<&str>,
 ) -> CommandResult<(bool, String, String)> {
     let Some(api_key) = api_key.map(str::trim).filter(|value| !value.is_empty()) else {
-        let profile = redact_profile_for_ui(root, json!({"profileId": profile_id}));
+        let _ = keychain_delete_secret(profile_id);
+        file_delete_secret(root, profile_id)?;
         return Ok((
-            profile
-                .get("hasApiKey")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            profile
-                .get("secretStorageBackend")
-                .and_then(Value::as_str)
-                .unwrap_or("none")
-                .to_string(),
-            profile
-                .get("secretStorageMessage")
-                .and_then(Value::as_str)
-                .unwrap_or("No API key is stored.")
-                .to_string(),
+            false,
+            "none".to_string(),
+            "No API key is stored.".to_string(),
         ));
     };
     match keychain_save_secret(profile_id, api_key) {
@@ -2284,6 +3195,7 @@ fn run_llm_gateway(
     job_id: &str,
     command_name: &str,
     input: &Value,
+    api_key: Option<&str>,
 ) -> CommandResult<Value> {
     let script = find_sidecar("sidecars/llm-gateway/gateway.mjs")
         .ok_or_else(|| "llm_gateway_sidecar_missing".to_string())?;
@@ -2291,18 +3203,32 @@ fn run_llm_gateway(
     let stamp = Utc::now().timestamp_millis();
     let input_path = cache_dir.join(format!("{}-input-{}.json", command_name, stamp));
     let output_path = cache_dir.join(format!("{}-output-{}.json", command_name, stamp));
-    write_json(&input_path, input)?;
-    let output = Command::new("node")
+    write_json(&input_path, &redact_llm_input_for_cache(input))?;
+    let mut command = Command::new("node");
+    command
         .arg(&script)
         .arg(command_name)
         .arg(&input_path)
-        .arg(&output_path)
+        .arg(&output_path);
+    if let Some(secret) = api_key.filter(|value| !value.trim().is_empty()) {
+        command.env("EPIC8_LLM_API_KEY", secret);
+    }
+    let output = command
         .output()
         .map_err(|error| format!("llm_gateway_spawn_failed:{}:{}", script.display(), error))?;
     if !output.status.success() {
         return Err(command_failure("llm-gateway", &output));
     }
     read_json(&output_path)
+}
+
+fn redact_llm_input_for_cache(input: &Value) -> Value {
+    let mut redacted = input.clone();
+    if let Some(obj) = redacted.as_object_mut() {
+        obj.remove("apiKey");
+        obj.insert("apiKeySource".to_string(), json!("process-env"));
+    }
+    redacted
 }
 
 fn deterministic_llm_output(group: &Value, mode: &str, warning: String) -> Value {
@@ -2312,18 +3238,17 @@ fn deterministic_llm_output(group: &Value, mode: &str, warning: String) -> Value
         .unwrap_or("short_answer");
     json!({
         "kind": kind,
-        "confidence": if kind == "table_completion" { 0.78 } else { 0.88 },
+        "confidence": 0.64,
         "patch": [
             {"op":"replace","path":"/kind","value":kind}
         ],
         "questions": group.get("questions").cloned().unwrap_or_else(|| json!([])),
-        "warnings": [warning],
-        "evidence": {"mode": mode, "source": "rust-local-fallback"}
+        "warnings": [warning, "low-confidence-review-required", "fallback-output-never-auto-applies"],
+        "evidence": {"mode": mode, "source": "rust-local-fallback", "fallback": true}
     })
 }
 
 fn make_llm_input(
-    root: &Path,
     profile: &Value,
     job: &ImportJob,
     group: &Value,
@@ -2342,13 +3267,197 @@ fn make_llm_input(
             "timeoutMs": profile.get("timeoutMs").cloned().unwrap_or_else(|| json!(60000)),
             "forceJson": profile.get("forceJson").cloned().unwrap_or(Value::Bool(true))
         },
-        "apiKey": load_profile_secret(root, profile_id).unwrap_or_default(),
         "group": group
     })
 }
 
+fn profile_payload(profile: &Value, profile_id: &str) -> Value {
+    json!({
+        "profileId": profile_id,
+        "provider": profile.get("provider").cloned().unwrap_or_else(|| json!("OpenAiCompatible")),
+        "baseUrl": profile.get("baseUrl").cloned().unwrap_or_else(|| json!("")),
+        "model": profile.get("model").cloned().unwrap_or_else(|| json!("")),
+        "temperature": profile.get("temperature").cloned().unwrap_or_else(|| json!(0)),
+        "timeoutMs": profile.get("timeoutMs").cloned().unwrap_or_else(|| json!(120000)),
+        "forceJson": profile.get("forceJson").cloned().unwrap_or(Value::Bool(true))
+    })
+}
+
+fn select_llm_profile(
+    root: &Path,
+    job: &ImportJob,
+    requested_profile_id: Option<String>,
+) -> Option<String> {
+    let profiles = load_profiles(root).unwrap_or_default();
+    requested_profile_id
+        .or_else(|| job.active_llm_profile_id.clone())
+        .or_else(|| {
+            profiles.iter().find_map(|profile| {
+                if profile
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true)
+                {
+                    profile
+                        .get("profileId")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+fn make_vision_transcription_input(
+    profile: &Value,
+    job: &ImportJob,
+    profile_id: &str,
+    extraction: &Value,
+) -> Value {
+    json!({
+        "mode": "transcribe_pdf_images",
+        "job": {"jobId": job.job_id, "title": job.title, "category": job.category, "frequency": job.frequency, "tags": job.tags},
+        "profile": profile_payload(profile, profile_id),
+        "pages": extraction.get("pages").cloned().unwrap_or_else(|| json!([])),
+        "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([]))
+    })
+}
+
+fn main_pdf_needs_vision_transcription(job: &ImportJob, doc: &Value) -> bool {
+    let Some(source) = main_source_file(job) else {
+        return false;
+    };
+    if source.file_type != "pdf" {
+        return false;
+    }
+    let warnings = parser_warnings(Some(doc)).join("\n").to_lowercase();
+    let provider = doc
+        .pointer("/parser/provider")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    provider != "vision-llm-transcription"
+        && (warnings.contains("no extractable text")
+            || warnings.contains("ocr/manual review required")
+            || !low_confidence_block_ids(Some(doc), 0.5).is_empty())
+}
+
+fn vision_transcription_for_job(
+    root: &Path,
+    job: &ImportJob,
+    profile_id: &str,
+    note: Option<&str>,
+) -> CommandResult<(Value, Value)> {
+    let source = main_source_file(job).ok_or_else(|| "no_main_source_file".to_string())?;
+    if source.file_type != "pdf" {
+        return Err(format!(
+            "vision_transcription_requires_pdf:{}",
+            source.file_type
+        ));
+    }
+    let upload_path = job_dir(root, &job.job_id)
+        .join("uploads")
+        .join(&source.stored_name);
+    if !upload_path.exists() {
+        return Err(format!(
+            "main_source_file_missing_for_vision:{}",
+            upload_path.display()
+        ));
+    }
+    let profile = find_profile(root, profile_id)?;
+    let dir = job_dir(root, &job.job_id);
+    let cache_dir = dir.join("cache").join("vision");
+    let extraction_path = cache_dir.join("pdf-images.json");
+    let asset_dir = cache_dir.join("assets");
+    let extraction = extract_pdf_images_with_python_sidecar(
+        &job.job_id,
+        &upload_path,
+        &extraction_path,
+        &asset_dir,
+    )?;
+    let image_count = extraction
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|page| {
+            page.get("images")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .count();
+    if image_count == 0 {
+        return Err("vision_transcription_no_extractable_pdf_images".to_string());
+    }
+
+    let input = make_vision_transcription_input(&profile, job, profile_id, &extraction);
+    let api_key = load_llm_api_key(root, profile_id);
+    let output = run_llm_gateway(
+        root,
+        &job.job_id,
+        "transcribe_pdf_images",
+        &input,
+        api_key.as_deref(),
+    )?;
+    let text = output
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if text.is_empty() {
+        return Err(format!(
+            "vision_transcription_empty:{}",
+            output.get("warnings").cloned().unwrap_or_else(|| json!([]))
+        ));
+    }
+    let confidence = output
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.6);
+    let warnings = output
+        .get("warnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let evidence = json!({
+        "profileId": profile_id,
+        "imageCount": image_count,
+        "extraction": {
+            "warnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([])),
+            "assetDir": asset_dir
+        },
+        "model": output.get("evidence").cloned().unwrap_or_else(|| json!({}))
+    });
+    let ir = vision_transcription_document_ir(job, &text, confidence, warnings, evidence, note);
+    Ok((ir, output))
+}
+
+fn load_llm_api_key(root: &Path, profile_id: &str) -> Option<String> {
+    load_profile_secret(root, profile_id).filter(|value| !value.trim().is_empty())
+}
+
 fn save_llm_suggestion(root: &Path, job_id: &str, suggestion: &Value) -> CommandResult<()> {
     let dir = job_dir(root, job_id);
+    let group_id = suggestion
+        .get("groupId")
+        .and_then(Value::as_str)
+        .map(safe_json_filename)
+        .unwrap_or_else(|| "unknown-group".to_string());
+    let suggestion_id = suggestion
+        .get("suggestionId")
+        .and_then(Value::as_str)
+        .map(safe_json_filename)
+        .unwrap_or_else(|| "unknown-suggestion".to_string());
+    write_json(
+        &dir.join("llm-suggestions")
+            .join(format!("{}--{}.json", group_id, suggestion_id)),
+        suggestion,
+    )?;
     write_json(&dir.join("llm-last-suggestion.json"), suggestion)?;
     append_text(
         &dir.join("llm-calls.jsonl"),
@@ -2357,6 +3466,291 @@ fn save_llm_suggestion(root: &Path, job_id: &str, suggestion: &Value) -> Command
             serde_json::to_string(suggestion).map_err(|error| error.to_string())?
         ),
     )
+}
+
+fn load_llm_suggestions(root: &Path, job_id: &str) -> CommandResult<Vec<Value>> {
+    let mut items = Vec::new();
+    let job_path = job_dir(root, job_id);
+    let dir = job_path.join("llm-suggestions");
+    if dir.exists() {
+        for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) == Some("json") {
+                items.push(read_json::<Value>(&path)?);
+            }
+        }
+    }
+    if items.is_empty() {
+        if let Some(last) = read_json_opt(&job_path.join("llm-last-suggestion.json"))? {
+            items.push(last);
+        }
+    }
+    items.sort_by(|left, right| {
+        right
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .cmp(
+                left.get("createdAt")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+    });
+    Ok(items)
+}
+
+fn is_allowed_llm_group_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "single_choice"
+            | "multi_choice"
+            | "true_false_not_given"
+            | "yes_no_not_given"
+            | "matching"
+            | "classification"
+            | "summary_completion"
+            | "table_completion"
+            | "diagram_completion"
+            | "short_answer"
+            | "sentence_completion"
+    )
+}
+
+fn is_allowed_llm_interaction_type(kind: &str) -> bool {
+    matches!(
+        kind,
+        "radio" | "checkbox" | "text" | "textarea" | "select" | "dragdrop" | "table" | "diagram"
+    )
+}
+
+fn json_string_set(value: Option<&Value>) -> HashSet<String> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|item| !item.trim().is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn group_by_suggestion<'a>(ir: &'a Value, suggestion: &Value) -> Option<&'a Value> {
+    let group_id = suggestion.get("groupId").and_then(Value::as_str)?;
+    ir.get("groups")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|group| group.get("groupId").and_then(Value::as_str) == Some(group_id))
+}
+
+fn llm_suggestion_auto_apply_issues(
+    ir: &Value,
+    suggestion: &Value,
+    selected_paths: &[String],
+) -> Vec<String> {
+    let mut issues = Vec::<String>::new();
+    let confidence = suggestion
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    if confidence < 0.85 {
+        issues.push("confidence_below_auto_apply_threshold".to_string());
+    }
+
+    let selected = selected_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    for path in &selected {
+        if !matches!(*path, "kind" | "layout" | "questions") {
+            issues.push(format!("unsupported_selected_path:{}", path));
+        }
+    }
+
+    let Some(group) = group_by_suggestion(ir, suggestion) else {
+        issues.push("suggestion_group_not_found".to_string());
+        return issues;
+    };
+
+    let group_source_ids = json_string_set(group.get("sourceBlockIds"));
+    if group_source_ids.is_empty() {
+        issues.push("group_source_blocks_missing".to_string());
+    }
+    let question_ids = group
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|question| question.get("id").and_then(Value::as_str))
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
+
+    let suggested_kind = suggestion.get("kind").and_then(Value::as_str);
+    if let Some(kind) = suggested_kind {
+        if !is_allowed_llm_group_kind(kind) {
+            issues.push(format!("invalid_kind:{}", kind));
+        }
+    }
+
+    let Some(patches) = suggestion.get("patch").and_then(Value::as_array) else {
+        issues.push("patch_array_missing".to_string());
+        return issues;
+    };
+    for patch in patches {
+        let op = patch.get("op").and_then(Value::as_str).unwrap_or_default();
+        let path = patch
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if op != "replace" {
+            issues.push(format!("unsupported_patch_op:{}", op));
+            continue;
+        }
+        match path {
+            "/kind" => {
+                if !selected.contains("kind") {
+                    continue;
+                }
+                let kind = patch
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !is_allowed_llm_group_kind(kind) {
+                    issues.push(format!("invalid_patch_kind:{}", kind));
+                }
+            }
+            "/layout/template" => {
+                if !(selected.contains("layout") || selected.contains("kind")) {
+                    continue;
+                }
+                if patch
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+                {
+                    issues.push("invalid_layout_template".to_string());
+                }
+            }
+            other => issues.push(format!("unsupported_patch_path:{}", other)),
+        }
+    }
+
+    if selected.contains("questions") {
+        let Some(questions) = suggestion.get("questions").and_then(Value::as_array) else {
+            issues.push("questions_array_missing".to_string());
+            return issues;
+        };
+        for question in questions {
+            let qid = question
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !question_ids.contains(qid) {
+                issues.push(format!("unknown_question_id:{}", qid));
+            }
+            if let Some(prompt) = question.get("prompt").and_then(Value::as_str) {
+                if prompt.trim().is_empty() {
+                    issues.push(format!("empty_question_prompt:{}", qid));
+                }
+            }
+            if let Some(interaction) = question.get("interaction") {
+                let interaction_type = interaction
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !is_allowed_llm_interaction_type(interaction_type) {
+                    issues.push(format!(
+                        "invalid_interaction_type:{}:{}",
+                        qid, interaction_type
+                    ));
+                }
+                if matches!(interaction_type, "radio" | "checkbox" | "select") {
+                    let options = interaction
+                        .get("options")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .filter(|option| !option.trim().is_empty())
+                        .count();
+                    if options == 0 {
+                        issues.push(format!("interaction_options_missing:{}", qid));
+                    }
+                }
+            }
+        }
+    }
+
+    let evidence = suggestion.get("evidence").unwrap_or(&Value::Null);
+    if evidence.get("fallback").and_then(Value::as_bool) == Some(true) {
+        issues.push("fallback_evidence_never_auto_applies".to_string());
+    }
+    let evidence_source = evidence
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if evidence_source.contains("fallback") || evidence_source.contains("heuristic") {
+        issues.push(format!("non_provider_evidence_source:{}", evidence_source));
+    }
+
+    let evidence_block_ids = json_string_set(
+        evidence
+            .get("sourceBlockIds")
+            .or_else(|| evidence.get("blockIds")),
+    );
+    if evidence_block_ids.is_empty() {
+        issues.push("evidence_source_block_ids_missing".to_string());
+    }
+    for block_id in &evidence_block_ids {
+        if !group_source_ids.contains(block_id) {
+            issues.push(format!("evidence_block_not_in_group:{}", block_id));
+        }
+    }
+
+    let quotes = evidence
+        .get("quotes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if quotes.is_empty() {
+        issues.push("evidence_quotes_missing".to_string());
+    }
+    for quote in quotes {
+        let block_id = quote
+            .get("blockId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let text = quote
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !group_source_ids.contains(block_id) {
+            issues.push(format!("evidence_quote_block_not_in_group:{}", block_id));
+        }
+        if text.trim().is_empty() {
+            issues.push(format!("evidence_quote_text_missing:{}", block_id));
+        }
+    }
+
+    for warning in suggestion
+        .get("warnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        if warning.contains("fallback-output-never-auto-applies")
+            || warning.contains("deterministic-local-fallback")
+        {
+            issues.push(format!("blocking_warning:{}", warning));
+        }
+    }
+
+    issues.sort();
+    issues.dedup();
+    issues
 }
 
 fn apply_suggestion_to_authoring(
@@ -2480,10 +3874,16 @@ async fn get_job(job_id: String, app: AppHandle) -> CommandResult<JobDetail> {
     Ok(JobDetail {
         job: load_job(&root, &job_id)?,
         document_ir: read_json_opt(&dir.join("document-ir.json"))?,
+        source_review: {
+            let document_ir = read_json_opt(&dir.join("document-ir.json"))?;
+            Some(source_review_status(&root, &job_id, document_ir.as_ref())?)
+        },
         split_candidates: read_json_opt(&dir.join("split-candidates.json"))?,
         authoring_ir: read_json_opt(&dir.join("authoring-ir.json"))?,
         validation_report: read_json_opt(&dir.join("validation-report.json"))?,
         preview_assets: read_json_opt(&dir.join("preview").join("preview-assets.json"))?,
+        pipeline_report: read_json_opt(&dir.join("pipeline-report.json"))?,
+        llm_suggestions: load_llm_suggestions(&root, &job_id)?,
     })
 }
 
@@ -2509,12 +3909,6 @@ async fn update_job_meta(
         }
         if let Some(profile_id) = patch.active_llm_profile_id {
             job.active_llm_profile_id = Some(profile_id);
-        }
-        if let Some(status) = patch.status {
-            job.status = status;
-        }
-        if let Some(step) = patch.current_step {
-            job.current_step = step;
         }
     })
 }
@@ -2547,12 +3941,8 @@ async fn import_source_file(
         .to_string();
     let (hash, size, bytes) = hash_file_or_path(&input)?;
     let stored_name = format!("{}-{}", &hash[..8], sanitize_filename(&original_name));
-    if let Some(bytes) = bytes {
-        fs::write(dir.join("uploads").join(&stored_name), bytes)
-            .map_err(|error| error.to_string())?;
-    } else {
-        write_text(&dir.join("uploads").join(format!("{}.missing.txt", stored_name)), "Original file path was not readable from the current embedded UI context. Use the Tauri file dialog command in production flow.\n")?;
-    }
+    let bytes = bytes.ok_or_else(|| format!("source_file_not_readable:{}", input.display()))?;
+    fs::write(dir.join("uploads").join(&stored_name), bytes).map_err(|error| error.to_string())?;
     let source = SourceFile {
         file_id: format!("file-{}", Uuid::new_v4().simple()),
         original_name,
@@ -2609,15 +3999,35 @@ async fn parse_document(
                 .join(format!("{}-document-ir.json", job_id));
             parse_source_document(&job, source, &upload_path, &parser_output, mode)?
         } else {
-            sample_document_ir(&job, mode)
+            missing_source_document_ir(
+                &job,
+                mode,
+                &format!(
+                    "main source file missing or unsupported: type={}, path={}",
+                    source.file_type,
+                    upload_path.display()
+                ),
+            )
         }
     } else {
-        sample_document_ir(&job, mode)
+        missing_source_document_ir(&job, mode, "no MainQuestion source file")
     };
     write_json(&job_dir(&root, &job_id).join("document-ir.json"), &ir)?;
+    let _ = write_source_review_status(&root, &job_id, Some(&ir), false, None)?;
     update_job(&root, &job_id, |job| {
-        job.status = JobStatus::Parsed;
+        let review = source_review_status(&root, &job_id, Some(&ir))
+            .unwrap_or_else(|_| json!({"required": true, "resolved": false}));
+        job.status = if review
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            JobStatus::NeedsHumanReview
+        } else {
+            JobStatus::Parsed
+        };
         job.current_step = WorkflowStep::DocumentReview;
+        job.issue_counts.needs_review = source_review_issues(&review).len() as u32;
     })?;
     Ok(ir)
 }
@@ -2639,11 +4049,113 @@ async fn rerun_ocr(
 }
 
 #[tauri::command]
+async fn apply_manual_transcription(
+    job_id: String,
+    input: ManualTranscriptionInput,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let job = load_job(&root, &job_id)?;
+    let text = input.text.trim();
+    if text.is_empty() {
+        return Err("manual_transcription_text_required".to_string());
+    }
+    let dir = job_dir(&root, &job_id);
+    ensure_job_dirs(&dir)?;
+    write_text(&dir.join("manual-transcription.txt"), text)?;
+    let ir = manual_transcription_document_ir(&job, text, input.note.as_deref());
+    write_json(&dir.join("document-ir.json"), &ir)?;
+    write_source_review_status(
+        &root,
+        &job_id,
+        Some(&ir),
+        true,
+        Some(
+            "manual transcription applied; operator must verify content before publish".to_string(),
+        ),
+    )?;
+    update_job(&root, &job_id, |job| {
+        job.status = JobStatus::Parsed;
+        job.current_step = WorkflowStep::DocumentReview;
+        job.issue_counts.needs_review = 0;
+    })?;
+    Ok(ir)
+}
+
+#[tauri::command]
+async fn apply_vision_transcription(
+    job_id: String,
+    input: Option<VisionTranscriptionInput>,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let options = input.unwrap_or_default();
+    let job = load_job(&root, &job_id)?;
+    let profile_id = select_llm_profile(&root, &job, options.profile_id)
+        .ok_or_else(|| "no_enabled_llm_profile_available_for_vision_transcription".to_string())?;
+    let dir = job_dir(&root, &job_id);
+    ensure_job_dirs(&dir)?;
+    let (ir, output) =
+        vision_transcription_for_job(&root, &job, &profile_id, options.note.as_deref())?;
+    write_text(
+        &dir.join("vision-transcription.txt"),
+        output
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
+    write_json(&dir.join("vision-transcription-output.json"), &output)?;
+    write_json(&dir.join("document-ir.json"), &ir)?;
+    let review = write_source_review_status(&root, &job_id, Some(&ir), false, None)?;
+    update_job(&root, &job_id, |job| {
+        job.status = JobStatus::NeedsHumanReview;
+        job.current_step = WorkflowStep::DocumentReview;
+        job.issue_counts.needs_review = source_review_issues(&review).len() as u32;
+    })?;
+    Ok(ir)
+}
+
+#[tauri::command]
+async fn resolve_source_review(
+    job_id: String,
+    note: Option<String>,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let dir = job_dir(&root, &job_id);
+    let document_ir = read_json_opt(&dir.join("document-ir.json"))?;
+    let review = write_source_review_status(&root, &job_id, document_ir.as_ref(), true, note)?;
+    let authoring = read_json_opt(&dir.join("authoring-ir.json"))?;
+    let authoring_review_count = authoring
+        .as_ref()
+        .map(|ir| authoring_review_issues(ir).len() as u32)
+        .unwrap_or(0);
+    update_job(&root, &job_id, |job| {
+        job.status = if authoring_review_count > 0 {
+            JobStatus::NeedsHumanReview
+        } else if authoring.is_some() {
+            JobStatus::AuthoringReady
+        } else {
+            JobStatus::Parsed
+        };
+        job.current_step = if authoring_review_count > 0 {
+            WorkflowStep::Authoring
+        } else {
+            WorkflowStep::DocumentReview
+        };
+        job.issue_counts.needs_review = authoring_review_count;
+    })?;
+    Ok(review)
+}
+
+#[tauri::command]
 async fn run_rule_split(job_id: String, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     let job = load_job(&root, &job_id)?;
     let doc = read_json_opt(&job_dir(&root, &job_id).join("document-ir.json"))?;
-    let split = make_dynamic_split_candidates(&job_id, &job, doc.as_ref());
+    let mut split = make_dynamic_split_candidates(&job_id, &job, doc.as_ref());
+    let answer_candidates = parse_answer_source_candidates(&root, &job, "auto")?;
+    merge_answer_source_candidates(&mut split, answer_candidates);
     write_json(
         &job_dir(&root, &job_id).join("split-candidates.json"),
         &split,
@@ -2677,18 +4189,30 @@ async fn build_authoring_ir(job_id: String, app: AppHandle) -> CommandResult<Val
     let doc = read_json_opt(&dir.join("document-ir.json"))?;
     let split = match read_json_opt(&dir.join("split-candidates.json"))? {
         Some(value) => value,
-        None => make_dynamic_split_candidates(&job_id, &job, doc.as_ref()),
+        None => {
+            let mut value = make_dynamic_split_candidates(&job_id, &job, doc.as_ref());
+            let answer_candidates = parse_answer_source_candidates(&root, &job, "auto")?;
+            merge_answer_source_candidates(&mut value, answer_candidates);
+            value
+        }
     };
     write_json(&dir.join("split-candidates.json"), &split)?;
-    let ir = make_dynamic_authoring_ir(&job, &split, doc.as_ref());
+    let mut ir = make_dynamic_authoring_ir(&job, &split, doc.as_ref());
+    let needs_review = refresh_authoring_review_state(&mut ir);
+    let source_review = source_review_status(&root, &job_id, doc.as_ref())?;
+    let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     write_json(&job_dir(&root, &job_id).join("authoring-ir.json"), &ir)?;
     update_job(&root, &job_id, |job| {
-        job.status = JobStatus::AuthoringReady;
+        job.status = if needs_review > 0 || source_review_issue_count > 0 {
+            JobStatus::NeedsHumanReview
+        } else {
+            JobStatus::AuthoringReady
+        };
         job.current_step = WorkflowStep::Authoring;
         job.issue_counts = IssueCounts {
             errors: 0,
             warnings: 1,
-            needs_review: 8,
+            needs_review: needs_review + source_review_issue_count,
         };
     })?;
     Ok(ir)
@@ -2698,6 +4222,10 @@ async fn build_authoring_ir(job_id: String, app: AppHandle) -> CommandResult<Val
 async fn update_authoring_ir(job_id: String, patch: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     let mut ir = patch.get("ir").cloned().unwrap_or(patch);
+    let needs_review = refresh_authoring_review_state(&mut ir);
+    let document_ir = read_json_opt(&job_dir(&root, &job_id).join("document-ir.json"))?;
+    let source_review = source_review_status(&root, &job_id, document_ir.as_ref())?;
+    let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     if let Some(obj) = ir.as_object_mut() {
         obj.insert(
             "answerKey".to_string(),
@@ -2719,9 +4247,14 @@ async fn update_authoring_ir(job_id: String, patch: Value, app: AppHandle) -> Co
     }
     write_json(&job_dir(&root, &job_id).join("authoring-ir.json"), &ir)?;
     update_job(&root, &job_id, |job| {
-        job.status = JobStatus::AuthoringReady;
+        job.status = if needs_review > 0 || source_review_issue_count > 0 {
+            JobStatus::NeedsHumanReview
+        } else {
+            JobStatus::AuthoringReady
+        };
         job.current_step = WorkflowStep::Authoring;
-        job.issue_counts.needs_review = 0;
+        job.issue_counts.needs_review = needs_review;
+        job.issue_counts.needs_review += source_review_issue_count;
     })?;
     Ok(ir)
 }
@@ -2812,10 +4345,16 @@ async fn test_llm_profile(profile_id: String, app: AppHandle) -> CommandResult<V
             "timeoutMs": profile.get("timeoutMs").cloned().unwrap_or_else(|| json!(60000)),
             "forceJson": profile.get("forceJson").cloned().unwrap_or(Value::Bool(true))
         },
-        "apiKey": load_profile_secret(&root, &profile_id).unwrap_or_default(),
         "group": {"groupId": "test", "kind": "short_answer", "instruction": ["Return JSON only."], "questions": []}
     });
-    let result = run_llm_gateway(&root, "profile-test", "test_profile", &input);
+    let api_key = load_llm_api_key(&root, &profile_id);
+    let result = run_llm_gateway(
+        &root,
+        "profile-test",
+        "test_profile",
+        &input,
+        api_key.as_deref(),
+    );
     let latency = Utc::now()
         .signed_duration_since(started)
         .num_milliseconds()
@@ -2837,9 +4376,10 @@ async fn llm_classify_group(
     let profile = find_profile(&root, &profile_id)?;
     let ir: Value = read_json(&job_dir(&root, &job_id).join("authoring-ir.json"))?;
     let group = llm_group_context(&ir, &group_id)?;
-    let input = make_llm_input(&root, &profile, &job, &group, &profile_id, "classify_group");
-    let output =
-        run_llm_gateway(&root, &job_id, "classify_group", &input).unwrap_or_else(|error| {
+    let input = make_llm_input(&profile, &job, &group, &profile_id, "classify_group");
+    let api_key = load_llm_api_key(&root, &profile_id);
+    let output = run_llm_gateway(&root, &job_id, "classify_group", &input, api_key.as_deref())
+        .unwrap_or_else(|error| {
             deterministic_llm_output(
                 &group,
                 "classify_group",
@@ -2901,14 +4441,16 @@ async fn llm_extract_group(
     let profile = find_profile(&root, &profile_id)?;
     let ir: Value = read_json(&job_dir(&root, &job_id).join("authoring-ir.json"))?;
     let group = llm_group_context(&ir, &group_id)?;
-    let input = make_llm_input(&root, &profile, &job, &group, &profile_id, "extract_group");
-    let output = run_llm_gateway(&root, &job_id, "extract_group", &input).unwrap_or_else(|error| {
-        deterministic_llm_output(
-            &group,
-            "extract_group",
-            format!("llm gateway fallback: {}", error),
-        )
-    });
+    let input = make_llm_input(&profile, &job, &group, &profile_id, "extract_group");
+    let api_key = load_llm_api_key(&root, &profile_id);
+    let output = run_llm_gateway(&root, &job_id, "extract_group", &input, api_key.as_deref())
+        .unwrap_or_else(|error| {
+            deterministic_llm_output(
+                &group,
+                "extract_group",
+                format!("llm gateway fallback: {}", error),
+            )
+        });
     let confidence = output
         .get("confidence")
         .and_then(Value::as_f64)
@@ -2961,10 +4503,12 @@ async fn apply_llm_suggestion(
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
     let mut ir: Value = read_json(&job_dir(&root, &job_id).join("authoring-ir.json"))?;
-    let suggestion: Value = read_json(&job_dir(&root, &job_id).join("llm-last-suggestion.json"))?;
-    if suggestion.get("suggestionId").and_then(Value::as_str) != Some(suggestion_id.as_str()) {
-        return Err(format!("suggestion_not_found:{}", suggestion_id));
-    }
+    let suggestion = load_llm_suggestions(&root, &job_id)?
+        .into_iter()
+        .find(|item| {
+            item.get("suggestionId").and_then(Value::as_str) == Some(suggestion_id.as_str())
+        })
+        .ok_or_else(|| format!("suggestion_not_found:{}", suggestion_id))?;
     if suggestion
         .get("confidence")
         .and_then(Value::as_f64)
@@ -2973,7 +4517,46 @@ async fn apply_llm_suggestion(
     {
         return Err("low_confidence_suggestion_requires_manual_review".to_string());
     }
+    let auto_apply_issues = llm_suggestion_auto_apply_issues(&ir, &suggestion, &selected_paths);
+    if !auto_apply_issues.is_empty() {
+        return Err(format!(
+            "llm_suggestion_auto_apply_blocked:{}",
+            auto_apply_issues.join(",")
+        ));
+    }
+    let suggestion_group_id = suggestion
+        .get("groupId")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
     apply_suggestion_to_authoring(&mut ir, &suggestion, &selected_paths)?;
+    if suggestion
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+        >= 0.85
+    {
+        if let (Some(group_id), Some(groups)) = (
+            suggestion_group_id.as_deref(),
+            ir.get_mut("groups").and_then(Value::as_array_mut),
+        ) {
+            if let Some(group) = groups
+                .iter_mut()
+                .find(|group| group.get("groupId").and_then(Value::as_str) == Some(group_id))
+            {
+                if let Some(obj) = group.as_object_mut() {
+                    obj.insert("autoApplied".to_string(), json!(true));
+                    obj.insert(
+                        "lastAutoAppliedSuggestionId".to_string(),
+                        json!(suggestion_id),
+                    );
+                }
+            }
+        }
+    }
+    let needs_review = refresh_authoring_review_state(&mut ir);
+    let document_ir = read_json_opt(&job_dir(&root, &job_id).join("document-ir.json"))?;
+    let source_review = source_review_status(&root, &job_id, document_ir.as_ref())?;
+    let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     if let Some(obj) = ir.as_object_mut() {
         obj.insert(
             "answerKey".to_string(),
@@ -2999,8 +4582,13 @@ async fn apply_llm_suggestion(
     }
     write_json(&job_dir(&root, &job_id).join("authoring-ir.json"), &ir)?;
     update_job(&root, &job_id, |job| {
-        job.status = JobStatus::AuthoringReady;
+        job.status = if needs_review > 0 || source_review_issue_count > 0 {
+            JobStatus::NeedsHumanReview
+        } else {
+            JobStatus::AuthoringReady
+        };
         job.current_step = WorkflowStep::Authoring;
+        job.issue_counts.needs_review = needs_review + source_review_issue_count;
     })?;
     Ok(ir)
 }
@@ -3015,25 +4603,31 @@ async fn validate_authoring_ir(job_id: String, app: AppHandle) -> CommandResult<
         match validate_with_node_sidecar(&root, &job_id, &source) {
             Ok(sidecar_report) => merge_sidecar_validation(&mut report, sidecar_report),
             Err(error) => {
-                if let Some(issues) = report.get_mut("issues").and_then(Value::as_array_mut) {
-                    issues.push(json!({
+                merge_validation_issues(
+                    &mut report,
+                    vec![json!({
                         "issueId": format!("issue-{}", Uuid::new_v4().simple()),
                         "severity": "warning",
                         "layer": "ReadingExamSourceV1",
                         "path": "$",
                         "message": format!("Node validator sidecar unavailable; used built-in validation only: {}", error),
                         "fixHint": "Verify node is installed and sidecars/node-validator/validate-reading-source.mjs is bundled."
-                    }));
-                }
+                    })],
+                );
             }
         }
     }
+    let document_ir = read_json_opt(&job_dir(&root, &job_id).join("document-ir.json"))?;
+    let source_review = source_review_status(&root, &job_id, document_ir.as_ref())?;
+    let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     write_json(
         &job_dir(&root, &job_id).join("validation-report.json"),
         &report,
     )?;
     update_job(&root, &job_id, |job| {
-        job.status = if report
+        job.status = if source_review_issue_count > 0 {
+            JobStatus::NeedsHumanReview
+        } else if report
             .get("passed")
             .and_then(Value::as_bool)
             .unwrap_or(false)
@@ -3055,6 +4649,7 @@ async fn validate_authoring_ir(job_id: String, app: AppHandle) -> CommandResult<
             .iter()
             .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("warning"))
             .count() as u32;
+        job.issue_counts.needs_review = source_review_issue_count;
     })?;
     Ok(report)
 }
@@ -3063,11 +4658,36 @@ async fn validate_authoring_ir(job_id: String, app: AppHandle) -> CommandResult<
 async fn generate_preview_assets(job_id: String, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     let ir: Value = read_json(&job_dir(&root, &job_id).join("authoring-ir.json"))?;
+    let report = validate_for_runtime_gate(&root, &job_id, &ir, false)?;
+    if !report
+        .get("passed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        update_job(&root, &job_id, |job| {
+            job.status = JobStatus::ValidationFailed;
+            job.current_step = WorkflowStep::Authoring;
+        })?;
+        return Err(format!(
+            "preview_validation_failed:{}",
+            serde_json::to_string(&report).unwrap_or_default()
+        ));
+    }
     let source = reading_source(&ir);
     let (_, _, _, _, assets) = preview_assets_for_source(&root, &job_id, &source)?;
+    let human_verified = ir.pointer("/audit/humanVerified").and_then(Value::as_bool) == Some(true);
+    let mut review_issues = authoring_review_issues(&ir);
+    let document_ir = read_json_opt(&job_dir(&root, &job_id).join("document-ir.json"))?;
+    let source_review = source_review_status(&root, &job_id, document_ir.as_ref())?;
+    review_issues.extend(source_review_issues(&source_review));
     update_job(&root, &job_id, |job| {
-        job.status = JobStatus::PreviewReady;
+        job.status = if review_issues.is_empty() && human_verified {
+            JobStatus::PreviewReady
+        } else {
+            JobStatus::NeedsHumanReview
+        };
         job.current_step = WorkflowStep::Preview;
+        job.issue_counts.needs_review = review_issues.len() as u32;
     })?;
     Ok(assets)
 }
@@ -3077,7 +4697,7 @@ async fn run_preview_e2e(job_id: String, app: AppHandle) -> CommandResult<Value>
     let root = app_root(&app)?;
     let authoring = read_json_opt(&job_dir(&root, &job_id).join("authoring-ir.json"))?;
     let report = if let Some(ir) = authoring.as_ref() {
-        validate_for_runtime_gate(&root, &job_id, ir)?
+        validate_for_runtime_gate(&root, &job_id, ir, false)?
     } else {
         let report = validate_authoring(&job_id, None);
         write_json(
@@ -3086,16 +4706,28 @@ async fn run_preview_e2e(job_id: String, app: AppHandle) -> CommandResult<Value>
         )?;
         report
     };
-    if report
+    let report_passed = report
         .get("passed")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        update_job(&root, &job_id, |job| {
-            job.status = JobStatus::ExportReady;
-            job.current_step = WorkflowStep::Export;
-        })?;
-    }
+        .unwrap_or(false);
+    let real_runtime_passed = report
+        .get("runtime")
+        .and_then(|runtime| runtime.get("mode"))
+        .and_then(Value::as_str)
+        == Some("real");
+    let readiness_passed = if report_passed && real_runtime_passed {
+        if let Some(ir) = authoring.as_ref() {
+            publish_readiness_gate(&root, &job_id, ir, report.clone())?
+                .get("passed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    apply_preview_e2e_job_state(&root, &job_id, &report, readiness_passed)?;
     Ok(report)
 }
 
@@ -3106,8 +4738,18 @@ async fn export_reading_assets(
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    let ir: Value = read_json(&job_dir(&root, &job_id).join("authoring-ir.json"))?;
-    let report = validate_for_runtime_gate(&root, &job_id, &ir)?;
+    export_reading_assets_core(&root, &job_id, &export_dir, runtime_gate_strict_mode())
+}
+
+fn export_reading_assets_core(
+    root: &Path,
+    job_id: &str,
+    export_dir: &str,
+    require_real_runtime: bool,
+) -> CommandResult<Value> {
+    let ir: Value = read_json(&job_dir(root, job_id).join("authoring-ir.json"))?;
+    let report = validate_for_runtime_gate(root, job_id, &ir, require_real_runtime)?;
+    let report = publish_readiness_gate(root, job_id, &ir, report)?;
     if !report
         .get("passed")
         .and_then(Value::as_bool)
@@ -3127,7 +4769,7 @@ async fn export_reading_assets(
     let wrapper_js = build_wrapper(&source)?;
     let manifest_js = build_manifest(std::slice::from_ref(&source))?;
     let out_dir = if export_dir.starts_with("local://") {
-        job_dir(&root, &job_id).join("exports")
+        job_dir(root, job_id).join("exports")
     } else {
         PathBuf::from(export_dir)
     };
@@ -3136,7 +4778,7 @@ async fn export_reading_assets(
     write_text(&out_dir.join(format!("{}.js", exam_id)), &wrapper_js)?;
     write_text(&out_dir.join("manifest.js"), &manifest_js)?;
     write_json(&out_dir.join("validation-report.json"), &report)?;
-    update_job(&root, &job_id, |job| {
+    update_job(root, job_id, |job| {
         job.status = JobStatus::ExportReady;
         job.current_step = WorkflowStep::Export;
     })?;
@@ -3148,6 +4790,10 @@ async fn export_reading_assets(
 #[tauri::command]
 async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
+    build_pack_core(&root, &input, runtime_gate_strict_mode())
+}
+
+fn build_pack_core(root: &Path, input: &Value, require_real_runtime: bool) -> CommandResult<Value> {
     let pack_id = input
         .get("packId")
         .and_then(Value::as_str)
@@ -3163,9 +4809,9 @@ async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
     }
     let pack_dir = root.join("packs").join(&pack_id);
     let exams_dir = pack_dir.join("reading-exams");
-    fs::create_dir_all(&exams_dir).map_err(|error| error.to_string())?;
     let mut sources = Vec::new();
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut job_ids = Vec::new();
     for job_id in input
         .get("jobIds")
         .and_then(Value::as_array)
@@ -3173,9 +4819,10 @@ async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
         .flatten()
         .filter_map(Value::as_str)
     {
-        let ir: Value = read_json(&job_dir(&root, job_id).join("authoring-ir.json"))?;
+        let ir: Value = read_json(&job_dir(root, job_id).join("authoring-ir.json"))?;
         let source = reading_source(&ir);
-        let report = validate_for_runtime_gate(&root, job_id, &ir)?;
+        let report = validate_for_runtime_gate(root, job_id, &ir, require_real_runtime)?;
+        let report = publish_readiness_gate(root, job_id, &ir, report)?;
         if !report
             .get("passed")
             .and_then(Value::as_bool)
@@ -3194,20 +4841,14 @@ async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
             .to_string();
         let wrapper = build_wrapper(&source)?;
         let script_name = format!("reading-exams/{}.js", exam_id);
-        write_text(&exams_dir.join(format!("{}.js", exam_id)), &wrapper)?;
         entries.push((script_name, wrapper.into_bytes()));
-        update_job(&root, job_id, |job| {
-            job.status = JobStatus::Published;
-            job.current_step = WorkflowStep::Pack;
-        })?;
+        job_ids.push(job_id.to_string());
         sources.push(source);
     }
     let manifest_js = build_manifest(&sources)?;
-    let pack_manifest = build_pack_manifest(&input, &sources);
+    let pack_manifest = build_pack_manifest(input, &sources);
     let pack_json =
         serde_json::to_string_pretty(&pack_manifest).map_err(|error| error.to_string())?;
-    write_text(&exams_dir.join("manifest.js"), &manifest_js)?;
-    write_text(&pack_dir.join("pack.json"), &pack_json)?;
     entries.insert(
         0,
         (
@@ -3218,6 +4859,20 @@ async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
     entries.insert(0, ("pack.json".to_string(), pack_json.into_bytes()));
     let zip_path = root.join("packs").join(format!("{}.zip", pack_id));
     let zip_size = write_zip(&zip_path, &entries)?;
+    fs::create_dir_all(&exams_dir).map_err(|error| error.to_string())?;
+    for (entry_path, content) in &entries {
+        if entry_path == "pack.json" {
+            write_bytes(&pack_dir.join("pack.json"), content)?;
+        } else if let Some(file_name) = entry_path.strip_prefix("reading-exams/") {
+            write_bytes(&exams_dir.join(file_name), content)?;
+        }
+    }
+    for job_id in &job_ids {
+        update_job(root, job_id, |job| {
+            job.status = JobStatus::Published;
+            job.current_step = WorkflowStep::Pack;
+        })?;
+    }
     Ok(json!({
         "packId": pack_id,
         "outputPath": zip_path.to_string_lossy(),
@@ -3227,6 +4882,404 @@ async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
         "manifest": pack_manifest,
         "createdAt": Utc::now().to_rfc3339()
     }))
+}
+
+#[tauri::command]
+async fn run_auto_pipeline(
+    job_id: String,
+    input: Option<AutoPipelineInput>,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let options = input.unwrap_or_default();
+    let parse_mode = options.parse_mode.as_deref().unwrap_or("auto");
+    let confidence_threshold = options.confidence_threshold.unwrap_or(0.85).clamp(0.0, 1.0);
+
+    let mut job = load_job(&root, &job_id)?;
+    let dir = job_dir(&root, &job_id);
+    ensure_job_dirs(&dir)?;
+
+    let has_doc = dir.join("document-ir.json").exists();
+    if !has_doc {
+        let ir = if let Some(source) = main_source_file(&job) {
+            let upload_path = dir.join("uploads").join(&source.stored_name);
+            if matches!(source.file_type.as_str(), "txt" | "md" | "pdf" | "docx")
+                && upload_path.exists()
+            {
+                let parser_output = root
+                    .join("cache")
+                    .join("parser")
+                    .join(format!("{}-document-ir.json", job_id));
+                parse_source_document(&job, source, &upload_path, &parser_output, parse_mode)?
+            } else {
+                missing_source_document_ir(
+                    &job,
+                    parse_mode,
+                    &format!(
+                        "main source file missing or unsupported: type={}, path={}",
+                        source.file_type,
+                        upload_path.display()
+                    ),
+                )
+            }
+        } else {
+            missing_source_document_ir(&job, parse_mode, "no MainQuestion source file")
+        };
+        write_json(&dir.join("document-ir.json"), &ir)?;
+        let _ = write_source_review_status(&root, &job_id, Some(&ir), false, None)?;
+        job = update_job(&root, &job_id, |item| {
+            let review = source_review_status(&root, &job_id, Some(&ir))
+                .unwrap_or_else(|_| json!({"required": true, "resolved": false}));
+            item.status = if review
+                .get("required")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                JobStatus::NeedsHumanReview
+            } else {
+                JobStatus::Parsed
+            };
+            item.current_step = WorkflowStep::DocumentReview;
+            item.issue_counts.needs_review = source_review_issues(&review).len() as u32;
+        })?;
+    }
+
+    let profile_id = select_llm_profile(&root, &job, options.profile_id.clone());
+    let mut vision_transcription = json!({
+        "attempted": false,
+        "applied": false,
+        "profileId": profile_id,
+        "warnings": [],
+        "failure": null
+    });
+
+    let mut doc = read_json_opt(&dir.join("document-ir.json"))?;
+    if let (Some(profile_id_for_vision), Some(current_doc)) = (profile_id.as_deref(), doc.as_ref())
+    {
+        if main_pdf_needs_vision_transcription(&job, current_doc) {
+            if let Some(obj) = vision_transcription.as_object_mut() {
+                obj.insert("attempted".to_string(), json!(true));
+            }
+            match vision_transcription_for_job(
+                &root,
+                &job,
+                profile_id_for_vision,
+                Some("auto pipeline vision transcription"),
+            ) {
+                Ok((vision_ir, vision_output)) => {
+                    write_text(
+                        &dir.join("vision-transcription.txt"),
+                        vision_output
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    )?;
+                    write_json(
+                        &dir.join("vision-transcription-output.json"),
+                        &vision_output,
+                    )?;
+                    write_json(&dir.join("document-ir.json"), &vision_ir)?;
+                    let _ =
+                        write_source_review_status(&root, &job_id, Some(&vision_ir), false, None)?;
+                    if let Some(obj) = vision_transcription.as_object_mut() {
+                        obj.insert("applied".to_string(), json!(true));
+                        obj.insert(
+                            "confidence".to_string(),
+                            vision_output
+                                .get("confidence")
+                                .cloned()
+                                .unwrap_or(Value::Null),
+                        );
+                        obj.insert(
+                            "warnings".to_string(),
+                            vision_output
+                                .get("warnings")
+                                .cloned()
+                                .unwrap_or_else(|| json!([])),
+                        );
+                    }
+                    doc = Some(vision_ir);
+                    job = update_job(&root, &job_id, |item| {
+                        item.status = JobStatus::NeedsHumanReview;
+                        item.current_step = WorkflowStep::DocumentReview;
+                    })?;
+                }
+                Err(error) => {
+                    if let Some(obj) = vision_transcription.as_object_mut() {
+                        obj.insert("failure".to_string(), json!(error));
+                    }
+                }
+            }
+        }
+    }
+
+    let source_review = source_review_status(&root, &job_id, doc.as_ref())?;
+    let parser_warnings = source_review
+        .get("parserWarnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let low_confidence_blocks = source_review
+        .get("lowConfidenceBlocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let mut split = make_dynamic_split_candidates(&job_id, &job, doc.as_ref());
+    let answer_candidates = parse_answer_source_candidates(&root, &job, parse_mode)?;
+    merge_answer_source_candidates(&mut split, answer_candidates);
+    write_json(&dir.join("split-candidates.json"), &split)?;
+    job = update_job(&root, &job_id, |item| {
+        item.status = JobStatus::SplitReady;
+        item.current_step = WorkflowStep::Split;
+    })?;
+
+    let mut ir = make_dynamic_authoring_ir(&job, &split, doc.as_ref());
+    write_json(&dir.join("authoring-ir.json"), &ir)?;
+    job = update_job(&root, &job_id, |item| {
+        item.status = JobStatus::AuthoringReady;
+        item.current_step = WorkflowStep::Authoring;
+    })?;
+
+    let mut low_confidence_groups = Vec::<String>::new();
+    let mut blocked_auto_apply_groups = Vec::<String>::new();
+    let mut high_confidence_applied_groups = Vec::<String>::new();
+    let mut llm_failures = Vec::<String>::new();
+    let mut suggestion_count = 0u32;
+    let mut applied_count = 0u32;
+
+    if let Some(profile_id) = profile_id {
+        let profile = find_profile(&root, &profile_id)?;
+        if let Some(groups) = ir.get("groups").and_then(Value::as_array).cloned() {
+            for group in groups {
+                let group_id = group
+                    .get("groupId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if group_id.is_empty() {
+                    continue;
+                }
+                let api_key = load_llm_api_key(&root, &profile_id);
+                let llm_input =
+                    make_llm_input(&profile, &job, &group, &profile_id, "extract_group");
+                let output = run_llm_gateway(
+                    &root,
+                    &job_id,
+                    "extract_group",
+                    &llm_input,
+                    api_key.as_deref(),
+                )
+                .unwrap_or_else(|error| {
+                    llm_failures.push(format!("{}:{}", group_id, error));
+                    deterministic_llm_output(
+                        &group,
+                        "extract_group",
+                        format!("llm gateway fallback: {}", error),
+                    )
+                });
+                let confidence = output
+                    .get("confidence")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                suggestion_count += 1;
+
+                let suggestion = json!({
+                    "suggestionId": format!("suggestion-{}", Uuid::new_v4().simple()),
+                    "jobId": job_id,
+                    "groupId": group_id,
+                    "profileId": profile_id,
+                    "kind": output.get("kind").cloned().unwrap_or_else(|| json!(group.get("kind").and_then(Value::as_str).unwrap_or("short_answer"))),
+                    "confidence": confidence,
+                    "patch": output.get("patch").cloned().unwrap_or_else(|| json!([])),
+                    "questions": output.get("questions").cloned().unwrap_or_else(|| json!([])),
+                    "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
+                    "evidence": output.get("evidence").cloned().unwrap_or_else(|| json!({})),
+                    "createdAt": Utc::now().to_rfc3339()
+                });
+                let _ = save_llm_suggestion(&root, &job_id, &suggestion);
+
+                if confidence >= confidence_threshold {
+                    let selected = vec![
+                        "kind".to_string(),
+                        "layout".to_string(),
+                        "questions".to_string(),
+                    ];
+                    let auto_apply_issues =
+                        llm_suggestion_auto_apply_issues(&ir, &suggestion, &selected);
+                    if auto_apply_issues.is_empty()
+                        && apply_suggestion_to_authoring(&mut ir, &suggestion, &selected).is_ok()
+                    {
+                        if let Some(groups) = ir.get_mut("groups").and_then(Value::as_array_mut) {
+                            if let Some(group) = groups.iter_mut().find(|group| {
+                                group.get("groupId").and_then(Value::as_str)
+                                    == Some(group_id.as_str())
+                            }) {
+                                if let Some(obj) = group.as_object_mut() {
+                                    obj.insert("autoApplied".to_string(), json!(true));
+                                    obj.insert(
+                                        "lastAutoAppliedSuggestionId".to_string(),
+                                        suggestion
+                                            .get("suggestionId")
+                                            .cloned()
+                                            .unwrap_or(Value::Null),
+                                    );
+                                }
+                            }
+                        }
+                        applied_count += 1;
+                        high_confidence_applied_groups.push(
+                            suggestion
+                                .get("groupId")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string(),
+                        );
+                    } else {
+                        blocked_auto_apply_groups.push(group_id.clone());
+                        llm_failures.push(format!(
+                            "{}:auto_apply_blocked:{}",
+                            group_id,
+                            auto_apply_issues.join(",")
+                        ));
+                    }
+                } else {
+                    low_confidence_groups.push(
+                        suggestion
+                            .get("groupId")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    } else {
+        llm_failures.push("no_enabled_llm_profile_available".to_string());
+    }
+
+    if let Some(obj) = ir.as_object_mut() {
+        obj.insert(
+            "answerKey".to_string(),
+            answer_key_from_authoring(&Value::Object(obj.clone())),
+        );
+        obj.insert(
+            "questionOrder".to_string(),
+            json!(question_order_from_authoring(&Value::Object(obj.clone()))),
+        );
+        obj.insert(
+            "questionDisplayMap".to_string(),
+            display_map_from_authoring(&Value::Object(obj.clone())),
+        );
+    }
+    let remaining_authoring_review = refresh_authoring_review_state(&mut ir);
+    if let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) {
+        audit.insert("llmUsed".to_string(), json!(suggestion_count > 0));
+        audit.insert("updatedAt".to_string(), json!(Utc::now().to_rfc3339()));
+        audit.insert(
+            "revision".to_string(),
+            json!(audit.get("revision").and_then(Value::as_u64).unwrap_or(0) + 1),
+        );
+    }
+    write_json(&dir.join("authoring-ir.json"), &ir)?;
+
+    let report = validate_for_runtime_gate(&root, &job_id, &ir, false)?;
+    let report_passed = report
+        .get("passed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let runtime_mode = report
+        .get("runtime")
+        .and_then(|runtime| runtime.get("mode"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let real_runtime_passed = report_passed && runtime_mode == "real";
+
+    let requires_parser_review = !source_review_issues(&source_review).is_empty();
+    let requires_authoring_review = remaining_authoring_review > 0;
+
+    let next_status = if !low_confidence_groups.is_empty()
+        || !blocked_auto_apply_groups.is_empty()
+        || requires_parser_review
+        || requires_authoring_review
+    {
+        JobStatus::NeedsHumanReview
+    } else if real_runtime_passed {
+        JobStatus::ExportReady
+    } else if report_passed {
+        JobStatus::PreviewReady
+    } else {
+        JobStatus::ValidationFailed
+    };
+    let next_step = if !low_confidence_groups.is_empty() || !blocked_auto_apply_groups.is_empty() {
+        WorkflowStep::LlmReview
+    } else if requires_parser_review {
+        WorkflowStep::DocumentReview
+    } else if requires_authoring_review {
+        WorkflowStep::Authoring
+    } else if real_runtime_passed {
+        WorkflowStep::Export
+    } else {
+        WorkflowStep::Preview
+    };
+
+    update_job(&root, &job_id, |item| {
+        item.status = next_status.clone();
+        item.current_step = next_step.clone();
+        item.issue_counts.needs_review = low_confidence_groups.len() as u32
+            + blocked_auto_apply_groups.len() as u32
+            + source_review_issues(&source_review).len() as u32
+            + remaining_authoring_review;
+        let issues = report
+            .get("issues")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        item.issue_counts.errors = issues
+            .iter()
+            .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("error"))
+            .count() as u32;
+        item.issue_counts.warnings = issues
+            .iter()
+            .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("warning"))
+            .count() as u32;
+    })?;
+
+    let pipeline_report = json!({
+        "jobId": job_id,
+        "confidenceThreshold": confidence_threshold,
+        "llm": {
+            "suggestionCount": suggestion_count,
+            "appliedCount": applied_count,
+            "highConfidenceAppliedGroups": high_confidence_applied_groups,
+            "lowConfidenceGroups": low_confidence_groups,
+            "blockedAutoApplyGroups": blocked_auto_apply_groups,
+            "failures": llm_failures
+        },
+        "validationPassed": report_passed,
+        "realRuntimePassed": real_runtime_passed,
+        "runtimeMode": runtime_mode,
+        "parser": {
+            "warnings": parser_warnings,
+            "lowConfidenceBlocks": low_confidence_blocks,
+            "visionTranscription": vision_transcription
+        },
+        "authoring": {
+            "remainingReviewItems": remaining_authoring_review
+        },
+        "status": format!("{:?}", next_status),
+        "currentStep": format!("{:?}", next_step),
+        "generatedAt": Utc::now().to_rfc3339(),
+        "validationReport": report
+    });
+    write_json(&dir.join("pipeline-report.json"), &pipeline_report)?;
+    Ok(pipeline_report)
 }
 
 pub fn run() {
@@ -3250,6 +5303,9 @@ pub fn run() {
             choose_export_dir,
             parse_document,
             rerun_ocr,
+            apply_manual_transcription,
+            apply_vision_transcription,
+            resolve_source_review,
             run_rule_split,
             save_split_adjustments,
             build_authoring_ir,
@@ -3264,9 +5320,1001 @@ pub fn run() {
             validate_authoring_ir,
             generate_preview_assets,
             run_preview_e2e,
+            run_auto_pipeline,
             export_reading_assets,
             build_pack
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_job() -> ImportJob {
+        make_job(CreateJobInput {
+            title: Some("Audit Fixture".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["test".to_string()]),
+            llm_profile_id: None,
+        })
+    }
+
+    fn test_source(file_type: &str) -> SourceFile {
+        SourceFile {
+            file_id: "file-test".to_string(),
+            original_name: format!("source.{}", file_type),
+            stored_name: format!("stored.{}", file_type),
+            file_type: file_type.to_string(),
+            sha256: "0".repeat(64),
+            size_bytes: 1,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        }
+    }
+
+    fn test_answer_source(file_type: &str) -> SourceFile {
+        SourceFile {
+            file_id: "file-answer".to_string(),
+            original_name: format!("answers.{}", file_type),
+            stored_name: format!("answers.{}", file_type),
+            file_type: file_type.to_string(),
+            sha256: "1".repeat(64),
+            size_bytes: 1,
+            role: "AnswerKey".to_string(),
+            imported_at: Utc::now(),
+        }
+    }
+
+    fn temp_test_root() -> PathBuf {
+        env::temp_dir().join(format!("epic8-test-{}", Uuid::new_v4().simple()))
+    }
+
+    fn external_runtime_available() -> bool {
+        resolve_external_unified_html().is_some() && resolve_external_unified_python().is_some()
+    }
+
+    fn parser_fixture(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures")
+            .join("parser")
+            .join(name)
+    }
+
+    fn make_publishable_fixture(root: &Path) -> (ImportJob, Value) {
+        ensure_app_dirs(root).unwrap();
+        let mut job = test_job();
+        job.source_files = vec![SourceFile {
+            file_id: "file-publishable".to_string(),
+            original_name: "publishable.pdf".to_string(),
+            stored_name: "publishable.pdf".to_string(),
+            file_type: "pdf".to_string(),
+            sha256: "b".repeat(64),
+            size_bytes: 431,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        }];
+        save_job(root, &job).unwrap();
+        ensure_job_dirs(&job_dir(root, &job.job_id)).unwrap();
+
+        let doc = sample_document_ir(&job, "auto");
+        write_json(&job_dir(root, &job.job_id).join("document-ir.json"), &doc).unwrap();
+        write_source_review_status(root, &job.job_id, Some(&doc), true, None).unwrap();
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        write_json(
+            &job_dir(root, &job.job_id).join("split-candidates.json"),
+            &split,
+        )
+        .unwrap();
+        let mut ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        verify_all_authoring_items(&mut ir);
+        write_json(&job_dir(root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+        (job, ir)
+    }
+
+    fn verify_all_authoring_items(ir: &mut Value) {
+        if let Some(groups) = ir.get_mut("groups").and_then(Value::as_array_mut) {
+            for group in groups {
+                if let Some(obj) = group.as_object_mut() {
+                    obj.insert("verified".to_string(), json!(true));
+                }
+                for question in group
+                    .get_mut("questions")
+                    .and_then(Value::as_array_mut)
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(obj) = question.as_object_mut() {
+                        obj.insert("verified".to_string(), json!(true));
+                    }
+                }
+            }
+        }
+        refresh_authoring_review_state(ir);
+    }
+
+    #[test]
+    fn llm_cache_input_redacts_api_key() {
+        let input = json!({
+            "apiKey": "sk-secret-value",
+            "profile": {"profileId": "profile-test", "model": "gpt-test"},
+            "group": {"groupId": "group-test"}
+        });
+
+        let redacted = redact_llm_input_for_cache(&input);
+        let serialized = serde_json::to_string(&redacted).unwrap();
+
+        assert!(!serialized.contains("sk-secret-value"));
+        assert!(redacted.get("apiKey").is_none());
+        assert_eq!(
+            redacted.get("apiKeySource").and_then(Value::as_str),
+            Some("process-env")
+        );
+    }
+
+    #[test]
+    fn make_llm_input_never_contains_api_key() {
+        let job = test_job();
+        let profile = json!({
+            "profileId": "profile-test",
+            "provider": "OpenAiCompatible",
+            "baseUrl": "https://example.invalid/v1",
+            "model": "gpt-test",
+            "apiKey": "sk-profile-secret"
+        });
+        let group = json!({"groupId": "group-test", "questions": []});
+
+        let input = make_llm_input(&profile, &job, &group, "profile-test", "extract_group");
+        let serialized = serde_json::to_string(&input).unwrap();
+
+        assert!(!serialized.contains("sk-profile-secret"));
+        assert!(input.get("apiKey").is_none());
+        assert!(input.pointer("/profile/apiKey").is_none());
+    }
+
+    #[test]
+    fn parser_failure_document_ir_never_uses_sample_content() {
+        let job = test_job();
+        let source = test_source("pdf");
+        let ir = parser_failure_document_ir(&job, &source, "auto", "boom");
+
+        assert_eq!(
+            ir.pointer("/parser/provider").and_then(Value::as_str),
+            Some("python-parser-sidecar:failure")
+        );
+        assert_eq!(
+            ir.pointer("/pages/0/blocks/0/confidence")
+                .and_then(Value::as_f64),
+            Some(0.0)
+        );
+        let warnings = ir
+            .pointer("/parser/warnings")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(warnings
+            .iter()
+            .any(|item| item.as_str() == Some("no-sample-content-generated")));
+        let text = ir
+            .pointer("/pages/0/blocks/0/text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(!text.contains("Detective fiction"));
+    }
+
+    #[test]
+    fn refresh_authoring_review_state_requires_low_confidence_verification() {
+        let job = test_job();
+        let mut ir = sample_document_ir(&job, "auto");
+        ir = make_dynamic_authoring_ir(
+            &job,
+            &make_dynamic_split_candidates(&job.job_id, &job, Some(&ir)),
+            Some(&ir),
+        );
+
+        let needs_review = refresh_authoring_review_state(&mut ir);
+
+        assert!(needs_review > 0);
+        assert_eq!(
+            ir.pointer("/audit/humanVerified").and_then(Value::as_bool),
+            Some(false)
+        );
+
+        for group in ir
+            .get_mut("groups")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(obj) = group.as_object_mut() {
+                obj.insert("verified".to_string(), json!(true));
+            }
+            for question in group
+                .get_mut("questions")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(obj) = question.as_object_mut() {
+                    obj.insert("verified".to_string(), json!(true));
+                }
+            }
+        }
+
+        let needs_review = refresh_authoring_review_state(&mut ir);
+
+        assert_eq!(needs_review, 0);
+        assert_eq!(
+            ir.pointer("/audit/humanVerified").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn publish_review_issues_block_empty_answers() {
+        let job = test_job();
+        let doc = sample_document_ir(&job, "auto");
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+
+        let issues = authoring_review_issues(&ir);
+
+        assert!(issues.iter().any(|issue| issue
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("requires human verification")));
+    }
+
+    #[test]
+    fn source_review_issues_block_even_when_authoring_is_human_verified() {
+        let job = test_job();
+        let source = test_source("pdf");
+        let doc = parser_failure_document_ir(&job, &source, "auto", "boom");
+        let review = json!({
+            "schemaVersion": "SourceReviewV1",
+            "jobId": job.job_id,
+            "required": true,
+            "resolved": false,
+            "stale": false,
+            "fingerprint": "fixture",
+            "parserWarnings": parser_warnings(Some(&doc)),
+            "lowConfidenceBlocks": low_confidence_block_ids(Some(&doc), 0.5),
+            "resolvedAt": null,
+            "note": null
+        });
+
+        let issues = source_review_issues(&review);
+
+        assert!(issues.iter().any(|issue| issue
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("Parser warning")));
+        assert!(issues.iter().any(|issue| issue
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("Low-confidence")));
+    }
+
+    #[test]
+    fn source_review_fingerprint_changes_when_low_confidence_text_changes() {
+        let job = test_job();
+        let source = test_source("pdf");
+        let mut doc = parser_failure_document_ir(&job, &source, "auto", "boom");
+        let before = source_review_fingerprint(Some(&doc));
+        doc["pages"][0]["blocks"][0]["text"] = json!("[Different low-confidence content]");
+        let after = source_review_fingerprint(Some(&doc));
+
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn missing_source_document_ir_never_uses_sample_content() {
+        let job = test_job();
+        let ir = missing_source_document_ir(&job, "auto", "no source");
+
+        assert_eq!(
+            ir.pointer("/parser/provider").and_then(Value::as_str),
+            Some("local-parser:source-missing")
+        );
+        assert_eq!(
+            ir.pointer("/pages/0/blocks/0/confidence")
+                .and_then(Value::as_f64),
+            Some(0.0)
+        );
+        let text = ir
+            .pointer("/pages/0/blocks/0/text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(!text.contains("Detective fiction"));
+    }
+
+    #[test]
+    fn manual_transcription_document_ir_reaches_split_answers() {
+        let job = test_job();
+        let transcript = "\
+READING PASSAGE 1
+Manual passage text about tides.
+
+Questions 1-3
+1 The tide rises daily.
+2 The passage mentions storms.
+3 The passage discusses satellites.
+
+Answers
+1 TRUE
+2 FALSE
+3 NOT GIVEN";
+
+        let doc = manual_transcription_document_ir(&job, transcript, Some("operator transcript"));
+        assert_eq!(
+            doc.pointer("/parser/provider").and_then(Value::as_str),
+            Some("manual-transcription")
+        );
+        assert!(parser_warnings(Some(&doc))
+            .iter()
+            .any(|warning| warning.contains("manual transcription")));
+        assert!(dynamic_document_blocks(Some(&doc))
+            .iter()
+            .any(|block| dynamic_block_role(block) == "question"));
+        assert!(dynamic_document_blocks(Some(&doc))
+            .iter()
+            .any(|block| dynamic_block_role(block) == "answer"));
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split
+                .pointer("/answerKeyCandidates/0/answers/1")
+                .and_then(Value::as_str),
+            Some("TRUE")
+        );
+        assert_eq!(
+            split
+                .pointer("/answerKeyCandidates/0/answers/3")
+                .and_then(Value::as_str),
+            Some("NOT GIVEN")
+        );
+    }
+
+    #[test]
+    fn vision_transcription_document_ir_requires_source_review_and_reaches_split() {
+        let job = test_job();
+        let transcript = "\
+READING PASSAGE 1
+Vision transcript text about tides.
+
+Questions 1-2
+1 The page was transcribed by a vision model.
+2 The author must verify the transcript.
+
+Answers
+1 TRUE
+2 TRUE";
+
+        let doc = vision_transcription_document_ir(
+            &job,
+            transcript,
+            0.91,
+            vec![],
+            json!({"source": "unit-test"}),
+            Some("vision fixture"),
+        );
+
+        assert_eq!(
+            doc.pointer("/parser/provider").and_then(Value::as_str),
+            Some("vision-llm-transcription")
+        );
+        assert!(parser_warnings(Some(&doc))
+            .iter()
+            .any(|warning| warning.contains("vision LLM transcription")));
+        let review = json!({
+            "schemaVersion": "SourceReviewV1",
+            "jobId": job.job_id,
+            "required": true,
+            "resolved": false,
+            "stale": false,
+            "fingerprint": "fixture",
+            "parserWarnings": parser_warnings(Some(&doc)),
+            "lowConfidenceBlocks": low_confidence_block_ids(Some(&doc), 0.5),
+            "resolvedAt": null,
+            "note": null
+        });
+        assert!(!source_review_issues(&review).is_empty());
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split
+                .pointer("/answerKeyCandidates/0/answers/1")
+                .and_then(Value::as_str),
+            Some("TRUE")
+        );
+        assert_eq!(
+            split
+                .pointer("/answerKeyCandidates/0/answers/2")
+                .and_then(Value::as_str),
+            Some("TRUE")
+        );
+    }
+
+    #[test]
+    fn image_only_pdf_fixture_exposes_embedded_images_for_vision() {
+        let job = test_job();
+        let fixture = parser_fixture("image-only-reading.pdf");
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let output = root
+            .join("cache")
+            .join("parser")
+            .join("image-extraction.json");
+        let asset_dir = root.join("cache").join("parser").join("image-assets");
+
+        let extraction =
+            extract_pdf_images_with_python_sidecar(&job.job_id, &fixture, &output, &asset_dir)
+                .expect("image-only PDF fixture should expose an embedded image");
+        let image_count = extraction
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|page| {
+                page.get("images")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .count();
+
+        assert!(image_count > 0);
+        assert!(extraction
+            .get("warnings")
+            .and_then(Value::as_array)
+            .map(|warnings| warnings.is_empty())
+            .unwrap_or(false));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn answer_key_source_candidates_merge_into_split_answers() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut job = test_job();
+        let main_source = test_source("txt");
+        let answer_source = test_answer_source("txt");
+        job.source_files = vec![main_source, answer_source.clone()];
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        write_text(
+            &job_dir(&root, &job.job_id)
+                .join("uploads")
+                .join(&answer_source.stored_name),
+            "Answers\n1 TRUE\n2 FALSE\n3 NOT GIVEN\n",
+        )
+        .unwrap();
+
+        let mut split = json!({
+            "jobId": job.job_id,
+            "passageCandidates": [],
+            "questionGroupCandidates": [],
+            "answerKeyCandidates": [],
+            "issues": ["No answer key detected; answers must be entered manually."]
+        });
+        let candidates = parse_answer_source_candidates(&root, &job, "auto").unwrap();
+        merge_answer_source_candidates(&mut split, candidates);
+
+        assert_eq!(
+            split
+                .pointer("/answerKeyCandidates/0/source")
+                .and_then(Value::as_str),
+            Some("answer-source:file-answer")
+        );
+        assert_eq!(
+            split
+                .pointer("/answerKeyCandidates/0/answers/1")
+                .and_then(Value::as_str),
+            Some("TRUE")
+        );
+        assert_eq!(
+            split
+                .pointer("/answerKeyCandidates/0/answers/3")
+                .and_then(Value::as_str),
+            Some("NOT GIVEN")
+        );
+        assert!(split
+            .get("issues")
+            .and_then(Value::as_array)
+            .map(|issues| issues.is_empty())
+            .unwrap_or(false));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn validate_authoring_blocks_duplicate_display_numbers_and_gaps() {
+        let job = test_job();
+        let doc = sample_document_ir(&job, "auto");
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let mut ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        if let Some(question) = ir
+            .get_mut("groups")
+            .and_then(Value::as_array_mut)
+            .and_then(|groups| groups.first_mut())
+            .and_then(|group| group.get_mut("questions"))
+            .and_then(Value::as_array_mut)
+            .and_then(|questions| questions.get_mut(1))
+        {
+            question["id"] = json!("q4");
+            question["displayNumber"] = json!("1");
+        }
+
+        let report = validate_authoring(&job.job_id, Some(&ir));
+        let messages = report
+            .get("issues")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|issue| issue.get("message").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(messages.contains("numerically continuous"));
+        assert!(messages.contains("Duplicate display number"));
+    }
+
+    #[test]
+    fn auto_applied_llm_patch_does_not_create_human_verification() {
+        let job = test_job();
+        let doc = sample_document_ir(&job, "auto");
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let mut ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let first_group_id = ir
+            .pointer("/groups/0/groupId")
+            .and_then(Value::as_str)
+            .unwrap_or("group-1")
+            .to_string();
+        let suggestion = json!({
+            "suggestionId": "suggestion-test",
+            "groupId": first_group_id,
+            "confidence": 0.99,
+            "patch": [{"op":"replace","path":"/kind","value":"short_answer"}],
+            "questions": []
+        });
+
+        apply_suggestion_to_authoring(&mut ir, &suggestion, &["kind".to_string()]).unwrap();
+        if let Some(group) = ir
+            .get_mut("groups")
+            .and_then(Value::as_array_mut)
+            .and_then(|groups| groups.first_mut())
+        {
+            group["autoApplied"] = json!(true);
+        }
+        let needs_review = refresh_authoring_review_state(&mut ir);
+
+        assert!(needs_review > 0);
+        assert_eq!(
+            ir.pointer("/audit/humanVerified").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn high_confidence_llm_without_evidence_cannot_auto_apply() {
+        let job = test_job();
+        let doc = sample_document_ir(&job, "auto");
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let first_group_id = ir
+            .pointer("/groups/0/groupId")
+            .and_then(Value::as_str)
+            .unwrap_or("group-1");
+        let suggestion = json!({
+            "suggestionId": "suggestion-no-evidence",
+            "groupId": first_group_id,
+            "kind": "short_answer",
+            "confidence": 0.99,
+            "patch": [{"op":"replace","path":"/kind","value":"short_answer"}],
+            "questions": [],
+            "evidence": {"source":"openai-compatible"}
+        });
+
+        let issues = llm_suggestion_auto_apply_issues(&ir, &suggestion, &["kind".to_string()]);
+
+        assert!(issues.contains(&"evidence_source_block_ids_missing".to_string()));
+        assert!(issues.contains(&"evidence_quotes_missing".to_string()));
+    }
+
+    #[test]
+    fn high_confidence_llm_with_source_block_evidence_can_auto_apply() {
+        let job = test_job();
+        let doc = sample_document_ir(&job, "auto");
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let mut ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let first_group = ir
+            .pointer("/groups/0")
+            .cloned()
+            .expect("fixture should have a group");
+        let first_group_id = first_group
+            .get("groupId")
+            .and_then(Value::as_str)
+            .unwrap_or("group-1")
+            .to_string();
+        let first_block_id = first_group
+            .get("sourceBlockIds")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(Value::as_str)
+            .unwrap_or("b004")
+            .to_string();
+        let suggestion = json!({
+            "suggestionId": "suggestion-with-evidence",
+            "groupId": first_group_id,
+            "kind": "short_answer",
+            "confidence": 0.99,
+            "patch": [{"op":"replace","path":"/kind","value":"short_answer"}],
+            "questions": [],
+            "warnings": [],
+            "evidence": {
+                "source": "openai-compatible",
+                "sourceBlockIds": [first_block_id],
+                "quotes": [{"blockId": first_block_id, "text": "Questions 1-5"}]
+            }
+        });
+
+        let issues = llm_suggestion_auto_apply_issues(&ir, &suggestion, &["kind".to_string()]);
+        assert!(issues.is_empty(), "unexpected issues: {:?}", issues);
+
+        apply_suggestion_to_authoring(&mut ir, &suggestion, &["kind".to_string()]).unwrap();
+        if let Some(group) = ir
+            .get_mut("groups")
+            .and_then(Value::as_array_mut)
+            .and_then(|groups| groups.first_mut())
+        {
+            group["autoApplied"] = json!(true);
+        }
+        let needs_review = refresh_authoring_review_state(&mut ir);
+
+        assert!(needs_review > 0);
+        assert_eq!(
+            ir.pointer("/audit/humanVerified").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn no_text_pdf_fixture_requires_source_review() {
+        let job = test_job();
+        let source = test_source("pdf");
+        let fixture = parser_fixture("no-text.pdf");
+        let output = env::temp_dir().join(format!(
+            "epic8-no-text-pdf-{}-document-ir.json",
+            Uuid::new_v4().simple()
+        ));
+
+        let ir = parse_source_document(&job, &source, &fixture, &output, "auto")
+            .expect("no-text PDF fixture should parse through pypdf");
+
+        assert_eq!(
+            ir.pointer("/parser/provider").and_then(Value::as_str),
+            Some("python-parser-sidecar:pdf:pypdf")
+        );
+        assert!(parser_warnings(Some(&ir))
+            .iter()
+            .any(|warning| warning.contains("no extractable text")));
+        assert_eq!(low_confidence_block_ids(Some(&ir), 0.5), vec!["b001"]);
+
+        let review = json!({
+            "schemaVersion": "SourceReviewV1",
+            "jobId": job.job_id,
+            "required": true,
+            "resolved": false,
+            "stale": false,
+            "fingerprint": "fixture",
+            "parserWarnings": parser_warnings(Some(&ir)),
+            "lowConfidenceBlocks": low_confidence_block_ids(Some(&ir), 0.5),
+            "resolvedAt": null,
+            "note": null
+        });
+        assert!(!source_review_issues(&review).is_empty());
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn reading_source_uses_real_source_metadata_and_review_status() {
+        let mut job = test_job();
+        job.source_files = vec![SourceFile {
+            file_id: "file-real".to_string(),
+            original_name: "Cambridge 18 Test 1.pdf".to_string(),
+            stored_name: "abc12345-Cambridge-18-Test-1.pdf".to_string(),
+            file_type: "pdf".to_string(),
+            sha256: "a".repeat(64),
+            size_bytes: 431,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        }];
+        let doc = sample_document_ir(&job, "auto");
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let mut ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        verify_all_authoring_items(&mut ir);
+
+        let source = reading_source(&ir);
+
+        assert_eq!(
+            source.pointer("/meta/pdfFilename").and_then(Value::as_str),
+            Some("Cambridge 18 Test 1.pdf")
+        );
+        assert_eq!(
+            source
+                .pointer("/sourceRefs/shuiPdf")
+                .and_then(Value::as_str),
+            Some("uploads/abc12345-Cambridge-18-Test-1.pdf")
+        );
+        assert_eq!(
+            source.pointer("/audit/matchStatus").and_then(Value::as_str),
+            Some("author_verified")
+        );
+        assert!(source
+            .pointer("/audit/notes")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("sourceFileId:file-real"));
+    }
+
+    #[test]
+    fn publish_gate_blocks_no_text_pdf_until_source_review_resolved() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut job = test_job();
+        let source = test_source("pdf");
+        job.source_files = vec![source.clone()];
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+
+        let fixture = parser_fixture("no-text.pdf");
+        let parser_output = root
+            .join("cache")
+            .join("parser")
+            .join("no-text-document-ir.json");
+        let doc = parse_source_document(&job, &source, &fixture, &parser_output, "auto").unwrap();
+        write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), &doc).unwrap();
+        write_source_review_status(&root, &job.job_id, Some(&doc), false, None).unwrap();
+
+        let authoring_doc = sample_document_ir(&job, "auto");
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&authoring_doc));
+        let mut ir = make_dynamic_authoring_ir(&job, &split, Some(&authoring_doc));
+        verify_all_authoring_items(&mut ir);
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+
+        let report = json!({
+            "jobId": job.job_id,
+            "passed": true,
+            "layers": [{"layer": "RuntimePreview", "passed": true, "issueCount": 0}],
+            "issues": [],
+            "runtime": {"mode": "real"}
+        });
+
+        let gated = publish_readiness_gate(&root, &job.job_id, &ir, report).unwrap();
+        assert_eq!(gated.get("passed").and_then(Value::as_bool), Some(false));
+        assert!(gated
+            .get("issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|issue| issue
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("Parser warning")));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_runtime_validation_downgrades_stale_export_ready_status() {
+        let root = temp_test_root();
+        let (job, mut ir) = make_publishable_fixture(&root);
+        update_job(&root, &job.job_id, |item| {
+            item.status = JobStatus::ExportReady;
+            item.current_step = WorkflowStep::Export;
+        })
+        .unwrap();
+        ir["groups"] = json!([]);
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+
+        let report = validate_for_runtime_gate(&root, &job.job_id, &ir, false).unwrap();
+        apply_preview_e2e_job_state(&root, &job.job_id, &report, false).unwrap();
+
+        let saved = load_job(&root, &job.job_id).unwrap();
+        assert_eq!(saved.status, JobStatus::ValidationFailed);
+        assert!(saved.issue_counts.errors > 0);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_core_writes_assets_after_real_runtime_gate() {
+        if !external_runtime_available() {
+            eprintln!("skipping: external unified runtime env vars are not configured");
+            return;
+        }
+        let root = temp_test_root();
+        let (job, ir) = make_publishable_fixture(&root);
+        let expected_exam_id = ir
+            .pointer("/exam/examId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        let out_dir = root.join("manual-export");
+
+        let result = export_reading_assets_core(
+            &root,
+            &job.job_id,
+            out_dir.to_string_lossy().as_ref(),
+            true,
+        )
+        .unwrap();
+
+        let exam_id = result.get("examId").and_then(Value::as_str).unwrap();
+        assert_eq!(exam_id, expected_exam_id);
+        assert!(out_dir.join(format!("{}.json", exam_id)).exists());
+        assert!(out_dir.join(format!("{}.js", exam_id)).exists());
+        assert!(out_dir.join("manifest.js").exists());
+        let report: Value = read_json(&out_dir.join("validation-report.json")).unwrap();
+        assert_eq!(report.get("passed").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            report.pointer("/runtime/mode").and_then(Value::as_str),
+            Some("real")
+        );
+        assert_eq!(
+            load_job(&root, &job.job_id).unwrap().status,
+            JobStatus::ExportReady
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn build_pack_core_writes_zip_after_real_runtime_gate() {
+        if !external_runtime_available() {
+            eprintln!("skipping: external unified runtime env vars are not configured");
+            return;
+        }
+        let root = temp_test_root();
+        let (job, ir) = make_publishable_fixture(&root);
+        let expected_exam_id = ir
+            .pointer("/exam/examId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        let input = json!({
+            "packId": "pack-fixture",
+            "version": "0.1.0",
+            "institution": "internal",
+            "description": "fixture",
+            "jobIds": [job.job_id]
+        });
+
+        let result = build_pack_core(&root, &input, true).unwrap();
+
+        let output_path = PathBuf::from(result.get("outputPath").and_then(Value::as_str).unwrap());
+        assert!(output_path.exists());
+        assert!(output_path.metadata().unwrap().len() > 0);
+        assert_eq!(result.get("entryCount").and_then(Value::as_u64), Some(3));
+        assert_eq!(
+            result
+                .pointer("/manifest/exams/0/examId")
+                .and_then(Value::as_str),
+            Some(expected_exam_id.as_str())
+        );
+        assert_eq!(
+            load_job(&root, &job.job_id).unwrap().status,
+            JobStatus::Published
+        );
+        assert!(root
+            .join("packs")
+            .join("pack-fixture")
+            .join("pack.json")
+            .exists());
+        assert!(root
+            .join("packs")
+            .join("pack-fixture")
+            .join("reading-exams")
+            .join("manifest.js")
+            .exists());
+        assert!(root
+            .join("packs")
+            .join("pack-fixture")
+            .join("reading-exams")
+            .join(format!("{}.js", expected_exam_id))
+            .exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn assert_complex_fixture_pipeline(file_name: &str, provider: &str) {
+        let mut job = test_job();
+        let file_type = file_name.rsplit('.').next().unwrap();
+        job.source_files = vec![test_source(file_type)];
+        let output = env::temp_dir().join(format!(
+            "epic8-complex-{}-{}-document-ir.json",
+            file_type,
+            Uuid::new_v4().simple()
+        ));
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &parser_fixture(file_name),
+            &output,
+            "auto",
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.pointer("/parser/provider").and_then(Value::as_str),
+            Some(provider)
+        );
+        assert!(parser_warnings(Some(&doc)).is_empty());
+        assert!(low_confidence_block_ids(Some(&doc), 0.5).is_empty());
+        let blocks = dynamic_document_blocks(Some(&doc));
+        assert!(blocks
+            .iter()
+            .any(|block| dynamic_block_role(block) == "passage"));
+        assert!(blocks
+            .iter()
+            .any(|block| dynamic_block_role(block) == "question"));
+        assert!(blocks
+            .iter()
+            .any(|block| dynamic_block_role(block) == "answer"));
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert!(split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .map(|items| items.len() >= 2)
+            .unwrap_or(false));
+        assert_eq!(
+            split
+                .pointer("/answerKeyCandidates/0/answers/1")
+                .and_then(Value::as_str),
+            Some("TRUE")
+        );
+        assert_eq!(
+            split
+                .pointer("/answerKeyCandidates/0/answers/5")
+                .and_then(Value::as_str),
+            Some("diaries")
+        );
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.get("questionOrder")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(5)
+        );
+        assert_eq!(
+            ir.pointer("/answerKey/q1").and_then(Value::as_str),
+            Some("TRUE")
+        );
+        assert_eq!(
+            ir.pointer("/answerKey/q5").and_then(Value::as_str),
+            Some("diaries")
+        );
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn complex_text_pdf_fixture_reaches_authoring_ir() {
+        assert_complex_fixture_pipeline("complex-reading.pdf", "python-parser-sidecar:pdf:pypdf");
+    }
+
+    #[test]
+    fn complex_docx_fixture_reaches_authoring_ir() {
+        assert_complex_fixture_pipeline("complex-reading.docx", "python-parser-sidecar:docx:ooxml");
+    }
 }

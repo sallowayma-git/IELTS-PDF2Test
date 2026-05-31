@@ -1,7 +1,18 @@
 import { deleteJob } from "../api/tauriCommands";
 import { go } from "../app/router";
 import { StatusPill } from "../components/StatusPill";
-import type { ImportJob } from "../types";
+import type { ImportJob, WorkflowStep } from "../types";
+
+const stepPath: Record<WorkflowStep, string> = {
+  Upload: "document",
+  DocumentReview: "document",
+  Split: "split",
+  Authoring: "groups",
+  LlmReview: "llm-review",
+  Preview: "preview",
+  Export: "export",
+  Pack: "pack"
+};
 
 export function JobList({ jobs, refresh }: { jobs: ImportJob[]; refresh: () => void }) {
   async function remove(jobId: string) {
@@ -28,7 +39,7 @@ export function JobList({ jobs, refresh }: { jobs: ImportJob[]; refresh: () => v
             <StatusPill status={job.status} />
             <span>{job.category}/{job.frequency}</span>
             <span>{job.sourceFiles.length} files</span>
-            <button className="ghost small" onClick={() => go(`/jobs/${job.jobId}/groups`)}>打开</button>
+            <button className="ghost small" onClick={() => go(`/jobs/${job.jobId}/${stepPath[job.currentStep] ?? "document"}`)}>打开</button>
             <button className="danger small" onClick={() => remove(job.jobId)}>删除</button>
           </div>
         ))}

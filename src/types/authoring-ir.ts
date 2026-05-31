@@ -1,4 +1,4 @@
-import type { Frequency, PassageCategory } from "./job";
+import type { Frequency, PassageCategory, SourceFile } from "./job";
 
 export type GroupKind =
   | "single_choice"
@@ -22,6 +22,7 @@ export interface ExamMetaDraft {
   category: PassageCategory;
   frequency: Frequency;
   tags: string[];
+  sourceFiles?: SourceFile[];
 }
 
 export interface PassageDraft {

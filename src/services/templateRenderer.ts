@@ -92,6 +92,7 @@ export function renderGroupBodyHtml(group: QuestionGroupDraft): string {
 }
 
 export function toReadingExamSource(ir: ReadingAuthoringIr): ReadingExamSourceV1 {
+  const sourceFile = ir.exam.sourceFiles?.find((source) => source.role === "MainQuestion");
   return {
     schemaVersion: "ReadingExamSourceV1",
     examId: ir.exam.examId,
@@ -99,7 +100,7 @@ export function toReadingExamSource(ir: ReadingAuthoringIr): ReadingExamSourceV1
       title: ir.exam.title,
       category: ir.exam.category,
       frequency: ir.exam.frequency,
-      pdfFilename: "source.pdf",
+      pdfFilename: sourceFile?.originalName ?? "source.pdf",
       legacyPath: "",
       legacyFilename: "",
       questionIntroHtml: "<h3>Questions</h3>"
@@ -120,14 +121,14 @@ export function toReadingExamSource(ir: ReadingAuthoringIr): ReadingExamSourceV1
       primaryHtml: `author-imports/${ir.jobId}/intermediate.html`,
       primaryProvider: "author_web",
       shuiHtml: null,
-      shuiPdf: "uploads/source.pdf",
+      shuiPdf: `uploads/${sourceFile?.storedName ?? "source.pdf"}`,
       ieltsHtml: null
     },
     audit: {
       matchStatus: ir.audit.humanVerified ? "author_verified" : "needs_review",
-      matchConfidence: ir.audit.humanVerified ? 1 : 0.82,
-      verifiedAt: new Date().toISOString(),
-      notes: "provider:author_web;signature:radio,text,table"
+      matchConfidence: ir.audit.humanVerified ? 1 : 0,
+      verifiedAt: ir.audit.humanVerified ? new Date().toISOString() : null,
+      notes: `provider:author_tauri;sourceFileId:${sourceFile?.fileId ?? "unknown-source"};sourceSha256:${sourceFile?.sha256 ?? "unknown-sha256"};signature:radio,text,table`
     },
     questionOrder: ir.questionOrder,
     questionDisplayMap: ir.questionDisplayMap

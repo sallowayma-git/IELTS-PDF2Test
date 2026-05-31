@@ -12,6 +12,7 @@ import type {
   LlmProfilePublic,
   LlmSuggestion,
   LlmTestResult,
+  AutoPipelineReport,
   PackBuildResult,
   ParseOptions,
   PreviewAssets,
@@ -19,6 +20,7 @@ import type {
   SaveLlmProfileInput,
   SourceFile,
   SourceFileRole,
+  SourceReview,
   SplitCandidates,
   ValidationIssue,
   ValidationReport
@@ -32,18 +34,23 @@ type Store = {
   authoring: Record<string, ReadingAuthoringIr>;
   validation: Record<string, ValidationReport>;
   previews: Record<string, PreviewAssets>;
+  sourceReviews: Record<string, SourceReview>;
   profiles: LlmProfilePublic[];
   suggestions: Record<string, LlmSuggestion[]>;
+  pipelineReports: Record<string, AutoPipelineReport>;
   packs: PackBuildResult[];
 };
 
 export interface JobDetail {
   job: ImportJob;
   documentIr?: DocumentIr;
+  sourceReview?: SourceReview;
   splitCandidates?: SplitCandidates;
   authoringIr?: ReadingAuthoringIr;
   validationReport?: ValidationReport;
   previewAssets?: PreviewAssets;
+  pipelineReport?: AutoPipelineReport;
+  llmSuggestions: LlmSuggestion[];
 }
 
 const STORE_KEY = "ielts-author-studio.dev-fallback-store.v1";
@@ -65,6 +72,7 @@ function initialStore(): Store {
     authoring: {},
     validation: {},
     previews: {},
+    sourceReviews: {},
     profiles: [
       {
         profileId: "profile-local-placeholder",
@@ -80,6 +88,7 @@ function initialStore(): Store {
       }
     ],
     suggestions: {},
+    pipelineReports: {},
     packs: []
   };
 }
@@ -234,6 +243,110 @@ function makeDocumentIr(job: ImportJob, options: ParseOptions): DocumentIr {
   };
 }
 
+function makeManualDocumentIr(job: ImportJob, text: string): DocumentIr {
+  const blocks = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split(/\n\s*\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item, index): DocumentBlock => ({
+      blockId: `b${String(index + 1).padStart(3, "0")}`,
+      blockType: /^Questions?\s+\d/i.test(item) ? "header" : "paragraph",
+      text: item,
+      html: `<p>${escapeHtml(item)}</p>`,
+      bbox: [72, 72 + index * 42, 520, 108 + index * 42],
+      confidence: 1,
+      roleHint: /^Questions?\s+\d/i.test(item) ? "question" : /^Answers?/i.test(item) || /answer key/i.test(item) ? "answer" : index === 0 ? "passage" : undefined
+    }));
+  return {
+    schemaVersion: "DocumentIRV1",
+    jobId: job.jobId,
+    pages: [{ pageIndex: 1, width: 595, height: 842, blocks }],
+    assets: [],
+    parser: {
+      provider: "manual-transcription",
+      version: "0.3.0",
+      mode: "manual",
+      warnings: ["manual transcription supplied by operator; verify against source PDF before publish"]
+    }
+  };
+}
+
+function makeVisionDocumentIr(job: ImportJob): DocumentIr {
+  const text = `READING PASSAGE 1
+Vision model transcription placeholder for ${job.title}. Human review is required before publish.
+
+Questions 1-2
+1 The uploaded scanned PDF requires visual transcription.
+2 The author must verify the generated text.
+
+Answers
+1 TRUE
+2 TRUE`;
+  const ir = makeManualDocumentIr(job, text);
+  return {
+    ...ir,
+    parser: {
+      provider: "vision-llm-transcription",
+      version: "0.1.0",
+      mode: "ocr",
+      warnings: ["vision LLM transcription; verify against source PDF before publish", "dev-fallback-placeholder"]
+    }
+  };
+}
+
+function parserWarnings(doc?: DocumentIr): string[] {
+  return doc?.parser.warnings ?? [];
+}
+
+function lowConfidenceBlockIds(doc?: DocumentIr, threshold = 0.5): string[] {
+  return flattenBlocks(doc)
+    .filter((block) => block.confidence < threshold)
+    .map((block) => block.blockId);
+}
+
+function sourceReviewFingerprint(doc?: DocumentIr): string {
+  return JSON.stringify({ warnings: parserWarnings(doc), lowConfidenceBlocks: lowConfidenceBlockIds(doc) });
+}
+
+function sourceReviewStatus(store: Store, jobId: string): SourceReview {
+  const doc = store.documents[jobId];
+  const parserWarningsList = parserWarnings(doc);
+  const lowConfidenceBlocks = lowConfidenceBlockIds(doc);
+  const required = parserWarningsList.length > 0 || lowConfidenceBlocks.length > 0;
+  const fingerprint = sourceReviewFingerprint(doc);
+  const saved = store.sourceReviews[jobId];
+  const stale = required && Boolean(saved?.resolved) && saved?.fingerprint !== fingerprint;
+  return {
+    schemaVersion: "SourceReviewV1",
+    jobId,
+    required,
+    resolved: !required || (Boolean(saved?.resolved) && !stale),
+    stale,
+    fingerprint,
+    parserWarnings: parserWarningsList,
+    lowConfidenceBlocks,
+    resolvedAt: saved?.resolvedAt ?? null,
+    note: saved?.note ?? null
+  };
+}
+
+function sourceReviewIssues(review: SourceReview): ValidationIssue[] {
+  if (!review.required || review.resolved) return [];
+  const issues: ValidationIssue[] = [];
+  for (const warning of review.parserWarnings) {
+    issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path: "$.sourceReview.parserWarnings", message: `Parser warning must be manually resolved before publish: ${warning}` });
+  }
+  for (const blockId of review.lowConfidenceBlocks) {
+    issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path: `$.sourceReview.lowConfidenceBlocks.${blockId}`, message: "Low-confidence parsed block requires source review before publish." });
+  }
+  if (!issues.length) {
+    issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path: "$.sourceReview.resolved", message: "Source document review must be resolved before publish." });
+  }
+  return issues;
+}
+
 function flattenBlocks(doc?: DocumentIr): DocumentBlock[] {
   return doc?.pages.flatMap((page) => page.blocks) ?? [];
 }
@@ -277,6 +390,16 @@ function parseAnswerText(text: string): Record<string, AnswerValue> {
   return answers;
 }
 
+function answerSourceCandidates(job?: ImportJob): SplitCandidates["answerKeyCandidates"] {
+  return (job?.sourceFiles ?? [])
+    .filter((source) => source.role === "AnswerKey")
+    .map((source) => ({
+      source: `answer-source:${source.fileId}`,
+      answers: parseAnswerText(source.originalName.replace(/\.[^.]+$/, " "))
+    }))
+    .filter((candidate) => Object.keys(candidate.answers).length > 0);
+}
+
 function inferPassageTitle(job: ImportJob, passageBlocks: DocumentBlock[]): string {
   const title = passageBlocks
     .map(blockText)
@@ -301,6 +424,10 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
   const answerBlocks = blocks.filter((block) => block.roleHint === "answer" || /^Answers?/i.test(blockText(block)) || /answer key/i.test(blockText(block)));
 
   const answerMap = answerBlocks.reduce<Record<string, AnswerValue>>((acc, block) => ({ ...acc, ...parseAnswerText(blockText(block)) }), {});
+  const externalAnswerCandidates = answerSourceCandidates(job);
+  for (const candidate of externalAnswerCandidates) {
+    Object.assign(answerMap, candidate.answers);
+  }
   const answerNumbers = Object.keys(answerMap).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
 
   const questionGroupCandidates = questionBlocks
@@ -351,7 +478,10 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
     jobId,
     passageCandidates: [{ range: passageRange, title: inferPassageTitle(job ?? { title: "Untitled Reading" } as ImportJob, passageBlocks), categoryHint: job?.category ?? "P1" }],
     questionGroupCandidates,
-    answerKeyCandidates: Object.keys(answerMap).length ? [{ source: answerBlocks.map((block) => block.blockId).join(",") || "manual", answers: answerMap }] : [],
+    answerKeyCandidates: [
+      ...(Object.keys(answerMap).length ? [{ source: answerBlocks.map((block) => block.blockId).join(",") || "manual", answers: answerMap }] : []),
+      ...externalAnswerCandidates
+    ],
     issues
   };
 }
@@ -481,7 +611,8 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       title: job.title,
       category: job.category ?? "P1",
       frequency: job.frequency ?? "medium",
-      tags: job.tags
+      tags: job.tags,
+      sourceFiles: job.sourceFiles
     },
     passage: {
       title: split.passageCandidates[0]?.title ?? job.title,
@@ -547,6 +678,91 @@ function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): Validati
   return { jobId, passed: issues.length === 0, layers, issues, generatedAt: now() };
 }
 
+function answerIsEmpty(answer: AnswerValue | undefined): boolean {
+  return answer == null || (Array.isArray(answer) ? answer.length === 0 || answer.every((item) => !String(item).trim()) : !String(answer).trim());
+}
+
+function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; needsReview: number } {
+  let needsReview = 0;
+  let total = 0;
+  let verified = 0;
+  let emptyAnswers = 0;
+  const groups = ir.groups.map((group) => {
+    let groupTotal = 0;
+    let groupVerified = 0;
+    const questions = group.questions.map((question) => {
+      total += 1;
+      groupTotal += 1;
+      if (question.verified) {
+        verified += 1;
+        groupVerified += 1;
+      }
+      if (answerIsEmpty(question.answer)) {
+        emptyAnswers += 1;
+        needsReview += 1;
+      }
+      if (question.confidence < 0.85 && !question.verified) needsReview += 1;
+      return question;
+    });
+    const nextVerified = groupTotal > 0 && groupTotal === groupVerified;
+    if (group.confidence < 0.85 && !nextVerified) needsReview += 1;
+    return { ...group, questions, verified: nextVerified };
+  });
+
+  return {
+    ir: {
+      ...refreshAuthoringDerivedFields({ ...ir, groups }),
+      audit: {
+        ...ir.audit,
+        humanVerified: total > 0 && total === verified && emptyAnswers === 0,
+        updatedAt: now()
+      }
+    },
+    needsReview
+  };
+}
+
+function publishReadinessReport(store: Store, jobId: string, ir: ReadingAuthoringIr, report: ValidationReport): ValidationReport {
+  const job = requireJob(store, jobId);
+  const documentIr = store.documents[jobId];
+  const issues: ValidationIssue[] = [...report.issues];
+  const add = (path: string, message: string) => issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path, message });
+  if (report.runtime?.mode !== "real") {
+    issues.push({
+      issueId: id("issue"),
+      severity: "error",
+      layer: "RuntimePreview",
+      path: "runtime.mode",
+      message: `Strict runtime gate requires real unified runtime mode; got '${report.runtime?.mode ?? "unknown"}'.`
+    });
+  }
+	  const humanVerified = ir.audit.humanVerified === true;
+	  if (job.status === "NeedsHumanReview") add("$.job.status", "Job is still marked NeedsHumanReview; complete manual review before publish.");
+	  issues.push(...sourceReviewIssues(sourceReviewStatus(store, jobId)));
+	  if (!humanVerified) {
+	    add("$.audit.humanVerified", "All questions and answers must be human verified before publish.");
+	  }
+  for (const group of ir.groups) {
+    if (group.confidence < 0.85 && !group.verified) add(`$.groups.${group.groupId}.verified`, "Low-confidence group requires human verification before publish.");
+    for (const question of group.questions) {
+      if (answerIsEmpty(question.answer)) add(`$.answerKey.${question.id}`, "Question answer is empty; fill or verify the answer before publish.");
+      if (question.confidence < 0.85 && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.verified`, "Low-confidence question requires human verification before publish.");
+    }
+  }
+  const layerNames: ValidationIssue["layer"][] = ["AuthoringIR", "ReadingExamSourceV1", "DomProtocol", "RuntimePreview"];
+  return {
+    ...report,
+    passed: issues.length === 0,
+    issues,
+    layers: layerNames.map((layer) => ({
+      layer,
+      issueCount: issues.filter((issue) => issue.layer === layer).length,
+      passed: issues.every((issue) => issue.layer !== layer)
+    })),
+    generatedAt: now()
+  };
+}
+
 function applySuggestionPatch(ir: ReadingAuthoringIr, suggestion: LlmSuggestion, selectedPaths: string[]): ReadingAuthoringIr {
   const selected = new Set(selectedPaths);
   const patches = Array.isArray(suggestion.patch) ? suggestion.patch as Array<{ op?: string; path?: string; value?: unknown }> : [];
@@ -577,6 +793,28 @@ function applySuggestionPatch(ir: ReadingAuthoringIr, suggestion: LlmSuggestion,
       return next;
     })
   };
+}
+
+function suggestionAutoApplyIssues(ir: ReadingAuthoringIr, suggestion: LlmSuggestion, selectedPaths: string[]): string[] {
+  const issues: string[] = [];
+  if (suggestion.confidence < 0.85) issues.push("confidence_below_auto_apply_threshold");
+  const group = ir.groups.find((item) => item.groupId === suggestion.groupId);
+  if (!group) return [...issues, "suggestion_group_not_found"];
+  const allowed = new Set(["kind", "layout", "questions"]);
+  for (const path of selectedPaths) if (!allowed.has(path)) issues.push(`unsupported_selected_path:${path}`);
+  const evidence = (suggestion.evidence ?? {}) as { fallback?: boolean; source?: string; sourceBlockIds?: string[]; blockIds?: string[]; quotes?: Array<{ blockId?: string; text?: string }> };
+  if (evidence.fallback) issues.push("fallback_evidence_never_auto_applies");
+  if ((evidence.source ?? "").includes("fallback") || (evidence.source ?? "").includes("heuristic")) issues.push(`non_provider_evidence_source:${evidence.source}`);
+  const groupBlockIds = new Set(group.sourceBlockIds);
+  const evidenceBlockIds = evidence.sourceBlockIds ?? evidence.blockIds ?? [];
+  if (!evidenceBlockIds.length) issues.push("evidence_source_block_ids_missing");
+  for (const blockId of evidenceBlockIds) if (!groupBlockIds.has(blockId)) issues.push(`evidence_block_not_in_group:${blockId}`);
+  if (!evidence.quotes?.length) issues.push("evidence_quotes_missing");
+  for (const quote of evidence.quotes ?? []) {
+    if (!quote.blockId || !groupBlockIds.has(quote.blockId)) issues.push(`evidence_quote_block_not_in_group:${quote.blockId ?? ""}`);
+    if (!quote.text?.trim()) issues.push(`evidence_quote_text_missing:${quote.blockId ?? ""}`);
+  }
+  return [...new Set(issues)].sort();
 }
 
 function refreshAuthoringDerivedFields(ir: ReadingAuthoringIr): ReadingAuthoringIr {
@@ -711,6 +949,8 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
     issues,
     runtime: {
       adapter: "dev-fallback-unified-runtime-contract-simulator",
+      mode: "fallback",
+      fallbackReason: "Development fallback does not execute the external unified runtime.",
       examId: source.examId,
       jobId,
       registeredIds: assets ? [source.examId] : [],
@@ -802,21 +1042,25 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       return jobs as T;
     }
 
-    case "get_job": {
-      const jobId = args.jobId as string;
-      const detail: JobDetail = {
-        job: requireJob(store, jobId),
-        documentIr: store.documents[jobId],
-        splitCandidates: store.splits[jobId],
+	    case "get_job": {
+	      const jobId = args.jobId as string;
+	      const detail: JobDetail = {
+	        job: requireJob(store, jobId),
+	        documentIr: store.documents[jobId],
+	        sourceReview: sourceReviewStatus(store, jobId),
+	        splitCandidates: store.splits[jobId],
         authoringIr: store.authoring[jobId],
         validationReport: store.validation[jobId],
-        previewAssets: store.previews[jobId]
+        previewAssets: store.previews[jobId],
+        pipelineReport: store.pipelineReports[jobId],
+        llmSuggestions: store.suggestions[jobId] ?? []
       };
       return detail as T;
     }
 
     case "update_job_meta": {
-      const job = updateJob(store, args.jobId as string, args.patch as JobMetaPatch);
+      const { status: _status, currentStep: _currentStep, ...patch } = args.patch as JobMetaPatch & Partial<ImportJob>;
+      const job = updateJob(store, args.jobId as string, patch);
       save(store);
       return job as T;
     }
@@ -857,19 +1101,76 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const job = requireJob(store, jobId);
       const ir = makeDocumentIr(job, (args.options ?? { mode: "auto" }) as ParseOptions);
       store.documents[jobId] = ir;
-      updateJob(store, jobId, { status: "Parsed", currentStep: "DocumentReview" });
+      delete store.sourceReviews[jobId];
+      const review = sourceReviewStatus(store, jobId);
+      updateJob(store, jobId, {
+        status: review.required ? "NeedsHumanReview" : "Parsed",
+        currentStep: "DocumentReview",
+        issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: sourceReviewIssues(review).length }
+      });
       save(store);
       return ir as T;
     }
 
-    case "rerun_ocr": {
+	    case "rerun_ocr": {
+	      const jobId = args.jobId as string;
+	      const job = requireJob(store, jobId);
+	      const ir = makeDocumentIr(job, { mode: "ocr" });
+	      store.documents[jobId] = ir;
+	      delete store.sourceReviews[jobId];
+	      save(store);
+	      return ir as T;
+	    }
+
+    case "apply_manual_transcription": {
       const jobId = args.jobId as string;
       const job = requireJob(store, jobId);
-      const ir = makeDocumentIr(job, { mode: "ocr" });
+      const input = args.input as { text?: string; note?: string };
+      const text = input?.text?.trim() ?? "";
+      if (!text) throw new Error("manual_transcription_text_required");
+      const ir = makeManualDocumentIr(job, text);
       store.documents[jobId] = ir;
+      const review = sourceReviewStatus(store, jobId);
+      store.sourceReviews[jobId] = { ...review, resolved: true, stale: false, resolvedAt: now(), note: input.note ?? "manual transcription applied" };
+      updateJob(store, jobId, {
+        status: "Parsed",
+        currentStep: "DocumentReview",
+        issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: 0 }
+      });
       save(store);
       return ir as T;
     }
+
+    case "apply_vision_transcription": {
+      const jobId = args.jobId as string;
+      const job = requireJob(store, jobId);
+      const ir = makeVisionDocumentIr(job);
+      store.documents[jobId] = ir;
+      const review = sourceReviewStatus(store, jobId);
+      store.sourceReviews[jobId] = { ...review, resolved: false, stale: false, resolvedAt: null, note: null };
+      updateJob(store, jobId, {
+        status: "NeedsHumanReview",
+        currentStep: "DocumentReview",
+        issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: sourceReviewIssues(review).length }
+      });
+      save(store);
+      return ir as T;
+    }
+
+	    case "resolve_source_review": {
+	      const jobId = args.jobId as string;
+	      const review = sourceReviewStatus(store, jobId);
+	      const resolved: SourceReview = { ...review, resolved: true, stale: false, resolvedAt: now(), note: (args.note as string | undefined) ?? null };
+	      store.sourceReviews[jobId] = resolved;
+	      const authoringReviewCount = store.authoring[jobId] ? refreshReviewState(store.authoring[jobId]).needsReview : 0;
+	      updateJob(store, jobId, {
+	        status: authoringReviewCount ? "NeedsHumanReview" : store.authoring[jobId] ? "AuthoringReady" : "Parsed",
+	        currentStep: authoringReviewCount ? "Authoring" : "DocumentReview",
+	        issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: authoringReviewCount }
+	      });
+	      save(store);
+	      return resolved as T;
+	    }
 
     case "run_rule_split": {
       const jobId = args.jobId as string;
@@ -896,22 +1197,170 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const ir = makeAuthoring(job, split, store.documents[jobId]);
       store.splits[jobId] = split;
       store.authoring[jobId] = ir;
-      updateJob(store, jobId, { status: "AuthoringReady", currentStep: "Authoring", issueCounts: { errors: 0, warnings: 1, needsReview: 8 } });
+      const authoringReview = refreshReviewState(ir);
+      const sourceReviewIssueCount = sourceReviewIssues(sourceReviewStatus(store, jobId)).length;
+      updateJob(store, jobId, {
+        status: authoringReview.needsReview || sourceReviewIssueCount ? "NeedsHumanReview" : "AuthoringReady",
+        currentStep: "Authoring",
+        issueCounts: { errors: 0, warnings: 1, needsReview: authoringReview.needsReview + sourceReviewIssueCount }
+      });
       save(store);
       return ir as T;
+    }
+
+    case "run_auto_pipeline": {
+      const jobId = args.jobId as string;
+      const input = (args.input ?? {}) as { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"] };
+      const threshold = Math.min(1, Math.max(0, input.confidenceThreshold ?? 0.85));
+      let job = requireJob(store, jobId);
+
+      let documentIr = store.documents[jobId] ?? makeDocumentIr(job, { mode: input.parseMode ?? "auto" });
+      const visionTranscription = { attempted: false, applied: false, profileId: input.profileId ?? store.profiles.find((profile) => profile.enabled)?.profileId ?? "profile-local-placeholder", warnings: [] as string[], failure: null as string | null, confidence: undefined as number | undefined };
+      if (
+        documentIr.parser.mode === "ocr" &&
+        documentIr.parser.provider !== "vision-llm-transcription" &&
+        documentIr.parser.warnings.length
+      ) {
+        visionTranscription.attempted = true;
+        documentIr = makeVisionDocumentIr(job);
+        visionTranscription.applied = true;
+        visionTranscription.confidence = 0.72;
+        visionTranscription.warnings = documentIr.parser.warnings;
+      }
+      store.documents[jobId] = documentIr;
+      job = updateJob(store, jobId, { status: "Parsed", currentStep: "DocumentReview" });
+
+      const split = makeSplit(jobId, documentIr, job);
+      store.splits[jobId] = split;
+      job = updateJob(store, jobId, { status: "SplitReady", currentStep: "Split" });
+
+      let ir = makeAuthoring(job, split, documentIr);
+      store.authoring[jobId] = ir;
+      updateJob(store, jobId, { status: "AuthoringReady", currentStep: "Authoring" });
+
+      const lowConfidenceGroups: string[] = [];
+      const blockedAutoApplyGroups: string[] = [];
+      const highConfidenceAppliedGroups: string[] = [];
+      const failures: string[] = [];
+      let suggestionCount = 0;
+      let appliedCount = 0;
+      const profileId = input.profileId ?? store.profiles.find((profile) => profile.enabled)?.profileId ?? "profile-local-placeholder";
+
+      for (const group of ir.groups) {
+        const suggestion: LlmSuggestion = {
+          suggestionId: id("suggestion"),
+          jobId,
+          groupId: group.groupId,
+          kind: group.kind,
+          confidence: 0.64,
+          patch: [
+            { op: "replace", path: "/kind", value: group.kind },
+            { op: "replace", path: "/layout/template", value: group.layout.template }
+          ],
+          questions: group.questions.map((question) => ({ id: question.id, prompt: question.prompt, interaction: question.interaction })),
+          evidence: { source: "dev-fallback-auto-pipeline", directJsGeneration: false, fallback: true },
+          warnings: ["deterministic-local-fallback", "low-confidence-review-required", "fallback-output-never-auto-applies"],
+          createdAt: now()
+        };
+        suggestionCount += 1;
+        store.suggestions[jobId] = [suggestion, ...(store.suggestions[jobId] ?? [])];
+
+        if (suggestion.confidence >= threshold) {
+          const autoApplyIssues = suggestionAutoApplyIssues(ir, suggestion, ["kind", "layout", "questions"]);
+          if (autoApplyIssues.length) {
+            blockedAutoApplyGroups.push(group.groupId);
+            failures.push(`${group.groupId}:auto_apply_blocked:${autoApplyIssues.join(",")}`);
+            continue;
+          }
+          ir = refreshAuthoringDerivedFields(applySuggestionPatch(ir, suggestion, ["kind", "layout", "questions"]));
+          appliedCount += 1;
+          highConfidenceAppliedGroups.push(group.groupId);
+        } else {
+          lowConfidenceGroups.push(group.groupId);
+        }
+      }
+
+      ir = {
+        ...refreshAuthoringDerivedFields(ir),
+        audit: { ...ir.audit, llmUsed: suggestionCount > 0, updatedAt: now(), revision: ir.audit.revision + 1 }
+      };
+      store.authoring[jobId] = ir;
+
+      const source = toReadingExamSource(ir);
+      const assets: PreviewAssets = {
+        examId: source.examId,
+        manifestPath: `local://${jobId}/preview/manifest.js`,
+        scriptPath: `local://${jobId}/preview/${source.examId}.js`,
+        previewUrl: `local-preview://${source.examId}`,
+        source,
+        wrapperJs: buildWrapper(source),
+        manifestJs: buildManifest([source])
+      };
+      store.previews[jobId] = assets;
+
+      const validationReport = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
+      store.validation[jobId] = validationReport;
+
+      const review = sourceReviewStatus(store, jobId);
+      const warnings = review.parserWarnings;
+      const lowConfidenceBlocks = review.lowConfidenceBlocks;
+      const sourceReviewIssueCount = sourceReviewIssues(review).length;
+      const requiresParserReview = sourceReviewIssueCount > 0;
+      const realRuntimePassed = validationReport.passed && validationReport.runtime?.mode === "real";
+      const status = lowConfidenceGroups.length || blockedAutoApplyGroups.length || requiresParserReview ? "NeedsHumanReview" : realRuntimePassed ? "ExportReady" : validationReport.passed ? "PreviewReady" : "ValidationFailed";
+      const currentStep = lowConfidenceGroups.length || blockedAutoApplyGroups.length ? "LlmReview" : requiresParserReview ? "DocumentReview" : realRuntimePassed ? "Export" : "Preview";
+      updateJob(store, jobId, {
+        status,
+        currentStep,
+        issueCounts: {
+          errors: validationReport.issues.filter((issue) => issue.severity === "error").length,
+          warnings: validationReport.issues.filter((issue) => issue.severity === "warning").length,
+          needsReview: lowConfidenceGroups.length + blockedAutoApplyGroups.length + sourceReviewIssueCount
+        }
+      });
+
+      const pipelineReport: AutoPipelineReport = {
+        jobId,
+        confidenceThreshold: threshold,
+        llm: {
+          profileId,
+          suggestionCount,
+          appliedCount,
+          highConfidenceAppliedGroups,
+          lowConfidenceGroups,
+          blockedAutoApplyGroups,
+          failures
+        },
+        parser: { warnings, lowConfidenceBlocks, visionTranscription },
+        validationPassed: validationReport.passed,
+        realRuntimePassed,
+        runtimeMode: validationReport.runtime?.mode ?? "unknown",
+        status,
+        currentStep,
+        generatedAt: now(),
+        validationReport
+      };
+      store.pipelineReports[jobId] = pipelineReport;
+      save(store);
+      return pipelineReport as T;
     }
 
     case "update_authoring_ir": {
       const jobId = args.jobId as string;
       const patch = args.patch as AuthoringPatch;
-      store.authoring[jobId] = {
+      const next = refreshReviewState({
         ...patch.ir,
         answerKey: Object.fromEntries(patch.ir.groups.flatMap((group) => group.questions.map((question) => [question.id, question.answer ?? ""]))),
         questionOrder: patch.ir.groups.flatMap((group) => group.questions.map((question) => question.id)),
         questionDisplayMap: Object.fromEntries(patch.ir.groups.flatMap((group) => group.questions.map((question) => [question.id, question.displayNumber]))),
         audit: { ...patch.ir.audit, revision: patch.ir.audit.revision + 1, updatedAt: now() }
-      };
-      updateJob(store, jobId, { issueCounts: { errors: 0, warnings: 0, needsReview: store.authoring[jobId].groups.flatMap((g) => g.questions).filter((q) => !q.verified).length } });
+      });
+      store.authoring[jobId] = next.ir;
+      updateJob(store, jobId, {
+        status: next.needsReview ? "NeedsHumanReview" : "AuthoringReady",
+        currentStep: "Authoring",
+        issueCounts: { errors: 0, warnings: 0, needsReview: next.needsReview }
+      });
       save(store);
       return store.authoring[jobId] as T;
     }
@@ -967,14 +1416,14 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         jobId,
         groupId,
         kind: group.kind,
-        confidence: group.kind === "table_completion" ? 0.78 : 0.91,
+        confidence: 0.64,
         patch: [
           { op: "replace", path: "/kind", value: group.kind },
           { op: "replace", path: "/layout/template", value: group.layout.template }
         ],
         questions: group.questions.map((question) => ({ id: question.id, prompt: question.prompt, interaction: question.interaction })),
-        evidence: { source: "dev-fallback-local-heuristic", directJsGeneration: false },
-        warnings: group.kind === "table_completion" ? ["Table layout should be reviewed by a human.", "low-confidence-review-required"] : [],
+        evidence: { source: "dev-fallback-local-heuristic", directJsGeneration: false, fallback: true },
+        warnings: ["deterministic-local-fallback", "low-confidence-review-required", "fallback-output-never-auto-applies"],
         createdAt: now()
       };
       store.suggestions[jobId] = [suggestion, ...(store.suggestions[jobId] ?? [])];
@@ -992,9 +1441,17 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       if (!suggestion) throw new Error(`suggestion_not_found:${suggestionId}`);
       if (suggestion.confidence < 0.85) throw new Error("low_confidence_suggestion_requires_manual_review");
       const selectedPaths = (args.selectedPaths ?? []) as string[];
+      const autoApplyIssues = suggestionAutoApplyIssues(ir, suggestion, selectedPaths);
+      if (autoApplyIssues.length) throw new Error(`llm_suggestion_auto_apply_blocked:${autoApplyIssues.join(",")}`);
       const patched = refreshAuthoringDerivedFields(applySuggestionPatch(ir, suggestion, selectedPaths));
-      store.authoring[jobId] = { ...patched, audit: { ...patched.audit, llmUsed: true, updatedAt: now(), revision: patched.audit.revision + 1 } };
-      updateJob(store, jobId, { status: "AuthoringReady" });
+      const withSuggestionAudit: ReadingAuthoringIr = {
+        ...patched,
+        audit: { ...patched.audit, llmUsed: true, updatedAt: now(), revision: patched.audit.revision + 1 }
+      };
+      const next = refreshReviewState(withSuggestionAudit);
+      store.authoring[jobId] = next.ir;
+      const sourceReviewIssueCount = sourceReviewIssues(sourceReviewStatus(store, jobId)).length;
+      updateJob(store, jobId, { status: next.needsReview || sourceReviewIssueCount ? "NeedsHumanReview" : "AuthoringReady", currentStep: "Authoring", issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: next.needsReview + sourceReviewIssueCount } });
       save(store);
       return store.authoring[jobId] as T;
     }
@@ -1003,12 +1460,13 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const jobId = args.jobId as string;
       const report = validateIr(jobId, store.authoring[jobId]);
       store.validation[jobId] = report;
+      const sourceReviewIssueCount = sourceReviewIssues(sourceReviewStatus(store, jobId)).length;
       updateJob(store, jobId, {
-        status: report.passed ? "PreviewReady" : "ValidationFailed",
+        status: sourceReviewIssueCount ? "NeedsHumanReview" : report.passed ? "PreviewReady" : "ValidationFailed",
         issueCounts: {
           errors: report.issues.filter((issue) => issue.severity === "error").length,
           warnings: report.issues.filter((issue) => issue.severity === "warning").length,
-          needsReview: 0
+          needsReview: sourceReviewIssueCount
         }
       });
       save(store);
@@ -1029,8 +1487,24 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         wrapperJs: buildWrapper(source),
         manifestJs: buildManifest([source])
       };
+      const validationReport = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
+      if (!validationReport.passed) {
+        store.validation[jobId] = validationReport;
+        updateJob(store, jobId, { status: "ValidationFailed", currentStep: "Authoring" });
+        save(store);
+        throw new Error(`preview_validation_failed:${validationReport.issues.map((issue) => issue.message).join(";")}`);
+      }
       store.previews[jobId] = assets;
-      updateJob(store, jobId, { status: "PreviewReady", currentStep: "Preview" });
+      const readiness = publishReadinessReport(store, jobId, ir, validationReport);
+      updateJob(store, jobId, {
+        status: readiness.issues.some((issue) => issue.layer === "AuthoringIR") ? "NeedsHumanReview" : "PreviewReady",
+        currentStep: "Preview",
+        issueCounts: {
+          errors: validationReport.issues.filter((issue) => issue.severity === "error").length,
+          warnings: validationReport.issues.filter((issue) => issue.severity === "warning").length,
+          needsReview: readiness.issues.filter((issue) => issue.layer === "AuthoringIR").length
+        }
+      });
       save(store);
       return assets as T;
     }
@@ -1052,7 +1526,11 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       store.previews[jobId] = assets;
       const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
       if (report.passed) {
-        updateJob(store, jobId, { status: "ExportReady", currentStep: "Export" });
+        const realRuntimePassed = report.runtime?.mode === "real";
+        updateJob(store, jobId, {
+          status: realRuntimePassed ? "ExportReady" : "PreviewReady",
+          currentStep: realRuntimePassed ? "Export" : "Preview"
+        });
       }
       store.validation[jobId] = report;
       save(store);
@@ -1075,10 +1553,15 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       };
       store.previews[jobId] = assets;
       const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
-      store.validation[jobId] = report;
+      const readiness = publishReadinessReport(store, jobId, ir, report);
+      store.validation[jobId] = readiness;
       if (!report.passed) {
         save(store);
         throw new Error(`export_validation_failed:${report.issues.map((issue) => issue.message).join(";")}`);
+      }
+      if (!readiness.passed) {
+        save(store);
+        throw new Error(`export_validation_failed:${readiness.issues.map((issue) => issue.message).join(";")}`);
       }
       const result: ExportResult = {
         examId: source.examId,
@@ -1111,8 +1594,10 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         };
         store.previews[jobId] = assets;
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
-        store.validation[jobId] = report;
+        const readiness = publishReadinessReport(store, jobId, ir, report);
+        store.validation[jobId] = readiness;
         if (!report.passed) throw new Error(`pack_validation_failed:${jobId}:${report.issues.map((issue) => issue.message).join(";")}`);
+        if (!readiness.passed) throw new Error(`pack_validation_failed:${jobId}:${readiness.issues.map((issue) => issue.message).join(";")}`);
         return source;
       });
       const manifest = packManifest(input, sources);

@@ -10,6 +10,9 @@ import type {
   LlmProfilePublic,
   LlmSuggestion,
   LlmTestResult,
+  ManualTranscriptionInput,
+  VisionTranscriptionInput,
+  AutoPipelineReport,
   PackBuildResult,
   ParseOptions,
   PreviewAssets,
@@ -17,6 +20,7 @@ import type {
   SaveLlmProfileInput,
   SourceFile,
   SourceFileRole,
+  SourceReview,
   SplitCandidates,
   ValidationReport
 } from "../types";
@@ -62,6 +66,18 @@ export async function parseDocument(jobId: string, options: ParseOptions): Promi
 
 export async function rerunOcr(jobId: string, pageIndices: number[]): Promise<DocumentIr> {
   return command("rerun_ocr", { jobId, pageIndices });
+}
+
+export async function applyManualTranscription(jobId: string, input: ManualTranscriptionInput): Promise<DocumentIr> {
+  return command("apply_manual_transcription", { jobId, input });
+}
+
+export async function applyVisionTranscription(jobId: string, input?: VisionTranscriptionInput): Promise<DocumentIr> {
+  return command("apply_vision_transcription", { jobId, input });
+}
+
+export async function resolveSourceReview(jobId: string, note?: string): Promise<SourceReview> {
+  return command("resolve_source_review", { jobId, note });
 }
 
 export async function runRuleSplit(jobId: string): Promise<SplitCandidates> {
@@ -118,6 +134,10 @@ export async function generatePreviewAssets(jobId: string): Promise<PreviewAsset
 
 export async function runPreviewE2e(jobId: string): Promise<ValidationReport> {
   return command("run_preview_e2e", { jobId });
+}
+
+export async function runAutoPipeline(jobId: string, input?: { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"] }): Promise<AutoPipelineReport> {
+  return command("run_auto_pipeline", { jobId, input });
 }
 
 export async function exportReadingAssets(jobId: string, exportDir = "local://exports"): Promise<ExportResult> {

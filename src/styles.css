@@ -93,6 +93,9 @@ p { color: var(--muted); }
 .job-row small, .link-cell small { display: block; color: var(--muted); margin-top: 3px; }
 .empty { padding: 22px; border: 1px dashed var(--line-strong); border-radius: 20px; color: var(--muted); }
 .error-text { color: var(--danger); font-weight: 700; overflow-wrap: anywhere; }
+.success-text { color: var(--accent); font-weight: 800; }
+.warning-box { border: 1px solid rgba(199,120,56,.5); border-radius: 18px; padding: 14px 16px; margin: 14px 0; background: rgba(199,120,56,.12); }
+.warning-box p { margin: 6px 0 0; color: #7a4a09; }
 .inspector, .form-section, .block-list, .document-canvas, .group-nav, .live-preview { border: 1px solid var(--line); border-radius: 24px; background: rgba(255,250,240,.68); padding: 18px; min-width: 0; }
 .form-section.contrast, .inspector { background: rgba(232, 239, 231, .72); }
 .inspector pre, .form-section pre, details pre { overflow: auto; max-height: 360px; background: rgba(19,32,29,.08); border-radius: 16px; padding: 14px; font-size: 12px; }
@@ -124,6 +127,8 @@ textarea { min-height: 120px; resize: vertical; }
 .candidate strong, .candidate span, .candidate small { display: block; }
 .answer-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .answer-grid div { padding: 12px; border-radius: 14px; background: rgba(255,250,240,.72); display: flex; justify-content: space-between; }
+.answer-grid .answer-edit-row { align-items: center; gap: 8px; }
+.answer-edit-row input { min-width: 0; padding: 8px 10px; }
 .group-nav { display: grid; align-content: start; gap: 10px; }
 .group-nav button strong, .group-nav button span, .group-nav button small { display: block; }
 .editor-form { max-height: 760px; overflow: auto; }

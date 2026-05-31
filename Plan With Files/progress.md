@@ -3,336 +3,520 @@
 ## Session: 2026-05-29
 
 ### Phase 1: Requirements & Discovery
-- **Status:** in_progress
-- **Started:** 2026-05-29 Asia/Shanghai
+- **Status:** complete
 - Actions taken:
   - 确认当前活动 goal 已存在，沿用该目标推进。
   - 读取 `planning-with-files` 技能说明。
   - 执行 session catchup，未发现输出的未同步上下文。
   - 扫描工作区，确认当前只有两份 Epic8 设计文档。
   - 创建 `Plan With Files/task_plan.md`、`findings.md`、`progress.md`。
-- Files created/modified:
-  - `Plan With Files/task_plan.md` created
-  - `Plan With Files/findings.md` created
-  - `Plan With Files/progress.md` created
+
+### Phase 2: Architecture & Scaffold
+- **Status:** complete
+- Actions taken:
+  - 决定 Tauri/Rust/内嵌界面技术栈与目录结构。
+  - 初始化 package、src、src-tauri 等工程文件。
+  - 建立共享类型、API 调用封装与基础路由。
+
+### Phase 3: Core Local Backend
+- **Status:** complete
+- Actions taken:
+  - 实现 Rust 数据模型、存储、命令 API。
+  - 实现导入、解析骨架、粗切、校验、导出服务。
+  - 将规则粗切与 Authoring IR 生成改为优先从 `DocumentIRV1` 动态推导。
+  - 将 TXT/MD Python parser sidecar 与 Node validator sidecar 接入 Rust command 优先路径。
+  - 建立 Rust 工具链后的命令级验证。
+  - 建立桌面文件选择器与导出目录选择 UI。
+  - 添加 txt/md parser sidecar 与 Node validator sidecar 入口。
+  - 添加 PDF/DOCX deterministic parser adapter：PDF 走 `pypdf`，DOCX 走 Python stdlib OOXML 解析。
+
+### Phase 4: Authoring UI
+- **Status:** in_progress
+- Actions taken:
+  - 实现 9 个页面的主要交互骨架。
+  - 接通页面到 Tauri command/dev fallback 的主流程。
+  - 添加本地 RuntimePreview contract simulator，执行生成的 manifest/wrapper 并校验自动填正确答案 100%。
+  - 完成真实/模拟 runtime 状态语义修正，区分 PreviewReady 与 ExportReady。
+  - 完成导入页、LLM 审阅页、DocumentReview、JobList、PackBuilder 的风险边界修订。
+- Remaining:
+  - 真实 unified runtime / OCR / scanned PDF 复杂场景的最终接入与验证。
+
+### Phase 5: Verification & Completion
+- **Status:** in_progress
+- Actions taken:
+  - 实现上传后自动流水线：自动解析、粗切、生成 AuthoringIR、批量 LLM 建议、高置信落库、低置信待审、校验/E2E。
+  - 修复关键门禁策略：发布链路默认 strict real-runtime gate，避免 fallback 通过掩盖真实兼容性问题。
+  - 修复配置移植性风险：移除代码内本机绝对路径默认值，仅保留 `EPIC8_UNIFIED_HTML_PATH`/`EPIC8_UNIFIED_PYTHON` 注入。
+  - 强化低置信与人工审核边界：LLM fallback 置信度统一降级、parser warnings / low-confidence blocks 进入人工审核。
+  - 完成 Tauri release build 与前端 build / Rust lint / sidecar 语法 / browser smoke 验证。
+  - 修正工程追踪文档中的过度乐观状态，恢复真实风险边界。
+- Remaining:
+  - 完成最终验收清单中的真实 unified runtime / OCR 最终接入验证。
 
 ## Test Results
 | Test | Input | Expected | Actual | Status |
 |------|-------|----------|--------|--------|
-| Planning files exist | `test -f ...` | 三份文件存在 | 待执行 | pending |
-
-## Error Log
-| Timestamp | Error | Attempt | Resolution |
-|-----------|-------|---------|------------|
-| 2026-05-29 | `create_goal` failed: active goal already exists | 1 | 使用已有 goal 继续推进 |
-
-## 5-Question Reboot Check
-| Question | Answer |
-|----------|--------|
-| Where am I? | Phase 1: Requirements & Discovery |
-| Where am I going? | 拆分任务后搭建 Tauri 工程并实现 MVP 到完整本地端功能 |
-| What's the goal? | 实现 Epic8 Tauri 作者端本地应用全部开发任务并维护工程追踪 |
-| What have I learned? | 当前仓库只有设计文档；需要从零搭建工程 |
-| What have I done? | 已创建 Plan With Files 三文档和初始任务表 |
-
-### Phase 1 Update: Document Decomposition
-- **Status:** in_progress
-- Actions taken:
-  - 读取 Tauri 设计文档的产品形态、页面、模型、Command API、服务伪代码、MVP 和开发顺序。
-  - 读取旧 Web 工程设计的输出契约、流水线、LLM 边界、模板生成、DOM 协议、校验层和工程任务拆分。
-  - 检测本地工具链：Node/npm 可用；Rust/Tauri CLI 暂不可用或未在 PATH 中。
-  - 读取 `frontend-skill`，确定应用 UI 采用产品工作台而非营销页设计。
-- Files created/modified:
-  - `Plan With Files/findings.md` updated
-  - `Plan With Files/progress.md` updated
-
-### Scope Correction: Local App Only
-- **Status:** in_progress
-- Actions taken:
-  - 接收用户更正：作者端不是独立 Web，主要目标是本地 Tauri 应用端。
-  - 调整实现策略：内嵌界面只是 Tauri 壳内界面；旧 Web 设计文档仅作输出契约参考。
-  - 准备将 Rust 本地 command 与 app data 存储实现提到当前阶段。
-- Files created/modified:
-  - `Plan With Files/findings.md` updated
-  - `Plan With Files/progress.md` updated
-
-### Phase 2/3 Implementation Snapshot
-- **Status:** in_progress
-- Actions taken:
-  - 初始化 Tauri 本地应用工程：`package.json`、Vite/React/TypeScript、`src-tauri`、capabilities、sidecar 目录。
-  - 实现桌面内嵌界面页面：Dashboard、JobList、ImportWizard、DocumentReview、SplitAndAnswers、GroupEditor、LlmReview、UnifiedPreview、ExportPage、PackBuilder、Settings。
-  - 实现同名 Tauri command 调用封装；Tauri 运行时走 Rust command，非 Tauri 开发预览走 dev fallback。
-  - 实现 Rust 本地 command 源码骨架：job app data 目录、job.json、uploads/preview/exports、Document IR 占位解析、规则粗切、Authoring IR、校验、预览资产、导出、Pack、LLM profile 占位。
-  - 添加 `.gitignore`，忽略 `node_modules/`、`dist/`、`src-tauri/target/`、`.DS_Store`。
-  - 使用 Browser 冒烟验证：演示任务创建 -> 结构编辑器 -> 校验预览 -> 生成预览资产 -> E2E 按钮可用 -> 导出 JSON/JS/manifest/preview HTML。
-- Files created/modified:
-  - `package.json`, `package-lock.json`, `vite.config.ts`, `tsconfig*.json`, `index.html`, `.gitignore`
-  - `src/**`
-  - `src-tauri/**`
-  - `Plan With Files/*.md`
-
-## Test Results
-| Test | Input | Expected | Actual | Status |
-|------|-------|----------|--------|--------|
-| Planning files exist | `test -f Plan With Files/{task_plan.md,findings.md,progress.md}` | 三份文件存在 | 三份文件存在 | pass |
+| Planning files exist | `test -f ...` | 三份文件存在 | 三份文件存在 | pass |
 | Frontend production build | `npm run build` | TypeScript + Vite build pass | Build passed, assets emitted under `dist/` | pass |
-| Toolchain probe | `rustc --version`, `cargo --version` | Rust/Cargo available for Tauri compile | `rustc not found`, `cargo not found` | blocked |
-| Browser smoke: demo job | Click `生成演示任务` | Opens GroupEditor with generated Authoring IR | GroupEditor opened with group-1/group-2 and answer fields | pass |
-| Browser smoke: preview | Click `校验并预览`, `重新生成预览` | Validation pass and preview assets generated | Validation layers pass, answerKey populated | pass |
-| Browser smoke: export | Click E2E then export | Export page lists JS/manifest output | JSON, single JS, manifest, preview HTML listed | pass |
+| Rust format/check/lint | `cargo fmt --check && cargo check && cargo clippy --all-targets -- -D warnings` | No Rust compile/lint failures | Passed | pass |
+| Full Tauri build | `npm run tauri build` | Release binary and macOS bundles generated | `.app` and `.dmg` generated under `src-tauri/target/release/bundle` | pass |
+| Sidecar syntax checks | `node --check` / `python3 -m py_compile` | sidecars parse/execute cleanly | Passed | pass |
+| LLM fallback smoke | `gateway.mjs extract_group ...` with no API key | confidence below auto-apply threshold | confidence `0.64` and fallback warnings present | pass |
+| Browser smoke: import page | `#/jobs/new` | submit disabled without file, production boundary visible | passed | pass |
+| Browser smoke: pack page | `#/packs` | only ExportReady is publishable | passed | pass |
+| Browser smoke: LLM page | `#/jobs/nonexistent/llm-review` | page renders | passed | pass |
+
+## Deep Audit Log: 2026-05-31 13:05 CST
+
+### Scope
+- 审计设计文档要求与当前实现的一致性。
+- 重点链路：上传 PDF/DOCX -> parser/切分 -> LLM 识别 -> 高置信自动落库 -> 低置信人工审核 -> 预览/E2E -> 导出/Pack。
+- 重点细节：状态机、字段、人工确认、低置信、真实 runtime、sidecar fallback、测试覆盖。
+
+### Evidence Read
+- `Files/Epic8-Tauri作者端应用详细设计.md`: 核心流程、状态机、MVP 范围。
+- `Files/Epic8-作者端Web导题与组卷器工程设计.md`: 输出契约、LLM 边界、四层校验、关键验收用例。
+- `src-tauri/src/lib.rs`: Rust 命令、数据模型、pipeline、parser、LLM、validator、export、pack。
+- `sidecars/python-parser/parser.py`: TXT/MD/PDF/DOCX deterministic parser。
+- `sidecars/llm-gateway/gateway.mjs`: LLM JSON patch gateway。
+- `sidecars/node-validator/validate-reading-source.mjs`: ReadingExamSourceV1 + DOM validator。
+- `sidecars/preview-e2e/preview-e2e.mjs`: fallback simulator + external unified runtime runner。
+- `src/pages/*.tsx`, `src/types/*.ts`, `src/services/devFallbackBackend.ts`: UI 路由、字段、dev fallback。
+
+### Findings
+- Product state: 可运行 MVP 原型，不是最终生产发布态。
+- P0: `export_reading_assets` / `build_pack` 没有统一回查 parser warnings、low-confidence blocks、`NeedsHumanReview`、`verified=false` 和 `audit.humanVerified=false`。
+- P0: PDF/DOCX parser sidecar 失败时，Rust 仍可能生成 sample Document IR，存在把真实上传失败替换成演示内容的风险。已于 2026-05-31 13:26 CST 修复为 failure Document IR。
+- P0: 低置信人工审核路径有 UI 可见性，但缺少“人工确认完成后才可发布”的后端硬状态闭环。
+- P1: OCR 只是 `mode=ocr` 重跑当前 parser，无真实 OCR adapter；no-text PDF 可以低置信进入人工，但没有自动化 fixture 验证不能发布。
+- P1: 真实 unified runtime runner 已写入 sidecar，但尚未完成外部运行时最终验收。
+- P1: Rust 核心后端单文件过大，业务边界混杂，继续扩展复杂 PDF/OCR 会增加回归风险。
+- P1: 仓库没有自有自动化测试/fixture，当前主要依赖 build/lint/smoke。
+
+### Plan Updates
+- 更新 `task_plan.md`：新增 E8-11/E8-12，修正 Phase 4/5 过度乐观表述。
+- 更新 `findings.md`：记录业务链路、字段契约、代码质量、下一步实现顺序。
+- Goal 不标记 complete；真实 runtime/OCR/发布硬门禁仍需继续实现。
+
+## Session: 2026-05-31 13:26 CST
+
+### Phase 5 / E8-11: Publish Readiness Gate
+- **Status:** in_progress, P0 subitems implemented
+- Actions taken:
+  - 修改 Rust parser fallback：非 TXT/MD parser 失败不再生成 sample 题，改为 failure Document IR。
+  - 新增后端人工确认派生逻辑：`refresh_authoring_review_state` 根据 confidence、answer、verified 推导 `audit.humanVerified` 与 needsReview。
+  - 新增统一发布门禁：`publish_readiness_gate` 在导出/Pack 前阻断未人工确认、低置信未确认、空答案、parser warning、low-confidence blocks、`NeedsHumanReview` 和非真实 runtime。
+  - 修正 `run_preview_e2e` 状态推进：只有真实 runtime + readiness gate 都通过才进入 `ExportReady`。
+  - 修正 `generate_preview_assets` 状态推进：未完成审核时不再误标 `PreviewReady`。
+  - 修正 `run_auto_pipeline`：高置信自动应用的题组/题目标记 verified，低置信仍进入人工审核。
+  - 同步 dev fallback 的 readiness 语义，避免前端开发环境误判导出/Pack。
+  - 新增 Rust 单元测试覆盖 parser failure、低置信人工确认和空答案发布阻断。
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `cargo fmt --check` | pass |
+| `cargo test` | pass, 3 tests |
+| `cargo clippy --all-targets -- -D warnings` | pass |
+| `node --check sidecars/llm-gateway/gateway.mjs` | pass |
+| `node --check sidecars/preview-e2e/preview-e2e.mjs` | pass |
+| `node --check sidecars/node-validator/validate-reading-source.mjs` | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| `git diff --check` | pass |
+
+### Remaining
+- 真实 unified runtime E2E 仍需接入执行。
+- OCR/scanned PDF fixture 仍需补齐。
+- Rust backend 模块拆分与更系统的 integration tests 仍未完成。
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|
 | 2026-05-29 | `create_goal` failed: active goal already exists | 1 | 使用已有 goal 继续推进 |
-| 2026-05-29 | `GroupEditor` TypeScript narrowing produced `QuestionGroupDraft | undefined` errors | 1 | Added explicit `QuestionGroupDraft` type and narrowed through `currentGroup` |
-| 2026-05-29 | Browser smoke script redeclared `snapshot` in persistent runtime | 1 | Retried with unique variable names, flow passed |
-| 2026-05-29 | `rustc` and `cargo` are not installed/in PATH | 1 | Recorded as environment blocker for Tauri backend compile; source implemented but not compiled locally |
+| 2026-05-31 | `cargo fmt --check` failed on formatting | 1 | Run `cargo fmt` and rerun checks |
+| 2026-05-31 | `cargo clippy` flagged identical `if` branches | 1 | Simplified `next_step` fallback logic |
+| 2026-05-31 | Initial import flow still allowed demo-style fallback path | 1 | Changed production import to fail on unreadable source file; demo flow stays isolated |
 
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 3: Core Local Backend |
-| Where am I going? | Replace placeholders with real parser sidecar, secure LLM gateway, real runtime preview/E2E, then Pack publishing polish |
+| Where am I? | Phase 5: Verification & Completion |
+| Where am I going? | Finish remaining verification and the final audit of true runtime / OCR risk |
 | What's the goal? | 实现 Epic8 Tauri 作者端本地应用全部开发任务并维护工程追踪 |
-| What have I learned? | 作者端没有独立 Web；旧 Web 文档仅是输出契约参考；本机缺 Rust/Cargo |
-| What have I done? | 已搭建本地 Tauri 工程、内嵌界面、Rust command 源码、开发 fallback，并通过前端构建与冒烟流程 |
+| What have I learned? | 主链路已通，但真实 unified runtime / OCR 仍是最后的高风险边界 |
+| What have I done? | 已完成自动流水线、状态语义修正、LLM fallback 降置信、前端/后端/sidecar 门禁与冒烟验证 |
 
-### Phase 3 Update: Local File Selection and Parser Sidecars
-- **Status:** in_progress
+## Session: 2026-05-31 13:38 CST
+
+### Deep Architecture and Business Audit
+- **Status:** complete for audit pass; implementation fixes still pending.
 - Actions taken:
-  - Installed `@tauri-apps/plugin-dialog` and added `src/api/desktopDialogs.ts`.
-  - Replaced browser file inputs in ImportWizard with explicit local path selection through the desktop dialog wrapper.
-  - Updated ExportPage to select an export directory before generating reading assets.
-  - Implemented Rust `.txt/.md` parsing fallback that reads copied uploads and emits real `DocumentIRV1` blocks instead of static sample blocks.
-  - Added `sidecars/python-parser/parser.py` and `sidecars/node-validator/validate-reading-source.mjs` as local-app sidecar command entrypoints.
-- Files created/modified:
-  - `src/api/desktopDialogs.ts` created
-  - `src/pages/ImportWizard.tsx` modified
-  - `src/pages/ExportPage.tsx` modified
-  - `src/styles.css` modified
-  - `src/services/devFallbackBackend.ts` modified
-  - `src-tauri/src/lib.rs` modified
-  - `sidecars/python-parser/parser.py` created
-  - `sidecars/node-validator/validate-reading-source.mjs` created
-  - `sidecars/README.md` created
-  - `package.json`, `package-lock.json` modified
+  - Re-read Plan With Files state and aligned current phase with remaining E8-06/E8-07/E8-10/E8-11/E8-12 work.
+  - Re-read design-document headings and output-contract requirements for local app, runtime contract, LLM boundary, four-layer validation, Pack/export, and file permissions.
+  - Audited `src-tauri/src/lib.rs` across status model, import, parser fallback, split, Authoring IR, LLM gateway, suggestion application, validation, runtime gate, publish readiness, export, Pack, and tests.
+  - Audited sidecars: Python parser, LLM gateway, Node validator, and preview E2E runner.
+  - Audited frontend pages and types for ImportWizard, DocumentReview, SplitAndAnswers, GroupEditor, LlmReview, UnifiedPreview, PackBuilder, ExportPage, Settings, desktop dialogs, and dev fallback.
+  - Identified new P0 risks around parser-warning readiness bypass and unrestricted workflow status mutation.
 
-## Additional Test Results - 2026-05-29
-| Test | Input | Expected | Actual | Status |
-|------|-------|----------|--------|--------|
-| Dialog dependency install | `npm install @tauri-apps/plugin-dialog` | JS dialog package available | Installed 2 packages, 0 vulnerabilities | pass |
-| Embedded interface build after dialog changes | `npm run build` | TypeScript + Vite build pass | Build passed | pass |
-| Python parser unsupported extension guard | process-substitution path without extension | Reject unsupported input | `unsupported_parser_input:none` | pass |
-| Python parser txt smoke | `/tmp/epic8-parser-smoke.txt` | DocumentIRV1 with role hints | Generated passage/question/answer blocks | pass |
-| Node validator usage | no args | Print usage and exit non-zero | Printed usage | pass |
-| Node validator positive case | `/tmp/reading-source-smoke.json` | ReadingExamSourceV1 + DOM pass | `passed: true` | pass |
-| Import fallback smoke | ImportWizard create without desktop runtime | Opens DocumentReview | DocumentReview opened with parsed blocks | pass |
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `cargo test` | pass, 3 tests |
+| `node --check sidecars/llm-gateway/gateway.mjs` | pass |
+| `node --check sidecars/preview-e2e/preview-e2e.mjs` | pass |
+| `node --check sidecars/node-validator/validate-reading-source.mjs` | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| `git diff --check` | pass |
 
-## Additional Error Log - 2026-05-29
+### Audit Result
+- Product remains MVP-complete but not production-complete for complex PDF/OCR.
+- Highest-priority fixes: add explicit parser/source review provenance, restrict workflow state mutation, remove production sample fallbacks, stop treating high-confidence LLM auto-apply as human verification, then add scanned PDF and real runtime fixture tests.
+
+## Session: 2026-05-31 14:04 CST
+
+### Phase 5 / E8-11: Source Review and State Machine Hardening
+- **Status:** complete for this sub-pass.
+- Actions taken:
+  - Implemented independent `SourceReviewV1` backend state and `source-review.json` persistence.
+  - Added `resolve_source_review` command and DocumentReview UI button to explicitly resolve parser warning / low-confidence source review.
+  - Changed `publish_readiness_gate` so parser warnings and low-confidence blocks are blocked independently of `audit.humanVerified`.
+  - Removed `status` / `currentStep` from Rust and TypeScript `JobMetaPatch`, preventing metadata updates from mutating workflow state.
+  - Replaced production sample fallback for missing/unsupported main source with `missing_source_document_ir` and `no-sample-content-generated` warning.
+  - Changed high-confidence LLM apply/auto-pipeline behavior to record `autoApplied` rather than setting `verified=true`.
+  - Synced dev fallback with the same source review and LLM verification semantics.
+  - Added Rust tests covering source-review blocking, missing-source non-sample behavior, and LLM auto-apply not creating human verification.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `cargo fmt --check` | pass |
+| `cargo test` | pass, 13 tests |
+| `cargo clippy --all-targets -- -D warnings` | pass |
+| `node --check sidecars/llm-gateway/gateway.mjs` | pass |
+| `node --check sidecars/preview-e2e/preview-e2e.mjs` | pass |
+| `node --check sidecars/node-validator/validate-reading-source.mjs` | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| `git diff --check` | pass |
+
+### Remaining
+- Complete command-level export/Pack real-runtime proof.
+- Decide OCR adapter vs explicit manual transcription for scanned PDFs.
+- Split Rust backend modules for E8-12.
+
+
+## Session: 2026-05-31 14:30 CST
+
+### Phase 5 / E8-10/E8-11: Fixture and Runtime Verification
+- **Status:** complete for this sub-pass.
+- Actions taken:
+  - Added `fixtures/parser/no-text.pdf` and verified it with `sidecars/python-parser/parser.py`.
+  - Added Rust fixture test proving no-text PDF produces parser warning, low-confidence block, and unresolved `SourceReviewV1` issues.
+  - Added Rust test proving `ReadingExamSourceV1` derives source metadata and audit status from real imported source provenance.
+  - Updated frontend/dev fallback types and `templateRenderer` to keep source metadata behavior consistent with Rust output.
+  - Fixed preview E2E runner so real-runtime structured failures are not masked by simulator fallback.
+  - Fixed radio wrong-answer E2E generation; external unified runtime minimal fixture now passes in real mode.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `cargo fmt --check` | pass |
+| `cargo test` | pass, 13 tests |
+| `cargo clippy --all-targets -- -D warnings` | pass |
+| `node --check sidecars/preview-e2e/preview-e2e.mjs` | pass |
+| `node --check sidecars/llm-gateway/gateway.mjs` | pass |
+| `node --check sidecars/node-validator/validate-reading-source.mjs` | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| no-text PDF parser smoke | pass, warning + confidence 0.2 |
+| external unified runtime minimal E2E | pass, `mode=real`, correct score 100%, wrong sample 50% |
+| `git diff --check` | pass |
+
+### Remaining
+- OCR adapter is still not implemented; current scanned/no-text PDF strategy is hard-stop/manual review.
+- Command-level export/Pack core fixture with real runtime now passes; broader pipeline fixture still missing.
+- Rust backend module decomposition remains open.
+
+### Error Log Additions
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|
-| 2026-05-29 | Parser smoke used process substitution path with no extension and failed with `unsupported_parser_input:none` | 1 | Re-ran with a real `.txt` temp file; parser generated DocumentIRV1 successfully |
-| 2026-05-29 | Browser read-only evaluate could not override `window.prompt` | 1 | Avoided mutating browser API and validated default fallback import path instead |
+| 2026-05-31 14:18 CST | Batch edit failed because command ran from `src-tauri` while targeting `src-tauri/src/lib.rs` | 1 | Switched to `apply_patch` with absolute paths. |
+| 2026-05-31 14:20 CST | `cargo test` invoked with two test-name filters | 1 | Ran full `cargo test` instead. |
+| 2026-05-31 14:27 CST | preview E2E hid real-runtime structured failure behind simulator fallback | 1 | Changed `validateRuntime` to return real-runtime structured report when available. |
+| 2026-05-31 14:28 CST | real runtime failed because wrong-answer radio sample fell back to first option and stayed correct | 1 | Changed radio filler to choose a different valid radio option when answer ends with `__wrong__`. |
 
-### Resume Check - 2026-05-29
-- **Status:** in_progress
-- Confirmed active goal and existing Plan With Files state.
-- Re-read current planning files, TypeScript fallback backend, Rust command source, shared IR types, and renderer contract.
-- Next edits: fix fallback split/authoring heuristics, then port dynamic split/authoring generation into Rust command layer.
 
-### Dynamic Split/Authoring Fix - 2026-05-29
-- **Status:** in_progress
-- Fixed non-Tauri fallback split generation to reassign contiguous `group-1`, `group-2`, ... IDs after filtering detected question headings.
-- Fixed prompt extraction to stop final question prompts before answer/next heading boundaries.
-- Browser smoke then exposed duplicate prompt content caused by combining `block.text` and stripped `block.html`; fixed fallback `blockText` and Rust dynamic `dynamic_block_text` to prefer source `text` and only fall back to stripped HTML when text is absent.
-- Ported dynamic split/authoring helper logic into Rust command source and switched `run_rule_split`/`build_authoring_ir` to use `document-ir.json` where available.
+## Session: 2026-05-31 14:45 CST
 
-## Additional Test Results - Dynamic Split/Authoring - 2026-05-29
-| Test | Input | Expected | Actual | Status |
-|------|-------|----------|--------|--------|
-| Embedded UI build after dynamic split changes | `npm run build` | TypeScript + Vite build pass | Build passed | pass |
-| Python parser txt smoke | `/tmp/epic8-parser-smoke.txt` | DocumentIRV1 with passage/question/answer hints | 4 blocks, roles `[passage,null,question,answer]` | pass |
-| Node validator positive case | `/tmp/reading-source-smoke.json` | ReadingExamSourceV1 + DOM pass | `passed: true` | pass |
-| Browser fallback smoke: generated Authoring IR | Click `生成演示任务` | Opens GroupEditor with contiguous groups and clean prompts | `group-1 Q1-5`, `group-2 Q6-8`; Q1-Q5 prompts clean, Q5 no duplicate text | pass |
-| Rust/Tauri compile probe | `rustc --version && cargo --version` | Rust toolchain available | `rustc: command not found` | blocked |
+### Phase 5 / E8-10: Command-Level Export and Pack Runtime Gates
+- **Status:** complete for this sub-pass.
+- Actions taken:
+  - Extracted `export_reading_assets_core` and `build_pack_core` from Tauri command wrappers.
+  - Added publishable fixture helper that writes job/document/split/authoring state and resolved source review to a temp app root.
+  - Added real-runtime export test verifying strict gate, output JSON/JS/manifest/report files, and `ExportReady` status.
+  - Added real-runtime Pack test verifying zip output, pack manifest, entry count, and `Published` status.
+  - Fixed `merge_sidecar_validation` so the `runtime` field from preview E2E sidecar is preserved in the validation report.
 
-## Additional Error Log - Dynamic Split/Authoring - 2026-05-29
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test` with `EPIC8_UNIFIED_HTML_PATH` and `EPIC8_UNIFIED_PYTHON` | pass, 13 tests |
+| `cargo fmt --check` | pass |
+| `cargo clippy --all-targets -- -D warnings` | pass |
+| `npm run check` | pass |
+| `npm run build` | pass |
+| sidecar syntax checks | pass |
+| `git diff --check` | pass |
+
+### Error Log Additions
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|
-| 2026-05-29 | Large Rust patch failed because exact static sample context did not match | 1 | Switched to additive dynamic helpers plus command entrypoint patch, preserving static sample fallback |
-| 2026-05-29 | Browser automation reused stale tab from another browser session | 1 | Created a new in-app browser tab for this session |
-| 2026-05-29 | Browser script redeclared `demoButton` in persistent runtime | 1 | Retried with unique variable names |
-| 2026-05-29 | Browser read-only evaluate could not clear `localStorage` | 1 | Avoided storage mutation and created a fresh demo job from the visible UI |
-| 2026-05-29 | Browser smoke showed Q5 prompt duplicated text/html content | 1 | Updated fallback and Rust block text extraction to prefer `text` and only fallback to stripped HTML |
+| 2026-05-31 14:42 CST | Export/Pack core tests failed because strict gate saw `runtime.mode=unknown` | 1 | Preserved sidecar `runtime` object in `merge_sidecar_validation`; tests passed. |
+| 2026-05-31 14:43 CST | Clippy `needless_borrow` after extracting Pack core | 1 | Changed `build_pack_manifest(&input, ...)` to `build_pack_manifest(input, ...)`. |
 
-### Phase 3 Update: Rust Sidecar Dispatch - 2026-05-29
-- **Status:** in_progress
+
+## Session: 2026-05-31 15:00 CST
+
+### Phase 5 / E8-10: Complex PDF/DOCX Fixture Coverage
+- **Status:** complete for clear-layout parser fixture sub-pass.
 - Actions taken:
-  - Added Rust sidecar path discovery helpers for development and packaged resource layouts.
-  - Connected `parse_document` TXT/MD flow to `python-parser/parser.py` with deterministic built-in parser fallback.
-  - Connected `validate_authoring_ir` to `node-validator/validate-reading-source.mjs` and merged ReadingExamSourceV1/DOM validation layers with built-in Authoring IR checks.
-  - Added `../sidecars` to Tauri bundle resources and documented Rust command integration in `sidecars/README.md`.
-- Files modified:
-  - `src-tauri/src/lib.rs`
-  - `src-tauri/tauri.conf.json`
-  - `sidecars/README.md`
-  - `Plan With Files/task_plan.md`, `findings.md`, `progress.md`
+  - Added `fixtures/parser/complex-reading.pdf` with passage text, two question groups, a table-like section, and answer key.
+  - Added `fixtures/parser/complex-reading.docx` as minimal OOXML with paragraphs, table, and answer key.
+  - Added Rust fixture tests for PDF and DOCX parser -> split -> AuthoringIR -> answerKey.
+  - Confirmed no parser warnings or low-confidence blocks for both clear-layout fixtures.
 
-## Additional Test Results - Sidecar Dispatch - 2026-05-29
-| Test | Input | Expected | Actual | Status |
-|------|-------|----------|--------|--------|
-| Embedded UI build after sidecar dispatch | `npm run build` | TypeScript + Vite build pass | Build passed | pass |
-| Python parser sidecar smoke | `python3 sidecars/python-parser/parser.py parse ...` | Writes DocumentIRV1 JSON | Provider `python-parser-sidecar`, 4 blocks | pass |
-| Node validator sidecar smoke | `node sidecars/node-validator/validate-reading-source.mjs /tmp/reading-source-smoke.json` | ReadingExamSourceV1 + DOM pass | `passed: true` | pass |
-| Rust/Tauri compile probe | `rustc --version && cargo --version` | Rust toolchain available | `rustc: command not found` | blocked |
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test` with external runtime env | pass, 13 tests |
+| `cargo fmt --check` | pass |
+| `cargo clippy --all-targets -- -D warnings` | pass |
+| `npm run check` | pass |
+| `npm run build` | pass |
+| sidecar syntax checks | pass |
+| `git diff --check` | pass |
 
-### Phase 4/E8-06 Update: LLM Gateway and Review - 2026-05-30
-- **Status:** in_progress
+### Remaining
+- OCR/scanned-image PDF adapter remains unresolved.
+- Complex image/flowchart/cross-page table layout recovery still requires manual review or a layout/OCR adapter.
+- Rust backend module decomposition remains open.
+
+## Session: 2026-05-31 15:40 CST
+
+### Deep Code Quality and Business Chain Audit
+- **Status:** audit pass complete; implementation follow-up pending.
 - Actions taken:
-  - Added `sidecars/llm-gateway/gateway.mjs` for JSON-only group classification/extraction suggestions.
-  - Added Rust local profile secret file storage fallback and redaction-friendly profile public fields.
-  - Replaced Rust placeholder `test_llm_profile`, `llm_classify_group`, `llm_extract_group`, and `apply_llm_suggestion` with gateway dispatch, audit files, low-confidence guard, and patch application.
-  - Updated dev fallback LLM suggestions and apply logic to match the structured patch behavior.
-  - Expanded Settings and LlmReview UI to show LLM safety controls, key status, patch/questions/evidence, and low-confidence auto-apply blocking.
-- Files modified/created:
-  - `sidecars/llm-gateway/gateway.mjs` created
-  - `src-tauri/src/lib.rs` modified
-  - `src/pages/Settings.tsx` modified
-  - `src/pages/LlmReview.tsx` modified
-  - `src/types/settings.ts` modified
-  - `src/services/devFallbackBackend.ts` modified
-  - `sidecars/README.md` modified
-  - `Plan With Files/*.md` updated
+  - Re-read Plan With Files state and current design-document anchors.
+  - Audited Rust backend architecture, parser/source-review gates, state transitions, LLM gateway, validation, preview/runtime, export, Pack, settings/secrets, Tauri packaging, frontend pages, and sidecars.
+  - Refreshed verification evidence with current working tree.
+  - Added new audit findings AUD-16 through AUD-25 to `findings.md`.
 
-## Additional Test Results - LLM Gateway - 2026-05-30
-| Test | Input | Expected | Actual | Status |
-|------|-------|----------|--------|--------|
-| LLM gateway deterministic smoke | `node sidecars/llm-gateway/gateway.mjs classify_group ...` | JSON-only suggestion with patch/questions/evidence | `kind=true_false_not_given`, confidence `0.72`, 2 patch ops | pass |
-| Embedded UI build after LLM changes | `npm run build` | TypeScript + Vite build pass | Build passed | pass |
-| Browser smoke: Settings LLM controls | Open Settings | Provider/forceJson/key safety/no-JS rule visible | All expected text visible | pass |
-| Browser smoke: LLM Review high-confidence apply | Demo job -> LLM Review group-1 -> apply | Suggestion applies and returns GroupEditor | Apply enabled, returned to `题组结构化编辑器` | pass |
-| Browser smoke: LLM Review low-confidence guard | Demo job -> LLM Review group-2 | Apply disabled and low-confidence warning visible | Apply disabled, warning visible | pass |
-| Rust/Tauri compile probe | `rustc --version && cargo --version` | Rust toolchain available | `rustc: command not found` | blocked |
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | pass |
+| `EPIC8_UNIFIED_HTML_PATH=... EPIC8_UNIFIED_PYTHON=... cargo test` | pass, 13 tests |
+| `node --check` for LLM, preview E2E, node validator | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| `git diff --check` | pass |
 
-### Phase 3/8 Update: Global Toolchain, Rust Verification, Pack Zip - 2026-05-30
-- **Status:** complete for toolchain setup; in_progress for full Epic8 scope.
+### Audit Result
+- Backend publish safety is materially improved and currently blocks unresolved source review, unverified authoring, non-real runtime, parser failures, empty answers, and low-confidence fields.
+- Full completion remains blocked by OCR/scanned PDF support or explicit manual-transcription product decision, self-contained packaging of sidecar runtimes/dependencies, Rust module decomposition, stricter schema/evidence validation, and UI security hardening around raw HTML preview/CSP.
+
+## Session: 2026-05-31 15:18 CST
+
+### Deep Detail Audit Follow-up
+- **Status:** audit pass complete; no product code changed in this sub-pass.
 - Actions taken:
-  - Stopped/confirmed no Vite dev server remained on port 1420.
-  - Probed global dependencies: Homebrew, Xcode Command Line Tools, Node/npm/npx, and Tauri CLI were present; Rust/Cargo/rustup were missing.
-  - Attempted `brew install rustup-init`; Homebrew began source-building CMake/Rust dependencies on macOS 13, so the brew install tree was terminated and caches were cleaned.
-  - Installed official Rust stable via rustup: `rustc 1.96.0`, `cargo 1.96.0`, `rustup 1.29.0`.
-  - Added `. "$HOME/.cargo/env"` to `~/.zshrc` and `~/.zprofile`; added `rustfmt` and `clippy` components.
-  - Installed global `@tauri-apps/cli@2.11.2` through npm so `tauri` is available without `npx`.
-  - Implemented Pack publishing improvement: `ReadingExamPackV1` manifest, publish-before-validation gate, standard stored `.zip` writer, Pack UI metadata fields, and dev fallback Pack manifest/zip metadata.
-  - Added minimal `src-tauri/icons/icon.png` to satisfy Tauri build requirements.
-  - Fixed Rust compile errors found by first `cargo check` and cleaned clippy warnings.
-  - Added `.playwright-mcp/` to `.gitignore`.
-- Files modified/created:
-  - `src-tauri/src/lib.rs`
-  - `src-tauri/Cargo.lock`
-  - `src-tauri/icons/icon.png`
-  - `src/services/devFallbackBackend.ts`
-  - `src/pages/PackBuilder.tsx`
-  - `src/types/reading-source.ts`
-  - `src/styles.css`
-  - `.gitignore`
-  - `Plan With Files/*.md`
+  - Re-audited the Rust LLM gateway path, parser/source review fingerprinting, Pack build sequence, Preview/E2E state updates, optional answer-file flow, split/answer UI, visible preview fidelity, validator completeness, provider support, and docs drift.
+  - Identified new P0 secret-handling issue: LLM API keys are written into cached gateway input JSON under job cache directories.
+  - Added AUD-26 through AUD-38 to `findings.md` and `task_plan.md`.
 
-## Additional Test Results - Toolchain and Pack - 2026-05-30
-| Test | Input | Expected | Actual | Status |
-|------|-------|----------|--------|--------|
-| Global Rust versions | `rustc --version`, `cargo --version`, `rustup --version` | Rust toolchain available | `rustc 1.96.0`, `cargo 1.96.0`, `rustup 1.29.0` | pass |
-| Rust components | `cargo fmt --version`, `cargo clippy --version` | Formatter/linter available | `rustfmt 1.9.0-stable`, `clippy 0.1.96` | pass |
-| Global Tauri CLI | `tauri --version` | Global command available | `tauri-cli 2.11.2` | pass |
-| Rust format/check/lint | `cargo fmt --check && cargo check && cargo clippy --all-targets -- -D warnings` in `src-tauri` | No Rust compile/lint failures | Passed | pass |
-| Embedded UI build | `npm run build` | TypeScript + Vite build pass | Passed | pass |
-| Full Tauri build | `npm run tauri build` | Release binary and macOS bundles generated | `.app` and `.dmg` generated under `src-tauri/target/release/bundle` | pass |
-| Pack fallback smoke | Browser demo -> preview -> E2E -> Pack | PackBuilder shows publishable job and Pack result metadata | Flow reached PackBuilder and selected publishable job before toolchain pivot; full fallback Pack result not re-smoked after Tauri build | partial |
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `EPIC8_UNIFIED_HTML_PATH=... EPIC8_UNIFIED_PYTHON=... cargo test` | pass, 13 tests |
+| `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | pass |
+| sidecar syntax checks + Python compile | pass |
+| `git diff --check` | pass |
 
-## Additional Error Log - Toolchain and Pack - 2026-05-30
+### Audit Result
+- Product remains a working local MVP with strong backend publish gates.
+- Full Epic 8 completion remains blocked by P0 secret persistence, OCR/scanned PDF policy, answer-file/manual split repair completeness, self-contained packaging, backend modularization, LLM evidence validation, and UI security/runtime-preview hardening.
+
+## Session: 2026-05-31 15:59 CST
+
+### Phase 5 / Deep Audit Follow-up Implementation
+- **Status:** complete for this sub-pass.
+- Actions taken:
+  - Fixed `AUD-26` by removing API keys from cached LLM input JSON and passing secrets to the sidecar through `EPIC8_LLM_API_KEY`.
+  - Added secret redaction regression tests for cached gateway input and `make_llm_input`.
+  - Fixed `AUD-31` by centralizing preview/E2E job-state application and downgrading failed E2E reports to `ValidationFailed`.
+  - Fixed `AUD-30` by delaying Pack `Published` status updates until after zip and Pack artifacts are written.
+  - Strengthened `SourceReviewV1` fingerprinting for `AUD-32` with parser/source metadata and low-confidence block text hashes.
+  - Added AuthoringIR question continuity and duplicate-display validation for `AUD-34`.
+  - Fixed stale validation report semantics for `AUD-35` by recomputing layers after warning insertion.
+  - Fixed `AUD-36` UI provider mismatch by only exposing OpenAI-compatible provider in Settings.
+  - Fixed `AUD-38` README drift by documenting no-sample production parser behavior.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | pass |
+| `cargo test` | pass, 18 tests |
+| `node --check sidecars/llm-gateway/gateway.mjs` | pass |
+| `node --check sidecars/preview-e2e/preview-e2e.mjs` | pass |
+| `node --check sidecars/node-validator/validate-reading-source.mjs` | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| `git diff --check` | pass |
+
+### Error Log Additions
 | Timestamp | Error | Attempt | Resolution |
 |-----------|-------|---------|------------|
-| 2026-05-30 | `brew install rustup-init` attempted a long source build of CMake/Rust dependencies on macOS 13 | 1 | Terminated brew process tree, ran `brew cleanup --prune=0`, used official rustup installer instead |
-| 2026-05-30 | First `cargo check` failed: duplicate `render_group_html`, missing `src-tauri/icons/icon.png`, `Value::String` mapping, unsized `write_json` generic | 1 | Renamed helper to `render_group_body_html`, added icon, fixed mapping and `Serialize + ?Sized` bound |
-| 2026-05-30 | `cargo clippy --all-targets -- -D warnings` failed on 10 style lints | 1 | Applied clippy suggestions and reran successfully |
+| 2026-05-31 15:49 CST | `cargo test` failed because duplicate qid masked numeric gap detection | 1 | Deduped numeric question ids before continuity check. |
+| 2026-05-31 15:51 CST | `cargo test` failed because duplicate display-number check used derived `questionDisplayMap`, which overwrote duplicate qids | 1 | Switched duplicate display detection to raw AuthoringIR question list. |
 
-### Phase 3/4 Update: PDF/DOCX Parser Adapter and Cargo Tauri CLI - 2026-05-30
-- **Status:** complete for E8-04 parser sidecar adapter; in_progress for full Epic8 scope.
+### Remaining
+- Build editable split/answer repair and answer-file merge.
+- Decide and implement OCR/manual-transcription product policy.
+- Add schema/evidence validation for high-confidence LLM suggestions.
+- Continue Rust module split and packaging/dependency hardening.
+
+## Session: 2026-05-31 16:17 CST
+
+### Phase 5 / AUD-27-AUD-28 Answer Merge and Manual Repair
+- **Status:** complete for this sub-pass.
 - Actions taken:
-  - Re-read Plan With Files state and confirmed the active goal remains incomplete.
-  - Used the existing PDF and DOCX fixture generator at `/tmp/make_epic8_docs.py`.
-  - Verified `sidecars/python-parser/parser.py` compiles and parses deterministic TXT/MD/PDF/DOCX inputs.
-  - Confirmed PDF fixture now splits glued `pypdf` text into passage heading, passage body, question instructions, numbered question statements, and answer block.
-  - Confirmed DOCX fixture parses paragraphs plus table blocks directly from OOXML with Python stdlib.
-  - Avoided global `pip install --user` after PEP 668 errors; no `--break-system-packages` was used.
-  - Installed Cargo Tauri CLI globally with `cargo install tauri-cli --version 2.11.2 --locked`, so `cargo tauri` now works in addition to npm global `tauri`.
-  - Re-ran parser smoke tests, Rust format/check/lint, TypeScript check, frontend build, and full Tauri release build.
-- Files modified:
-  - `Plan With Files/task_plan.md`
-  - `Plan With Files/findings.md`
-  - `Plan With Files/progress.md`
+  - Added Rust helpers to collect `AnswerKey` sources, parse them with the parser sidecar, extract answer maps, and merge them into split candidates.
+  - Updated `run_rule_split`, `build_authoring_ir` fallback split creation, and `run_auto_pipeline` to include answer-source candidates.
+  - Added a Rust regression test proving answer-source text merges into `answerKeyCandidates` and removes the missing-answer issue.
+  - Reworked `SplitAndAnswers` from read-only display to editable repair surface for group heading, range, kind, block IDs, instruction, and answer values.
+  - Wired the UI to `saveSplitAdjustments` and save-before-build so manual corrections feed AuthoringIR generation.
+  - Added minimal CSS for warning/success messages and editable answer rows.
+  - Mirrored answer-source behavior in the dev fallback path.
 
-## Additional Test Results - Parser Adapter and Cargo Tauri - 2026-05-30
-| Test | Input | Expected | Actual | Status |
-|------|-------|----------|--------|--------|
-| Python parser compile | `python3 -m py_compile sidecars/python-parser/parser.py` | Syntax valid | Passed | pass |
-| PDF parser fixture smoke | `/tmp/epic8-parser-fixtures/reading-sample.pdf` | DocumentIRV1 with passage/question/answer role hints | Provider `python-parser-sidecar:pdf:pypdf`, 6 blocks, roles include passage/question/answer | pass |
-| DOCX parser fixture smoke | `/tmp/epic8-parser-fixtures/reading-sample.docx` | DocumentIRV1 with passage/question/answer role hints | Provider `python-parser-sidecar:docx:ooxml`, 7 blocks including table, roles include passage/question/answer | pass |
-| Global cargo Tauri CLI | `cargo tauri --version` | Cargo subcommand available | `tauri-cli 2.11.2` | pass |
-| Global npm Tauri CLI | `tauri --version` | npm/global command available | `tauri-cli 2.11.2` | pass |
-| Rust format | `cargo fmt --check` in `src-tauri` | No formatting diffs | Passed | pass |
-| Rust compile | `cargo check` in `src-tauri` | No compile failures | Passed | pass |
-| Rust lint | `cargo clippy --all-targets -- -D warnings` in `src-tauri` | No warnings | Passed | pass |
-| TypeScript check | `npm run check` | No TS errors | Passed | pass |
-| Embedded UI production build | `npm run build` | Vite build pass | Passed | pass |
-| Full Tauri release build | `npm run tauri build` | `.app` and `.dmg` generated | Generated `IELTS Author Studio.app` and `IELTS Author Studio_0.1.0_aarch64.dmg` | pass |
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | pass |
+| `cargo test` | pass, 19 tests |
+| `node --check sidecars/llm-gateway/gateway.mjs` | pass |
+| `node --check sidecars/preview-e2e/preview-e2e.mjs` | pass |
+| `node --check sidecars/node-validator/validate-reading-source.mjs` | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| `git diff --check` | pass |
 
-## Additional Error Log - Parser Adapter and Cargo Tauri - 2026-05-30
-| Timestamp | Error | Attempt | Resolution |
-|-----------|-------|---------|------------|
-| 2026-05-30 | Homebrew Python rejected global `pip install --user` with PEP 668 externally managed environment | 1 | Avoided global Python package mutation; used installed `pypdf` for PDF and stdlib OOXML parsing for DOCX |
-| 2026-05-30 | `cargo tauri --version` initially failed with `no such command: tauri` | 1 | Installed Cargo Tauri CLI via `cargo install tauri-cli --version 2.11.2 --locked`; `cargo tauri --version` now passes |
+### Remaining
+- OCR/manual-transcription policy and implementation.
+- Stronger LLM evidence/schema validation.
+- Runtime/dependency packaging hardening.
+- Rust module decomposition and typed domain model extraction.
 
-### Phase 4/E8-07 Update: RuntimePreview Contract Gate - 2026-05-30
-- **Status:** in_progress for E8-07 because external real unified runtime E2E is still not wired; complete for local RuntimePreview contract simulator.
+## Session: 2026-05-31 16:37 CST
+
+### Phase 5 / AUD-17 Manual Transcription Fallback
+- **Status:** complete for manual-transcription sub-pass.
 - Actions taken:
-  - Re-read Plan With Files and the preview/E2E requirements in both Epic8 design docs.
-  - Confirmed no external `reading-practice-unified.html` runtime was discoverable in the current workspace or `/Users/maziheng/Downloads/0.3.1 working`.
-  - Added `sidecars/preview-e2e/preview-e2e.mjs`.
-  - Enhanced `sidecars/node-validator/validate-reading-source.mjs` for stronger ReadingExamSourceV1 and DOM protocol checks.
-  - Refactored Rust validation so `run_preview_e2e`, `export_reading_assets`, and `build_pack` all enforce the four-layer gate before export/publish.
-  - Mirrored the RuntimePreview contract simulator in `src/services/devFallbackBackend.ts` so non-Tauri UI smoke follows the same gate semantics.
-  - Expanded `UnifiedPreview` diagnostics for collected answers, score info, wrong-answer score, nav/question count, console errors, and issues.
-  - Added `__pycache__/` to `.gitignore` and removed the generated Python bytecode cache.
-- Files modified/created:
-  - `sidecars/preview-e2e/preview-e2e.mjs` created
-  - `sidecars/node-validator/validate-reading-source.mjs` modified
-  - `sidecars/README.md` modified
-  - `src-tauri/src/lib.rs` modified
-  - `src/services/devFallbackBackend.ts` modified
-  - `src/pages/UnifiedPreview.tsx` modified
-  - `src/types/validation.ts` modified
-  - `.gitignore` modified
-  - `Plan With Files/*.md` updated
+  - Added `ManualTranscriptionInput` and `apply_manual_transcription` Tauri command.
+  - Added `manual_transcription_document_ir` to create a deterministic `DocumentIRV1` from operator-pasted text while recording `parser.provider=manual-transcription`.
+  - Updated `DocumentReview` to expose scanned-PDF/OCR-failure manual transcription UI.
+  - Added `ManualTranscriptionInput` TS type and `applyManualTranscription` API wrapper.
+  - Mirrored manual transcription in dev fallback.
+  - Added Rust regression coverage proving manual transcript reaches split answer extraction.
 
-## Additional Test Results - RuntimePreview Gate - 2026-05-30
-| Test | Input | Expected | Actual | Status |
-|------|-------|----------|--------|--------|
-| Node syntax checks | `node --check sidecars/preview-e2e/preview-e2e.mjs` and validator | Syntax valid | Passed | pass |
-| DOM validator positive smoke | `/tmp/epic8-runtime-source.json` | ReadingExamSourceV1 + DOM pass | Passed | pass |
-| DOM validator negative smoke | malformed bodyHtml with wrong input name | DomProtocol fails | Failed as expected with `No collectible control found for q1` | pass |
-| RuntimePreview positive smoke | generated manifest/wrapper for `runtime-smoke` | RuntimePreview pass, registered exam, correct score 100, wrong score 0 | Passed | pass |
-| RuntimePreview negative smoke | answerKey value absent from radio options | RuntimePreview fails | Failed as expected with radio answer option error | pass |
-| TypeScript check | `npm run check` | No TS errors | Passed | pass |
-| Rust format | `cargo fmt --check` in `src-tauri` | No formatting diffs | Passed | pass |
-| Rust compile | `cargo check` in `src-tauri` | No compile failures | Passed | pass |
-| Rust lint | `cargo clippy --all-targets -- -D warnings` in `src-tauri` | No warnings | Passed | pass |
-| Embedded UI production build | `npm run build` | Vite build pass | Passed | pass |
-| Full Tauri release build | `npm run tauri build` | `.app` and `.dmg` generated with bundled sidecars | Passed | pass |
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | pass |
+| `cargo test` | pass, 20 tests |
+| `node --check sidecars/llm-gateway/gateway.mjs` | pass |
+| `node --check sidecars/preview-e2e/preview-e2e.mjs` | pass |
+| `node --check sidecars/node-validator/validate-reading-source.mjs` | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| `git diff --check` | pass |
 
-## Additional Error Log - RuntimePreview Gate - 2026-05-30
-| Timestamp | Error | Attempt | Resolution |
-|-----------|-------|---------|------------|
-| 2026-05-30 | No external real unified runtime was found in current workspace or expected sibling path | 1 | Implemented local RuntimePreview contract simulator and kept E8-07 in progress until real runtime E2E can be wired |
-| 2026-05-30 | RuntimePreview smoke initially failed because the temporary fixture had been intentionally mutated for a negative test | 1 | Regenerated the positive fixture wrapper and reran successfully |
+### Remaining
+- Real OCR/layout adapter remains optional/open depending on product scope; manual transcription fallback is now implemented.
+- LLM evidence/schema validation.
+- Runtime/dependency packaging hardening.
+- Rust module decomposition and typed domain model extraction.
+
+## Session: 2026-05-31 16:58 CST
+
+### Phase 5 / AUD-17 Vision LLM Transcription
+- **Status:** complete for this sub-pass.
+- Actions taken:
+  - Added `extract_pdf_images` command to the Python parser sidecar, producing `PdfImageExtractionV1` metadata and extracted page images.
+  - Added `transcribe_pdf_images` to the Node LLM gateway for OpenAI-compatible vision models.
+  - Added Rust `VisionTranscriptionInput`, `apply_vision_transcription`, `vision_transcription_document_ir`, and automatic pipeline detection for no-text/low-confidence PDFs.
+  - Updated `DocumentReview` with a “视觉 LLM 转录” action while preserving manual transcription fallback.
+  - Updated dev fallback behavior and TypeScript types for vision transcription reporting.
+  - Added `fixtures/parser/image-only-reading.pdf` and Rust tests for embedded-image extraction and source-review-gated vision transcription.
+  - Updated sidecar README and Plan With Files tracking.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `cargo test` | pass, 22 tests |
+| `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | pass |
+| `node --check sidecars/llm-gateway/gateway.mjs` | pass |
+| `node --check sidecars/preview-e2e/preview-e2e.mjs` | pass |
+| `node --check sidecars/node-validator/validate-reading-source.mjs` | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| `python3 sidecars/python-parser/parser.py extract_pdf_images ...` on image-only fixture | pass, extracted 1 image |
+| `git diff --check` | pass |
+
+### Remaining
+- LLM suggestion schema/evidence validation before high-confidence auto-apply.
+- Packaging/dependency self-containment and file-secret fallback hardening.
+- Rust backend module split and typed models.
+- Actual visual unified-runtime preview or explicit UI limitation label.
+
+## Session: 2026-05-31 17:16 CST
+
+### Phase 5 / AUD-22-AUD-33 LLM Evidence Gate
+- **Status:** complete for high-confidence auto-apply path.
+- Actions taken:
+  - Added Rust `llm_suggestion_auto_apply_issues` validation for confidence, selected paths, patch schema, kind, question IDs, interaction schema, non-fallback evidence, source block IDs, and evidence quotes.
+  - Wired the gate into both `apply_llm_suggestion` and `run_auto_pipeline`.
+  - Updated automatic pipeline reporting with `blockedAutoApplyGroups`; blocked high-confidence suggestions now route to `LlmReview`.
+  - Updated `llm-gateway` prompt/validation to request and normalize `evidence.sourceBlockIds` and `evidence.quotes` while keeping fallback suggestions non-auto-applicable.
+  - Updated dev fallback with matching safety semantics.
+  - Updated LLM Review UI copy to show blocked-auto-apply context.
+  - Added Rust regression tests for high-confidence suggestions with and without source-block evidence.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `npm run build` | pass |
+| `cargo test` | pass, 24 tests |
+| `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | pass |
+| `node --check sidecars/llm-gateway/gateway.mjs` | pass |
+| `node --check sidecars/preview-e2e/preview-e2e.mjs` | pass |
+| `node --check sidecars/node-validator/validate-reading-source.mjs` | pass |
+| `python3 -m py_compile sidecars/python-parser/parser.py` | pass |
+| `git diff --check` | pass |
+
+### Remaining
+- Packaging/dependency self-containment and file-secret fallback hardening.
+- Rust backend module split and typed models.
+- Actual visual unified-runtime preview or explicit UI limitation label.

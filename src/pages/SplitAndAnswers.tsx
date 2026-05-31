@@ -1,10 +1,41 @@
 import { useEffect, useState } from "react";
-import { buildAuthoringIr, getJob, runRuleSplit } from "../api/tauriCommands";
+import { buildAuthoringIr, getJob, runRuleSplit, saveSplitAdjustments } from "../api/tauriCommands";
 import { go } from "../app/router";
-import type { SplitCandidates } from "../types";
+import type { AnswerValue, GroupKind, SplitCandidates, SplitGroupCandidate } from "../types";
+
+const groupKinds: GroupKind[] = [
+  "single_choice",
+  "multi_choice",
+  "true_false_not_given",
+  "yes_no_not_given",
+  "matching",
+  "classification",
+  "summary_completion",
+  "table_completion",
+  "diagram_completion",
+  "short_answer",
+  "sentence_completion"
+];
+
+function parseRange(value: string): [number, number] {
+  const [start, end] = value.split(/[-–—,~]/).map((item) => Number(item.trim())).filter(Number.isFinite);
+  const safeStart = Math.max(1, Math.floor(start || 1));
+  const safeEnd = Math.max(safeStart, Math.floor(end || safeStart));
+  return [safeStart, safeEnd];
+}
+
+function answerToText(value: AnswerValue): string {
+  return Array.isArray(value) ? value.join(", ") : value;
+}
+
+function textToAnswer(value: string): AnswerValue {
+  const parts = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return parts.length > 1 ? parts : value.trim();
+}
 
 export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: () => void }) {
   const [split, setSplit] = useState<SplitCandidates | undefined>();
+  const [saveMessage, setSaveMessage] = useState<string | undefined>();
 
   async function load() {
     const detail = await getJob(jobId);
@@ -18,23 +49,62 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
   async function run() {
     const result = await runRuleSplit(jobId);
     setSplit(result);
+    setSaveMessage(undefined);
+    refresh();
+  }
+
+  async function save(nextSplit = split) {
+    if (!nextSplit) return;
+    const saved = await saveSplitAdjustments(jobId, nextSplit);
+    setSplit(saved);
+    setSaveMessage("已保存人工修订，后续 Authoring IR 会使用当前 split/answer。");
     refresh();
   }
 
   async function build() {
+    if (split) await save(split);
     await buildAuthoringIr(jobId);
     refresh();
     go(`/jobs/${jobId}/groups`);
   }
 
   const answers = split?.answerKeyCandidates[0]?.answers ?? {};
+  const setGroup = (index: number, updater: (group: SplitGroupCandidate) => SplitGroupCandidate) => {
+    setSplit((current) => current ? { ...current, questionGroupCandidates: current.questionGroupCandidates.map((group, groupIndex) => groupIndex === index ? updater(group) : group) } : current);
+  };
+  const setAnswer = (number: string, value: string) => {
+    setSplit((current) => {
+      if (!current) return current;
+      const candidates = current.answerKeyCandidates.length ? [...current.answerKeyCandidates] : [{ source: "manual", answers: {} }];
+      const first = { ...candidates[0], answers: { ...candidates[0].answers, [number]: textToAnswer(value) } };
+      candidates[0] = first;
+      return { ...current, answerKeyCandidates: candidates, issues: current.issues.filter((issue) => !issue.includes("No answer key detected")) };
+    });
+  };
+  const removeAnswer = (number: string) => {
+    setSplit((current) => {
+      if (!current?.answerKeyCandidates.length) return current;
+      const candidates = [...current.answerKeyCandidates];
+      const answers = { ...candidates[0].answers };
+      delete answers[number];
+      candidates[0] = { ...candidates[0], answers };
+      return { ...current, answerKeyCandidates: candidates };
+    });
+  };
+  const addAnswer = () => {
+    const existing = Object.keys(answers).map(Number).filter(Number.isFinite);
+    const nextNumber = String((existing.length ? Math.max(...existing) : 0) + 1);
+    setAnswer(nextNumber, "");
+  };
 
   return (
     <section className="page-enter">
       <div className="section-heading spread">
         <div><p className="eyebrow">Rule Split</p><h2>粗切与答案对齐</h2></div>
-        <div className="button-row"><button className="ghost" onClick={run}>运行规则粗切</button><button className="primary" disabled={!split} onClick={build}>生成 Authoring IR</button></div>
+        <div className="button-row"><button className="ghost" onClick={run}>运行规则粗切</button><button className="ghost" disabled={!split} onClick={() => save()}>保存人工修订</button><button className="primary" disabled={!split} onClick={build}>生成 Authoring IR</button></div>
       </div>
+      {saveMessage ? <p className="success-text">{saveMessage}</p> : null}
+      {split?.issues.length ? <div className="warning-box"><strong>需要复核</strong>{split.issues.map((issue) => <p key={issue}>{issue}</p>)}</div> : null}
       <div className="split-grid">
         <section className="form-section">
           <h3>Passage 区</h3>
@@ -44,21 +114,24 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
         </section>
         <section className="form-section">
           <h3>题组区</h3>
-          {split?.questionGroupCandidates.map((group) => (
+          {split?.questionGroupCandidates.map((group, index) => (
             <div className="candidate" key={group.groupId}>
-              <strong>{group.heading}</strong>
-              <span>{group.kindHint} · Q{group.questionRange[0]}-{group.questionRange[1]}</span>
-              <p>{group.instructionText}</p>
+              <label>Heading<input value={group.heading} onChange={(event) => setGroup(index, (item) => ({ ...item, heading: event.target.value }))} /></label>
+              <label>Range<input value={`${group.questionRange[0]}-${group.questionRange[1]}`} onChange={(event) => setGroup(index, (item) => ({ ...item, questionRange: parseRange(event.target.value) }))} /></label>
+              <label>Kind<select value={group.kindHint ?? "short_answer"} onChange={(event) => setGroup(index, (item) => ({ ...item, kindHint: event.target.value as GroupKind }))}>{groupKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+              <label>Block IDs<input value={group.blockIds.join(", ")} onChange={(event) => setGroup(index, (item) => ({ ...item, blockIds: event.target.value.split(",").map((id) => id.trim()).filter(Boolean) }))} /></label>
+              <label>Instruction<textarea value={group.instructionText} onChange={(event) => setGroup(index, (item) => ({ ...item, instructionText: event.target.value }))} /></label>
             </div>
           )) ?? <p className="empty">尚未生成 question groups。</p>}
         </section>
         <section className="form-section contrast">
-          <h3>答案区</h3>
+          <div className="section-heading spread"><h3>答案区</h3><button className="ghost small" disabled={!split} onClick={addAnswer}>新增答案</button></div>
           <div className="answer-grid">
             {Object.entries(answers).map(([number, answer]) => (
-              <div key={number}><span>{number}</span><strong>{Array.isArray(answer) ? answer.join(", ") : answer}</strong></div>
+              <div key={number} className="answer-edit-row"><span>{number}</span><input value={answerToText(answer)} onChange={(event) => setAnswer(number, event.target.value)} /><button className="ghost small" onClick={() => removeAnswer(number)}>删除</button></div>
             ))}
           </div>
+          {split?.answerKeyCandidates.slice(1).map((candidate) => <details key={candidate.source}><summary>{candidate.source}</summary><pre>{JSON.stringify(candidate.answers, null, 2)}</pre></details>)}
         </section>
       </div>
     </section>

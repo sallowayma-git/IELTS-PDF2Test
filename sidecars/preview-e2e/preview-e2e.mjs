@@ -334,7 +334,13 @@ async def run(payload):
                     if (radios.length > 0) {
                         if (!normalized.length) return { ok: false, mode: 'radio' };
                         const target = normalized[0];
-                        const found = radios.find((item) => String(item.value ?? '').trim().toLowerCase() === target.toLowerCase()) || radios[0];
+                        const targetLower = target.toLowerCase();
+                        let found = radios.find((item) => String(item.value ?? '').trim().toLowerCase() === targetLower);
+                        if (!found && targetLower.endsWith('__wrong__')) {
+                            const original = targetLower.replace(/__wrong__$/, '');
+                            found = radios.find((item) => String(item.value ?? '').trim().toLowerCase() !== original);
+                        }
+                        if (!found) return { ok: false, mode: 'radio' };
                         found.checked = true;
                         found.dispatchEvent(new Event('change', { bubbles: true }));
                         return { ok: true, mode: 'radio' };
@@ -539,10 +545,7 @@ function resolveUnifiedHtmlPath() {
   if (fromEnv && fs.existsSync(fromEnv)) {
     return path.resolve(fromEnv);
   }
-  const defaults = [
-    '/Users/maziheng/Downloads/0.3.1 working/assets/generated/reading-exams/reading-practice-unified.html',
-  ];
-  return defaults.find((candidate) => fs.existsSync(candidate)) || null;
+  return null;
 }
 
 function resolvePythonPath() {
@@ -551,7 +554,6 @@ function resolvePythonPath() {
     return path.resolve(fromEnv);
   }
   const defaults = [
-    '/Users/maziheng/Downloads/0.3.1 working/.venv/bin/python',
     '/usr/bin/python3',
     '/opt/homebrew/bin/python3',
   ];
@@ -635,6 +637,10 @@ function runRealRuntime({ previewDir, examId, jobId }) {
 function validateRuntime({ previewDir, examId, jobId }) {
   const real = runRealRuntime({ previewDir, examId, jobId });
   if (real.ok && real.report) {
+    return real.report;
+  }
+  if (real.report) {
+    real.report.runtime.fallbackReason = 'real_runtime_failed';
     return real.report;
   }
 

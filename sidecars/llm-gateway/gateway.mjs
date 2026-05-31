@@ -30,12 +30,13 @@ function normalizeKind(text = "") {
 
 function deterministicSuggestion(input, mode) {
   const group = input.group ?? {};
+  const sourceBlockIds = Array.isArray(group.sourceBlockIds) ? group.sourceBlockIds : [];
   const groupText = [
     ...(group.instruction ?? []),
     ...(group.questions ?? []).map((question) => question.prompt ?? "")
   ].join(" ");
   const kind = normalizeKind(groupText);
-  const confidence = kind === group.kind ? 0.9 : 0.72;
+  const confidence = 0.64;
   return {
     kind,
     confidence,
@@ -50,12 +51,16 @@ function deterministicSuggestion(input, mode) {
     })),
     warnings: [
       "deterministic-local-fallback",
-      ...(confidence < 0.85 ? ["low-confidence-review-required"] : [])
+      "low-confidence-review-required",
+      "fallback-output-never-auto-applies"
     ],
     evidence: {
       mode,
       allowedKinds,
-      source: "local-heuristic"
+      source: "local-heuristic",
+      sourceBlockIds,
+      quotes: [],
+      fallback: true
     }
   };
 }
@@ -86,22 +91,120 @@ function buildPrompt(input, mode) {
     "You are an IELTS Reading authoring assistant.",
     "Return JSON only. Do not return Markdown, HTML, JavaScript, or explanations.",
     "Never invent passage facts or answers. Suggest structure only.",
+    "Evidence is required: include evidence.sourceBlockIds copied from the input group.sourceBlockIds and evidence.quotes as [{blockId,text}] using short source excerpts that justify the suggestion.",
+    "If you cannot cite the source blocks, return confidence below 0.85.",
     `Task: ${mode}.`,
     `Allowed group kinds: ${allowedKinds.join(", ")}.`,
     `Group JSON: ${JSON.stringify(input.group ?? {})}`
   ].join("\n");
 }
 
-async function callOpenAiCompatible(input, mode) {
+function transcriptionFallback(warning) {
+  return {
+    text: "",
+    confidence: 0,
+    warnings: [
+      warning,
+      "vision-transcription-failed",
+      "manual-transcription-required"
+    ],
+    evidence: {
+      mode: "transcribe_pdf_images",
+      source: "local-fallback",
+      fallback: true
+    }
+  };
+}
+
+function buildVisionPrompt(input) {
+  return [
+    "You are transcribing an IELTS Reading PDF page image for an authoring workflow.",
+    "Return JSON only with shape {\"text\":\"...\",\"confidence\":0.0,\"warnings\":[]}.",
+    "Transcribe all visible passage text, question headings, question prompts, options, tables, labels, and answer keys if present.",
+    "Preserve useful structural headings such as READING PASSAGE, Questions 1-5, and Answers.",
+    "Do not invent missing words or answers. If a region is unclear, write [unclear] and lower confidence.",
+    `Job: ${JSON.stringify(input.job ?? {})}`
+  ].join("\n");
+}
+
+async function imageToDataUrl(image) {
+  if (!image?.path) throw new Error("vision_image_path_missing");
+  const data = await fs.readFile(image.path);
+  const mimeType = image.mimeType || "application/octet-stream";
+  return `data:${mimeType};base64,${data.toString("base64")}`;
+}
+
+async function callVisionOpenAiCompatible(input) {
   const profile = input.profile ?? {};
-  const apiKey = input.apiKey ?? "";
-  if (!apiKey || !profile.baseUrl || !profile.model) return null;
+  const apiKey = process.env.EPIC8_LLM_API_KEY ?? input.apiKey ?? "";
+  if (!profile.baseUrl || !profile.model) return null;
+  const pages = input.pages ?? [];
+  const content = [{ type: "text", text: buildVisionPrompt(input) }];
+  for (const page of pages) {
+    for (const image of page.images ?? []) {
+      content.push({ type: "text", text: `Page ${page.pageIndex}, image ${image.assetId || image.fileName || ""}` });
+      content.push({ type: "image_url", image_url: { url: await imageToDataUrl(image) } });
+    }
+  }
+  if (!content.some((item) => item.type === "image_url")) return null;
+
   const endpoint = new URL(profile.baseUrl.replace(/\/$/, "") + "/chat/completions");
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {})
+    },
+    body: JSON.stringify({
+      model: profile.model,
+      temperature: profile.temperature ?? 0,
+      response_format: profile.forceJson === false ? undefined : { type: "json_object" },
+      messages: [
+        { role: "system", content: "Return valid JSON only." },
+        { role: "user", content }
+      ]
+    }),
+    signal: AbortSignal.timeout(profile.timeoutMs ?? 120000)
+  });
+  if (!response.ok) throw new Error(`llm_http_${response.status}:${await response.text()}`);
+  const payload = await response.json();
+  const message = payload?.choices?.[0]?.message?.content;
+  if (!message) throw new Error("vision_llm_empty_content");
+  const parsed = JSON.parse(message);
+  return {
+    text: typeof parsed.text === "string" ? parsed.text : "",
+    confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.6,
+    warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+    evidence: {
+      ...(parsed.evidence ?? {}),
+      mode: "transcribe_pdf_images",
+      source: "openai-compatible-vision",
+      model: profile.model,
+      usage: payload.usage ?? null
+    }
+  };
+}
+
+function validateTranscription(value) {
+  if (!value || typeof value !== "object") throw new Error("transcription_not_object");
+  if (typeof value.text !== "string") value.text = "";
+  if (typeof value.confidence !== "number") value.confidence = value.text.trim() ? 0.6 : 0;
+  if (!Array.isArray(value.warnings)) value.warnings = [];
+  if (!value.text.trim()) value.warnings.push("empty-vision-transcription");
+  if (!value.evidence || typeof value.evidence !== "object") value.evidence = {};
+  return value;
+}
+
+async function callOpenAiCompatible(input, mode) {
+  const profile = input.profile ?? {};
+  const apiKey = process.env.EPIC8_LLM_API_KEY ?? input.apiKey ?? "";
+  if (!profile.baseUrl || !profile.model) return null;
+  const endpoint = new URL(profile.baseUrl.replace(/\/$/, "") + "/chat/completions");
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {})
     },
     body: JSON.stringify({
       model: profile.model,
@@ -138,16 +241,32 @@ function validateSuggestion(value) {
   if (!Array.isArray(value.patch)) value.patch = [];
   if (!Array.isArray(value.warnings)) value.warnings = [];
   if (!Array.isArray(value.questions)) value.questions = [];
+  if (!value.evidence || typeof value.evidence !== "object") value.evidence = {};
+  if (!Array.isArray(value.evidence.sourceBlockIds)) value.evidence.sourceBlockIds = [];
+  if (!Array.isArray(value.evidence.quotes)) value.evidence.quotes = [];
   return value;
 }
 
 async function main() {
   const [command, inputPath, outputPath] = process.argv.slice(2);
-  if (!["classify_group", "extract_group", "test_profile"].includes(command) || !inputPath || !outputPath) {
-    console.error("usage: gateway.mjs <classify_group|extract_group|test_profile> <input.json> <output.json>");
+  if (!["classify_group", "extract_group", "test_profile", "transcribe_pdf_images"].includes(command) || !inputPath || !outputPath) {
+    console.error("usage: gateway.mjs <classify_group|extract_group|test_profile|transcribe_pdf_images> <input.json> <output.json>");
     process.exit(2);
   }
   const input = JSON.parse(await fs.readFile(inputPath, "utf8"));
+  if (command === "transcribe_pdf_images") {
+    let transcription;
+    try {
+      transcription = await callVisionOpenAiCompatible(input);
+    } catch (error) {
+      transcription = transcriptionFallback(`provider-call-failed:${String(error.message ?? error)}`);
+    }
+    if (!transcription) transcription = transcriptionFallback("no-enabled-vision-provider-or-images");
+    const output = validateTranscription(transcription);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, JSON.stringify(output, null, 2));
+    return;
+  }
   const mode = command === "test_profile" ? "test_profile" : command;
   let suggestion;
   try {

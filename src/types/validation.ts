@@ -24,6 +24,9 @@ export interface ValidationReport {
   generatedAt: string;
   runtime?: {
     adapter?: string;
+    mode?: "real" | "fallback" | string;
+    fallbackReason?: string;
+    fallbackAdapter?: string;
     examId?: string;
     jobId?: string;
     registeredIds?: string[];

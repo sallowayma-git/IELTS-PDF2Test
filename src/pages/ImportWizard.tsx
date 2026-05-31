@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { createImportJob, importSourceFile, parseDocument } from "../api/tauriCommands";
+import { createImportJob, importSourceFile, runAutoPipeline } from "../api/tauriCommands";
 import { chooseSourceFile, type PickedPath } from "../api/desktopDialogs";
 import { go } from "../app/router";
-import type { Frequency, PassageCategory } from "../types";
+import type { AutoPipelineReport, Frequency, PassageCategory } from "../types";
 
 export function ImportWizard({ refresh }: { refresh: () => void }) {
   const [title, setTitle] = useState("The Rise and Fall of Detective Stories");
@@ -13,6 +13,8 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
   const [sourceFile, setSourceFile] = useState<PickedPath | null>(null);
   const [answerFile, setAnswerFile] = useState<PickedPath | null>(null);
   const [busy, setBusy] = useState(false);
+  const [autoReport, setAutoReport] = useState<AutoPipelineReport | undefined>();
+  const [error, setError] = useState<string | undefined>();
 
   async function pickSource() {
     setSourceFile(await chooseSourceFile());
@@ -23,14 +25,34 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
   }
 
   async function submit() {
+    if (!sourceFile) {
+      setError("请选择主文件后再创建任务。生产流程不能静默使用 demo 文件。");
+      return;
+    }
     setBusy(true);
+    setError(undefined);
     try {
       const job = await createImportJob({ title, category, frequency, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean) });
-      await importSourceFile(job.jobId, sourceFile?.path ?? "demo-reading.pdf", "MainQuestion", sourceFile?.sizeBytes ?? 0);
+      await importSourceFile(job.jobId, sourceFile.path, "MainQuestion", sourceFile.sizeBytes);
       if (answerFile) await importSourceFile(job.jobId, answerFile.path, "AnswerKey", answerFile.sizeBytes);
-      await parseDocument(job.jobId, { mode: parseMode });
+      const report = await runAutoPipeline(job.jobId, { confidenceThreshold: 0.85, parseMode });
+      setAutoReport(report);
       refresh();
-      go(`/jobs/${job.jobId}/document`);
+      const nextStep = typeof report.currentStep === "string" ? report.currentStep : "DocumentReview";
+      const nextPath = nextStep === "LlmReview"
+        ? "llm-review"
+        : nextStep === "Export"
+          ? "export"
+          : nextStep === "Preview"
+            ? "preview"
+            : nextStep === "Authoring"
+              ? "groups"
+              : nextStep === "Split"
+                ? "split"
+                : "document";
+      go(`/jobs/${job.jobId}/${nextPath}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setBusy(false);
     }
@@ -61,6 +83,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
             <button className="ghost small" onClick={pickAnswer}>选择答案文件</button>
           </div>
           <label>解析模式<select value={parseMode} onChange={(event) => setParseMode(event.target.value as typeof parseMode)}><option value="auto">auto</option><option value="text">text</option><option value="ocr">ocr</option></select></label>
+          {autoReport ? <details><summary>自动处理结果</summary><pre>{JSON.stringify(autoReport, null, 2)}</pre></details> : null}
         </section>
         <section className="form-section">
           <span className="step-number">02</span>
@@ -74,7 +97,8 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
           <span className="step-number">03</span>
           <h3>本地权限边界</h3>
           <p>导入只读取用户通过系统对话框显式选择的文件；Rust command 会复制到 app data 的 job uploads 目录并记录 hash。</p>
-          <button className="primary wide" disabled={busy} onClick={submit}>{busy ? "创建中..." : "创建并解析"}</button>
+          {error ? <p className="error-text">{error}</p> : null}
+          <button className="primary wide" disabled={busy || !sourceFile} onClick={submit}>{busy ? "自动处理中..." : "创建并自动处理"}</button>
         </section>
       </div>
     </section>

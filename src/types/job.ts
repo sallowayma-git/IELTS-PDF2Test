@@ -76,6 +76,4 @@ export interface JobMetaPatch {
   frequency?: Frequency;
   tags?: string[];
   activeLlmProfileId?: string;
-  status?: JobStatus;
-  currentStep?: WorkflowStep;
 }

@@ -47,3 +47,36 @@ export interface LlmSuggestion {
   warnings: string[];
   createdAt: string;
 }
+
+export interface AutoPipelineReport {
+  jobId: string;
+  confidenceThreshold: number;
+  llm: {
+    suggestionCount: number;
+    appliedCount: number;
+    highConfidenceAppliedGroups: string[];
+    lowConfidenceGroups: string[];
+    blockedAutoApplyGroups?: string[];
+    failures: string[];
+    profileId?: string;
+  };
+  parser?: {
+    warnings: string[];
+    lowConfidenceBlocks: string[];
+    visionTranscription?: {
+      attempted: boolean;
+      applied: boolean;
+      profileId?: string | null;
+      warnings?: string[];
+      failure?: string | null;
+      confidence?: number;
+    };
+  };
+  validationPassed: boolean;
+  realRuntimePassed?: boolean;
+  runtimeMode?: string;
+  status: string;
+  currentStep: string;
+  generatedAt: string;
+  validationReport?: unknown;
+}

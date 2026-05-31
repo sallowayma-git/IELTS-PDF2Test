@@ -9,13 +9,18 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
   const counts = statusOrder.map((status) => ({ status, count: jobs.filter((job) => job.status === status).length }));
 
   async function createDemo() {
-    const job = await createImportJob({ title: "The Rise and Fall of Detective Stories", category: "P1", frequency: "medium", tags: ["demo", "mvp"] });
-    await importSourceFile(job.jobId, "demo-reading.pdf", "MainQuestion", 512000);
-    await parseDocument(job.jobId, { mode: "auto" });
-    await runRuleSplit(job.jobId);
-    await buildAuthoringIr(job.jobId);
-    refresh();
-    go(`/jobs/${job.jobId}/groups`);
+    try {
+      const job = await createImportJob({ title: "The Rise and Fall of Detective Stories", category: "P1", frequency: "medium", tags: ["demo", "mvp"] });
+      await importSourceFile(job.jobId, "demo-reading.pdf", "MainQuestion", 512000);
+      await parseDocument(job.jobId, { mode: "auto" });
+      await runRuleSplit(job.jobId);
+      await buildAuthoringIr(job.jobId);
+      refresh();
+      go(`/jobs/${job.jobId}/groups`);
+    } catch (error) {
+      console.error(error);
+      go("/jobs/new");
+    }
   }
 
   return (
@@ -28,7 +33,7 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
         </div>
         <div className="hero-actions">
           <button className="primary" onClick={() => go("/jobs/new")}>新建导题任务</button>
-          <button className="ghost" onClick={createDemo}>生成演示任务</button>
+          <button className="ghost" onClick={createDemo}>开发演示任务</button>
         </div>
       </div>
 

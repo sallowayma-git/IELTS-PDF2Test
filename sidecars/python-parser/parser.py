@@ -9,8 +9,10 @@ with Python stdlib so the adapter still works without python-docx.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
+import mimetypes
 import re
 import sys
 import zipfile
@@ -174,6 +176,77 @@ def document_ir(job_id: str, pages: list[dict], mode: str, provider: str, warnin
     }
 
 
+def sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def image_mime_type(name: str) -> str:
+    guessed, _ = mimetypes.guess_type(name)
+    return guessed or "application/octet-stream"
+
+
+def extract_pdf_images(input_path: Path, output_dir: Path, job_id: str) -> dict:
+    warnings: list[str] = []
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except Exception as exc:  # pragma: no cover - depends on host env
+        raise SystemExit(f"missing_pdf_dependency:pypdf:{exc}")
+
+    reader = PdfReader(str(input_path))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pages: list[dict] = []
+    image_counter = 1
+
+    for page_index, page in enumerate(reader.pages, start=1):
+        width = int(float(page.mediabox.width or PAPER_WIDTH))
+        height = int(float(page.mediabox.height or PAPER_HEIGHT))
+        page_images = []
+        try:
+            images = list(page.images)
+        except Exception as exc:
+            warnings.append(f"page {page_index} image extraction failed: {exc}")
+            images = []
+
+        for image in images:
+            raw = getattr(image, "data", b"") or b""
+            if not raw:
+                warnings.append(f"page {page_index} image has no extractable bytes")
+                continue
+            original_name = getattr(image, "name", "") or f"image-{image_counter}.bin"
+            suffix = Path(original_name).suffix or ".bin"
+            file_name = f"page-{page_index:03d}-image-{image_counter:03d}{suffix}"
+            image_path = output_dir / file_name
+            image_path.write_bytes(raw)
+            ref = getattr(image, "indirect_reference", None) or {}
+            page_images.append(
+                {
+                    "assetId": f"pdf-page-{page_index}-image-{image_counter}",
+                    "pageIndex": page_index,
+                    "fileName": file_name,
+                    "path": str(image_path),
+                    "mimeType": image_mime_type(file_name),
+                    "width": int(ref.get("/Width", 0) or 0) if hasattr(ref, "get") else 0,
+                    "height": int(ref.get("/Height", 0) or 0) if hasattr(ref, "get") else 0,
+                    "sha256": sha256_bytes(raw),
+                    "sizeBytes": len(raw),
+                }
+            )
+            image_counter += 1
+
+        pages.append({"pageIndex": page_index, "width": width, "height": height, "images": page_images})
+
+    if not any(page["images"] for page in pages):
+        warnings.append("PDF contains no extractable embedded page images; manual transcription required")
+
+    return {
+        "schemaVersion": "PdfImageExtractionV1",
+        "jobId": job_id,
+        "sourcePath": str(input_path),
+        "pages": pages,
+        "warnings": warnings,
+    }
+
+
 def parse_text(input_path: Path, job_id: str, mode: str) -> dict:
     content = input_path.read_text(encoding="utf-8", errors="replace")
     chunks = semantic_chunks(content) or [input_path.stem]
@@ -279,13 +352,23 @@ def main() -> int:
     parse_cmd.add_argument("--output", required=True)
     parse_cmd.add_argument("--job-id", required=True)
     parse_cmd.add_argument("--mode", default="auto")
+    extract_cmd = sub.add_parser("extract_pdf_images")
+    extract_cmd.add_argument("--input", required=True)
+    extract_cmd.add_argument("--output", required=True)
+    extract_cmd.add_argument("--job-id", required=True)
+    extract_cmd.add_argument("--asset-dir", required=True)
     args = parser.parse_args()
 
     input_path = Path(args.input)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    ir = parse(input_path, args.job_id, args.mode)
-    output_path.write_text(json.dumps(ir, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.command == "parse":
+        result = parse(input_path, args.job_id, args.mode)
+    elif args.command == "extract_pdf_images":
+        result = extract_pdf_images(input_path, Path(args.asset_dir), args.job_id)
+    else:  # pragma: no cover - argparse enforces this
+        raise SystemExit(f"unsupported_command:{args.command}")
+    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0
 
 
