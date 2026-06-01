@@ -619,25 +619,30 @@ mod tests {
     use crate::parser::{
         extract_pdf_images_for_vision, extract_pdf_images_with_python_sidecar,
         image_count_from_extraction, manual_transcription_document_ir, missing_source_document_ir,
-        parse_source_document, parser_failure_document_ir, render_pdf_page_with_sips_fallback,
+        parse_source_document, parser_failure_document_ir, render_pdf_pages_with_adapter,
         vision_transcription_document_ir,
     };
     use crate::reading_source::reading_source;
     use crate::runtime_validation::{publish_readiness_gate, validate_for_runtime_gate};
     use crate::source_review::{
-        low_confidence_block_ids, parser_warnings, source_review_fingerprint, source_review_issues,
-        source_review_status, write_source_review_status,
+        low_confidence_block_ids, parser_warnings, resolve_source_review_status,
+        source_review_fingerprint, source_review_issues, source_review_status,
+        source_review_status_for_job, write_source_review_status,
     };
     use crate::util::{
         ensure_job_dirs, file_type_from_name, hash_file_or_path, is_safe_path_segment, job_dir,
         read_json, read_json_opt, safe_job_dir, sanitize_filename, validate_path_segment,
         write_bytes, write_json, write_text,
     };
+    use crate::validator::allowed_question_kind;
     use crate::workflow_state::apply_preview_e2e_job_state;
     use std::{
         fs,
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
         path::Path,
-        sync::{Mutex, OnceLock},
+        sync::{mpsc, Mutex, OnceLock},
+        thread,
     };
     use uuid::Uuid;
 
@@ -689,6 +694,119 @@ mod tests {
             .join(name)
     }
 
+    fn write_minimal_docx(path: &Path, document_xml: &str) {
+        let file = fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap();
+        zip.add_directory("word/", options).unwrap();
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(document_xml.as_bytes()).unwrap();
+        zip.finish().unwrap();
+    }
+
+    fn read_mock_http_request(stream: &mut TcpStream) -> String {
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        let mut content_length = None::<usize>;
+        loop {
+            let read = stream.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buffer[..read]);
+            if content_length.is_none() {
+                if let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    let header = String::from_utf8_lossy(&bytes[..header_end]).to_string();
+                    content_length = header.lines().find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        if name.eq_ignore_ascii_case("content-length") {
+                            value.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    });
+                }
+            }
+            if let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                let body_start = header_end + 4;
+                let expected = body_start + content_length.unwrap_or(0);
+                if bytes.len() >= expected {
+                    break;
+                }
+            }
+        }
+        String::from_utf8_lossy(&bytes).to_string()
+    }
+
+    fn mock_openai_server(
+        content: Value,
+    ) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_mock_http_request(&mut stream);
+            sender.send(request).unwrap();
+            let response_body = json!({
+                "choices": [{"message": {"content": serde_json::to_string(&content).unwrap()}}],
+                "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.flush().unwrap();
+        });
+        (format!("http://{}/v1", address), receiver, handle)
+    }
+
+    fn tiny_png_bytes() -> Vec<u8> {
+        vec![
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+            8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31,
+            0, 3, 3, 2, 0, 239, 191, 167, 219, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]
+    }
+
+    fn cached_llm_inputs(root: &Path, job_id: &str) -> Vec<String> {
+        let dir = job_dir(root, job_id).join("cache").join("llm");
+        if !dir.exists() {
+            return Vec::new();
+        }
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains("-input-"))
+            .map(|entry| fs::read_to_string(entry.path()).unwrap())
+            .collect::<Vec<_>>()
+    }
+
+    fn live_llm_profile_from_env() -> Option<(Value, String)> {
+        let base_url = env::var("EPIC8_LIVE_LLM_BASE_URL").ok()?;
+        let api_key = env::var("EPIC8_LIVE_LLM_API_KEY").ok()?;
+        let model = env::var("EPIC8_LIVE_LLM_MODEL").ok()?;
+        Some((
+            json!({
+                "profileId": "profile-live-provider",
+                "provider": "OpenAiCompatible",
+                "baseUrl": base_url,
+                "model": model,
+                "temperature": 0,
+                "timeoutMs": 120000,
+                "forceJson": true
+            }),
+            api_key,
+        ))
+    }
+
     fn attach_fixture_source(root: &Path, job: &mut ImportJob, fixture_name: &str, role: &str) {
         let fixture = parser_fixture(fixture_name);
         let original_name = fixture
@@ -738,6 +856,13 @@ mod tests {
         }];
         save_job(root, &job).unwrap();
         ensure_job_dirs(&job_dir(root, &job.job_id)).unwrap();
+        write_text(
+            &job_dir(root, &job.job_id)
+                .join("uploads")
+                .join("publishable.pdf"),
+            "original source bytes",
+        )
+        .unwrap();
 
         let doc = sample_document_ir(&job, "auto");
         write_json(&job_dir(root, &job.job_id).join("document-ir.json"), &doc).unwrap();
@@ -993,6 +1118,460 @@ mod tests {
     }
 
     #[test]
+    fn make_llm_input_carries_structured_repair_context_and_evidence() {
+        let job = test_job();
+        let profile = json!({
+            "profileId": "profile-test",
+            "provider": "OpenAiCompatible",
+            "baseUrl": "https://example.invalid/v1",
+            "model": "gpt-test"
+        });
+        let group = json!({
+            "groupId": "group-test",
+            "kind": "matching",
+            "layout": {"template": "matching_list"},
+            "sourceBlockIds": ["b-heading", "b-options"],
+            "reviewWarnings": ["Option reuse was inferred from question type; source wording did not state it explicitly."],
+            "classificationEvidence": ["b-heading"],
+            "sectionEvidence": [{
+                "blockId": "b-options",
+                "pageIndex": 2,
+                "column": 1,
+                "textPreview": "A option",
+                "tableRows": 3,
+                "tableCols": 2,
+                "headingLevel": 2,
+                "numberingLevel": 0,
+                "normalizedBbox": [10, 20, 120, 240],
+                "pageRotation": 90
+            }],
+            "continuationEdges": [{"fromBlockId": "b-heading", "toBlockId": "b-options", "reason": "cross-page-continuation", "confidence": 0.72}],
+            "questions": []
+        });
+
+        let input = make_llm_input(&profile, &job, &group, "profile-test", "extract_group");
+
+        assert_eq!(
+            input
+                .pointer("/repairContract/schema")
+                .and_then(Value::as_str),
+            Some("Epic8LlmGroupRepairV1")
+        );
+        assert_eq!(
+            input
+                .pointer("/repairContext/sectionEvidence/0/tableRows")
+                .and_then(Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            input
+                .pointer("/repairContext/sectionEvidence/0/pageRotation")
+                .and_then(Value::as_u64),
+            Some(90)
+        );
+        assert_eq!(
+            input
+                .pointer("/repairContext/continuationEdges/0/reason")
+                .and_then(Value::as_str),
+            Some("cross-page-continuation")
+        );
+        assert!(serde_json::to_string(&input)
+            .unwrap()
+            .contains("allowedPatchPaths"));
+    }
+
+    #[test]
+    fn rust_llm_gateway_hits_mock_openai_compatible_chat_completion() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let (base_url, request_receiver, handle) = mock_openai_server(json!({
+            "kind": "short_answer",
+            "confidence": 0.91,
+            "patch": [],
+            "questions": [],
+            "warnings": [],
+            "evidence": {
+                "sourceBlockIds": ["b-question"],
+                "quotes": [{"blockId": "b-question", "text": "Questions 1-2"}]
+            }
+        }));
+        let input = json!({
+            "profile": {
+                "profileId": "profile-mock",
+                "provider": "OpenAiCompatible",
+                "baseUrl": base_url,
+                "model": "mock-json-model",
+                "temperature": 0,
+                "timeoutMs": 10000,
+                "forceJson": true
+            },
+            "group": {
+                "groupId": "group-1",
+                "kind": "short_answer",
+                "sourceBlockIds": ["b-question"],
+                "instruction": ["Questions 1-2"],
+                "questions": []
+            }
+        });
+
+        let output = llm_gateway::run_llm_gateway(
+            &root,
+            "job-mock-llm",
+            "extract_group",
+            &input,
+            Some("sk-mock-secret"),
+        )
+        .unwrap();
+        let request = request_receiver.recv().unwrap();
+        handle.join().unwrap();
+
+        assert!(request.starts_with("POST /v1/chat/completions "));
+        assert!(request.contains("authorization: Bearer sk-mock-secret"));
+        assert!(request.contains("\"response_format\":{\"type\":\"json_object\"}"));
+        assert_eq!(
+            output.get("kind").and_then(Value::as_str),
+            Some("short_answer")
+        );
+        assert_eq!(
+            output.pointer("/evidence/source").and_then(Value::as_str),
+            Some("openai-compatible-rust")
+        );
+        assert_eq!(
+            output.pointer("/evidence/model").and_then(Value::as_str),
+            Some("mock-json-model")
+        );
+
+        let cached_inputs = cached_llm_inputs(&root, "job-mock-llm");
+        assert!(!cached_inputs.is_empty());
+        assert!(!cached_inputs.join("\n").contains("sk-mock-secret"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[ignore = "requires EPIC8_LIVE_LLM_BASE_URL, EPIC8_LIVE_LLM_API_KEY, and EPIC8_LIVE_LLM_MODEL"]
+    fn live_rust_llm_gateway_provider_smoke_text_and_vision() {
+        let Some((profile, api_key)) = live_llm_profile_from_env() else {
+            eprintln!(
+                "skipping: set EPIC8_LIVE_LLM_BASE_URL, EPIC8_LIVE_LLM_API_KEY, and EPIC8_LIVE_LLM_MODEL"
+            );
+            return;
+        };
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+
+        let text_input = json!({
+            "profile": profile,
+            "group": {
+                "groupId": "group-live",
+                "kind": "short_answer",
+                "sourceBlockIds": ["b-live"],
+                "instruction": ["Return JSON only."],
+                "questions": []
+            }
+        });
+        let text_output = llm_gateway::run_llm_gateway(
+            &root,
+            "job-live-provider-text",
+            "extract_group",
+            &text_input,
+            Some(&api_key),
+        )
+        .unwrap();
+        assert!(allowed_question_kind(
+            text_output
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        ));
+        assert_eq!(
+            text_output
+                .pointer("/evidence/source")
+                .and_then(Value::as_str),
+            Some("openai-compatible-rust")
+        );
+
+        let image_path = root.join("live-vision-fixture.png");
+        write_bytes(&image_path, &tiny_png_bytes()).unwrap();
+        let vision_input = json!({
+            "profile": text_input.get("profile").cloned().unwrap(),
+            "job": {"jobId": "job-live-provider-vision", "title": "Live Vision Smoke"},
+            "pages": [{
+                "pageIndex": 1,
+                "images": [{
+                    "assetId": "live-page-1",
+                    "path": image_path.to_string_lossy(),
+                    "mimeType": "image/png"
+                }]
+            }]
+        });
+        let vision_output = llm_gateway::run_llm_gateway(
+            &root,
+            "job-live-provider-vision",
+            "transcribe_pdf_images",
+            &vision_input,
+            Some(&api_key),
+        )
+        .unwrap();
+        assert!(vision_output
+            .get("text")
+            .map(Value::is_string)
+            .unwrap_or(false));
+        assert_eq!(
+            vision_output
+                .pointer("/evidence/source")
+                .and_then(Value::as_str),
+            Some("openai-compatible-vision-rust")
+        );
+
+        let cached = [
+            cached_llm_inputs(&root, "job-live-provider-text").join("\n"),
+            cached_llm_inputs(&root, "job-live-provider-vision").join("\n"),
+        ]
+        .join("\n");
+        assert!(!cached.contains(&api_key));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[ignore = "requires EPIC8_LIVE_LLM_BASE_URL, EPIC8_LIVE_LLM_API_KEY, and EPIC8_LIVE_LLM_MODEL; calls live provider for Files/*.pdf groups"]
+    fn live_llm_repair_contract_on_files_pdf_samples() {
+        let Some((profile, api_key)) = live_llm_profile_from_env() else {
+            eprintln!(
+                "skipping: set EPIC8_LIVE_LLM_BASE_URL, EPIC8_LIVE_LLM_API_KEY, and EPIC8_LIVE_LLM_MODEL"
+            );
+            return;
+        };
+        let sample_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("Files");
+        let mut samples = fs::read_dir(&sample_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| value.eq_ignore_ascii_case("pdf"))
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+        samples.sort();
+        assert_eq!(samples.len(), 4);
+
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut diagnostics = Vec::<Value>::new();
+        let mut checked_groups = 0usize;
+        let mut high_confidence_count = 0usize;
+        let mut auto_applicable_count = 0usize;
+        let mut low_confidence_count = 0usize;
+        let mut blocked_high_confidence = Vec::<Value>::new();
+        let mut manual_scaffold_samples = Vec::<String>::new();
+
+        for (sample_index, sample) in samples.iter().enumerate() {
+            let original_name = sample
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap()
+                .to_string();
+            let mut job = make_job(CreateJobInput {
+                title: Some(
+                    sample
+                        .file_stem()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("PDF sample")
+                        .to_string(),
+                ),
+                category: Some("P2".to_string()),
+                frequency: Some("medium".to_string()),
+                tags: Some(vec!["live-llm-files-pdf".to_string()]),
+                llm_profile_id: None,
+            });
+            let source = SourceFile {
+                file_id: format!("file-live-sample-{}", sample_index + 1),
+                original_name: original_name.clone(),
+                stored_name: original_name.clone(),
+                file_type: "pdf".to_string(),
+                sha256: "3".repeat(64),
+                size_bytes: sample.metadata().unwrap().len(),
+                role: "MainQuestion".to_string(),
+                imported_at: Utc::now(),
+            };
+            job.source_files = vec![source.clone()];
+            save_job(&root, &job).unwrap();
+            ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+
+            let parser_output = root
+                .join("cache")
+                .join("parser")
+                .join(format!("{}-live-document-ir.json", job.job_id));
+            let doc = parse_source_document(&job, &source, sample, &parser_output, "auto")
+                .unwrap_or_else(|error| panic!("{} parse failed: {}", original_name, error));
+            let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+            let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+            let groups = ir
+                .get("groups")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let selected_groups = groups
+                .iter()
+                .filter(|group| {
+                    group
+                        .get("requiresManualQuestionImport")
+                        .and_then(Value::as_bool)
+                        != Some(true)
+                })
+                .take(2)
+                .cloned()
+                .collect::<Vec<_>>();
+            if selected_groups.is_empty() {
+                manual_scaffold_samples.push(original_name);
+                continue;
+            }
+
+            for group in selected_groups {
+                checked_groups += 1;
+                let group_id = group
+                    .get("groupId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string();
+                let input = make_llm_input(
+                    &profile,
+                    &job,
+                    &group,
+                    "profile-live-provider",
+                    "extract_group",
+                );
+                let output = llm_gateway::run_llm_gateway(
+                    &root,
+                    &job.job_id,
+                    "extract_group",
+                    &input,
+                    Some(&api_key),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("{} {} live LLM failed: {}", original_name, group_id, error)
+                });
+                assert!(allowed_question_kind(
+                    output
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                ));
+                assert!(output.get("patch").map(Value::is_array).unwrap_or(false));
+                assert!(output
+                    .get("questions")
+                    .map(Value::is_array)
+                    .unwrap_or(false));
+                assert!(output.get("warnings").map(Value::is_array).unwrap_or(false));
+                assert_eq!(
+                    output.pointer("/evidence/source").and_then(Value::as_str),
+                    Some("openai-compatible-rust")
+                );
+
+                let suggestion = json!({
+                    "suggestionId": format!("live-suggestion-{}", Uuid::new_v4().simple()),
+                    "jobId": job.job_id,
+                    "groupId": group_id,
+                    "profileId": "profile-live-provider",
+                    "kind": output.get("kind").cloned().unwrap_or_else(|| json!("short_answer")),
+                    "confidence": output.get("confidence").cloned().unwrap_or_else(|| json!(0.0)),
+                    "patch": output.get("patch").cloned().unwrap_or_else(|| json!([])),
+                    "questions": output.get("questions").cloned().unwrap_or_else(|| json!([])),
+                    "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
+                    "evidence": output.get("evidence").cloned().unwrap_or_else(|| json!({})),
+                    "createdAt": Utc::now().to_rfc3339()
+                });
+                let issues = llm_suggestion_auto_apply_issues(
+                    &ir,
+                    &suggestion,
+                    &[
+                        "kind".to_string(),
+                        "layout".to_string(),
+                        "questions".to_string(),
+                    ],
+                );
+                let confidence = suggestion
+                    .get("confidence")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                if confidence >= 0.85 {
+                    high_confidence_count += 1;
+                    if issues.is_empty() {
+                        auto_applicable_count += 1;
+                    } else {
+                        blocked_high_confidence.push(json!({
+                            "sample": original_name,
+                            "groupId": suggestion.get("groupId").cloned().unwrap_or(Value::Null),
+                            "kind": suggestion.get("kind").cloned().unwrap_or(Value::Null),
+                            "confidence": confidence,
+                            "issues": issues
+                        }));
+                    }
+                } else {
+                    low_confidence_count += 1;
+                }
+                diagnostics.push(json!({
+                    "sample": original_name,
+                    "groupId": suggestion.get("groupId").cloned().unwrap_or(Value::Null),
+                    "kind": suggestion.get("kind").cloned().unwrap_or(Value::Null),
+                    "confidence": confidence,
+                    "autoApplyIssueCount": issues.len(),
+                    "issues": issues,
+                    "evidenceBlockCount": suggestion.pointer("/evidence/sourceBlockIds").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+                    "quoteCount": suggestion.pointer("/evidence/quotes").and_then(Value::as_array).map(Vec::len).unwrap_or(0)
+                }));
+            }
+        }
+
+        assert!(checked_groups >= 4);
+        assert!(
+            high_confidence_count + low_confidence_count == checked_groups,
+            "all checked groups should be counted"
+        );
+        assert!(
+            auto_applicable_count > 0
+                || !blocked_high_confidence.is_empty()
+                || low_confidence_count > 0,
+            "live provider diagnostic should classify at least one output path"
+        );
+        if !blocked_high_confidence.is_empty() {
+            eprintln!(
+                "blocked high-confidence live outputs: {}",
+                serde_json::to_string_pretty(&blocked_high_confidence).unwrap()
+            );
+        }
+        eprintln!(
+            "live Files PDF LLM diagnostics: {}",
+            serde_json::to_string_pretty(&json!({
+                "checkedGroups": checked_groups,
+                "highConfidence": high_confidence_count,
+                "autoApplicable": auto_applicable_count,
+                "lowConfidence": low_confidence_count,
+                "diagnostics": diagnostics,
+                "manualScaffoldSamples": manual_scaffold_samples
+            }))
+            .unwrap()
+        );
+
+        let cached = fs::read_dir(root.join("jobs"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| {
+                cached_llm_inputs(&root, entry.file_name().to_string_lossy().as_ref()).join("\n")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!cached.contains(&api_key));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn parser_failure_document_ir_never_uses_sample_content() {
         let job = test_job();
         let source = test_source("pdf");
@@ -1020,6 +1599,64 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or_default();
         assert!(!text.contains("Detective fiction"));
+    }
+
+    #[test]
+    fn llm_auto_apply_accepts_matching_interaction_type() {
+        let job = test_job();
+        let group = json!({
+            "groupId": "group-matching",
+            "kind": "matching_information",
+            "sourceBlockIds": ["b1"],
+            "questions": [{
+                "id": "q14",
+                "displayNumber": "14",
+                "prompt": "Which paragraph contains information about diet?",
+                "interaction": {"type": "matching", "options": ["A", "B"], "allowOptionReuse": true},
+                "sourceBlockIds": ["b1"],
+                "confidence": 0.8,
+                "verified": false
+            }]
+        });
+        let ir = json!({
+            "schemaVersion": "ReadingAuthoringIRV1",
+            "jobId": job.job_id,
+            "groups": [group],
+            "audit": {"humanVerified": false}
+        });
+        let suggestion = json!({
+            "suggestionId": "suggestion-matching",
+            "jobId": job.job_id,
+            "groupId": "group-matching",
+            "profileId": "profile-test",
+            "kind": "matching_information",
+            "confidence": 0.95,
+            "patch": [
+                {"op":"replace","path":"/kind","value":"matching_information"},
+                {"op":"replace","path":"/layout/template","value":"matching_information"}
+            ],
+            "questions": [{
+                "id": "q14",
+                "prompt": "Which paragraph contains information about diet?",
+                "interaction": {"type": "matching", "options": ["A", "B"], "allowOptionReuse": true}
+            }],
+            "warnings": [],
+            "evidence": {
+                "source": "openai-compatible-rust",
+                "sourceBlockIds": ["b1"],
+                "quotes": [{"blockId": "b1", "text": "diet"}]
+            }
+        });
+        let issues = llm_suggestion_auto_apply_issues(
+            &ir,
+            &suggestion,
+            &[
+                "kind".to_string(),
+                "layout".to_string(),
+                "questions".to_string(),
+            ],
+        );
+        assert!(issues.is_empty(), "unexpected issues: {:?}", issues);
     }
 
     #[test]
@@ -1187,6 +1824,49 @@ mod tests {
     }
 
     #[test]
+    fn source_review_resolution_survives_minimal_state_without_document_ir() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let job = test_job();
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let source = test_source("pdf");
+        let doc = parser_failure_document_ir(&job, &source, "auto", "boom");
+        write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), &doc).unwrap();
+        let unresolved =
+            write_source_review_status(&root, &job.job_id, Some(&doc), false, None).unwrap();
+        assert!(!source_review_issues(&unresolved).is_empty());
+        fs::remove_file(job_dir(&root, &job.job_id).join("document-ir.json")).unwrap();
+
+        let saved = source_review_status_for_job(&root, &job.job_id).unwrap();
+        assert_eq!(saved.get("required").and_then(Value::as_bool), Some(true));
+        assert!(saved
+            .get("parserWarnings")
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty())
+            .unwrap_or(false));
+        let resolved =
+            resolve_source_review_status(&root, &job.job_id, Some("checked minimal state".into()))
+                .unwrap();
+        assert_eq!(
+            resolved.get("required").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            resolved.get("resolved").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(source_review_issues(&resolved).is_empty());
+        assert!(resolved
+            .get("parserWarnings")
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty())
+            .unwrap_or(false));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn missing_source_document_ir_never_uses_sample_content() {
         let job = test_job();
         let ir = missing_source_document_ir(&job, "auto", "no source");
@@ -1315,6 +1995,74 @@ Answers
     }
 
     #[test]
+    fn rust_vision_gateway_sends_image_url_and_parses_transcription() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let image_path = root.join("vision-fixture.png");
+        write_bytes(&image_path, &tiny_png_bytes()).unwrap();
+        let (base_url, request_receiver, handle) = mock_openai_server(json!({
+            "text": "READING PASSAGE 1\nQuestions 1-1\n1 Mock vision text.\nAnswers\n1 TRUE",
+            "confidence": 0.87,
+            "warnings": []
+        }));
+        let input = json!({
+            "profile": {
+                "profileId": "profile-vision-mock",
+                "provider": "OpenAiCompatible",
+                "baseUrl": base_url,
+                "model": "mock-vision-model",
+                "temperature": 0,
+                "timeoutMs": 10000,
+                "forceJson": true
+            },
+            "job": {"jobId": "job-mock-vision", "title": "Vision Mock"},
+            "pages": [{
+                "pageIndex": 1,
+                "images": [{
+                    "assetId": "page-1",
+                    "path": image_path.to_string_lossy(),
+                    "mimeType": "image/png"
+                }]
+            }]
+        });
+
+        let output = llm_gateway::run_llm_gateway(
+            &root,
+            "job-mock-vision",
+            "transcribe_pdf_images",
+            &input,
+            Some("sk-vision-secret"),
+        )
+        .unwrap();
+        let request = request_receiver.recv().unwrap();
+        handle.join().unwrap();
+
+        assert!(request.starts_with("POST /v1/chat/completions "));
+        assert!(request.contains("\"type\":\"image_url\""));
+        assert!(request.contains("data:image/png;base64,"));
+        assert!(!request.contains(&image_path.to_string_lossy().to_string()));
+        assert!(request.contains("authorization: Bearer sk-vision-secret"));
+        assert_eq!(
+            output.get("text").and_then(Value::as_str),
+            Some("READING PASSAGE 1\nQuestions 1-1\n1 Mock vision text.\nAnswers\n1 TRUE")
+        );
+        assert_eq!(
+            output.pointer("/evidence/source").and_then(Value::as_str),
+            Some("openai-compatible-vision-rust")
+        );
+        assert_eq!(
+            output.pointer("/evidence/model").and_then(Value::as_str),
+            Some("mock-vision-model")
+        );
+
+        let cached_inputs = cached_llm_inputs(&root, "job-mock-vision");
+        assert!(!cached_inputs.is_empty());
+        assert!(!cached_inputs.join("\n").contains("sk-vision-secret"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn image_only_pdf_fixture_exposes_embedded_images_for_vision() {
         let job = test_job();
         let fixture = parser_fixture("image-only-reading.pdf");
@@ -1401,7 +2149,7 @@ Answers
     }
 
     #[test]
-    fn rust_sips_fallback_renders_pdf_without_python_extraction() {
+    fn pdf_render_adapter_renders_with_macos_sips_without_ocr() {
         let sips = command_probe("sips", &["--version"]);
         if !sips.get("ok").and_then(Value::as_bool).unwrap_or(false) {
             eprintln!("skipping: macOS sips renderer is unavailable");
@@ -1417,7 +2165,7 @@ Answers
             .join("rust-sips-extraction.json");
         let asset_dir = root.join("cache").join("parser").join("rust-sips-assets");
 
-        let extraction = render_pdf_page_with_sips_fallback(
+        let extraction = render_pdf_pages_with_adapter(
             &job.job_id,
             &fixture,
             &output,
@@ -1432,6 +2180,18 @@ Answers
         assert_eq!(
             extraction.get("renderedFallback").and_then(Value::as_bool),
             Some(true)
+        );
+        assert_eq!(
+            extraction.get("rendererAdapter").and_then(Value::as_str),
+            Some("macos-sips")
+        );
+        assert_eq!(
+            extraction.get("ocrPerformed").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            extraction.get("futureAdapter").and_then(Value::as_str),
+            Some("pdfium-render-page-renderer")
         );
         assert_eq!(
             extraction
@@ -1576,6 +2336,22 @@ Answers
         let issues = validator::validate_reading_source_contract(&source);
 
         assert!(issues.is_empty(), "unexpected issues: {:?}", issues);
+    }
+
+    #[test]
+    fn rust_contract_validator_accepts_specialized_matching_group_kinds() {
+        let mut source = contract_fixture_source();
+        for kind in ["matching", "heading_matching", "matching_information"] {
+            source["questionGroups"][0]["kind"] = json!(kind);
+            source["questionGroups"][0]["allowOptionReuse"] = json!(kind == "matching_information");
+            let issues = validator::validate_reading_source_contract(&source);
+            assert!(
+                issues.is_empty(),
+                "{} should be accepted: {:?}",
+                kind,
+                issues
+            );
+        }
     }
 
     #[test]
@@ -1966,6 +2742,49 @@ Answers
     }
 
     #[test]
+    fn llm_question_field_patches_are_rejected_in_favor_of_questions_array() {
+        let job = test_job();
+        let doc = sample_document_ir(&job, "auto");
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let first_group = ir
+            .pointer("/groups/0")
+            .cloned()
+            .expect("fixture should have a group");
+        let first_group_id = first_group
+            .get("groupId")
+            .and_then(Value::as_str)
+            .unwrap_or("group-1")
+            .to_string();
+        let first_block_id = first_group
+            .get("sourceBlockIds")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(Value::as_str)
+            .unwrap_or("b004")
+            .to_string();
+        let suggestion = json!({
+            "suggestionId": "suggestion-question-patch",
+            "groupId": first_group_id,
+            "kind": "short_answer",
+            "confidence": 0.99,
+            "patch": [{"op":"replace","path":"/questions/0/prompt","value":"Unsafe direct prompt patch"}],
+            "questions": [],
+            "warnings": [],
+            "evidence": {
+                "source": "openai-compatible",
+                "sourceBlockIds": [first_block_id],
+                "quotes": [{"blockId": first_block_id, "text": "Questions 1-5"}]
+            }
+        });
+
+        let issues = llm_suggestion_auto_apply_issues(&ir, &suggestion, &["questions".to_string()]);
+
+        assert!(issues.iter().any(|issue| issue
+            .starts_with("question_patch_must_use_questions_array:/questions/0/prompt")));
+    }
+
+    #[test]
     fn high_confidence_llm_with_source_block_evidence_can_auto_apply() {
         let job = test_job();
         let doc = sample_document_ir(&job, "auto");
@@ -2272,21 +3091,103 @@ Answers
         assert_eq!(saved.status, JobStatus::NeedsReview);
         assert_eq!(saved.current_step, WorkflowStep::LlmReview);
         assert!(saved.issue_counts.needs_review > 0);
-        assert!(job_dir(&root, &job.job_id)
+        assert!(!job_dir(&root, &job.job_id)
             .join("document-ir.json")
             .exists());
-        assert!(job_dir(&root, &job.job_id)
+        assert!(!job_dir(&root, &job.job_id)
             .join("split-candidates.json")
             .exists());
         assert!(job_dir(&root, &job.job_id)
             .join("authoring-ir.json")
             .exists());
         assert!(job_dir(&root, &job.job_id)
+            .join("authoring-project.json")
+            .exists());
+        assert!(!job_dir(&root, &job.job_id).join("cache").exists());
+        assert!(!job_dir(&root, &job.job_id)
             .join("pipeline-report.json")
+            .exists());
+        assert!(!job_dir(&root, &job.job_id)
+            .join("pipeline-report-summary.json")
             .exists());
         assert!(!job_dir(&root, &job.job_id)
             .join("cleanup-summary.json")
             .exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_pipeline_persists_llm_review_in_authoring_ir_after_minimization() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut job = test_job();
+        attach_fixture_source(&root, &mut job, "complex-reading.txt", "MainQuestion");
+        save_job(&root, &job).unwrap();
+
+        let report = run_auto_pipeline_core(&root, &job.job_id, None).unwrap();
+        assert_eq!(
+            report.get("currentStep").and_then(Value::as_str),
+            Some("LlmReview")
+        );
+        let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        let groups = ir.get("groups").and_then(Value::as_array).unwrap();
+        assert!(groups.iter().any(|group| group
+            .get("llmReview")
+            .and_then(Value::as_object)
+            .map(|review| review.get("required").and_then(Value::as_bool) == Some(true))
+            .unwrap_or(false)));
+        assert!(!job_dir(&root, &job.job_id).join("llm-suggestions").exists());
+        assert!(!job_dir(&root, &job.job_id)
+            .join("pipeline-report.json")
+            .exists());
+        assert!(job_dir(&root, &job.job_id)
+            .join("authoring-ir.json")
+            .exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_pipeline_retains_process_artifacts_only_when_diagnostics_enabled() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        write_diagnostics_settings(
+            &root,
+            &DiagnosticsSettings {
+                keep_full_process_artifacts: true,
+            },
+        )
+        .unwrap();
+        let mut job = test_job();
+        attach_fixture_source(&root, &mut job, "complex-reading.txt", "MainQuestion");
+        save_job(&root, &job).unwrap();
+
+        let report = run_auto_pipeline_core(&root, &job.job_id, None).unwrap();
+
+        assert_eq!(
+            report.get("status").and_then(Value::as_str),
+            Some("NeedsReview")
+        );
+        let job_path = job_dir(&root, &job.job_id);
+        assert!(job_path.join("document-ir.json").exists());
+        assert!(job_path.join("split-candidates.json").exists());
+        assert!(job_path.join("pipeline-report.json").exists());
+        assert!(job_path.join("cache").exists());
+        let parser_cache = root.join("cache").join("parser");
+        assert!(parser_cache.exists());
+        let retained_parser_outputs = fs::read_dir(&parser_cache)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with(&job.job_id))
+            .collect::<Vec<_>>();
+        assert!(
+            !retained_parser_outputs.is_empty(),
+            "diagnostics mode should retain root parser cache outputs"
+        );
+        assert!(job_path.join("authoring-ir.json").exists());
+        assert!(job_path.join("authoring-project.json").exists());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2646,14 +3547,12 @@ Answers
             WorkflowStep::LlmReview | WorkflowStep::Authoring
         ));
         assert!(saved.issue_counts.needs_review > 0);
-        let split: Value =
-            read_json(&job_dir(&root, &job.job_id).join("split-candidates.json")).unwrap();
-        assert_eq!(
-            split
-                .pointer("/questionGroupCandidates/0/requiresManualQuestionImport")
-                .and_then(Value::as_bool),
-            Some(true)
-        );
+        assert!(!job_dir(&root, &job.job_id)
+            .join("split-candidates.json")
+            .exists());
+        assert!(!job_dir(&root, &job.job_id)
+            .join("document-ir.json")
+            .exists());
         let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
         assert_eq!(
             ir.pointer("/groups/0/requiresManualQuestionImport")
@@ -2667,6 +3566,157 @@ Answers
         assert!(!job_dir(&root, &job.job_id)
             .join("cleanup-summary.json")
             .exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rust_backend_fixture_flow_exports_from_minimal_editable_state() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut job = test_job();
+        attach_fixture_source(&root, &mut job, "complex-reading.txt", "MainQuestion");
+        save_job(&root, &job).unwrap();
+
+        let report = run_auto_pipeline_core(&root, &job.job_id, None).unwrap();
+
+        assert_eq!(
+            report.get("status").and_then(Value::as_str),
+            Some("NeedsReview")
+        );
+        assert_eq!(
+            report.get("currentStep").and_then(Value::as_str),
+            Some("LlmReview")
+        );
+        let job_path = job_dir(&root, &job.job_id);
+        assert!(job_path.join("authoring-ir.json").exists());
+        assert!(job_path.join("authoring-project.json").exists());
+        assert!(job_path.join("source-review.json").exists());
+        assert!(job_path.join("uploads").exists());
+        for transient in [
+            "document-ir.json",
+            "split-candidates.json",
+            "pipeline-report.json",
+            "validation-report.json",
+            "publish-readiness-report.json",
+            "cleanup-summary.json",
+        ] {
+            assert!(
+                !job_path.join(transient).exists(),
+                "auto-pipeline should not persist {} in ordinary mode",
+                transient
+            );
+        }
+        assert!(!job_path.join("llm-suggestions").exists());
+        assert!(!job_path.join("cache").exists());
+
+        let mut ir: Value = read_json(&job_path.join("authoring-ir.json")).unwrap();
+        assert!(ir
+            .get("groups")
+            .and_then(Value::as_array)
+            .map(|groups| !groups.is_empty())
+            .unwrap_or(false));
+        assert!(ir
+            .get("groups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|group| group
+                .get("llmReview")
+                .and_then(Value::as_object)
+                .and_then(|review| review.get("required"))
+                .and_then(Value::as_bool)
+                == Some(true)));
+        verify_all_authoring_items(&mut ir);
+        assert_eq!(
+            ir.pointer("/audit/humanVerified").and_then(Value::as_bool),
+            Some(true)
+        );
+        write_json(&job_path.join("authoring-ir.json"), &ir).unwrap();
+        update_job(&root, &job.job_id, |job| {
+            job.status = JobStatus::DraftSaved;
+            job.current_step = WorkflowStep::Authoring;
+            job.issue_counts.needs_review = 0;
+        })
+        .unwrap();
+
+        let export_dir = root.join("fixture-export");
+        let export = export_reading_assets_core(
+            &root,
+            &job.job_id,
+            export_dir.to_string_lossy().as_ref(),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(
+            export.pointer("/cleanup/cleaned").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            load_job(&root, &job.job_id).unwrap().status,
+            JobStatus::Cleaned
+        );
+        let exam_id = export.get("examId").and_then(Value::as_str).unwrap();
+        assert!(export_dir.join(format!("{}.json", exam_id)).exists());
+        assert!(export_dir.join(format!("{}.js", exam_id)).exists());
+        assert!(export_dir.join("manifest.js").exists());
+        assert!(export_dir.join("validation-report.json").exists());
+
+        let final_project: Value = read_json(&job_path.join("authoring-project.json")).unwrap();
+        assert_eq!(
+            final_project
+                .pointer("/exportSummary/type")
+                .and_then(Value::as_str),
+            Some("reading-assets")
+        );
+        assert!(job_path.join("authoring-ir.json").exists());
+        assert!(job_path.join("authoring-project.json").exists());
+        assert!(job_path.join("source-review.json").exists());
+        assert!(job_path.join("uploads").exists());
+        assert!(job_path
+            .join("uploads")
+            .read_dir()
+            .unwrap()
+            .next()
+            .is_some());
+        let parser_cache = root.join("cache").join("parser");
+        if parser_cache.exists() {
+            let retained_job_parser_outputs = fs::read_dir(&parser_cache)
+                .unwrap()
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().to_string())
+                .filter(|name| name.starts_with(&job.job_id))
+                .collect::<Vec<_>>();
+            assert!(
+                retained_job_parser_outputs.is_empty(),
+                "export should remove job-scoped parser cache outputs: {:?}",
+                retained_job_parser_outputs
+            );
+        }
+        for transient in [
+            "document-ir.json",
+            "split-candidates.json",
+            "pipeline-report.json",
+            "validation-report.json",
+            "publish-readiness-report.json",
+            "cleanup-summary.json",
+            "llm-last-suggestion.json",
+            "llm-calls.jsonl",
+        ] {
+            assert!(
+                !job_path.join(transient).exists(),
+                "export should leave only minimal editable state, found {}",
+                transient
+            );
+        }
+        for transient_dir in ["cache", "preview", "llm-suggestions"] {
+            assert!(
+                !job_path.join(transient_dir).exists(),
+                "export should remove transient dir {}",
+                transient_dir
+            );
+        }
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2756,6 +3806,308 @@ Answers
         assert!(!is_dynamic_umbrella_question_range(
             "Questions 20-23 Choose the correct letter, A, B, C or D."
         ));
+    }
+
+    #[test]
+    fn layout_aware_split_reorders_two_column_blocks_and_preserves_continuations() {
+        let job = make_job(CreateJobInput {
+            title: Some("Two Column Reading Order".to_string()),
+            category: Some("P2".to_string()),
+            frequency: Some("hard".to_string()),
+            tags: Some(vec!["layout-aware".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"right-heading","blockType":"paragraph","text":"Questions 6-8 Classify the following statements according to the groups A-D.","html":"<p>Questions 6-8 Classify the following statements according to the groups A-D.</p>","bbox":[330,120,560,150],"confidence":0.94,"roleHint":"question"},
+                    {"blockId":"left-heading","blockType":"paragraph","text":"Questions 1-5 Choose TWO letters, A-E. Which TWO features are mentioned?","html":"<p>Questions 1-5 Choose TWO letters, A-E.</p>","bbox":[60,120,290,150],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"right-options","blockType":"table","text":"A marine animals B insects C birds D plants You may use any letter more than once.","html":"<table><tr><td>A marine animals</td></tr></table>","bbox":[330,160,560,250],"confidence":0.92,"roleHint":"question"},
+                    {"blockId":"left-options","blockType":"paragraph","text":"A faster growth B lower cost C stronger roots D brighter leaves E longer stems 1 ___ 2 ___ 3 ___ 4 ___ 5 ___","html":"<p>A faster growth B lower cost C stronger roots D brighter leaves E longer stems</p>","bbox":[60,160,290,250],"confidence":0.93,"roleHint":"question"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 1 A 2 C 3 D 4 E 5 B 6 A 7 C 8 D","html":"<p>Answers 1 A 2 C 3 D 4 E 5 B 6 A 7 C 8 D</p>","bbox":[60,700,560,760],"confidence":0.91,"roleHint":"answer"}
+                ]
+            }, {
+                "pageIndex": 2,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"right-more","blockType":"paragraph","text":"6 ___ 7 ___ 8 ___","html":"<p>6 ___ 7 ___ 8 ___</p>","bbox":[330,80,560,120],"confidence":0.92,"roleHint":"question"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let blocks = dynamic_document_blocks(Some(&doc));
+        assert_eq!(
+            blocks
+                .iter()
+                .take(4)
+                .map(|block| block.get("blockId").and_then(Value::as_str).unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "left-heading",
+                "left-options",
+                "right-heading",
+                "right-options"
+            ]
+        );
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let groups = split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            groups[0].get("kindHint").and_then(Value::as_str),
+            Some("multi_choice")
+        );
+        assert_eq!(
+            groups[0]
+                .pointer("/classification/interaction/type")
+                .and_then(Value::as_str),
+            Some("checkbox")
+        );
+        assert_eq!(
+            groups[0]
+                .pointer("/classification/interaction/maxSelections")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            groups[0]
+                .get("blockIds")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec!["left-heading", "left-options"]
+        );
+        assert_eq!(
+            groups[1].get("kindHint").and_then(Value::as_str),
+            Some("classification")
+        );
+        assert_eq!(
+            groups[1]
+                .pointer("/classification/interaction/allowOptionReuse")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            groups[1]
+                .get("blockIds")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec!["right-heading", "right-options", "right-more"]
+        );
+        assert!(groups[1]
+            .get("sectionEvidence")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item.get("blockId").and_then(Value::as_str) == Some("right-more")
+                    && item.get("pageIndex").and_then(Value::as_u64) == Some(2)
+            }));
+        assert_eq!(
+            groups[1]
+                .pointer("/sectionEvidence/0/pageIndex")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(groups[1]
+            .get("continuationEdges")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|edge| edge.get("reason").and_then(Value::as_str)
+                == Some("cross-page-continuation")));
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/interaction/maxSelections")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert!(ir
+            .pointer("/groups/0/reviewWarnings")
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty())
+            .unwrap_or(false));
+        assert_eq!(
+            ir.pointer("/groups/1/allowOptionReuse")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/classificationEvidence/0")
+                .and_then(Value::as_str),
+            Some("right-heading")
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/sourceBlockIds")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec!["right-heading", "right-options", "right-more"]
+        );
+        assert!(ir
+            .pointer("/groups/1/questions/0/sourceBlockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|item| item.as_str() == Some("right-more")));
+        assert!(ir
+            .pointer("/groups/1/sectionEvidence")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|item| {
+                item.get("blockId").and_then(Value::as_str) == Some("right-more")
+                    && item.get("pageIndex").and_then(Value::as_u64) == Some(2)
+            }));
+        assert!(ir
+            .pointer("/groups/1/continuationEdges")
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty())
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn rotated_page_bbox_is_normalized_before_split_ordering() {
+        let job = make_job(CreateJobInput {
+            title: Some("Rotated PDF Reading Order".to_string()),
+            category: Some("P2".to_string()),
+            frequency: Some("hard".to_string()),
+            tags: Some(vec!["rotation".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 600,
+                "height": 800,
+                "rotation": 90,
+                "blocks": [
+                    {"blockId":"later-question","blockType":"paragraph","text":"Questions 3-4 Complete the sentences below. Choose ONE WORD ONLY from the passage.","html":"<p>Questions 3-4 Complete the sentences below.</p>","bbox":[470,120,520,360],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"earlier-question","blockType":"paragraph","text":"Questions 1-2 Choose the correct letter, A, B or C.","html":"<p>Questions 1-2 Choose the correct letter.</p>","bbox":[520,120,570,360],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 1 A 2 B 3 archive 4 maps","html":"<p>Answers 1 A 2 B 3 archive 4 maps</p>","bbox":[40,120,90,500],"confidence":0.90,"roleHint":"answer"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let blocks = dynamic_document_blocks(Some(&doc));
+        assert_eq!(
+            blocks
+                .iter()
+                .take(2)
+                .map(|block| block.get("blockId").and_then(Value::as_str).unwrap())
+                .collect::<Vec<_>>(),
+            vec!["earlier-question", "later-question"]
+        );
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/blockIds/0")
+                .and_then(Value::as_str),
+            Some("earlier-question")
+        );
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/sectionEvidence/0/pageRotation")
+                .and_then(Value::as_i64),
+            Some(90)
+        );
+        assert!(split
+            .pointer("/questionGroupCandidates/0/sectionEvidence/0/normalizedBbox")
+            .and_then(Value::as_array)
+            .map(|bbox| bbox.len() == 4)
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn enhanced_classifier_distinguishes_matching_table_and_completion_types() {
+        let job = make_job(CreateJobInput {
+            title: Some("Enhanced Classifier Fixture".to_string()),
+            category: Some("P3".to_string()),
+            frequency: Some("hard".to_string()),
+            tags: Some(vec!["classifier".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"q27-30","blockType":"paragraph","text":"Questions 27-30 The reading passage has four sections, A-D. Choose the correct heading for each section from the list of headings below. Each heading may be used once only.","html":"<p>Questions 27-30 Choose the correct heading.</p>","bbox":[72,90,520,140],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"headings","blockType":"paragraph","text":"List of Headings i Early experiments ii Commercial growth iii Public criticism iv A later decline","html":"<p>List of Headings</p>","bbox":[72,145,520,220],"confidence":0.94,"roleHint":"question"},
+                    {"blockId":"q31-34","blockType":"table","text":"Questions 31-34 Complete the table below. Choose ONE WORD ONLY from the passage for each answer. Year | Event | 31 ___","html":"<table><tr><td>Year</td><td>Event</td></tr></table>","bbox":[72,240,520,330],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"q35-38","blockType":"paragraph","text":"Questions 35-38 Complete the summary below. Choose NO MORE THAN TWO WORDS from the passage for each answer. Researchers first noticed 35 ___ before recording 36 ___.","html":"<p>Questions 35-38 Complete the summary below.</p>","bbox":[72,350,520,430],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 27 i 28 ii 29 iii 30 iv 31 trial 32 growth 33 decline 34 criticism 35 movement 36 signals 37 roots 38 leaves","html":"<p>Answers</p>","bbox":[72,700,520,760],"confidence":0.90,"roleHint":"answer"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let kinds = split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .map(|group| group.get("kindHint").and_then(Value::as_str).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec!["heading_matching", "table_completion", "summary_completion"]
+        );
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/classification/interaction/allowOptionReuse")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/0/allowOptionReuse")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/classificationEvidence/0")
+                .and_then(Value::as_str),
+            Some("q27-30")
+        );
+        let issues = authoring_review_issues(&ir);
+        assert!(issues.iter().any(|issue| {
+            issue
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("Question-group classification warning")
+        }));
     }
 
     #[test]
@@ -3306,9 +4658,12 @@ Answers
         let job_path = job_dir(&root, &job.job_id);
         assert!(job_path.join("authoring-ir.json").exists());
         assert!(job_path.join("authoring-project.json").exists());
-        assert!(job_path.join("cleanup-summary.json").exists());
+        assert!(job_path.join("uploads").join("publishable.pdf").exists());
+        assert!(!job_path.join("cleanup-summary.json").exists());
         assert!(!job_path.join("document-ir.json").exists());
         assert!(!job_path.join("split-candidates.json").exists());
+        assert!(!job_path.join("validation-report.json").exists());
+        assert!(!job_path.join("publish-readiness-report.json").exists());
         assert!(!job_path.join("preview").exists());
 
         let _ = fs::remove_dir_all(root);
@@ -3337,10 +4692,10 @@ Answers
         assert!(!out_dir.exists());
         let job_path = job_dir(&root, &job.job_id);
         assert!(!job_path.join("cleanup-summary.json").exists());
-        assert!(!job_path.join("authoring-project.json").exists());
-        assert!(job_path.join("document-ir.json").exists());
-        assert!(job_path.join("split-candidates.json").exists());
-        assert!(job_path.join("publish-readiness-report.json").exists());
+        assert!(job_path.join("authoring-project.json").exists());
+        assert!(!job_path.join("document-ir.json").exists());
+        assert!(!job_path.join("split-candidates.json").exists());
+        assert!(!job_path.join("publish-readiness-report.json").exists());
         assert_eq!(
             load_job(&root, &job.job_id).unwrap().status,
             JobStatus::Working
@@ -3437,10 +4792,10 @@ Answers
             .exists());
         let job_path = job_dir(&root, &job.job_id);
         assert!(!job_path.join("cleanup-summary.json").exists());
-        assert!(!job_path.join("authoring-project.json").exists());
-        assert!(job_path.join("document-ir.json").exists());
-        assert!(job_path.join("split-candidates.json").exists());
-        assert!(job_path.join("publish-readiness-report.json").exists());
+        assert!(job_path.join("authoring-project.json").exists());
+        assert!(!job_path.join("document-ir.json").exists());
+        assert!(!job_path.join("split-candidates.json").exists());
+        assert!(!job_path.join("publish-readiness-report.json").exists());
         assert_eq!(
             load_job(&root, &job.job_id).unwrap().status,
             JobStatus::Working
@@ -3474,6 +4829,7 @@ Answers
         .unwrap();
 
         assert_eq!(summary.get("cleaned").and_then(Value::as_bool), Some(false));
+        assert!(job_path.join("cleanup-summary.json").exists());
         assert!(job_path.join("document-ir.json").exists());
         assert!(job_path.join("split-candidates.json").exists());
         assert!(job_path.join("validation-report.json").exists());
@@ -3575,6 +4931,460 @@ Answers
     #[test]
     fn complex_docx_fixture_reaches_authoring_ir() {
         assert_complex_fixture_pipeline("complex-reading.docx", "rust-parser:docx:ooxml");
+    }
+
+    #[test]
+    fn docx_ooxml_parser_preserves_table_ir_for_split_evidence() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let output = env::temp_dir().join(format!(
+            "epic8-docx-table-ir-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &parser_fixture("complex-reading.docx"),
+            &output,
+            "auto",
+        )
+        .unwrap();
+
+        let table_block = doc
+            .pointer("/pages/0/blocks")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .find(|block| block.get("blockType").and_then(Value::as_str) == Some("table"))
+            .expect("complex DOCX fixture should contain a table block");
+        assert!(table_block
+            .pointer("/table/cells")
+            .and_then(Value::as_array)
+            .map(|cells| !cells.is_empty())
+            .unwrap_or(false));
+        assert!(
+            table_block
+                .pointer("/table/rows")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                >= 2
+        );
+        assert!(
+            table_block
+                .pointer("/table/cols")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                >= 2
+        );
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert!(split
+            .pointer("/questionGroupCandidates")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .flat_map(|group| {
+                group
+                    .get("sectionEvidence")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .any(|evidence| evidence
+                .get("tableRows")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                >= 2));
+
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn docx_ooxml_parser_preserves_table_cell_span_metadata() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let docx_path = env::temp_dir().join(format!(
+            "epic8-docx-table-span-{}.docx",
+            Uuid::new_v4().simple()
+        ));
+        let output = env::temp_dir().join(format!(
+            "epic8-docx-table-span-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        write_minimal_docx(
+            &docx_path,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>READING PASSAGE 1</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Questions 1-2 Complete the table below.</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>Feature group</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Answer</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:tcPr><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t>Growth</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>1 ____</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>rapid</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p><w:r><w:t></w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>2 ____</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>slow</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:p><w:r><w:t>Answers 1 rapid 2 slow</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#,
+        );
+
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &docx_path,
+            &output,
+            "auto",
+        )
+        .unwrap();
+
+        let table_block = doc
+            .pointer("/pages/0/blocks")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .find(|block| block.get("blockType").and_then(Value::as_str) == Some("table"))
+            .expect("generated DOCX should contain a table block");
+        assert_eq!(
+            table_block.pointer("/table/cols").and_then(Value::as_u64),
+            Some(3)
+        );
+        let cells = table_block
+            .pointer("/table/cells")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(
+            cells.iter().any(|cell| {
+                cell.get("text").and_then(Value::as_str) == Some("Feature group")
+                    && cell.get("colSpan").and_then(Value::as_u64) == Some(2)
+            }),
+            "table cells should preserve gridSpan metadata: {}",
+            serde_json::to_string_pretty(cells).unwrap()
+        );
+        assert!(cells.iter().any(|cell| {
+            cell.get("text").and_then(Value::as_str) == Some("Growth")
+                && cell.get("verticalMerge").and_then(Value::as_str) == Some("restart")
+        }));
+        assert!(cells
+            .iter()
+            .any(|cell| { cell.get("verticalMerge").and_then(Value::as_str) == Some("continue") }));
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert!(split
+            .pointer("/questionGroupCandidates")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .flat_map(|group| {
+                group
+                    .get("sectionEvidence")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .any(|evidence| {
+                evidence.get("tableCols").and_then(Value::as_u64) == Some(3)
+                    && evidence.get("tableRows").and_then(Value::as_u64) == Some(3)
+                    && evidence.get("tableHasColSpans").and_then(Value::as_bool) == Some(true)
+                    && evidence
+                        .get("tableHasVerticalMerges")
+                        .and_then(Value::as_bool)
+                        == Some(true)
+                    && evidence.get("tableMergedCellCount").and_then(Value::as_u64) == Some(3)
+            }));
+
+        let _ = fs::remove_file(docx_path);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn docx_ooxml_parser_preserves_paragraph_style_and_numbering_metadata() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let docx_path = env::temp_dir().join(format!(
+            "epic8-docx-style-numbering-{}.docx",
+            Uuid::new_v4().simple()
+        ));
+        let output = env::temp_dir().join(format!(
+            "epic8-docx-style-numbering-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        write_minimal_docx(
+            &docx_path,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>READING PASSAGE 1</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Styled passage text for the parser.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Questions 1-2 Choose TWO letters, A-C.</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="7"/></w:numPr></w:pPr><w:r><w:t>A faster growth</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="7"/></w:numPr></w:pPr><w:r><w:t>B lower cost</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Answers 1 A 2 B</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#,
+        );
+
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &docx_path,
+            &output,
+            "auto",
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/blockType")
+                .and_then(Value::as_str),
+            Some("header")
+        );
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/layoutHints/headingLevel")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        let list_block = doc
+            .pointer("/pages/0/blocks")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .find(|block| block.get("blockType").and_then(Value::as_str) == Some("list"))
+            .expect("styled DOCX should preserve numbered list blocks");
+        assert_eq!(
+            list_block
+                .pointer("/layoutHints/numbering/id")
+                .and_then(Value::as_str),
+            Some("7")
+        );
+        assert_eq!(
+            list_block
+                .pointer("/layoutHints/numbering/level")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let evidence = split
+            .pointer("/questionGroupCandidates/0/sectionEvidence")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(evidence
+            .iter()
+            .any(|item| item.get("numberingId").and_then(Value::as_str) == Some("7")));
+
+        let _ = fs::remove_file(docx_path);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn docx_ooxml_parser_resolves_styles_and_numbering_definitions() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let docx_path = env::temp_dir().join(format!(
+            "epic8-docx-resolved-style-numbering-{}.docx",
+            Uuid::new_v4().simple()
+        ));
+        let output = env::temp_dir().join(format!(
+            "epic8-docx-resolved-style-numbering-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="IELTSHeading"/></w:pPr><w:r><w:t>READING PASSAGE 2</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Questions 14-16 Match each statement with the correct paragraph.</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="42"/></w:numPr></w:pPr><w:r><w:t>A early research</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="42"/></w:numPr></w:pPr><w:r><w:t>B later criticism</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+        write_minimal_docx(&docx_path, document_xml);
+        {
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&docx_path)
+                .unwrap();
+            let mut zip = zip::ZipWriter::new_append(file).unwrap();
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("word/styles.xml", options).unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="BaseHeading"><w:name w:val="Heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>
+  <w:style w:type="paragraph" w:styleId="IELTSHeading"><w:name w:val="IELTS Passage Heading"/><w:basedOn w:val="BaseHeading"/></w:style>
+</w:styles>"#,
+            )
+            .unwrap();
+            zip.start_file("word/numbering.xml", options).unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="9">
+    <w:lvl w:ilvl="1"><w:numFmt w:val="upperLetter"/><w:lvlText w:val="%2."/></w:lvl>
+  </w:abstractNum>
+  <w:num w:numId="42"><w:abstractNumId w:val="9"/></w:num>
+</w:numbering>"#,
+            )
+            .unwrap();
+            zip.finish().unwrap();
+        }
+
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &docx_path,
+            &output,
+            "auto",
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/blockType")
+                .and_then(Value::as_str),
+            Some("header")
+        );
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/layoutHints/styleId")
+                .and_then(Value::as_str),
+            Some("IELTSHeading")
+        );
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/layoutHints/styleName")
+                .and_then(Value::as_str),
+            Some("IELTS Passage Heading")
+        );
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/layoutHints/basedOnStyleId")
+                .and_then(Value::as_str),
+            Some("BaseHeading")
+        );
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/layoutHints/headingLevel")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        let list_block = doc
+            .pointer("/pages/0/blocks")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .find(|block| block.get("blockType").and_then(Value::as_str) == Some("list"))
+            .expect("numbering definitions should produce list block metadata");
+        assert_eq!(
+            list_block
+                .pointer("/layoutHints/numbering/id")
+                .and_then(Value::as_str),
+            Some("42")
+        );
+        assert_eq!(
+            list_block
+                .pointer("/layoutHints/numbering/abstractId")
+                .and_then(Value::as_str),
+            Some("9")
+        );
+        assert_eq!(
+            list_block
+                .pointer("/layoutHints/numbering/format")
+                .and_then(Value::as_str),
+            Some("upperLetter")
+        );
+        assert_eq!(
+            list_block
+                .pointer("/layoutHints/numbering/text")
+                .and_then(Value::as_str),
+            Some("%2.")
+        );
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let evidence = split
+            .pointer("/questionGroupCandidates/0/sectionEvidence")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(evidence
+            .iter()
+            .any(|item| item.get("numberingId").and_then(Value::as_str) == Some("42")));
+
+        let _ = fs::remove_file(docx_path);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn docx_ooxml_parser_preserves_section_column_metadata() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let docx_path = env::temp_dir().join(format!(
+            "epic8-docx-section-columns-{}.docx",
+            Uuid::new_v4().simple()
+        ));
+        let output = env::temp_dir().join(format!(
+            "epic8-docx-section-columns-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let document_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:sectPr><w:cols w:num="2" w:space="720" w:equalWidth="1"/></w:sectPr></w:pPr><w:r><w:t>READING PASSAGE 3</w:t></w:r></w:p>
+    <w:p><w:r><w:t>The first paragraph is laid out in two newspaper-style columns.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Questions 27-28 Choose TWO letters, A-C.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>A Column-aware extraction</w:t></w:r></w:p>
+    <w:p><w:r><w:t>B Ignored page structure</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Answers 27 A 28 C</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+        write_minimal_docx(&docx_path, document_xml);
+
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &docx_path,
+            &output,
+            "auto",
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/layoutHints/section/columns/count")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/layoutHints/section/columns/spaceTwips")
+                .and_then(Value::as_u64),
+            Some(720)
+        );
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/0/layoutHints/section/columns/equalWidth")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            doc.pointer("/pages/0/blocks/1/layoutHints/section/columns/count")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let evidence = split
+            .pointer("/questionGroupCandidates/0/sectionEvidence")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(evidence
+            .iter()
+            .any(|item| { item.get("sectionColumnCount").and_then(Value::as_u64) == Some(2) }));
+
+        let _ = fs::remove_file(docx_path);
+        let _ = fs::remove_file(output);
     }
 
     #[test]
@@ -3863,6 +5673,196 @@ Answers
         assert!(
             full_text_layer_samples >= 1,
             "at least one sample should exercise the fully text-layer readable path"
+        );
+    }
+
+    #[test]
+    fn files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate() {
+        let sample_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("Files");
+        let mut samples = fs::read_dir(&sample_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| value.eq_ignore_ascii_case("pdf"))
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+        samples.sort();
+        assert_eq!(samples.len(), 4);
+
+        let mut source_review_routed = 0usize;
+        let mut authoring_or_llm_routed = 0usize;
+        for sample in samples {
+            let root = temp_test_root();
+            ensure_app_dirs(&root).unwrap();
+            let mut job = make_job(CreateJobInput {
+                title: Some(
+                    sample
+                        .file_stem()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("PDF sample")
+                        .to_string(),
+                ),
+                category: Some("P2".to_string()),
+                frequency: Some("medium".to_string()),
+                tags: Some(vec!["files-pdf-pipeline-sample".to_string()]),
+                llm_profile_id: None,
+            });
+            let original_name = sample
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap()
+                .to_string();
+            let (hash, size, bytes) = hash_file_or_path(&sample).unwrap();
+            let stored_name = format!("{}-{}", &hash[..8], sanitize_filename(&original_name));
+            ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+            write_bytes(
+                &job_dir(&root, &job.job_id)
+                    .join("uploads")
+                    .join(&stored_name),
+                &bytes.unwrap(),
+            )
+            .unwrap();
+            job.source_files.push(SourceFile {
+                file_id: format!("file-{}", Uuid::new_v4().simple()),
+                original_name: original_name.clone(),
+                stored_name,
+                file_type: "pdf".to_string(),
+                sha256: hash,
+                size_bytes: size,
+                role: "MainQuestion".to_string(),
+                imported_at: Utc::now(),
+            });
+            save_job(&root, &job).unwrap();
+
+            let report = run_auto_pipeline_core_with_gateway(
+                &root,
+                &job.job_id,
+                None,
+                |_root, _job_id, _mode, _input, _api_key| {
+                    Err("mock gateway should not be called without an enabled profile".to_string())
+                },
+            )
+            .unwrap_or_else(|error| panic!("{} auto pipeline failed: {}", original_name, error));
+            let job_path = job_dir(&root, &job.job_id);
+            assert!(
+                job_path.join("authoring-ir.json").exists(),
+                "{} should keep the editable AuthoringIR",
+                original_name
+            );
+            assert!(
+                job_path.join("authoring-project.json").exists(),
+                "{} should keep the editable project manifest",
+                original_name
+            );
+            assert!(
+                job_path.join("source-review.json").exists(),
+                "{} should persist source review independently of DocumentIR",
+                original_name
+            );
+            for relative in [
+                "document-ir.json",
+                "split-candidates.json",
+                "pipeline-report.json",
+                "pipeline-report-summary.json",
+                "llm-last-suggestion.json",
+                "llm-calls.jsonl",
+                "vision-transcription-output.json",
+                "vision-transcription.txt",
+            ] {
+                assert!(
+                    !job_path.join(relative).exists(),
+                    "{} should not persist transient {} after AuthoringIR",
+                    original_name,
+                    relative
+                );
+            }
+            assert!(!job_path.join("cache").exists());
+            assert!(!job_path.join("preview").exists());
+            assert!(!job_path.join("llm-suggestions").exists());
+            let parser_cache = root.join("cache").join("parser");
+            if parser_cache.exists() {
+                let leaked = fs::read_dir(&parser_cache)
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name().to_string_lossy().to_string())
+                    .filter(|name| name.starts_with(&job.job_id))
+                    .collect::<Vec<_>>();
+                assert!(
+                    leaked.is_empty(),
+                    "{} should remove root parser cache entries, leaked {:?}",
+                    original_name,
+                    leaked
+                );
+            }
+
+            let source_review = source_review_status(&root, &job.job_id, None).unwrap();
+            let saved = load_job(&root, &job.job_id).unwrap();
+            let review_required =
+                source_review.get("required").and_then(Value::as_bool) == Some(true);
+            let review_issues = source_review_issues(&source_review);
+            if review_required {
+                source_review_routed += 1;
+                assert!(!review_issues.is_empty());
+                assert_eq!(saved.status, JobStatus::NeedsReview);
+                assert_eq!(saved.current_step, WorkflowStep::DocumentReview);
+                assert_eq!(
+                    report.get("currentStep").and_then(Value::as_str),
+                    Some("DocumentReview")
+                );
+                assert_eq!(
+                    report
+                        .pointer("/parser/visionTranscription/attempted")
+                        .and_then(Value::as_bool),
+                    Some(true),
+                    "{} should attempt vision transcription for mixed image/text PDFs",
+                    original_name
+                );
+                assert_eq!(
+                    report
+                        .pointer("/parser/visionTranscription/applied")
+                        .and_then(Value::as_bool),
+                    Some(false),
+                    "{} should not apply failed/unavailable vision transcription",
+                    original_name
+                );
+                assert!(
+                    report
+                        .pointer("/parser/visionTranscription/failure")
+                        .is_some_and(|failure| !failure.is_null()),
+                    "{} should report the unavailable vision gateway while preserving SourceReview",
+                    original_name
+                );
+            } else {
+                authoring_or_llm_routed += 1;
+                assert_eq!(saved.status, JobStatus::NeedsReview);
+                assert_eq!(saved.current_step, WorkflowStep::LlmReview);
+                assert_eq!(
+                    report.get("currentStep").and_then(Value::as_str),
+                    Some("LlmReview")
+                );
+                assert!(report
+                    .pointer("/llm/failures")
+                    .and_then(Value::as_array)
+                    .map(|failures| !failures.is_empty())
+                    .unwrap_or(false));
+            }
+
+            let _ = fs::remove_dir_all(root);
+        }
+
+        assert!(
+            source_review_routed >= 3,
+            "mixed image/text samples should route to SourceReview"
+        );
+        assert!(
+            authoring_or_llm_routed >= 1,
+            "at least one fully text-layer sample should proceed beyond SourceReview"
         );
     }
 }

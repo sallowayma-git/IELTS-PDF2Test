@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "check": "tsc --noEmit",
-    "e2e:ui-flow": "node sidecars/ui-flow-e2e/ui-flow-e2e.mjs"
+    "e2e:ui-flow": "node sidecars/ui-flow-e2e/ui-flow-e2e.mjs",
+    "audit:package": "node scripts/package-audit.mjs",
+    "verify:release": "npm run tauri build && npm run audit:package"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",

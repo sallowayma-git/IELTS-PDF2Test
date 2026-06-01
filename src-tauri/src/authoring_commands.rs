@@ -6,6 +6,7 @@ use crate::{
     auto_pipeline::{
         parse_answer_source_candidates, select_llm_profile, vision_transcription_for_job,
     },
+    cleanup::minimize_process_artifacts_after_authoring,
     job_store::{load_job, update_job},
     main_source_file,
     parser::{manual_transcription_document_ir, missing_source_document_ir, parse_source_document},
@@ -13,7 +14,10 @@ use crate::{
         answer_key_from_authoring, display_map_from_authoring, question_order_from_authoring,
         render_group_body_html,
     },
-    source_review::{source_review_issues, source_review_status, write_source_review_status},
+    source_review::{
+        resolve_source_review_status, source_review_issues, source_review_status,
+        source_review_status_for_job, write_source_review_status,
+    },
     util::{ensure_job_dirs, job_dir, read_json, read_json_opt, write_json, write_text},
     CommandResult, IssueCounts, JobStatus, ManualTranscriptionInput, ParseOptions,
     VisionTranscriptionInput, WorkflowStep,
@@ -143,9 +147,8 @@ pub(crate) fn resolve_source_review_core(
     job_id: &str,
     note: Option<String>,
 ) -> CommandResult<Value> {
+    let review = resolve_source_review_status(root, job_id, note)?;
     let dir = job_dir(root, job_id);
-    let document_ir = read_json_opt(&dir.join("document-ir.json"))?;
-    let review = write_source_review_status(root, job_id, document_ir.as_ref(), true, note)?;
     let authoring = read_json_opt(&dir.join("authoring-ir.json"))?;
     let authoring_review_count = authoring
         .as_ref()
@@ -205,12 +208,12 @@ pub(crate) fn build_authoring_ir_core(root: &Path, job_id: &str) -> CommandResul
             value
         }
     };
-    write_json(&dir.join("split-candidates.json"), &split)?;
     let mut ir = make_dynamic_authoring_ir(&job, &split, doc.as_ref());
     let needs_review = refresh_authoring_review_state(&mut ir);
     let source_review = source_review_status(root, job_id, doc.as_ref())?;
     let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     write_json(&job_dir(root, job_id).join("authoring-ir.json"), &ir)?;
+    let _ = minimize_process_artifacts_after_authoring(root, job_id, "build_authoring_ir")?;
     update_job(root, job_id, |job| {
         job.status = if needs_review > 0 || source_review_issue_count > 0 {
             JobStatus::NeedsReview
@@ -234,8 +237,7 @@ pub(crate) fn update_authoring_ir_core(
 ) -> CommandResult<Value> {
     let mut ir = patch.get("ir").cloned().unwrap_or(patch);
     let needs_review = refresh_authoring_review_state(&mut ir);
-    let document_ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
-    let source_review = source_review_status(root, job_id, document_ir.as_ref())?;
+    let source_review = source_review_status_for_job(root, job_id)?;
     let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     if let Some(obj) = ir.as_object_mut() {
         obj.insert(

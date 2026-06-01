@@ -1427,3 +1427,97 @@ stateDiagram-v2
 - macOS MVP 可使用系统 `sips` 渲染页面图作为视觉 LLM 输入。未来 Windows/Linux 需要时再评估 PDFium page-render adapter；该 adapter 只负责渲染页面，不做本地 OCR。
 - 生产发布门禁为 Rust 静态合同 gate + SourceReview/AuthoringReview。真实 unified runtime E2E 是显式诊断/CI 命令，不作为普通导出/Pack 的硬依赖。
 - 如果未来必须在本地生产环境跑真实 runtime E2E，应优先使用 Tauri WebView/内嵌 JS 可控方案，而不是要求用户安装 Node。
+
+### 2026-06-01 10:37:59 CST 最新需求覆盖说明：复杂 PDF/DOCX 切分与题型分类增强
+
+本节覆盖复杂版式 PDF/DOCX 的下一阶段优先需求。当前核心自动化闭环已经形成，下一最高优先级不是继续增加人工核验负担，而是提升复杂文档的自动切分、阅读顺序恢复和题型分类准确度。
+
+#### 产品原则
+
+- `SourceReview` 的“一键确认”是正确产品方向。它表示作者对源文档解析风险已做整体确认，不应强制用户逐条勾选 parser warning、低置信 block 或视觉转录项。
+- 高置信 LLM 建议进入草稿后，不再要求逐题强制核验。人工操作原则是：作者在 LLM Review 中点击 Apply 或在草稿中做必要修订，然后进行整体确认。
+- 高置信自动应用仍然只是进入可编辑草稿，不等于绕过发布门禁。导出/Pack 仍必须通过 Rust 静态合同 gate、SourceReview、AuthoringReview 和整体人工确认。
+- 低置信、题型不确定、选项复用规则不确定、题干缺失或切分顺序不确定的部分进入人工修订，但人工介入应聚焦于修正草稿，不做机械 checklist。
+
+#### 复杂版式输入范围
+
+复杂 PDF/DOCX 增强需要预先覆盖以下情况：
+
+- 双栏 passage、双栏题目区、左右栏混排。
+- 横向页面、旋转页面、页面方向不一致。
+- passage、题组、选项或答案跨页延续。
+- PDF 文本抽取顺序与视觉阅读顺序不一致。
+- 题干、选项、表格和答案分散在多个 block 中。
+- 表格题、匹配题、heading matching、classification、summary/table/sentence completion 等题型中的结构信息不连续。
+- Word/DOCX 中通过表格、分栏、缩进、编号列表实现的视觉结构。
+
+#### 切分算法方向
+
+下一阶段不应只依赖 `Questions x-y` 正则作为题组边界。推荐实现一个 layout-aware split pipeline：
+
+1. **Block normalization**
+   - 保留 page index、bbox、block type、role hint、confidence、font/line 信息（可得时）。
+   - 对旋转页和横向页做坐标标准化，记录 orientation。
+   - 对 DOCX 的段落、表格、列表项转成统一 block 序列。
+
+2. **Reading order reconstruction**
+   - 基于 bbox 聚类检测列布局，先按页分组，再按列内从上到下、列间从左到右恢复阅读顺序。
+   - 双栏页面不能简单按 PDF extractor 输出顺序处理。
+   - 对跨页 continuation 识别页尾/页首相邻题组或 passage。
+
+3. **Semantic section graph**
+   - 将 block 组织为 passage nodes、question-heading nodes、question-prompt nodes、option nodes、table nodes、answer nodes。
+   - 边的依据包括空间邻近、题号连续、heading range、选项编号/字母、表格位置、跨页延续。
+   - 规则切分输出应携带置信度和不确定原因，供 AuthoringReview 聚焦展示。
+
+4. **Fallback behavior**
+   - 当阅读顺序或结构无法可靠恢复时，生成低置信草稿而不是失败或伪造内容。
+   - 若只识别到总题组范围（例如 `Questions 14-26`），继续保留为 umbrella metadata，并生成 manual import scaffold。
+   - 复杂 PDF 的失败兜底仍是可编辑草稿 + 人工修订，而不是强制逐项审核。
+
+#### 题型分类增强
+
+题型分类需要从“粗略 kind”升级为“题型 + 交互 + 选项复用规则 + 证据”的组合判断。
+
+- 先使用确定性规则分类，规则不足时再调用 LLM classifier。
+- LLM classifier 只输出结构化 JSON，不直接生成最终 JS。
+- 分类输出至少应包含：
+  - `kind`
+  - `interaction.type`
+  - `questionRange`
+  - `optionSet`
+  - `allowOptionReuse`
+  - `maxSelections` / `minSelections`（多选题需要）
+  - `confidence`
+  - `evidence.sourceBlockIds`
+  - `warnings`
+
+需要重点区分：
+
+- 单选：`Choose the correct letter, A, B, C or D`，通常 `radio`，不可多选。
+- 多选：`Choose TWO/THREE letters`，通常 `checkbox`，需要 `minSelections=maxSelections=N`。
+- 匹配题：根据题干判断是否可重复使用选项。
+- Heading matching：通常不可重复，除非题干明确允许。
+- Classification：经常可能复用选项，尤其题干出现 `You may use any letter more than once`。
+- Summary/table/sentence completion：需要识别字数限制、空格数量、表格行列关系。
+- True/False/Not Given 与 Yes/No/Not Given：需要区分事实判断和作者观点判断。
+
+选项复用规则必须被显式建模：
+
+- 题干出现 `You may use any letter more than once`、`may be used more than once` 时，设置 `allowOptionReuse=true`。
+- 题干出现 `each option may be used once only`、`use each letter once only` 时，设置 `allowOptionReuse=false`。
+- 未明确时，根据题型默认值推断，但 confidence 应降低并在 warnings 中说明。
+
+#### 工程约束
+
+- 复杂 PDF/DOCX 增强是下一工程任务最高优先级。
+- 生产主链路继续 Rust-first：解析、切分、校验、导出和 Pack 不依赖 Node/Python 作为硬前置。
+- 不引入重量级本地 OCR。图片型 PDF 继续走视觉 LLM + SourceReview。
+- 不把用户测试 PDF 纳入 git；测试样本可保留本地或使用合成 fixture。
+- 对真实复杂样本应建立 fixture 分级：文本层 PDF、双栏 PDF、旋转 PDF、DOCX 表格/分栏、扫描/图片 PDF。
+- 每个 fixture 的验收不是“完美识别所有内容”，而是：
+  - 能恢复合理 reading order；
+  - 能产出可编辑草稿；
+  - 能正确标记低置信/不确定项；
+  - 能避免生成错误的高置信可发布结果；
+  - 导出前必须经过现有发布门禁。

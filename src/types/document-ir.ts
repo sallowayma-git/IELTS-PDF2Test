@@ -7,6 +7,7 @@ export interface TableCellIr {
   text: string;
   rowSpan?: number;
   colSpan?: number;
+  verticalMerge?: "restart" | "continue" | string;
 }
 
 export interface TableIr {

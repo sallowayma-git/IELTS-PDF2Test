@@ -631,6 +631,9 @@ function sectionEvidenceForBlocks(blocks: DocumentBlock[]): NonNullable<SplitCan
     pageRotation: normalizeRotation((block as DocumentBlock & { __pageRotation?: number }).__pageRotation ?? 0),
     tableRows: block.table?.rows,
     tableCols: block.table?.cols,
+    tableHasColSpans: block.table ? block.table.cells.some((cell) => (cell.colSpan ?? 1) > 1) : undefined,
+    tableHasVerticalMerges: block.table ? block.table.cells.some((cell) => Boolean(cell.verticalMerge)) : undefined,
+    tableMergedCellCount: block.table ? block.table.cells.filter((cell) => (cell.colSpan ?? 1) > 1 || Boolean(cell.verticalMerge)).length : undefined,
     headingLevel: hintNumber(block, ["headingLevel"]),
     numberingLevel: hintNumber(block, ["numbering", "level"]),
     numberingId: hintString(block, ["numbering", "id"])
@@ -1956,6 +1959,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         throw new Error(`preview_validation_failed:${validationReport.issues.map((issue) => issue.message).join(";")}`);
       }
       store.previews[jobId] = assets;
+      store.validation[jobId] = validationReport;
       const readiness = publishReadinessReport(store, jobId, ir, validationReport);
       updateJob(store, jobId, {
         status: readiness.issues.some((issue) => issue.layer === "AuthoringIR") ? "NeedsReview" : "DraftSaved",

@@ -4,6 +4,7 @@ use crate::{
         make_dynamic_split_candidates, merge_answer_source_candidates, parse_dynamic_answer_text,
     },
     authoring_review::refresh_authoring_review_state,
+    cleanup::minimize_process_artifacts_after_authoring,
     job_store::{load_job, update_job},
     llm_gateway::run_llm_gateway,
     llm_profiles::{find_profile, load_llm_api_key, load_profiles},
@@ -223,6 +224,54 @@ pub(crate) fn run_auto_pipeline_core(
     input: Option<AutoPipelineInput>,
 ) -> CommandResult<Value> {
     run_auto_pipeline_core_with_gateway(root, job_id, input, run_llm_gateway)
+}
+
+fn record_group_llm_review(
+    ir: &mut Value,
+    group_id: &str,
+    status: &str,
+    confidence: f64,
+    warning: String,
+    suggestion: &Value,
+) {
+    let Some(group) = ir
+        .get_mut("groups")
+        .and_then(Value::as_array_mut)
+        .and_then(|groups| {
+            groups
+                .iter_mut()
+                .find(|group| group.get("groupId").and_then(Value::as_str) == Some(group_id))
+        })
+    else {
+        return;
+    };
+    let Some(obj) = group.as_object_mut() else {
+        return;
+    };
+    let warnings = obj
+        .entry("reviewWarnings".to_string())
+        .or_insert_with(|| json!([]));
+    if !warnings.is_array() {
+        *warnings = json!([]);
+    }
+    if let Some(items) = warnings.as_array_mut() {
+        if !items.iter().any(|item| item.as_str() == Some(&warning)) {
+            items.push(json!(warning));
+        }
+    }
+    obj.insert(
+        "llmReview".to_string(),
+        json!({
+            "required": true,
+            "status": status,
+            "confidence": confidence,
+            "suggestionId": suggestion.get("suggestionId").cloned().unwrap_or(Value::Null),
+            "suggestedKind": suggestion.get("kind").cloned().unwrap_or(Value::Null),
+            "warnings": suggestion.get("warnings").cloned().unwrap_or_else(|| json!([])),
+            "evidence": suggestion.get("evidence").cloned().unwrap_or_else(|| json!({})),
+            "recordedAt": Utc::now().to_rfc3339()
+        }),
+    );
 }
 
 pub(crate) fn run_auto_pipeline_core_with_gateway<F>(
@@ -486,20 +535,42 @@ where
                         );
                     } else {
                         blocked_auto_apply_groups.push(group_id.clone());
-                        llm_failures.push(format!(
+                        let warning = format!(
                             "{}:auto_apply_blocked:{}",
                             group_id,
                             auto_apply_issues.join(",")
-                        ));
+                        );
+                        record_group_llm_review(
+                            &mut ir,
+                            &group_id,
+                            "auto_apply_blocked",
+                            confidence,
+                            format!(
+                                "LLM suggestion reached confidence threshold but was not safe to auto-apply: {}",
+                                auto_apply_issues.join(",")
+                            ),
+                            &suggestion,
+                        );
+                        llm_failures.push(warning);
                     }
                 } else {
-                    low_confidence_groups.push(
-                        suggestion
-                            .get("groupId")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
+                    let group_id = suggestion
+                        .get("groupId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    record_group_llm_review(
+                        &mut ir,
+                        &group_id,
+                        "low_confidence",
+                        confidence,
+                        format!(
+                            "LLM suggestion confidence {:.2} is below auto-apply threshold {:.2}; manual review is required.",
+                            confidence, confidence_threshold
+                        ),
+                        &suggestion,
                     );
+                    low_confidence_groups.push(group_id);
                 }
             }
         }
@@ -624,5 +695,6 @@ where
         "validationReport": report
     });
     write_json(&dir.join("pipeline-report.json"), &pipeline_report)?;
+    let _ = minimize_process_artifacts_after_authoring(root, &job_id, "run_auto_pipeline")?;
     Ok(pipeline_report)
 }

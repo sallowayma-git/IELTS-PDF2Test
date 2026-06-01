@@ -8,7 +8,7 @@ use crate::{
         preview_assets_for_source, publish_readiness_gate, run_node_validator_diagnostic,
         validate_for_runtime_gate, validate_preview_with_node_sidecar,
     },
-    source_review::{source_review_issues, source_review_status},
+    source_review::{source_review_issues, source_review_status_for_job},
     util::{job_dir, read_json, read_json_opt, write_json},
     workflow_state::{apply_preview_e2e_job_state, update_validation_job_state},
     CommandResult, JobStatus, WorkflowStep,
@@ -24,8 +24,7 @@ pub(crate) fn validate_authoring_ir_core(root: &Path, job_id: &str) -> CommandRe
         let source = reading_source(ir);
         run_node_validator_diagnostic(root, job_id, &mut report, &source);
     }
-    let document_ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
-    let source_review = source_review_status(root, job_id, document_ir.as_ref())?;
+    let source_review = source_review_status_for_job(root, job_id)?;
     let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     write_json(
         &job_dir(root, job_id).join("validation-report.json"),
@@ -56,8 +55,7 @@ pub(crate) fn generate_preview_assets_core(root: &Path, job_id: &str) -> Command
     let (_, _, _, _, assets) = preview_assets_for_source(root, job_id, &source)?;
     let human_verified = ir.pointer("/audit/humanVerified").and_then(Value::as_bool) == Some(true);
     let mut review_issues = authoring_review_issues(&ir);
-    let document_ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
-    let source_review = source_review_status(root, job_id, document_ir.as_ref())?;
+    let source_review = source_review_status_for_job(root, job_id)?;
     review_issues.extend(source_review_issues(&source_review));
     update_job(root, job_id, |job| {
         job.status = if review_issues.is_empty() && human_verified {

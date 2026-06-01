@@ -13,6 +13,71 @@ pub(crate) struct PassageCandidateV1 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct GroupInteractionClassificationV1 {
+    pub r#type: String,
+    pub options: Vec<String>,
+    pub allow_option_reuse: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_selections: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_selections: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GroupClassificationV1 {
+    pub kind: String,
+    pub interaction: GroupInteractionClassificationV1,
+    pub confidence: f64,
+    pub warnings: Vec<String>,
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SplitSectionEvidenceV1 {
+    pub block_id: String,
+    pub page_index: u64,
+    pub column: u8,
+    pub role: String,
+    pub text_preview: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<[f64; 4]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized_bbox: Option<[f64; 4]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_rotation: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_rows: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_cols: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_has_col_spans: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_has_vertical_merges: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_merged_cell_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heading_level: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub numbering_level: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub numbering_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section_column_count: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SplitContinuationEdgeV1 {
+    pub from_block_id: String,
+    pub to_block_id: String,
+    pub reason: String,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SplitGroupCandidateV1 {
     pub group_id: String,
     pub heading: String,
@@ -21,6 +86,12 @@ pub(crate) struct SplitGroupCandidateV1 {
     pub block_ids: Vec<String>,
     pub kind_hint: String,
     pub confidence: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classification: Option<GroupClassificationV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub section_evidence: Vec<SplitSectionEvidenceV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub continuation_edges: Vec<SplitContinuationEdgeV1>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_umbrella_range: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,6 +195,14 @@ pub(crate) struct QuestionGroupDraftV1 {
     pub instruction: Vec<String>,
     pub questions: Vec<QuestionDraftV1>,
     pub layout: Value,
+    pub review_warnings: Vec<String>,
+    pub classification_evidence: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub section_evidence: Vec<SplitSectionEvidenceV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub continuation_edges: Vec<SplitContinuationEdgeV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_option_reuse: Option<bool>,
     pub source_block_ids: Vec<String>,
     pub confidence: f64,
     pub verified: bool,
@@ -197,18 +276,55 @@ fn strip_html(input: &str) -> String {
 }
 
 pub(crate) fn dynamic_document_blocks(doc: Option<&Value>) -> Vec<Value> {
-    doc.and_then(|value| value.get("pages"))
+    let mut blocks = doc
+        .and_then(|value| value.get("pages"))
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .flat_map(|page| {
+        .enumerate()
+        .flat_map(|(page_position, page)| {
+            let page_index = page
+                .get("pageIndex")
+                .and_then(Value::as_u64)
+                .unwrap_or((page_position + 1) as u64);
+            let page_width = page.get("width").and_then(Value::as_f64).unwrap_or(595.0);
+            let page_height = page.get("height").and_then(Value::as_f64).unwrap_or(842.0);
+            let page_rotation = page
+                .get("rotation")
+                .or_else(|| page.pointer("/layoutHints/rotation"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
             page.get("blocks")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
+                .enumerate()
+                .map(move |(block_position, block)| {
+                    let mut block = block.clone();
+                    if block.get("pageIndex").and_then(Value::as_u64).is_none() {
+                        block["pageIndex"] = json!(page_index);
+                    }
+                    if block.get("pageRotation").and_then(Value::as_i64).is_none() {
+                        block["pageRotation"] = json!(normalize_rotation_degrees(page_rotation));
+                    }
+                    block["_epic8PageWidth"] = json!(page_width);
+                    block["_epic8PageHeight"] = json!(page_height);
+                    block["_epic8PageRotation"] = json!(page_rotation);
+                    block["_epic8OriginalOrder"] = json!(block_position);
+                    block
+                })
         })
-        .cloned()
-        .collect()
+        .collect::<Vec<_>>();
+    blocks.sort_by(dynamic_reading_order_cmp);
+    for block in &mut blocks {
+        if let Some(map) = block.as_object_mut() {
+            map.remove("_epic8PageWidth");
+            map.remove("_epic8PageHeight");
+            map.remove("_epic8PageRotation");
+            map.remove("_epic8OriginalOrder");
+        }
+    }
+    blocks
 }
 
 pub(crate) fn dynamic_block_text(block: &Value) -> String {
@@ -240,6 +356,236 @@ pub(crate) fn dynamic_block_role(block: &Value) -> &str {
         .get("roleHint")
         .and_then(Value::as_str)
         .unwrap_or_default()
+}
+
+fn dynamic_block_page_index(block: &Value) -> u64 {
+    block.get("pageIndex").and_then(Value::as_u64).unwrap_or(1)
+}
+
+fn dynamic_block_bbox(block: &Value) -> Option<[f64; 4]> {
+    let values = block.get("bbox")?.as_array()?;
+    if values.len() != 4 {
+        return None;
+    }
+    Some([
+        values.first()?.as_f64()?,
+        values.get(1)?.as_f64()?,
+        values.get(2)?.as_f64()?,
+        values.get(3)?.as_f64()?,
+    ])
+}
+
+fn normalize_rotation_degrees(value: i64) -> i64 {
+    value.rem_euclid(360)
+}
+
+fn dynamic_block_page_rotation(block: &Value) -> i64 {
+    normalize_rotation_degrees(
+        block
+            .get("_epic8PageRotation")
+            .or_else(|| block.get("pageRotation"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+    )
+}
+
+fn rotate_point_to_upright(x: f64, y: f64, width: f64, height: f64, rotation: i64) -> (f64, f64) {
+    match normalize_rotation_degrees(rotation) {
+        90 => (y, width - x),
+        180 => (width - x, height - y),
+        270 => (height - y, x),
+        _ => (x, y),
+    }
+}
+
+fn dynamic_block_normalized_bbox(block: &Value) -> Option<[f64; 4]> {
+    let bbox = dynamic_block_bbox(block)?;
+    let rotation = dynamic_block_page_rotation(block);
+    if rotation == 0 {
+        return Some(bbox);
+    }
+    let page_width = block
+        .get("_epic8PageWidth")
+        .and_then(Value::as_f64)
+        .unwrap_or(595.0);
+    let page_height = block
+        .get("_epic8PageHeight")
+        .and_then(Value::as_f64)
+        .unwrap_or(842.0);
+    let points = [
+        rotate_point_to_upright(bbox[0], bbox[1], page_width, page_height, rotation),
+        rotate_point_to_upright(bbox[2], bbox[1], page_width, page_height, rotation),
+        rotate_point_to_upright(bbox[2], bbox[3], page_width, page_height, rotation),
+        rotate_point_to_upright(bbox[0], bbox[3], page_width, page_height, rotation),
+    ];
+    let min_x = points.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
+    let min_y = points.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
+    let max_x = points
+        .iter()
+        .map(|(x, _)| *x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let max_y = points
+        .iter()
+        .map(|(_, y)| *y)
+        .fold(f64::NEG_INFINITY, f64::max);
+    Some([min_x, min_y, max_x, max_y])
+}
+
+fn dynamic_block_column(block: &Value) -> u8 {
+    let Some(bbox) = dynamic_block_normalized_bbox(block) else {
+        return 0;
+    };
+    let page_width = if matches!(dynamic_block_page_rotation(block), 90 | 270) {
+        block
+            .get("_epic8PageHeight")
+            .and_then(Value::as_f64)
+            .unwrap_or(842.0)
+    } else {
+        block
+            .get("_epic8PageWidth")
+            .and_then(Value::as_f64)
+            .unwrap_or(595.0)
+    };
+    if bbox[0] >= page_width * 0.45 {
+        1
+    } else {
+        0
+    }
+}
+
+fn dynamic_block_text_preview(block: &Value) -> String {
+    let text = dynamic_block_text(block);
+    text.chars().take(120).collect::<String>()
+}
+
+fn table_merge_summary(block: &Value) -> (Option<bool>, Option<bool>, Option<u64>) {
+    let Some(cells) = block.pointer("/table/cells").and_then(Value::as_array) else {
+        return (None, None, None);
+    };
+    let has_col_spans = cells
+        .iter()
+        .any(|cell| cell.get("colSpan").and_then(Value::as_u64).unwrap_or(1) > 1);
+    let has_vertical_merges = cells
+        .iter()
+        .any(|cell| cell.get("verticalMerge").and_then(Value::as_str).is_some());
+    let merged_cell_count = cells
+        .iter()
+        .filter(|cell| {
+            cell.get("colSpan").and_then(Value::as_u64).unwrap_or(1) > 1
+                || cell.get("verticalMerge").and_then(Value::as_str).is_some()
+        })
+        .count() as u64;
+    (
+        Some(has_col_spans),
+        Some(has_vertical_merges),
+        Some(merged_cell_count),
+    )
+}
+
+fn split_section_evidence_for_blocks(blocks: &[Value]) -> Vec<SplitSectionEvidenceV1> {
+    blocks
+        .iter()
+        .map(|block| {
+            let (table_has_col_spans, table_has_vertical_merges, table_merged_cell_count) =
+                table_merge_summary(block);
+            SplitSectionEvidenceV1 {
+                block_id: dynamic_block_id(block),
+                page_index: dynamic_block_page_index(block),
+                column: dynamic_block_column(block),
+                role: dynamic_block_role(block).to_string(),
+                text_preview: dynamic_block_text_preview(block),
+                bbox: dynamic_block_bbox(block),
+                normalized_bbox: dynamic_block_normalized_bbox(block),
+                page_rotation: Some(dynamic_block_page_rotation(block)),
+                table_rows: block.pointer("/table/rows").and_then(Value::as_u64),
+                table_cols: block.pointer("/table/cols").and_then(Value::as_u64),
+                table_has_col_spans,
+                table_has_vertical_merges,
+                table_merged_cell_count,
+                heading_level: block
+                    .pointer("/layoutHints/headingLevel")
+                    .and_then(Value::as_u64),
+                numbering_level: block
+                    .pointer("/layoutHints/numbering/level")
+                    .and_then(Value::as_u64),
+                numbering_id: block
+                    .pointer("/layoutHints/numbering/id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                section_column_count: block
+                    .pointer("/layoutHints/section/columns/count")
+                    .and_then(Value::as_u64),
+            }
+        })
+        .collect()
+}
+
+fn split_continuation_edges_for_blocks(blocks: &[Value]) -> Vec<SplitContinuationEdgeV1> {
+    blocks
+        .windows(2)
+        .filter_map(|pair| {
+            let from = pair.first()?;
+            let to = pair.get(1)?;
+            let from_id = dynamic_block_id(from);
+            let to_id = dynamic_block_id(to);
+            if from_id.is_empty() || to_id.is_empty() {
+                return None;
+            }
+            let reason = if dynamic_block_page_index(from) != dynamic_block_page_index(to) {
+                "cross-page-continuation"
+            } else if dynamic_block_column(from) != dynamic_block_column(to) {
+                "cross-column-continuation"
+            } else {
+                "same-section-continuation"
+            };
+            Some(SplitContinuationEdgeV1 {
+                from_block_id: from_id,
+                to_block_id: to_id,
+                reason: reason.to_string(),
+                confidence: 0.72,
+            })
+        })
+        .collect()
+}
+
+fn dynamic_block_order_role_rank(block: &Value) -> u8 {
+    match dynamic_block_role(block) {
+        "answer" => 3,
+        "ignore" => 4,
+        _ => 0,
+    }
+}
+
+fn dynamic_reading_order_cmp(left: &Value, right: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    dynamic_block_page_index(left)
+        .cmp(&dynamic_block_page_index(right))
+        .then_with(|| {
+            dynamic_block_order_role_rank(left).cmp(&dynamic_block_order_role_rank(right))
+        })
+        .then_with(|| dynamic_block_column(left).cmp(&dynamic_block_column(right)))
+        .then_with(|| {
+            let left_y = dynamic_block_normalized_bbox(left).map(|bbox| bbox[1]);
+            let right_y = dynamic_block_normalized_bbox(right).map(|bbox| bbox[1]);
+            left_y.partial_cmp(&right_y).unwrap_or(Ordering::Equal)
+        })
+        .then_with(|| {
+            let left_x = dynamic_block_normalized_bbox(left).map(|bbox| bbox[0]);
+            let right_x = dynamic_block_normalized_bbox(right).map(|bbox| bbox[0]);
+            left_x.partial_cmp(&right_x).unwrap_or(Ordering::Equal)
+        })
+        .then_with(|| {
+            left.get("_epic8OriginalOrder")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                .cmp(
+                    &right
+                        .get("_epic8OriginalOrder")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                )
+        })
 }
 
 fn find_question_word(text: &str) -> Option<(usize, usize)> {
@@ -507,21 +853,182 @@ fn detect_dynamic_group_kind(text: &str) -> &'static str {
         "true_false_not_given"
     } else if lower.contains("yes") && lower.contains("no") && lower.contains("not given") {
         "yes_no_not_given"
+    } else if lower.contains("choose")
+        && (lower.contains("two") || lower.contains("three"))
+        && lower.contains("letter")
+    {
+        "multi_choice"
     } else if lower.contains("complete the table")
         || lower.contains("table below")
         || (lower.contains('|') && lower.contains("complete"))
     {
         "table_completion"
+    } else if lower.contains("list of headings") || lower.contains("matching headings") {
+        "heading_matching"
+    } else if lower.contains("which paragraph contains")
+        || lower.contains("matching information")
+        || lower.contains("match each statement")
+    {
+        "matching_information"
+    } else if lower.contains("classify")
+        || lower.contains("classification")
+        || lower.contains("according to")
+    {
+        "classification"
+    } else if lower.contains("match") && lower.contains("letter") {
+        "matching"
     } else if lower.contains("choose") && lower.contains("letter") {
         "single_choice"
-    } else if lower.contains("choose") && (lower.contains("two") || lower.contains("three")) {
-        "multi_choice"
     } else if lower.contains("complete the summary") {
         "summary_completion"
-    } else if lower.contains("complete the sentence") {
+    } else if lower.contains("complete the sentence") || lower.contains("complete the sentences") {
         "sentence_completion"
     } else {
         "short_answer"
+    }
+}
+
+fn dynamic_letter_options_for_text(text: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    if lower.contains(" a-g") || lower.contains("a-g") || lower.contains("list of headings") {
+        ["A", "B", "C", "D", "E", "F", "G"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect()
+    } else if lower.contains(" a-f") || lower.contains("a-f") {
+        ["A", "B", "C", "D", "E", "F"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect()
+    } else if lower.contains(" a-e") || lower.contains("a-e") {
+        ["A", "B", "C", "D", "E"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect()
+    } else {
+        ["A", "B", "C", "D"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect()
+    }
+}
+
+fn dynamic_selection_count(text: &str) -> Option<u32> {
+    let lower = text.to_lowercase();
+    if lower.contains("choose three") || lower.contains("three letters") {
+        Some(3)
+    } else if lower.contains("choose two") || lower.contains("two letters") {
+        Some(2)
+    } else {
+        None
+    }
+}
+
+fn dynamic_option_reuse_rule(kind: &str, text: &str) -> (bool, Option<String>) {
+    let lower = text.to_lowercase();
+    if lower.contains("may use any letter more than once")
+        || lower.contains("may be used more than once")
+        || lower.contains("use any letter more than once")
+    {
+        return (true, None);
+    }
+    if lower.contains("each option may be used once only")
+        || lower.contains("use each letter once only")
+        || lower.contains("each letter may be used once only")
+    {
+        return (false, None);
+    }
+    match kind {
+        "classification" | "matching_information" => (
+            true,
+            Some("Option reuse was inferred from question type; source wording did not state it explicitly.".to_string()),
+        ),
+        "heading_matching" | "matching" | "single_choice" | "multi_choice" => (
+            false,
+            Some("Option reuse was inferred from question type; source wording did not state it explicitly.".to_string()),
+        ),
+        _ => (false, None),
+    }
+}
+
+fn classify_dynamic_group(text: &str, block_ids: &[String]) -> GroupClassificationV1 {
+    let kind = detect_dynamic_group_kind(text).to_string();
+    let lower = text.to_lowercase();
+    let mut warnings = Vec::new();
+    let (allow_option_reuse, reuse_warning) = dynamic_option_reuse_rule(&kind, text);
+    if let Some(warning) = reuse_warning {
+        warnings.push(warning);
+    }
+    let interaction = match kind.as_str() {
+        "true_false_not_given" => GroupInteractionClassificationV1 {
+            r#type: "radio".to_string(),
+            options: vec![
+                "TRUE".to_string(),
+                "FALSE".to_string(),
+                "NOT GIVEN".to_string(),
+            ],
+            allow_option_reuse,
+            min_selections: None,
+            max_selections: None,
+        },
+        "yes_no_not_given" => GroupInteractionClassificationV1 {
+            r#type: "radio".to_string(),
+            options: vec!["YES".to_string(), "NO".to_string(), "NOT GIVEN".to_string()],
+            allow_option_reuse,
+            min_selections: None,
+            max_selections: None,
+        },
+        "single_choice" => GroupInteractionClassificationV1 {
+            r#type: "radio".to_string(),
+            options: dynamic_letter_options_for_text(text),
+            allow_option_reuse,
+            min_selections: None,
+            max_selections: None,
+        },
+        "multi_choice" => {
+            let count = dynamic_selection_count(text).unwrap_or(2);
+            GroupInteractionClassificationV1 {
+                r#type: "checkbox".to_string(),
+                options: dynamic_letter_options_for_text(text),
+                allow_option_reuse,
+                min_selections: Some(count),
+                max_selections: Some(count),
+            }
+        }
+        "heading_matching" | "matching" | "matching_information" | "classification" => {
+            GroupInteractionClassificationV1 {
+                r#type: "matching".to_string(),
+                options: dynamic_letter_options_for_text(text),
+                allow_option_reuse,
+                min_selections: None,
+                max_selections: None,
+            }
+        }
+        _ => GroupInteractionClassificationV1 {
+            r#type: "text".to_string(),
+            options: Vec::new(),
+            allow_option_reuse,
+            min_selections: None,
+            max_selections: None,
+        },
+    };
+    let confidence = if warnings.is_empty() {
+        0.82
+    } else if lower.contains("may be used more than once")
+        || lower.contains("use each letter once only")
+        || lower.contains("choose two")
+        || lower.contains("choose three")
+    {
+        0.78
+    } else {
+        0.68
+    };
+    GroupClassificationV1 {
+        kind,
+        interaction,
+        confidence,
+        warnings,
+        evidence: block_ids.to_vec(),
     }
 }
 
@@ -735,14 +1242,21 @@ pub(crate) fn make_dynamic_split_candidates(
             .map(dynamic_block_text)
             .collect::<Vec<_>>()
             .join(" ");
+        let block_ids = included.iter().map(dynamic_block_id).collect::<Vec<_>>();
+        let classification = classify_dynamic_group(&combined, &block_ids);
+        let section_evidence = split_section_evidence_for_blocks(included);
+        let continuation_edges = split_continuation_edges_for_blocks(included);
         group_candidates.push(SplitGroupCandidateV1 {
             group_id: format!("group-{}", group_candidates.len() + 1),
             heading: dynamic_question_heading(start, end),
             question_range: [start, end],
             instruction_text: text,
-            block_ids: included.iter().map(dynamic_block_id).collect::<Vec<_>>(),
-            kind_hint: detect_dynamic_group_kind(&combined).to_string(),
-            confidence: 0.72,
+            block_ids,
+            kind_hint: classification.kind.clone(),
+            confidence: classification.confidence,
+            classification: Some(classification),
+            section_evidence,
+            continuation_edges,
             is_umbrella_range: None,
             requires_manual_question_import: None,
         });
@@ -763,6 +1277,12 @@ pub(crate) fn make_dynamic_split_candidates(
                 },
                 kind_hint: "short_answer".to_string(),
                 confidence: 0.35,
+                classification: Some(classify_dynamic_group(
+                    &umbrella.text,
+                    std::slice::from_ref(&umbrella.block_id),
+                )),
+                section_evidence: Vec::new(),
+                continuation_edges: Vec::new(),
                 is_umbrella_range: Some(true),
                 requires_manual_question_import: Some(true),
             });
@@ -775,24 +1295,22 @@ pub(crate) fn make_dynamic_split_candidates(
             .map(dynamic_block_text)
             .collect::<Vec<_>>()
             .join("\n");
+        let block_ids = question_blocks
+            .iter()
+            .map(dynamic_block_id)
+            .collect::<Vec<_>>();
+        let classification = classify_dynamic_group(&combined, &block_ids);
         group_candidates.push(SplitGroupCandidateV1 {
             group_id: "group-1".to_string(),
             heading: dynamic_question_heading(start, end),
             question_range: [start, end],
             instruction_text: combined,
-            block_ids: question_blocks
-                .iter()
-                .map(dynamic_block_id)
-                .collect::<Vec<_>>(),
-            kind_hint: detect_dynamic_group_kind(
-                &question_blocks
-                    .iter()
-                    .map(dynamic_block_text)
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            )
-            .to_string(),
-            confidence: 0.58,
+            block_ids,
+            kind_hint: classification.kind.clone(),
+            confidence: classification.confidence.min(0.58),
+            classification: Some(classification),
+            section_evidence: split_section_evidence_for_blocks(&question_blocks),
+            continuation_edges: split_continuation_edges_for_blocks(&question_blocks),
             is_umbrella_range: None,
             requires_manual_question_import: None,
         });
@@ -871,7 +1389,12 @@ pub(crate) fn dynamic_interaction_for_kind(kind: &str) -> Value {
         }
         "yes_no_not_given" => json!({"type": "radio", "options": ["YES", "NO", "NOT GIVEN"]}),
         "single_choice" => json!({"type": "radio", "options": ["A", "B", "C", "D"]}),
-        "multi_choice" => json!({"type": "checkbox", "options": ["A", "B", "C", "D", "E", "F"]}),
+        "multi_choice" => {
+            json!({"type": "checkbox", "options": ["A", "B", "C", "D", "E", "F"], "minSelections": 2, "maxSelections": 2})
+        }
+        "heading_matching" | "matching" | "matching_information" | "classification" => {
+            json!({"type": "matching", "options": ["A", "B", "C", "D"], "allowOptionReuse": kind == "classification" || kind == "matching_information"})
+        }
         _ => json!({"type": "text", "placeholder": "answer"}),
     }
 }
@@ -882,11 +1405,22 @@ pub(crate) fn dynamic_template_for_kind(kind: &str) -> &'static str {
         "yes_no_not_given" => "ynng_list",
         "single_choice" => "single_choice_list",
         "multi_choice" => "multi_choice_checkbox",
+        "heading_matching" => "heading_matching",
+        "matching" => "matching_list",
+        "matching_information" => "matching_information",
+        "classification" => "classification",
         "table_completion" => "table_completion",
         "summary_completion" => "summary_text_completion",
         "sentence_completion" => "inline_text_completion",
         _ => "short_answer_list",
     }
+}
+
+fn dynamic_interaction_from_candidate(candidate: &Value, kind: &str) -> Value {
+    candidate
+        .pointer("/classification/interaction")
+        .cloned()
+        .unwrap_or_else(|| dynamic_interaction_for_kind(kind))
 }
 
 fn find_dynamic_number_marker(text: &str, number: u32, from: usize) -> Option<(usize, usize)> {
@@ -1135,6 +1669,44 @@ pub(crate) fn make_dynamic_authoring_ir(
                 if text.trim().is_empty() { instruction_text.to_string() } else { text }
             };
             let (start, end) = dynamic_range_from_candidate(candidate);
+            let review_warnings = candidate
+                .pointer("/classification/warnings")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let classification_evidence = candidate
+                .pointer("/classification/evidence")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| block_ids.clone());
+            let section_evidence = candidate
+                .get("sectionEvidence")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|item| serde_json::from_value::<SplitSectionEvidenceV1>(item).ok())
+                .collect::<Vec<_>>();
+            let continuation_edges = candidate
+                .get("continuationEdges")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|item| serde_json::from_value::<SplitContinuationEdgeV1>(item).ok())
+                .collect::<Vec<_>>();
             let questions = (start..=end)
                 .map(|number| {
                     let display = number.to_string();
@@ -1147,7 +1719,7 @@ pub(crate) fn make_dynamic_authoring_ir(
                         } else {
                             dynamic_prompt_for_question(&group_text, number, heading, end)
                         },
-                        interaction: dynamic_interaction_for_kind(kind),
+                        interaction: dynamic_interaction_from_candidate(candidate, kind),
                         answer: answer_by_display
                             .get(&number.to_string())
                             .cloned()
@@ -1167,6 +1739,9 @@ pub(crate) fn make_dynamic_authoring_ir(
             } else {
                 json!({"template": dynamic_template_for_kind(kind)})
             };
+            let allow_option_reuse = candidate
+                .pointer("/classification/interaction/allowOptionReuse")
+                .and_then(Value::as_bool);
             QuestionGroupDraftV1 {
                 group_id: candidate
                     .get("groupId")
@@ -1178,6 +1753,11 @@ pub(crate) fn make_dynamic_authoring_ir(
                 instruction: vec![instruction_text.to_string()],
                 questions,
                 layout,
+                review_warnings,
+                classification_evidence,
+                section_evidence,
+                continuation_edges,
+                allow_option_reuse,
                 source_block_ids: block_ids,
                 confidence: candidate
                     .get("confidence")

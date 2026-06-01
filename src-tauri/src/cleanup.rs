@@ -1,13 +1,13 @@
 use crate::diagnostics::load_diagnostics_settings;
 use crate::job_store::{load_job, update_job};
-use crate::source_review::source_review_status;
+use crate::source_review::source_review_status_for_job;
 use crate::util::{
     job_dir, read_json, read_json_opt, remove_dir_if_exists, remove_file_if_exists, write_json,
 };
 use crate::{CommandResult, JobStatus, WorkflowStep};
 use chrono::Utc;
 use serde_json::{json, Value};
-use std::path::Path;
+use std::{fs, path::Path};
 
 fn source_summary_from_job(job: &crate::ImportJob) -> Value {
     json!(job
@@ -35,7 +35,7 @@ pub(crate) fn validation_summary(report: &Value) -> Value {
     })
 }
 
-fn write_authoring_project(
+pub(crate) fn write_authoring_project(
     root: &Path,
     job_id: &str,
     export_summary: Option<Value>,
@@ -43,8 +43,7 @@ fn write_authoring_project(
     let job = load_job(root, job_id)?;
     let dir = job_dir(root, job_id);
     let authoring: Value = read_json(&dir.join("authoring-ir.json"))?;
-    let document_ir = read_json_opt(&dir.join("document-ir.json"))?;
-    let source_review = source_review_status(root, job_id, document_ir.as_ref())?;
+    let source_review = source_review_status_for_job(root, job_id)?;
     let validation_report = read_json_opt(&dir.join("validation-report.json"))?;
     let project = json!({
         "schemaVersion": "AuthoringProjectV1",
@@ -74,6 +73,29 @@ fn write_authoring_project(
     Ok(project)
 }
 
+fn cleanup_parser_cache_for_job(root: &Path, job_id: &str) -> CommandResult<()> {
+    let parser_cache = root.join("cache").join("parser");
+    if !parser_cache.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&parser_cache)
+        .map_err(|error| format!("read_parser_cache:{}:{}", parser_cache.display(), error))?
+    {
+        let entry =
+            entry.map_err(|error| format!("read_parser_cache_entry:{}:{}", job_id, error))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with(job_id) {
+            let path = entry.path();
+            if path.is_dir() {
+                remove_dir_if_exists(&path)?;
+            } else {
+                remove_file_if_exists(&path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn cleanup_transient_job_artifacts(
     root: &Path,
     job_id: &str,
@@ -96,13 +118,14 @@ pub(crate) fn cleanup_transient_job_artifacts(
         return Ok(summary);
     }
 
-    for relative in ["uploads", "cache", "preview", "llm-suggestions"] {
+    for relative in ["cache", "preview", "llm-suggestions"] {
         remove_dir_if_exists(&dir.join(relative))?;
     }
     for relative in [
         "document-ir.json",
         "split-candidates.json",
         "pipeline-report.json",
+        "pipeline-report-summary.json",
         "llm-last-suggestion.json",
         "llm-calls.jsonl",
         "vision-transcription-output.json",
@@ -113,6 +136,7 @@ pub(crate) fn cleanup_transient_job_artifacts(
     ] {
         remove_file_if_exists(&dir.join(relative))?;
     }
+    cleanup_parser_cache_for_job(root, job_id)?;
 
     let summary = json!({
         "schemaVersion": "CleanupSummaryV1",
@@ -120,16 +144,68 @@ pub(crate) fn cleanup_transient_job_artifacts(
         "cleaned": true,
         "retainedFullProcessArtifacts": false,
         "message": "中间文件已自动清理，已保留可编辑题目稿。",
-        "kept": ["job.json", "authoring-ir.json", "authoring-project.json", "cleanup-summary.json", "exports/"],
-        "removed": ["uploads/", "cache/", "preview/", "document-ir.json", "split-candidates.json", "pipeline-report.json", "llm-suggestions/", "llm-calls.jsonl", "vision/manual transcription temp files", "validation/runtime intermediate reports"],
+        "kept": ["job.json", "authoring-ir.json", "authoring-project.json", "source-review.json", "uploads/", "exports/"],
+        "removed": ["cache/", "preview/", "document-ir.json", "split-candidates.json", "pipeline-report.json", "llm-suggestions/", "llm-calls.jsonl", "vision/manual transcription temp files", "validation/runtime intermediate reports"],
         "exportSummary": export_summary,
         "projectSchemaVersion": project.get("schemaVersion").cloned().unwrap_or(Value::Null),
         "generatedAt": Utc::now().to_rfc3339()
     });
-    write_json(&dir.join("cleanup-summary.json"), &summary)?;
     update_job(root, job_id, |job| {
         job.status = JobStatus::Cleaned;
         job.current_step = WorkflowStep::Export;
     })?;
     Ok(summary)
+}
+
+pub(crate) fn minimize_process_artifacts_after_authoring(
+    root: &Path,
+    job_id: &str,
+    reason: &str,
+) -> CommandResult<Value> {
+    let dir = job_dir(root, job_id);
+    let diagnostics = load_diagnostics_settings(root)?;
+    let project = write_authoring_project(root, job_id, None)?;
+    if diagnostics.keep_full_process_artifacts {
+        return Ok(json!({
+            "schemaVersion": "ArtifactMinimizationV1",
+            "jobId": job_id,
+            "minimized": false,
+            "retainedFullProcessArtifacts": true,
+            "reason": reason,
+            "message": "Developer diagnostics retention is enabled; full process artifacts were kept.",
+            "generatedAt": Utc::now().to_rfc3339()
+        }));
+    }
+
+    for relative in ["cache", "preview", "llm-suggestions"] {
+        remove_dir_if_exists(&dir.join(relative))?;
+    }
+    for relative in [
+        "document-ir.json",
+        "split-candidates.json",
+        "pipeline-report.json",
+        "validation-report.json",
+        "publish-readiness-report.json",
+        "llm-last-suggestion.json",
+        "llm-calls.jsonl",
+        "vision-transcription-output.json",
+        "vision-transcription.txt",
+        "manual-transcription.txt",
+    ] {
+        remove_file_if_exists(&dir.join(relative))?;
+    }
+    cleanup_parser_cache_for_job(root, job_id)?;
+
+    Ok(json!({
+        "schemaVersion": "ArtifactMinimizationV1",
+        "jobId": job_id,
+        "minimized": true,
+        "retainedFullProcessArtifacts": false,
+        "reason": reason,
+        "message": "已压缩为最小可编辑态，仅保留 authoring-ir、authoring-project、source-review 与作业元数据。",
+        "kept": ["job.json", "authoring-ir.json", "authoring-project.json", "source-review.json", "uploads/"],
+        "removed": ["document-ir.json", "split-candidates.json", "pipeline-report*.json", "cache/", "preview/", "llm-suggestions/", "llm-calls.jsonl", "vision/manual transcription temp files"],
+        "projectSchemaVersion": project.get("schemaVersion").cloned().unwrap_or(Value::Null),
+        "generatedAt": Utc::now().to_rfc3339()
+    }))
 }

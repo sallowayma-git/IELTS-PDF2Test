@@ -2,7 +2,7 @@ use crate::diagnostics::DiagnosticsSettings;
 use crate::job_store::{list_saved_jobs, load_job, make_job, save_job, update_job};
 use crate::llm_profiles::load_profiles;
 use crate::llm_suggestions::load_llm_suggestions;
-use crate::source_review::source_review_status;
+use crate::source_review::source_review_status_for_job;
 use crate::util::{
     ensure_app_dirs, ensure_job_dirs, file_type_from_name, hash_file_or_path, job_dir,
     read_json_opt, sanitize_filename,
@@ -46,10 +46,7 @@ pub(crate) async fn get_job_core(job_id: String, app: AppHandle) -> CommandResul
     Ok(JobDetail {
         job: load_job(&root, &job_id)?,
         document_ir: read_json_opt(&dir.join("document-ir.json"))?,
-        source_review: {
-            let document_ir = read_json_opt(&dir.join("document-ir.json"))?;
-            Some(source_review_status(&root, &job_id, document_ir.as_ref())?)
-        },
+        source_review: Some(source_review_status_for_job(&root, &job_id)?),
         split_candidates: read_json_opt(&dir.join("split-candidates.json"))?,
         authoring_ir: read_json_opt(&dir.join("authoring-ir.json"))?,
         validation_report: read_json_opt(&dir.join("validation-report.json"))?,

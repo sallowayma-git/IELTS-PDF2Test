@@ -122,11 +122,16 @@ pub(crate) fn source_review_status(
     job_id: &str,
     doc: Option<&Value>,
 ) -> CommandResult<Value> {
+    let saved = read_json_opt(&source_review_path(root, job_id))?;
+    if doc.is_none() {
+        if let Some(saved) = saved {
+            return Ok(saved);
+        }
+    }
     let parser_warnings = parser_warnings(doc);
     let low_confidence_blocks = low_confidence_block_ids(doc, 0.5);
     let required = !parser_warnings.is_empty() || !low_confidence_blocks.is_empty();
     let fingerprint = source_review_fingerprint(doc);
-    let saved = read_json_opt(&source_review_path(root, job_id))?;
     let saved_fingerprint = saved
         .as_ref()
         .and_then(|value| value.get("fingerprint"))
@@ -151,6 +156,15 @@ pub(crate) fn source_review_status(
     .to_value()
 }
 
+pub(crate) fn source_review_status_for_job(root: &Path, job_id: &str) -> CommandResult<Value> {
+    let saved = read_json_opt(&source_review_path(root, job_id))?;
+    if let Some(saved) = saved {
+        return Ok(saved);
+    }
+    let document_ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
+    source_review_status(root, job_id, document_ir.as_ref())
+}
+
 pub(crate) fn write_source_review_status(
     root: &Path,
     job_id: &str,
@@ -164,6 +178,23 @@ pub(crate) fn write_source_review_status(
     review.resolved = resolved || !review.required;
     review.stale = false;
     review.resolved_at = resolved.then(|| Utc::now().to_rfc3339());
+    review.note = note;
+    let review = review.to_value()?;
+    write_json(&source_review_path(root, job_id), &review)?;
+    Ok(review)
+}
+
+pub(crate) fn resolve_source_review_status(
+    root: &Path,
+    job_id: &str,
+    note: Option<String>,
+) -> CommandResult<Value> {
+    let review_value = source_review_status_for_job(root, job_id)?;
+    let mut review = SourceReviewV1::from_value(&review_value)
+        .ok_or_else(|| "invalid_source_review_status".to_string())?;
+    review.resolved = true;
+    review.stale = false;
+    review.resolved_at = Some(Utc::now().to_rfc3339());
     review.note = note;
     let review = review.to_value()?;
     write_json(&source_review_path(root, job_id), &review)?;

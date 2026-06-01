@@ -28,6 +28,20 @@ fn value_verified(value: &Value) -> bool {
         .unwrap_or(false)
 }
 
+fn review_warning_count(value: &Value) -> usize {
+    value
+        .get("reviewWarnings")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|warning| !warning.trim().is_empty())
+                .count()
+        })
+        .unwrap_or(0)
+}
+
 pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
     let mut needs_review = 0u32;
     let mut total_questions = 0u32;
@@ -61,6 +75,9 @@ pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
                 obj.insert("verified".to_string(), json!(all_group_questions_verified));
             }
             if value_confidence(group) < 0.85 && !all_group_questions_verified {
+                needs_review += 1;
+            }
+            if review_warning_count(group) > 0 && !all_group_questions_verified {
                 needs_review += 1;
             }
         }
@@ -97,6 +114,25 @@ pub(crate) fn authoring_review_issues(ir: &Value) -> Vec<Value> {
                 &format!("$.groups[{}].verified", group_id),
                 "Low-confidence group requires human verification before publish",
             ));
+        }
+        for warning in group
+            .get("reviewWarnings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|warning| !warning.trim().is_empty())
+        {
+            if !value_verified(group) {
+                issues.push(json_issue(
+                    "AuthoringIR",
+                    &format!("$.groups[{}].reviewWarnings", group_id),
+                    &format!(
+                        "Question-group classification warning requires author review: {}",
+                        warning
+                    ),
+                ));
+            }
         }
         if group
             .get("requiresManualQuestionImport")

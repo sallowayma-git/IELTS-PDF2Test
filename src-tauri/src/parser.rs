@@ -5,8 +5,24 @@ use crate::{hash_bytes, html_escape, main_source_file, CommandResult, ImportJob,
 use chrono::Utc;
 use quick_xml::{events::Event, Reader};
 use serde_json::{json, Value};
-use std::{fs, io::Read, path::Path, process::Command};
+use std::{collections::HashMap, fs, io::Read, path::Path, process::Command};
 use zip::ZipArchive;
+
+#[derive(Debug, Clone)]
+struct TableCellIr {
+    row: usize,
+    col: usize,
+    text: String,
+    col_span: Option<usize>,
+    vertical_merge: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TableIr {
+    cells: Vec<TableCellIr>,
+    rows: usize,
+    cols: usize,
+}
 
 fn role_hint_for_text(text: &str) -> Option<&'static str> {
     let lower = text.to_ascii_lowercase();
@@ -128,6 +144,42 @@ fn markdownish_to_html(text: &str, block_type: &str) -> String {
         }
         _ => format!("<p>{}</p>", html_escape(trimmed)),
     }
+}
+
+fn table_ir_to_html(table: &TableIr) -> String {
+    let rows = (0..table.rows)
+        .map(|row| {
+            let cells = (0..table.cols)
+                .map(|col| {
+                    let text = table
+                        .cells
+                        .iter()
+                        .find(|cell| cell.row == row && cell.col == col)
+                        .map(|cell| cell.text.as_str())
+                        .unwrap_or_default();
+                    format!("<td>{}</td>", html_escape(text))
+                })
+                .collect::<String>();
+            format!("<tr>{}</tr>", cells)
+        })
+        .collect::<String>();
+    format!("<table>{}</table>", rows)
+}
+
+fn table_ir_to_value(table: &TableIr) -> Value {
+    json!({
+        "rows": table.rows,
+        "cols": table.cols,
+        "cells": table.cells.iter().map(|cell| {
+            json!({
+                "row": cell.row,
+                "col": cell.col,
+                "text": cell.text,
+                "colSpan": cell.col_span,
+                "verticalMerge": cell.vertical_merge
+            })
+        }).collect::<Vec<_>>()
+    })
 }
 
 fn paragraph_text_chunks(content: &str) -> Vec<String> {
@@ -461,23 +513,437 @@ fn parse_pdf_with_rust_text_extractor(
 struct DocxRawBlock {
     kind: &'static str,
     text: String,
+    table: Option<TableIr>,
+    layout_hints: Option<Value>,
 }
 
 fn is_word_tag(name: &[u8], tag: &[u8]) -> bool {
     name == tag || name.ends_with(&[b":", tag].concat())
 }
 
-fn push_docx_block(blocks: &mut Vec<DocxRawBlock>, kind: &'static str, text: &str) {
-    let collapsed = collapse_whitespace(text);
-    if !collapsed.is_empty() {
-        blocks.push(DocxRawBlock {
-            kind,
-            text: collapsed,
-        });
+#[derive(Debug, Clone, Default)]
+struct DocxTableCell {
+    text: String,
+    col_span: Option<usize>,
+    vertical_merge: Option<String>,
+}
+
+fn push_docx_table_block(blocks: &mut Vec<DocxRawBlock>, rows: &[Vec<DocxTableCell>]) {
+    if !rows
+        .iter()
+        .flat_map(|row| row.iter())
+        .any(|cell| !cell.text.trim().is_empty())
+    {
+        return;
+    }
+    let cols = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.col_span.unwrap_or(1).max(1))
+                .sum::<usize>()
+        })
+        .max()
+        .unwrap_or(0);
+    let mut cells = Vec::new();
+    let mut text_rows = Vec::new();
+    for (row_index, row) in rows.iter().enumerate() {
+        let mut text_cells = Vec::new();
+        let mut col_index = 0usize;
+        for cell in row {
+            let text = cell.text.clone();
+            cells.push(TableCellIr {
+                row: row_index,
+                col: col_index,
+                text: text.clone(),
+                col_span: cell.col_span,
+                vertical_merge: cell.vertical_merge.clone(),
+            });
+            text_cells.push(text);
+            col_index += cell.col_span.unwrap_or(1).max(1);
+        }
+        while col_index < cols {
+            cells.push(TableCellIr {
+                row: row_index,
+                col: col_index,
+                text: String::new(),
+                col_span: None,
+                vertical_merge: None,
+            });
+            text_cells.push(String::new());
+            col_index += 1;
+        }
+        text_rows.push(text_cells.join("\t"));
+    }
+    blocks.push(DocxRawBlock {
+        kind: "table",
+        text: text_rows.join("\n"),
+        table: Some(TableIr {
+            cells,
+            rows: rows.len(),
+            cols,
+        }),
+        layout_hints: Some(json!({
+            "source": "docx-ooxml-table",
+            "rows": rows.len(),
+            "cols": cols
+        })),
+    });
+}
+
+#[derive(Debug, Clone, Default)]
+struct DocxParagraphMeta {
+    style_id: Option<String>,
+    style_name: Option<String>,
+    based_on_style_id: Option<String>,
+    resolved_style_id: Option<String>,
+    numbering_level: Option<u32>,
+    numbering_id: Option<String>,
+    numbering_format: Option<String>,
+    numbering_text: Option<String>,
+    abstract_numbering_id: Option<String>,
+    style_heading_level: Option<u32>,
+    section_columns: Option<DocxSectionColumns>,
+}
+
+impl DocxParagraphMeta {
+    fn is_list(&self) -> bool {
+        self.numbering_id.is_some() || self.numbering_level.is_some()
+    }
+
+    fn heading_level(&self) -> Option<u32> {
+        if let Some(level) = self.style_heading_level {
+            return Some(level);
+        }
+        let style = self.style_id.as_deref()?.to_ascii_lowercase();
+        style
+            .strip_prefix("heading")
+            .or_else(|| style.strip_prefix("标题"))
+            .and_then(|suffix| suffix.chars().find(|ch| ch.is_ascii_digit()))
+            .and_then(|ch| ch.to_digit(10))
+    }
+
+    fn block_kind(&self) -> &'static str {
+        if self.heading_level().is_some() {
+            "header"
+        } else if self.is_list() {
+            "list"
+        } else {
+            "paragraph"
+        }
+    }
+
+    fn layout_hints(&self) -> Option<Value> {
+        if self.style_id.is_none()
+            && self.numbering_id.is_none()
+            && self.numbering_level.is_none()
+            && self.section_columns.is_none()
+        {
+            return None;
+        }
+        Some(json!({
+            "source": "docx-ooxml-paragraph",
+            "styleId": self.style_id,
+            "styleName": self.style_name,
+            "basedOnStyleId": self.based_on_style_id,
+            "resolvedStyleId": self.resolved_style_id,
+            "headingLevel": self.heading_level(),
+            "numbering": if self.is_list() {
+                json!({
+                    "level": self.numbering_level,
+                    "id": self.numbering_id,
+                    "abstractId": self.abstract_numbering_id,
+                    "format": self.numbering_format,
+                    "text": self.numbering_text
+                })
+            } else {
+                Value::Null
+            },
+            "section": self.section_columns.as_ref().map(|columns| json!({
+                "columns": {
+                    "count": columns.count,
+                    "spaceTwips": columns.space_twips,
+                    "equalWidth": columns.equal_width
+                }
+            })).unwrap_or(Value::Null)
+        }))
     }
 }
 
-fn parse_docx_document_xml(document_xml: &[u8]) -> CommandResult<Vec<DocxRawBlock>> {
+fn attr_value(event: &quick_xml::events::BytesStart<'_>, attr_name: &[u8]) -> Option<String> {
+    event
+        .attributes()
+        .flatten()
+        .find(|attr| is_word_tag(attr.key.as_ref(), attr_name))
+        .and_then(|attr| {
+            std::str::from_utf8(attr.value.as_ref())
+                .ok()
+                .map(ToString::to_string)
+        })
+}
+
+#[derive(Debug, Clone, Default)]
+struct DocxStyleDef {
+    style_id: String,
+    name: Option<String>,
+    based_on: Option<String>,
+    outline_level: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DocxNumberingLevelDef {
+    level: u32,
+    format: Option<String>,
+    text: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DocxNumberingDefs {
+    num_to_abstract: HashMap<String, String>,
+    abstract_levels: HashMap<(String, u32), DocxNumberingLevelDef>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DocxSectionColumns {
+    count: Option<u32>,
+    space_twips: Option<u32>,
+    equal_width: Option<bool>,
+}
+
+fn heading_level_from_style_text(value: &str) -> Option<u32> {
+    let lower = value.to_ascii_lowercase();
+    lower
+        .strip_prefix("heading")
+        .or_else(|| lower.strip_prefix("标题"))
+        .and_then(|suffix| suffix.chars().find(|ch| ch.is_ascii_digit()))
+        .and_then(|ch| ch.to_digit(10))
+}
+
+fn parse_docx_styles_xml(styles_xml: &[u8]) -> CommandResult<HashMap<String, DocxStyleDef>> {
+    let mut reader = Reader::from_reader(styles_xml);
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    let mut styles = HashMap::<String, DocxStyleDef>::new();
+    let mut current = None::<DocxStyleDef>;
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format!("docx_styles_xml_read_failed:{}", error))?
+        {
+            Event::Start(event) => {
+                let name = event.name().as_ref().to_vec();
+                if is_word_tag(&name, b"style") {
+                    let style_id = attr_value(&event, b"styleId").unwrap_or_default();
+                    if !style_id.trim().is_empty() {
+                        current = Some(DocxStyleDef {
+                            style_id,
+                            ..DocxStyleDef::default()
+                        });
+                    }
+                } else if let Some(style) = current.as_mut() {
+                    if is_word_tag(&name, b"name") {
+                        style.name = attr_value(&event, b"val");
+                    } else if is_word_tag(&name, b"basedOn") {
+                        style.based_on = attr_value(&event, b"val");
+                    } else if is_word_tag(&name, b"outlineLvl") {
+                        style.outline_level =
+                            attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                    }
+                }
+            }
+            Event::Empty(event) => {
+                let name = event.name().as_ref().to_vec();
+                if is_word_tag(&name, b"style") {
+                    let style_id = attr_value(&event, b"styleId").unwrap_or_default();
+                    if !style_id.trim().is_empty() {
+                        styles.insert(
+                            style_id.clone(),
+                            DocxStyleDef {
+                                style_id,
+                                ..DocxStyleDef::default()
+                            },
+                        );
+                    }
+                } else if let Some(style) = current.as_mut() {
+                    if is_word_tag(&name, b"name") {
+                        style.name = attr_value(&event, b"val");
+                    } else if is_word_tag(&name, b"basedOn") {
+                        style.based_on = attr_value(&event, b"val");
+                    } else if is_word_tag(&name, b"outlineLvl") {
+                        style.outline_level =
+                            attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                    }
+                }
+            }
+            Event::End(event) => {
+                let name = event.name().as_ref().to_vec();
+                if is_word_tag(&name, b"style") {
+                    if let Some(style) = current.take() {
+                        styles.insert(style.style_id.clone(), style);
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(styles)
+}
+
+fn parse_docx_numbering_xml(numbering_xml: &[u8]) -> CommandResult<DocxNumberingDefs> {
+    let mut reader = Reader::from_reader(numbering_xml);
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    let mut defs = DocxNumberingDefs::default();
+    let mut current_abstract_id = None::<String>;
+    let mut current_num_id = None::<String>;
+    let mut current_level = None::<DocxNumberingLevelDef>;
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format!("docx_numbering_xml_read_failed:{}", error))?
+        {
+            Event::Start(event) => {
+                let name = event.name().as_ref().to_vec();
+                if is_word_tag(&name, b"abstractNum") {
+                    current_abstract_id = attr_value(&event, b"abstractNumId");
+                } else if is_word_tag(&name, b"num") {
+                    current_num_id = attr_value(&event, b"numId");
+                } else if is_word_tag(&name, b"lvl") {
+                    current_level = attr_value(&event, b"ilvl")
+                        .and_then(|value| value.parse::<u32>().ok())
+                        .map(|level| DocxNumberingLevelDef {
+                            level,
+                            ..DocxNumberingLevelDef::default()
+                        });
+                } else if let Some(level) = current_level.as_mut() {
+                    if is_word_tag(&name, b"numFmt") {
+                        level.format = attr_value(&event, b"val");
+                    } else if is_word_tag(&name, b"lvlText") {
+                        level.text = attr_value(&event, b"val");
+                    }
+                } else if is_word_tag(&name, b"abstractNumId") {
+                    if let (Some(num_id), Some(abstract_id)) =
+                        (current_num_id.as_ref(), attr_value(&event, b"val"))
+                    {
+                        defs.num_to_abstract.insert(num_id.clone(), abstract_id);
+                    }
+                }
+            }
+            Event::Empty(event) => {
+                let name = event.name().as_ref().to_vec();
+                if let Some(level) = current_level.as_mut() {
+                    if is_word_tag(&name, b"numFmt") {
+                        level.format = attr_value(&event, b"val");
+                    } else if is_word_tag(&name, b"lvlText") {
+                        level.text = attr_value(&event, b"val");
+                    }
+                } else if is_word_tag(&name, b"abstractNumId") {
+                    if let (Some(num_id), Some(abstract_id)) =
+                        (current_num_id.as_ref(), attr_value(&event, b"val"))
+                    {
+                        defs.num_to_abstract.insert(num_id.clone(), abstract_id);
+                    }
+                }
+            }
+            Event::End(event) => {
+                let name = event.name().as_ref().to_vec();
+                if is_word_tag(&name, b"lvl") {
+                    if let (Some(abstract_id), Some(level)) =
+                        (current_abstract_id.as_ref(), current_level.take())
+                    {
+                        defs.abstract_levels
+                            .insert((abstract_id.clone(), level.level), level);
+                    }
+                } else if is_word_tag(&name, b"abstractNum") {
+                    current_abstract_id = None;
+                } else if is_word_tag(&name, b"num") {
+                    current_num_id = None;
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(defs)
+}
+
+fn resolve_docx_style(
+    style_id: Option<&str>,
+    styles: &HashMap<String, DocxStyleDef>,
+) -> (Option<String>, Option<String>, Option<u32>) {
+    let Some(style_id) = style_id else {
+        return (None, None, None);
+    };
+    let mut current_id = style_id.to_string();
+    let mut based_on = None::<String>;
+    let mut name = None::<String>;
+    let mut heading_level = heading_level_from_style_text(style_id);
+    let mut seen = Vec::<String>::new();
+    for _ in 0..12 {
+        if seen.contains(&current_id) {
+            break;
+        }
+        seen.push(current_id.clone());
+        let Some(style) = styles.get(&current_id) else {
+            break;
+        };
+        if name.is_none() {
+            name = style.name.clone();
+        }
+        if heading_level.is_none() {
+            heading_level = style
+                .outline_level
+                .map(|level| level + 1)
+                .or_else(|| {
+                    style
+                        .name
+                        .as_deref()
+                        .and_then(heading_level_from_style_text)
+                })
+                .or_else(|| heading_level_from_style_text(&style.style_id));
+        }
+        if let Some(parent) = &style.based_on {
+            if based_on.is_none() {
+                based_on = Some(parent.clone());
+            }
+            current_id = parent.clone();
+        } else {
+            break;
+        }
+    }
+    (name, based_on, heading_level)
+}
+
+fn resolve_docx_numbering(
+    numbering_id: Option<&str>,
+    numbering_level: Option<u32>,
+    numbering_defs: &DocxNumberingDefs,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(num_id) = numbering_id else {
+        return (None, None, None);
+    };
+    let abstract_id = numbering_defs.num_to_abstract.get(num_id).cloned();
+    let level = numbering_level.unwrap_or(0);
+    let level_def = abstract_id
+        .as_ref()
+        .and_then(|id| numbering_defs.abstract_levels.get(&(id.clone(), level)));
+    (
+        abstract_id,
+        level_def.and_then(|item| item.format.clone()),
+        level_def.and_then(|item| item.text.clone()),
+    )
+}
+
+fn parse_docx_document_xml(
+    document_xml: &[u8],
+    styles: &HashMap<String, DocxStyleDef>,
+    numbering_defs: &DocxNumberingDefs,
+) -> CommandResult<Vec<DocxRawBlock>> {
     let mut reader = Reader::from_reader(document_xml);
     reader.config_mut().trim_text(true);
     let mut buffer = Vec::new();
@@ -486,7 +952,15 @@ fn parse_docx_document_xml(document_xml: &[u8]) -> CommandResult<Vec<DocxRawBloc
     let mut in_cell = false;
     let mut paragraph_text = String::new();
     let mut cell_text = String::new();
-    let mut row_cells = Vec::<String>::new();
+    let mut row_cells = Vec::<DocxTableCell>::new();
+    let mut table_rows = Vec::<Vec<DocxTableCell>>::new();
+    let mut current_cell = DocxTableCell::default();
+    let mut paragraph_meta = DocxParagraphMeta::default();
+    let mut active_section_columns = None::<DocxSectionColumns>;
+    let mut in_paragraph_properties = false;
+    let mut in_numbering_properties = false;
+    let mut in_section_properties = false;
+    let mut in_table_cell_properties = false;
 
     loop {
         match reader
@@ -497,13 +971,81 @@ fn parse_docx_document_xml(document_xml: &[u8]) -> CommandResult<Vec<DocxRawBloc
                 let name = event.name().as_ref().to_vec();
                 if is_word_tag(&name, b"tbl") {
                     in_table = true;
+                    table_rows.clear();
                 } else if is_word_tag(&name, b"tr") && in_table {
                     row_cells.clear();
                 } else if is_word_tag(&name, b"tc") && in_table {
                     in_cell = true;
                     cell_text.clear();
+                    current_cell = DocxTableCell::default();
+                } else if is_word_tag(&name, b"tcPr") && in_cell {
+                    in_table_cell_properties = true;
+                } else if is_word_tag(&name, b"gridSpan") && (in_table_cell_properties || in_cell) {
+                    current_cell.col_span =
+                        attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                } else if is_word_tag(&name, b"vMerge") && (in_table_cell_properties || in_cell) {
+                    current_cell.vertical_merge =
+                        Some(attr_value(&event, b"val").unwrap_or_else(|| "continue".to_string()));
                 } else if is_word_tag(&name, b"p") {
                     paragraph_text.clear();
+                    paragraph_meta = DocxParagraphMeta::default();
+                    paragraph_meta.section_columns = active_section_columns.clone();
+                } else if is_word_tag(&name, b"pPr") {
+                    in_paragraph_properties = true;
+                } else if is_word_tag(&name, b"numPr") && in_paragraph_properties {
+                    in_numbering_properties = true;
+                } else if is_word_tag(&name, b"sectPr") {
+                    in_section_properties = true;
+                } else if is_word_tag(&name, b"pStyle") && in_paragraph_properties {
+                    paragraph_meta.style_id = attr_value(&event, b"val");
+                } else if is_word_tag(&name, b"ilvl") && in_numbering_properties {
+                    paragraph_meta.numbering_level =
+                        attr_value(&event, b"val").and_then(|value| value.parse::<u32>().ok());
+                } else if is_word_tag(&name, b"numId") && in_numbering_properties {
+                    paragraph_meta.numbering_id = attr_value(&event, b"val");
+                } else if is_word_tag(&name, b"cols") && in_section_properties {
+                    let columns = DocxSectionColumns {
+                        count: attr_value(&event, b"num").and_then(|value| value.parse().ok()),
+                        space_twips: attr_value(&event, b"space")
+                            .and_then(|value| value.parse().ok()),
+                        equal_width: attr_value(&event, b"equalWidth")
+                            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false")),
+                    };
+                    paragraph_meta.section_columns = Some(columns.clone());
+                    active_section_columns = Some(columns);
+                } else if is_word_tag(&name, b"gridSpan") && (in_table_cell_properties || in_cell) {
+                    current_cell.col_span =
+                        attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                } else if is_word_tag(&name, b"vMerge") && (in_table_cell_properties || in_cell) {
+                    current_cell.vertical_merge =
+                        Some(attr_value(&event, b"val").unwrap_or_else(|| "continue".to_string()));
+                }
+            }
+            Event::Empty(event) => {
+                let name = event.name().as_ref().to_vec();
+                if is_word_tag(&name, b"pStyle") && in_paragraph_properties {
+                    paragraph_meta.style_id = attr_value(&event, b"val");
+                } else if is_word_tag(&name, b"ilvl") && in_numbering_properties {
+                    paragraph_meta.numbering_level =
+                        attr_value(&event, b"val").and_then(|value| value.parse::<u32>().ok());
+                } else if is_word_tag(&name, b"numId") && in_numbering_properties {
+                    paragraph_meta.numbering_id = attr_value(&event, b"val");
+                } else if is_word_tag(&name, b"cols") && in_section_properties {
+                    let columns = DocxSectionColumns {
+                        count: attr_value(&event, b"num").and_then(|value| value.parse().ok()),
+                        space_twips: attr_value(&event, b"space")
+                            .and_then(|value| value.parse().ok()),
+                        equal_width: attr_value(&event, b"equalWidth")
+                            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false")),
+                    };
+                    paragraph_meta.section_columns = Some(columns.clone());
+                    active_section_columns = Some(columns);
+                } else if is_word_tag(&name, b"gridSpan") && (in_table_cell_properties || in_cell) {
+                    current_cell.col_span =
+                        attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                } else if is_word_tag(&name, b"vMerge") && (in_table_cell_properties || in_cell) {
+                    current_cell.vertical_merge =
+                        Some(attr_value(&event, b"val").unwrap_or_else(|| "continue".to_string()));
                 }
             }
             Event::Text(event) => {
@@ -523,27 +1065,58 @@ fn parse_docx_document_xml(document_xml: &[u8]) -> CommandResult<Vec<DocxRawBloc
                             }
                             cell_text.push_str(&collapsed);
                         } else if !in_table {
+                            let mut resolved_meta = paragraph_meta.clone();
+                            let (style_name, based_on_style_id, style_heading_level) =
+                                resolve_docx_style(resolved_meta.style_id.as_deref(), styles);
+                            resolved_meta.style_name = style_name;
+                            resolved_meta.based_on_style_id = based_on_style_id;
+                            resolved_meta.resolved_style_id = resolved_meta.style_id.clone();
+                            resolved_meta.style_heading_level = style_heading_level;
+                            let (abstract_id, numbering_format, numbering_text) =
+                                resolve_docx_numbering(
+                                    resolved_meta.numbering_id.as_deref(),
+                                    resolved_meta.numbering_level,
+                                    numbering_defs,
+                                );
+                            resolved_meta.abstract_numbering_id = abstract_id;
+                            resolved_meta.numbering_format = numbering_format;
+                            resolved_meta.numbering_text = numbering_text;
                             blocks.push(DocxRawBlock {
-                                kind: "paragraph",
+                                kind: resolved_meta.block_kind(),
                                 text: collapsed,
+                                table: None,
+                                layout_hints: resolved_meta.layout_hints(),
                             });
                         }
                     }
                     paragraph_text.clear();
                 } else if is_word_tag(&name, b"tc") && in_table {
-                    row_cells.push(collapse_whitespace(&cell_text));
+                    current_cell.text = collapse_whitespace(&cell_text);
+                    row_cells.push(current_cell.clone());
                     cell_text.clear();
+                    current_cell = DocxTableCell::default();
+                    in_table_cell_properties = false;
                     in_cell = false;
                 } else if is_word_tag(&name, b"tr") && in_table {
-                    if row_cells.iter().any(|cell| !cell.is_empty()) {
-                        push_docx_block(&mut blocks, "table", &row_cells.join("\t"));
+                    if row_cells.iter().any(|cell| !cell.text.is_empty()) {
+                        table_rows.push(row_cells.clone());
                     }
                     row_cells.clear();
                 } else if is_word_tag(&name, b"tbl") {
+                    push_docx_table_block(&mut blocks, &table_rows);
                     in_table = false;
                     in_cell = false;
+                    table_rows.clear();
                     row_cells.clear();
                     cell_text.clear();
+                } else if is_word_tag(&name, b"numPr") {
+                    in_numbering_properties = false;
+                } else if is_word_tag(&name, b"pPr") {
+                    in_paragraph_properties = false;
+                } else if is_word_tag(&name, b"sectPr") {
+                    in_section_properties = false;
+                } else if is_word_tag(&name, b"tcPr") {
+                    in_table_cell_properties = false;
                 }
             }
             Event::Eof => break,
@@ -573,9 +1146,27 @@ fn parse_docx_with_rust_ooxml(
     document
         .read_to_end(&mut document_xml)
         .map_err(|error| format!("rust_docx_read_document_xml_failed:{}", error))?;
+    drop(document);
+
+    let mut styles = HashMap::<String, DocxStyleDef>::new();
+    if let Ok(mut styles_file) = archive.by_name("word/styles.xml") {
+        let mut styles_xml = Vec::new();
+        styles_file
+            .read_to_end(&mut styles_xml)
+            .map_err(|error| format!("rust_docx_read_styles_xml_failed:{}", error))?;
+        styles = parse_docx_styles_xml(&styles_xml)?;
+    }
+    let mut numbering_defs = DocxNumberingDefs::default();
+    if let Ok(mut numbering_file) = archive.by_name("word/numbering.xml") {
+        let mut numbering_xml = Vec::new();
+        numbering_file
+            .read_to_end(&mut numbering_xml)
+            .map_err(|error| format!("rust_docx_read_numbering_xml_failed:{}", error))?;
+        numbering_defs = parse_docx_numbering_xml(&numbering_xml)?;
+    }
 
     let mut warnings = Vec::<String>::new();
-    let mut raw_blocks = parse_docx_document_xml(&document_xml)?;
+    let mut raw_blocks = parse_docx_document_xml(&document_xml, &styles, &numbering_defs)?;
     if raw_blocks.is_empty() {
         warnings.push(
             "DOCX contains no extractable paragraphs or tables; manual review required".to_string(),
@@ -587,6 +1178,8 @@ fn parse_docx_with_rust_ooxml(
                 .and_then(|value| value.to_str())
                 .unwrap_or("document")
                 .to_string(),
+            table: None,
+            layout_hints: None,
         });
     }
     let blocks = raw_blocks
@@ -597,7 +1190,18 @@ fn parse_docx_with_rust_ooxml(
                 document_block(format!("b{:03}", index + 1), &block.text, 1, index, 0.99);
             if block.kind == "table" {
                 value["blockType"] = json!("table");
-                value["html"] = json!(markdownish_to_html(&block.text, "table"));
+                if let Some(table) = &block.table {
+                    value["table"] = table_ir_to_value(table);
+                    value["html"] = json!(table_ir_to_html(table));
+                } else {
+                    value["html"] = json!(markdownish_to_html(&block.text, "table"));
+                }
+            } else if block.kind == "header" || block.kind == "list" {
+                value["blockType"] = json!(block.kind);
+                value["html"] = json!(markdownish_to_html(&block.text, block.kind));
+            }
+            if let Some(layout_hints) = &block.layout_hints {
+                value["layoutHints"] = layout_hints.clone();
             }
             value
         })
@@ -695,7 +1299,17 @@ pub(crate) fn image_count_from_extraction(extraction: &Value) -> usize {
         .count()
 }
 
-pub(crate) fn render_pdf_page_with_sips_fallback(
+pub(crate) fn render_pdf_pages_with_adapter(
+    job_id: &str,
+    input_path: &Path,
+    output_path: &Path,
+    asset_dir: &Path,
+    prior_warnings: Vec<String>,
+) -> CommandResult<Value> {
+    render_pdf_pages_with_macos_sips(job_id, input_path, output_path, asset_dir, prior_warnings)
+}
+
+fn render_pdf_pages_with_macos_sips(
     job_id: &str,
     input_path: &Path,
     output_path: &Path,
@@ -747,6 +1361,11 @@ pub(crate) fn render_pdf_page_with_sips_fallback(
         "schemaVersion": "PdfImageExtractionV1",
         "jobId": job_id,
         "sourcePath": input_path.to_string_lossy(),
+        "rendererAdapter": "macos-sips",
+        "rendererProvider": "system-sips",
+        "renderPurpose": "vision-llm-transcription-input",
+        "ocrPerformed": false,
+        "futureAdapter": "pdfium-render-page-renderer",
         "pages": [{
             "pageIndex": 1,
             "width": 595,
@@ -791,16 +1410,10 @@ pub(crate) fn extract_pdf_images_for_vision(
                     .filter_map(Value::as_str)
                     .map(ToString::to_string)
                     .collect::<Vec<_>>();
-                render_pdf_page_with_sips_fallback(
-                    job_id,
-                    input_path,
-                    output_path,
-                    asset_dir,
-                    warnings,
-                )
+                render_pdf_pages_with_adapter(job_id, input_path, output_path, asset_dir, warnings)
             }
         }
-        Err(error) => render_pdf_page_with_sips_fallback(
+        Err(error) => render_pdf_pages_with_adapter(
             job_id,
             input_path,
             output_path,

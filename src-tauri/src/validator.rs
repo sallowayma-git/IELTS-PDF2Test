@@ -46,6 +46,8 @@ pub(crate) fn allowed_question_kind(kind: &str) -> bool {
             | "true_false_not_given"
             | "yes_no_not_given"
             | "matching"
+            | "heading_matching"
+            | "matching_information"
             | "classification"
             | "summary_completion"
             | "table_completion"
@@ -283,11 +285,13 @@ pub(crate) fn validate_reading_source_contract(source: &Value) -> Vec<Value> {
                 &format!("{} is not an allowed group kind", kind),
             ));
         }
-        if matches!(kind, "matching" | "classification")
-            && !group
-                .get("allowOptionReuse")
-                .map(Value::is_boolean)
-                .unwrap_or(false)
+        if matches!(
+            kind,
+            "matching" | "heading_matching" | "matching_information" | "classification"
+        ) && !group
+            .get("allowOptionReuse")
+            .map(Value::is_boolean)
+            .unwrap_or(false)
         {
             issues.push(json_issue(
                 "ReadingExamSourceV1",

@@ -149,6 +149,9 @@ export interface SplitSectionEvidence {
   pageRotation?: number;
   tableRows?: number;
   tableCols?: number;
+  tableHasColSpans?: boolean;
+  tableHasVerticalMerges?: boolean;
+  tableMergedCellCount?: number;
   headingLevel?: number;
   numberingLevel?: number;
   numberingId?: string;

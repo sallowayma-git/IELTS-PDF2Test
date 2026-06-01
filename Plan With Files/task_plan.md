@@ -6,6 +6,11 @@
 ## Current Phase
 Phase 5: Verification & Completion
 
+## Latest Requirement Override
+| Timestamp | Priority | Requirement | Product Principle | Tracking ID |
+|-----------|----------|-------------|-------------------|-------------|
+| 2026-06-01 10:42:39 CST | highest-next | 复杂 PDF/DOCX 切分与题型分类增强，包括双栏、旋转/横向页、跨页延续、PDF 抽取顺序错乱、DOCX 表格/分栏/列表结构、题型交互与选项复用规则分类 | 高置信 LLM 建议进入草稿后只需作者点击 Apply 或做必要修订，不再要求逐题强制核验；低置信、不确定或证据不足项进入人工修订；发布仍必须经过 SourceReview、AuthoringReview 与 Rust 静态合同门禁 | E8-74 |
+
 ## Engineering Tracking Table
 | ID | Task | Source | Status | Dependencies | Acceptance |
 |----|------|--------|--------|--------------|------------|
@@ -15,14 +20,28 @@ Phase 5: Verification & Completion
 | E8-03 | 实现本地数据目录、配置与 Job 存储 | Tauri doc: 本地数据目录、Rust 模型 | complete | E8-02 | Rust `cargo check` 与 Tauri release build 已验证 app data/job 存储命令可编译 |
 | E8-04 | 实现文件导入与 parser 接入骨架 | Tauri doc: Files/Parser commands | complete | E8-03 | TXT/MD/PDF/DOCX 已改为 Rust 主解析；Python sidecar 仅保留 legacy fallback 和 PDF 嵌入图片抽取；macOS 图片 PDF 可由 Rust 调 `sips` 渲染后交给视觉 LLM |
 | E8-05 | 实现规则粗切、答案对齐与 Authoring IR 编辑 | Tauri + output-contract pipeline | complete | E8-04 | 可从 Document IR 生成题组草稿并在 UI 编辑；新增上传后自动流水线（解析、粗切、AuthoringIR、LLM批处理、校验/E2E） |
-| E8-06 | 实现 LLM profile、密钥存储、调用与建议审阅 | Tauri doc: LLM 设置与安全、LLM Review | in_progress | E8-05 | LLM profile、跨平台 OS secure storage 默认存储（keyring native backends 已显式启用）、Rust OpenAI-compatible HTTP gateway、结构化建议与审阅 UI 已接入；高置信自动应用经 schema/evidence/sourceBlockIds/quotes 白名单校验；仍需真实 provider 覆盖与 Windows 实机凭据 smoke |
+| E8-06 | 实现 LLM profile、密钥存储、调用与建议审阅 | Tauri doc: LLM 设置与安全、LLM Review | in_progress | E8-05 | LLM profile、跨平台 OS secure storage 默认存储（keyring native backends 已显式启用）、Rust OpenAI-compatible HTTP gateway、结构化建议与审阅 UI 已接入；高置信自动应用经 schema/evidence/sourceBlockIds/quotes 白名单校验；真实 provider 文本/视觉 Rust 诊断已通过；仍需 Windows 实机凭据 smoke |
 | E8-07 | 实现模板渲染、统一阅读页预览与校验 | Tauri + output-contract docs | in_progress | E8-05 | JS/manifest 生成、Rust ReadingExamSourceV1/DOM 静态合同校验已接入；真实 runtime E2E 保留为开发/CI/诊断命令，不再作为普通生产导出硬依赖；仍需更多复杂题型与完整 UI E2E |
 | E8-08 | 实现 PackBuilder、JS 导出和组 Pack 发布 | Tauri doc: Pack 发布 | in_progress | E8-07 | 单题 JS/manifest、Pack 目录/标准 `.zip` 已实现；导出/Pack 已强制 SourceReview + AuthoringReview + Rust 静态合同门禁；生产不打包 Node/Python/OCR，真实 runtime E2E 为诊断项 |
 | E8-09 | 完成 Dashboard、ImportWizard、DocumentReview、SplitAndAnswers、GroupEditor、LlmReview、UnifiedPreview、PackBuilder、Settings 全页面 | Tauri doc: 页面详细设计 | complete | E8-02..E8-08 | 页面流程闭环且状态可持久化 |
 | E8-10 | 验收测试、错误修复与文档同步 | Tauri doc: 最小 MVP 范围、关键验收用例 | in_progress | E8-03..E8-09 | 已完成构建/语法/冒烟验证、no-text/image PDF、复杂 TXT/MD/PDF/DOCX、Rust 静态 export/Pack 回归；扫描 PDF 策略已定为视觉 LLM + SourceReview + 手工兜底，仍需更广 UI E2E 和真实服务覆盖 |
 | E8-11 | 审计后发布硬门禁补齐 | Deep audit 2026-05-31 | complete | E8-06..E8-10 | 已新增 `publish_readiness_gate`、SourceReviewV1、no-text/image PDF fixture、Rust 静态合同 gate、命令级导出/Pack static fixture；OCR 策略定为视觉 LLM + 人工 SourceReview，不打包本地 OCR |
-| E8-12 | 审计后架构拆分与测试基线 | Deep audit 2026-05-31 | in_progress | E8-03..E8-10 | 已新增 parser no-text/image PDF、complex TXT/MD/PDF/DOCX、source metadata、export/Pack static core、路径段安全、Rust LLM gateway 测试；已拆出 parser/source review/auto pipeline/export-pack/LLM/preview-authoring/job command modules，并落地首个 typed SourceReview seam，仍需扩展 typed-domain refactor 与更多 UI E2E |
+| E8-12 | 审计后架构拆分与测试基线 | Deep audit 2026-05-31 | in_progress | E8-03..E8-10 | 已新增 parser no-text/image PDF、complex TXT/MD/PDF/DOCX、source metadata、export/Pack static core、路径段安全、Rust LLM gateway mock 文本/视觉测试；已拆出 parser/source review/auto pipeline/export-pack/LLM/preview-authoring/job command modules，并落地首个 typed SourceReview seam，仍需扩展 typed-domain refactor 与更多 UI E2E |
 | E8-13 | 生产化交付、安全与依赖自包含审计 | Deep audit 2026-05-31 15:40 | in_progress | E8-06..E8-12 | 已加固明文密钥兜底默认禁用、路径段校验、sandbox iframe 预览和显式 CSP；最新策略是不打包 Node/Python/OCR，剩余 Python/pypdf 仅为 legacy/嵌入图片可选能力，Node 仅诊断 |
+| E8-74 | 复杂 PDF/DOCX 切分与题型分类增强 | 最新需求 2026-06-01 10:37:59 CST | in_progress | E8-04..E8-08 | 已完成首个 Rust-first 增量：基于 page/bbox 的双栏 reading-order 重建、answer/ignore 语义尾部排序、续块归组、题型/交互/选项复用分类元数据、choose TWO/THREE selection 约束，并同步 dev fallback；剩余 rotated 坐标标准化、跨页 section graph、DOCX 表格/列表富元数据和 LLM repair/classifier 深化 |
+| E8-82 | 最小可编辑态存储策略 | 用户要求 2026-06-01 | complete | E8-05..E8-08 | 默认在 AuthoringIR 生成后移除 parser/split/cache/LLM/temp transcription/pipeline report 等过程态，仅保留 `job.json`、`authoring-ir.json`、`authoring-project.json`、`source-review.json` 与上传源文件；`keepFullProcessArtifacts=true` 时保留完整诊断态；导出/Pack 门禁失败也压缩为可恢复编辑态 |
+| E8-83 | 四个真实 PDF 样本自动流水线回归 | Files PDF samples + 最新最小态策略 | complete | E8-74, E8-82 | 四个 `Files/*.pdf` 样本已覆盖 parser/split 与 auto pipeline：验证 P2 umbrella range、混合图片页 SourceReview 路由、文本层样本 LLM Review 路由、默认最小可编辑态清理，以及 root `cache/parser` job-scoped 清理；诊断保留模式仍保留完整过程态 |
+| E8-84 | 真实 provider 的 PDF LLM repair 合同诊断 | E8-83 后续 + 用户提供测试 key | complete | E8-81, E8-83 | 新增 ignored live diagnostic，使用四个真实 PDF 的 concrete groups 调用 OpenAI-compatible provider；修复 `matching_information`/`heading_matching` Rust 合同漂移、`matching` interaction auto-apply 白名单缺口；实测 6 组中 5 组高置信可自动应用、1 组低置信进人工审核 |
+| E8-85 | PDF 页面渲染 adapter 边界收敛 | PDFium adapter 评估 + 依赖边界 | complete | E8-21, E8-74, E8-83 | 将扫描/no-text PDF 页面图生成收敛为 `render_pdf_pages_with_adapter` seam，当前 macOS 走系统 `sips`，输出 `rendererAdapter`、`renderPurpose`、`ocrPerformed=false`、`futureAdapter=pdfium-render-page-renderer`；不引入默认 PDFium/OCR 依赖 |
+| E8-86 | DOCX styles.xml / numbering.xml 结构语义解析 | E8-74 DOCX 富元数据缺口 | complete | E8-79 | Rust DOCX adapter 解析 `word/styles.xml` 和 `word/numbering.xml`，将样式名、basedOn、outline heading level、numId/abstractNumId/level format/text 写入 layoutHints，并进入 split evidence；不引入 Python/Node/Office 依赖 |
+| E8-89 | 最小可编辑态 UI E2E 合同门禁 | 用户要求 2026-06-01 最小可编辑态 | complete | E8-82, E8-88 | UI E2E 覆盖清晰文本与图片 PDF/人工转录链路，断言自动流水线后不保留 DocumentIR、splitCandidates、pipelineReport、预览前 validationReport；preview/export/Pack 可从最小态重新生成必要产物 |
+| E8-90 | 打包产物与生产依赖边界审计 | 生产化交付/不打包 Node/Python/OCR 要求 | complete | E8-13, E8-82 | `npm run tauri build` 产出 macOS `.app`/`.dmg`；新增 `npm run audit:package` 验证 `externalBin` 为空、包体无 Node/Python runtime、node_modules、venv、Tesseract/OCR、PDFium 和 junk metadata |
+| E8-91 | Release 验证命令加固 | 生产化交付门禁 | complete | E8-90 | `scripts/package-audit.mjs` 改为发现 `Product_version_*.dmg`，避免硬编码 aarch64；新增 `npm run verify:release` 一键执行 Tauri build + package audit |
+| E8-92 | Rust 后端最小态端到端回归 | 最小可编辑态/真实 Tauri 后端持久化 | complete | E8-82, E8-89 | 新增真实 fixture Rust 后端连续回归：auto pipeline 最小化 -> 人工审核状态 -> export；验证仅保留 authoring/project/source-review/uploads，清理 parser/split/pipeline/validation/LLM/cache 过程态 |
+| E8-93 | DOCX 分栏结构元数据解析 | 最新需求 2026-06-01 复杂 DOCX 增强 | complete | E8-74, E8-86 | Rust OOXML DOCX parser 解析 `sectPr/cols`，将分栏 count/space/equalWidth 写入 `layoutHints.section.columns` 并进入 split evidence 的 `sectionColumnCount` |
+| E8-94 | 跨页题组延续证据回归加固 | 最新需求 2026-06-01 跨页延续增强 | complete | E8-74 | 加强 layout-aware split 回归，验证跨页续块进入 split blockIds/sectionEvidence、AuthoringIR sourceBlockIds、题目 sourceBlockIds 和 continuationEdges，避免只记录 edge 但丢失下一页证据 |
+| E8-95 | DOCX 表格单元格 span/merge 元数据 | 最新需求 2026-06-01 复杂 DOCX 表格增强 | complete | E8-74, E8-93 | Rust OOXML DOCX table parser 保留 `w:gridSpan`/`w:vMerge` 为 table cell `colSpan`/`verticalMerge`，并用生成 DOCX 回归覆盖 table completion/matching 关键结构证据 |
+| E8-96 | DOCX 合并表格结构进入 split/LLM 证据链 | 最新需求 2026-06-01 复杂 DOCX 表格增强 + 最小可编辑态约束 | complete | E8-95 | split `sectionEvidence` 现在暴露 `tableHasColSpans`、`tableHasVerticalMerges`、`tableMergedCellCount`，前端类型/dev fallback 同步；不新增任何持久化中间态 |
 
 ## Phases
 
@@ -64,7 +83,8 @@ Phase 5: Verification & Completion
 - [x] 修复关键门禁策略：发布链路默认 Rust 静态合同 gate + SourceReview/AuthoringReview，真实 runtime E2E 退为诊断/CI 项
 - [x] 修复配置移植性风险：移除代码内本机绝对路径默认值，仅保留 `EPIC8_UNIFIED_HTML_PATH`/`EPIC8_UNIFIED_PYTHON` 注入
 - [x] 完成当前实现深度审计，识别发布硬门禁与复杂 PDF/OCR 缺口
-- [ ] 完成最终验收清单执行（Rust 静态 gate、no-text/image PDF、复杂 TXT/MD/PDF/DOCX、export/Pack 命令级证据、视觉 LLM/人工转录策略、路径/CSP/密钥 hardening 已补；模块拆分、真实 provider 覆盖和更广 UI E2E 仍未完成）
+- [x] 启动 E8-74：复杂 PDF/DOCX 切分、layout-aware reading order、semantic section graph、题型/交互/选项复用规则分类增强（下一工程任务最高优先级）
+- [ ] 完成最终验收清单执行（Rust 静态 gate、no-text/image PDF、复杂 TXT/MD/PDF/DOCX、export/Pack 命令级证据、视觉 LLM/人工转录策略、路径/CSP/密钥 hardening、最小可编辑态 UI E2E 已补；模块拆分、真实 provider 扩展覆盖和交互式 packaged desktop smoke 仍未完成；Rust 后端最小态端到端回归已补）
 - [ ] 完成最终交付说明
 - **Status:** in_progress
 
@@ -455,7 +475,7 @@ This addendum is the latest execution guidance for future agents. It supersedes 
 
 | ID | Priority | Status | Summary | Evidence |
 |----|----------|--------|---------|----------|
-| E8-21 | P1 | complete | Moved the rendered-page fallback orchestration for image/no-text PDFs into Rust. Vision transcription now tries Python/pypdf embedded-image extraction first, but if that fails or returns no images, Rust directly invokes macOS `sips` and emits the same `PdfImageExtractionV1` contract for the LLM gateway. This reduces Python/pypdf from a hard dependency for scanned-PDF vision input on macOS while preserving SourceReview as the publish gate. | `no_text_pdf_fixture_renders_page_fallback_for_vision` passed through the unified Rust entrypoint; `rust_sips_fallback_renders_pdf_without_python_extraction` passed without using Python extraction; full `cargo test` passed 35 tests; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run check`, `npm run build`, sidecar syntax checks, `git diff --check`, and `npm run tauri build` passed. |
+| E8-21 | P1 | complete | Moved the rendered-page fallback orchestration for image/no-text PDFs into Rust. Vision transcription now tries Python/pypdf embedded-image extraction first, but if that fails or returns no images, Rust directly invokes macOS `sips` and emits the same `PdfImageExtractionV1` contract for the LLM gateway. This reduces Python/pypdf from a hard dependency for scanned-PDF vision input on macOS while preserving SourceReview as the publish gate. | `no_text_pdf_fixture_renders_page_fallback_for_vision` passed through the unified Rust entrypoint; `pdf_render_adapter_renders_with_macos_sips_without_ocr` passed without using Python extraction; full `cargo test` passed 35 tests; `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `npm run check`, `npm run build`, sidecar syntax checks, `git diff --check`, and `npm run tauri build` passed. |
 
 ### Current Remaining Implementation Order
 1. Keep production dependency strategy Rust-first: no bundled Node/Python/OCR; Node remains diagnostic, Python/pypdf remains legacy/embedded-image optional, macOS `sips` handles rendered-page fallback.
@@ -1009,3 +1029,291 @@ This addendum is the latest execution guidance for future agents. It supersedes 
 2. Consider adding packaged Tauri smoke coverage for the same flow, separate from the Vite/dev-fallback browser diagnostic.
 3. Preserve production dependency direction: UI E2E remains development/CI only and must not become a production runtime dependency.
 4. Continue aligning dev fallback behavior with Rust production path when diagnostics expose report, review, or cleanup drift.
+
+## Implementation Update: 2026-06-01 / E8-76
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-76 | P0 | complete | Implemented the first E8-74 complex split/classification increment. The Rust split path now does lightweight layout-aware block ordering using page, role, column, bbox, and original order; prevents answer/ignore blocks from interleaving ahead of question content; preserves continuation blocks in the candidate group; adds explicit classification metadata with interaction type, option reuse, selection counts, confidence, warnings, and source-block evidence; and propagates candidate interactions into AuthoringIR. Dev fallback and frontend types were aligned. | Targeted Rust regressions passed for two-column out-of-order extraction/continuation and enhanced classifier cases; `(cd src-tauri && cargo fmt --check && cargo test)` passed, 76 passed and 1 ignored; `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` passed; `npm run check` passed; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Deepen E8-74 from deterministic increment into a richer semantic section graph: cross-page continuation edges, table/option adjacency, confidence reasons, and explicit repair targets.
+2. Add rotated/landscape coordinate normalization in parser/DocumentIR, including orientation metadata instead of assuming raw bbox coordinates are already normalized.
+3. Enrich DOCX OOXML parsing with table/list/numbering/column metadata so table completion, matching and classification prompts retain visual structure.
+4. Add LLM classifier/repair pass that consumes split candidates and returns only structured JSON patches with evidence, never final JS.
+5. Expand sample-PDF regression coverage against the four user-supplied PDFs after the graph and DOCX metadata increments.
+
+## Implementation Update: 2026-06-01 / E8-77
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-77 | P0 | complete | Added semantic split evidence for the E8-74 complex PDF/DOCX pipeline. Split candidates and AuthoringIR groups now carry optional `sectionEvidence` and `continuationEdges`, exposing page/column/bbox/role evidence and same-section/cross-column/cross-page continuation relationships. Dev fallback, TypeScript contracts, GroupEditor, and Rust regressions were aligned. | `cargo test layout_aware_split_reorders_two_column_blocks_and_preserves_continuations -- --nocapture` passed; `cargo test enhanced_classifier_distinguishes_matching_table_and_completion_types -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 76 passed and 1 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add rotated/landscape coordinate normalization in parser/DocumentIR so bbox ordering is stable across PDF orientations.
+2. Enrich DOCX OOXML parsing with table/list/numbering/column metadata, then feed those fields into section evidence and classifier confidence.
+3. Add a structured LLM classifier/repair pass that consumes `sectionEvidence`, `continuationEdges`, classification warnings, and source block evidence, returning JSON patches only.
+4. Expand sample-PDF regression coverage against the four user-supplied PDFs using the new evidence fields to classify failure modes.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-78
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-78 | P0 | complete | Added DOCX OOXML table metadata for E8-74. The Rust DOCX parser now emits one structured table block per OOXML table with `table.cells`, `table.rows`, `table.cols`, HTML rendered from that structure, and `layoutHints`. Split `sectionEvidence`, AuthoringIR, TypeScript contracts, dev fallback, and GroupEditor now expose optional table dimensions for table completion/matching repair. | `cargo test docx_ooxml_parser_preserves_table_ir_for_split_evidence -- --nocapture` passed; `cargo test complex_docx_fixture_reaches_authoring_ir -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 77 passed and 1 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add DOCX OOXML list numbering and paragraph style/heading metadata, then feed those fields into split evidence and classifier confidence.
+2. Add rotated/landscape coordinate normalization in parser/DocumentIR so PDF bbox ordering is stable across orientations.
+3. Add a structured LLM classifier/repair pass that consumes `sectionEvidence`, `continuationEdges`, table dimensions, classification warnings, and source block evidence, returning JSON patches only.
+4. Expand sample-PDF regression coverage against the four user-supplied PDFs using the evidence fields to classify failure modes.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-79
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-79 | P0 | complete | Added DOCX paragraph style and numbering metadata for E8-74. The Rust OOXML parser now reads direct `w:pStyle`, `w:numPr/w:ilvl`, and `w:numPr/w:numId` metadata, emits additive `layoutHints`, promotes heading-style paragraphs to header blocks and numbered paragraphs to list blocks, and carries heading/numbering evidence through split candidates, AuthoringIR, TypeScript contracts, dev fallback, and GroupEditor. | `cargo test docx_ooxml_parser_preserves_paragraph_style_and_numbering_metadata -- --nocapture` passed; `cargo test docx_ooxml_parser_preserves_table_ir_for_split_evidence -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 78 passed and 1 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add rotated/landscape coordinate normalization in parser/DocumentIR so PDF bbox ordering is stable across orientations.
+2. Add a structured LLM classifier/repair pass that consumes `sectionEvidence`, `continuationEdges`, table dimensions, heading/numbering evidence, classification warnings, and source block evidence, returning JSON patches only.
+3. Expand sample-PDF regression coverage against the four user-supplied PDFs using the evidence fields to classify failure modes and protect real-world import behavior.
+4. Consider resolving DOCX `styles.xml` and `numbering.xml` definitions if direct ids/levels are not enough for real user DOCX files.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-80
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-80 | P0 | complete | Added rotated-page bbox normalization for E8-74 split logic. `dynamic_document_blocks` now reads optional page rotation metadata, normalizes bbox coordinates for 90/180/270 degree pages before ordering/column detection, preserves `pageRotation`, and exposes `normalizedBbox` plus `pageRotation` in split/AuthoringIR section evidence. Dev fallback and TypeScript contracts were aligned. | `cargo test rotated_page_bbox_is_normalized_before_split_ordering -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 79 passed and 1 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add a structured LLM classifier/repair pass that consumes `sectionEvidence`, `continuationEdges`, table dimensions, heading/numbering evidence, normalized bbox/rotation evidence, classification warnings, and source block evidence, returning JSON patches only.
+2. Expand sample-PDF regression coverage against the four user-supplied PDFs using the evidence fields to classify failure modes and protect real-world import behavior.
+3. Evaluate a future PDFium adapter for real text bbox/page rotation extraction and rendered-page fallback beyond macOS `sips`.
+4. Consider resolving DOCX `styles.xml` and `numbering.xml` definitions if direct ids/levels are not enough for real user DOCX files.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-81
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-81 | P0 | complete | Added the evidence-aware structured LLM repair contract for E8-74. LLM group inputs now include `repairContract` and `repairContext` with section evidence, continuation edges, table dimensions, heading/numbering metadata, normalized bbox/rotation evidence, warnings, and source block ids. The Rust prompt requires contract compliance and source citations, and auto-apply validation now rejects direct `/questions/...` patch paths in favor of the validated `questions` array. | `cargo test make_llm_input_carries_structured_repair_context_and_evidence -- --nocapture` passed; `cargo test llm_question_field_patches_are_rejected_in_favor_of_questions_array -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 81 passed and 1 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Expand sample-PDF regression coverage against the four user-supplied PDFs using the evidence fields to classify failure modes and protect real-world import behavior.
+2. Keep default storage constrained to the minimal editable state; only diagnostics mode may retain parser/split/cache/pipeline artifacts.
+3. Rerun or add an ignored live provider diagnostic against the stricter `Epic8LlmGroupRepairV1` prompt when temporary provider credentials are available.
+4. Evaluate a future PDFium adapter for real text bbox/page rotation extraction and rendered-page fallback beyond macOS `sips`.
+5. Consider resolving DOCX `styles.xml` and `numbering.xml` definitions if direct ids/levels are not enough for real user DOCX files.
+6. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-82
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-82 | P0 | complete | Implemented the minimal editable-state storage policy. After AuthoringIR generation, parser/split/cache/LLM call/temp transcription/pipeline report artifacts are removed by default, while `job.json`, `authoring-ir.json`, `authoring-project.json`, `source-review.json`, and uploads remain. Diagnostics retention explicitly preserves full process artifacts. Export/Pack gate failures now also minimize to a recoverable editable state instead of leaving stale parser intermediates. | `cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture` passed; `cargo test auto_pipeline_retains_process_artifacts_only_when_diagnostics_enabled -- --nocapture` passed; `cargo test export_core_publish_gate_failure_writes_no_export_or_cleanup -- --nocapture` passed; `cargo test build_pack_publish_gate_failure_writes_no_pack_or_cleanup -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 82 passed and 1 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Expand sample-PDF regression coverage against the four user-supplied PDFs using the evidence fields to classify failure modes and protect real-world import behavior.
+2. Rerun or add an ignored live provider diagnostic against the stricter `Epic8LlmGroupRepairV1` prompt when temporary provider credentials are available.
+3. Evaluate a future PDFium adapter for real text bbox/page rotation extraction and rendered-page fallback beyond macOS `sips`.
+4. Consider resolving DOCX `styles.xml` and `numbering.xml` definitions if direct ids/levels are not enough for real user DOCX files.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-83
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-83 | P0 | complete | Added full auto-pipeline regression coverage for the four user-provided PDFs under `Files/`. The tests now prove parser/split behavior, P2 `Questions 14-26` umbrella handling, mixed image/text PDF SourceReview routing, text-layer sample LLM-review routing, default minimal editable-state persistence, and cleanup of both job-local artifacts and root `cache/parser` outputs. Diagnostics mode still retains root parser cache outputs. | `cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture` passed; `cargo test files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate -- --nocapture` passed; `cargo test auto_pipeline_retains_process_artifacts_only_when_diagnostics_enabled -- --nocapture` passed; `cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 83 passed and 1 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Rerun or add an ignored live provider diagnostic against the stricter `Epic8LlmGroupRepairV1` prompt using the four real PDF samples, then classify model-output failure clusters.
+2. Evaluate a future PDFium adapter for real text bbox/page rotation extraction and rendered-page fallback beyond macOS `sips`.
+3. Consider resolving DOCX `styles.xml` and `numbering.xml` definitions if direct ids/levels are not enough for real user DOCX files.
+4. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-84
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-84 | P0 | complete | Added and ran an ignored live provider diagnostic for real PDF-derived LLM repair. The diagnostic uses the four `Files/*.pdf` samples, sends concrete groups through `Epic8LlmGroupRepairV1`, validates provider JSON shape/evidence/auto-apply safety, and records manual scaffold samples separately. Live testing found and fixed specialized matching kind drift plus the missing `matching` interaction whitelist. | Live command with provided endpoint/key/model passed: 6 concrete groups checked, 5 high-confidence auto-applicable, 1 low-confidence review, 1 manual scaffold sample; `cargo test llm_auto_apply_accepts_matching_interaction_type -- --nocapture` passed; `cargo test rust_contract_validator_accepts_specialized_matching_group_kinds -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 85 passed and 2 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and, separately, richer text bbox/rotation extraction.
+2. Consider resolving DOCX `styles.xml` and `numbering.xml` definitions if direct ids/levels are not enough for real user DOCX files.
+3. Expand live diagnostics from sampled concrete groups to a fuller semantic benchmark once editor/review UX is stable enough for model-output scoring.
+4. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-85
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-85 | P1 | complete | Established the PDF rendered-page adapter boundary without adding a default PDFium/OCR dependency. The public parser seam is now `render_pdf_pages_with_adapter`; current macOS implementation uses system `sips`, emits adapter metadata (`rendererAdapter`, `rendererProvider`, `renderPurpose`, `ocrPerformed=false`, `futureAdapter`), and keeps scanned/image PDFs on the vision LLM + SourceReview path. | `cargo test pdf_render_adapter_renders_with_macos_sips_without_ocr -- --nocapture` passed; `cargo test no_text_pdf_fixture_renders_page_fallback_for_vision -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 85 passed and 2 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Consider resolving DOCX `styles.xml` and `numbering.xml` definitions if direct ids/levels are not enough for real user DOCX files.
+2. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and, separately, richer text bbox/rotation extraction.
+3. Expand live diagnostics from sampled concrete groups to a fuller semantic benchmark once editor/review UX is stable enough for model-output scoring.
+4. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-86
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-86 | P1 | complete | Added lightweight Rust parsing for DOCX `word/styles.xml` and `word/numbering.xml`. The parser now resolves style names, `basedOn` parent styles, heading levels from `w:outlineLvl` or inherited heading names, and numbering definitions from `numId -> abstractNumId -> ilvl`, then writes that semantic structure into additive `layoutHints` for split evidence and LLM repair. | `cargo test docx_ooxml_parser_resolves_styles_and_numbering_definitions -- --nocapture` passed; `cargo test docx_ooxml_parser_preserves_paragraph_style_and_numbering_metadata -- --nocapture` passed; `cargo test complex_docx_fixture_reaches_authoring_ir -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 86 passed and 2 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Evaluate DOCX section columns and advanced numbering overrides if real samples show structure loss.
+2. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and, separately, richer text bbox/rotation extraction.
+3. Expand live diagnostics from sampled concrete groups to a fuller semantic benchmark once editor/review UX is stable enough for model-output scoring.
+4. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-87
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-87 | P0 | complete | Tightened the minimal editable-state storage policy. Ordinary mode no longer persists `cleanup-summary.json` or `publish-readiness-report.json`, removes validation/readiness reports during minimization, and retains source `uploads/` after export/Pack cleanup as project provenance. Diagnostics retention remains the only mode that keeps full process reports. | `cargo test export_core -- --nocapture` passed; `cargo test build_pack -- --nocapture` passed; `cargo test cleanup_respects_diagnostics_artifact_retention -- --nocapture` passed; `cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture` passed; `cargo test files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 86 passed and 2 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Continue desktop/frontend smoke testing against the minimized persisted state, especially DocumentReview, LlmReview, Export, and Pack pages after auto-pipeline/export.
+2. Evaluate DOCX section columns and advanced numbering overrides if real samples show structure loss.
+3. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+4. Expand live diagnostics from sampled concrete groups to a fuller semantic benchmark once editor/review UX is stable enough for model-output scoring.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-88
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-88 | P0 | complete | Aligned the minimized persisted state with the review UI. Low-confidence and auto-apply-blocked LLM outcomes are now persisted into `AuthoringIRV1.groups[].llmReview`, LlmReview can recover those items even after transient suggestion files are cleaned, and DocumentReview explains the minimized-state behavior instead of surfacing a technical missing-document error. | `cargo test auto_pipeline_persists_llm_review_in_authoring_ir_after_minimization -- --nocapture` passed; `cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture` passed; `cargo test auto_pipeline_retains_process_artifacts_only_when_diagnostics_enabled -- --nocapture` passed; `cargo test files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 87 passed and 2 ignored; `git diff --check` passed; browser smoke at `http://127.0.0.1:1420/#/jobs/new` passed with only a favicon 404 in console. |
+
+### Current Remaining Implementation Order
+1. Continue browser smoke on DocumentReview, LlmReview, Export, and Pack flows against real imported jobs to ensure the minimized persisted state is still usable end-to-end.
+2. Evaluate DOCX section columns and advanced numbering overrides if real samples show structure loss.
+3. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+4. Expand live diagnostics from sampled concrete groups to a fuller semantic benchmark once editor/review UX is stable enough for model-output scoring.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-89
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-89 | P0 | complete | Added a UI E2E gate for the minimal editable-state contract. The clear-text flow now asserts no persisted `DocumentIR`, split candidates, pipeline report, or pre-preview validation report after auto-pipeline convergence. The scanned/image PDF flow asserts durable `SourceReview`, no persisted vision placeholder/process report before manual transcription, and cleanup of manual transcription `DocumentIR`/split candidates after AuthoringIR is built. Both flows still complete preview, export, and Pack from the minimized state. | `npm run e2e:ui-flow` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 87 passed and 2 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Continue reducing development-only process-state assumptions in UI helpers and dev fallback where they are not needed for an active step.
+2. Run packaged desktop smoke after the next consolidation pass to confirm Tauri persistence matches the browser/dev fallback contract.
+3. Evaluate DOCX section columns and advanced numbering overrides if real samples show structure loss.
+4. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+
+## Implementation Update: 2026-06-01 / E8-90
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-90 | P0 | complete | Added repeatable production package audit coverage. The macOS Tauri package builds successfully, `sidecars/.DS_Store` was removed after being detected in the first packaged resources, and `npm run audit:package` now verifies app/DMG artifacts, `externalBinCount=0`, and absence of bundled Node/Python runtimes, `node_modules`, virtualenvs, Tesseract/OCR engines, PDFium binaries, and junk metadata. | `npm run tauri build` passed; `npm run audit:package` passed with `.app` size `16846712` bytes and `.dmg` size `5908322` bytes; `npm run e2e:ui-flow` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 87 passed and 2 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add an interactive packaged `.app` IPC smoke if the next pass focuses on end-user desktop runtime behavior rather than package composition.
+2. Continue reducing development-only process-state assumptions in UI helpers and dev fallback where they are not needed for an active step.
+3. Evaluate DOCX section columns and advanced numbering overrides if real samples show structure loss.
+4. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+
+## Implementation Update: 2026-06-01 / E8-91
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-91 | P0 | complete | Hardened the release verification gate. `scripts/package-audit.mjs` now discovers `Product_version_*.dmg` instead of hard-coding the current `aarch64` suffix, and `npm run verify:release` now runs a fresh Tauri production build followed by package audit in one command. | `npm run verify:release` passed; `npm run e2e:ui-flow` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 87 passed and 2 ignored; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add an interactive packaged `.app` IPC smoke if the next pass focuses on true end-user desktop runtime behavior.
+2. Continue reducing development-only process-state assumptions in UI helpers and dev fallback where they are not needed for an active step.
+3. Evaluate DOCX section columns and advanced numbering overrides if real samples show structure loss.
+4. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+
+## Implementation Update: 2026-06-01 / E8-92
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-92 | P0 | complete | Added a Rust backend end-to-end regression for the minimal editable-state workflow. It imports a real `complex-reading.txt` fixture, runs auto-pipeline, verifies minimized durable state, simulates human authoring review, exports through `export_reading_assets_core`, and asserts only `authoring-ir.json`, `authoring-project.json`, `source-review.json`, uploads, and export outputs remain while parser/split/pipeline/validation/LLM/cache artifacts are removed. | `cargo test rust_backend_fixture_flow_exports_from_minimal_editable_state -- --nocapture` passed; `npm run e2e:ui-flow` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 88 passed and 2 ignored; `npm run verify:release` passed; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add an interactive packaged `.app` IPC smoke if the next pass focuses on true end-user desktop runtime behavior.
+2. Continue reducing development-only process-state assumptions in UI helpers and dev fallback where they are not needed for an active step.
+3. Evaluate DOCX section columns and advanced numbering overrides if real samples show structure loss.
+4. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+
+## Implementation Update: 2026-06-01 / E8-93
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-93 | P0 | complete | Added DOCX section-column parsing to the Rust OOXML parser. `sectPr/cols` metadata is now preserved in paragraph `layoutHints.section.columns`, and split evidence exposes `sectionColumnCount` so layout-aware grouping can reason about multi-column Word documents. | `cargo test docx_ooxml_parser_preserves_section_column_metadata -- --nocapture` passed; `npm run e2e:ui-flow` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 89 passed and 2 ignored; `npm run verify:release` passed; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add an interactive packaged `.app` IPC smoke if the next pass focuses on true end-user desktop runtime behavior.
+2. Continue reducing development-only process-state assumptions in UI helpers and dev fallback where they are not needed for an active step.
+3. Evaluate more complex DOCX section transitions or irregular column overrides if real samples show structure loss.
+4. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+
+## Implementation Update: 2026-06-01 / E8-94
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-94 | P0 | complete | Hardened the cross-page continuation regression. The layout-aware split test now proves the page-2 continuation block remains in split `blockIds`, split `sectionEvidence`, AuthoringIR `sourceBlockIds`, question-level `sourceBlockIds`, group `sectionEvidence`, and `continuationEdges`, not merely that an edge was emitted. | `cargo test layout_aware_split_reorders_two_column_blocks_and_preserves_continuations -- --nocapture` passed; `npm run e2e:ui-flow` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 89 passed and 2 ignored; `npm run verify:release` passed; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add an interactive packaged `.app` IPC smoke if the next pass focuses on true end-user desktop runtime behavior.
+2. Add more real multi-page PDF/DOCX samples if users provide documents with unusual cross-page option/table continuations.
+3. Continue reducing development-only process-state assumptions in UI helpers and dev fallback where they are not needed for an active step.
+4. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+
+## Implementation Update: 2026-06-01 / E8-95
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-95 | P0 | complete | Added DOCX table-cell span/merge metadata preservation. The Rust OOXML parser now records `w:gridSpan` as `colSpan` and `w:vMerge` as `verticalMerge` on table cells, keeping merged header/row semantics available for split evidence, LLM repair, and human review. | `cargo test docx_ooxml_parser_preserves_table_cell_span_metadata -- --nocapture` passed; `npm run e2e:ui-flow` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 90 passed and 2 ignored; `npm run verify:release` passed; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Add an interactive packaged `.app` IPC smoke if the next pass focuses on true end-user desktop runtime behavior.
+2. Add real DOCX table fixtures if users provide nested/irregular merged-table examples that break the conservative cell model.
+3. Continue reducing development-only process-state assumptions in UI helpers and dev fallback where they are not needed for an active step.
+4. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-96
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-96 | P0 | complete | Promoted DOCX merged-table signals from parsed table cells into the durable editable evidence chain. Split `sectionEvidence` now records whether a table has column spans, vertical merges, and how many cells carry merge/span metadata; TypeScript contracts and dev fallback produce the same fields. This follows the minimal-state requirement: the extra information is folded into AuthoringIR/section evidence, not stored as a separate process artifact. | `cargo test docx_ooxml_parser_preserves_table_cell_span_metadata -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 90 passed and 2 ignored; `npm run e2e:ui-flow` passed; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Continue auditing whether any UI command still depends on `DocumentIR`/`split-candidates` after auto-pipeline minimization, and regenerate only on demand when an active step truly needs it.
+2. Add real DOCX table fixtures if users provide nested/irregular merged-table examples that require a logical grid reconstruction.
+3. Add an interactive packaged `.app` IPC smoke if the next pass focuses on true end-user desktop runtime behavior.
+4. Evaluate a future optional PDFium implementation behind `render_pdf_pages_with_adapter` for cross-platform page rendering and richer text bbox/rotation extraction.
+5. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.
+
+## Implementation Update: 2026-06-01 / E8-97
+
+| ID | Priority | Status | Summary | Evidence |
+|----|----------|--------|---------|----------|
+| E8-97 | P0 | complete | Decoupled post-authoring source review from transient `document-ir.json`. Validation, preview, publish readiness, LLM suggestion apply, job detail, and authoring-project summary now read the persisted `source-review.json` first, falling back to `document-ir.json` only for legacy/pre-authoring states. Resolving source review now updates the saved review directly, so parser warnings and low-confidence block summaries survive after process artifacts are minimized. | `cargo test source_review_resolution_survives_minimal_state_without_document_ir -- --nocapture` passed; `npm run check` passed; `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` passed, 91 passed and 2 ignored; `npm run e2e:ui-flow` passed; `git diff --check` passed. |
+
+### Current Remaining Implementation Order
+1. Continue removing assumptions that `document-ir.json` or `split-candidates.json` exist after AuthoringIR is built; remaining uses should be limited to parser/split active steps, legacy diagnostics, or tests that explicitly enable artifact retention.
+2. Add interactive packaged `.app` IPC smoke when validating real installed desktop behavior.
+3. Add more real DOCX/PDF fixtures only when they expose concrete layout failures beyond current synthetic coverage.
+4. Preserve dependency direction: no bundled Node/Python/OCR hard dependency; vision LLM remains the scanned/image PDF OCR substitute with mandatory SourceReview.

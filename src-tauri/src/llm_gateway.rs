@@ -147,6 +147,8 @@ fn llm_prompt(input: &Value, mode: &str) -> String {
         "true_false_not_given",
         "yes_no_not_given",
         "matching",
+        "heading_matching",
+        "matching_information",
         "classification",
         "summary_completion",
         "table_completion",
@@ -156,9 +158,13 @@ fn llm_prompt(input: &Value, mode: &str) -> String {
     ]
     .join(", ");
     format!(
-        "You are an IELTS Reading authoring assistant.\nReturn JSON only. Do not return Markdown, HTML, JavaScript, or explanations.\nNever invent passage facts or answers. Suggest structure only.\nEvidence is required: include evidence.sourceBlockIds copied from the input group.sourceBlockIds and evidence.quotes as [{{\"blockId\":\"...\",\"text\":\"...\"}}] using short source excerpts that justify the suggestion.\nIf you cannot cite the source blocks, return confidence below 0.85.\nTask: {}.\nAllowed group kinds: {}.\nGroup JSON: {}",
+        "You are an IELTS Reading authoring assistant.\nReturn JSON only. Do not return Markdown, HTML, JavaScript, ReadingExamSource, final export files, or explanations.\nReturn exactly one JSON object with this shape: {{\"kind\":\"short_answer\",\"confidence\":0.0,\"patch\":[],\"questions\":[],\"warnings\":[],\"evidence\":{{\"sourceBlockIds\":[],\"quotes\":[]}}}}.\nThe kind value MUST be one of the allowed group kinds. patch, questions, warnings, evidence.sourceBlockIds, and evidence.quotes MUST be arrays.\nOnly emit JSON Patch-like objects with op=replace and path in repairContract.allowedPatchPaths. Do not create new paths.\nNever invent passage facts or answers. Suggest structure only.\nUse repairContext.sectionEvidence, continuationEdges, table dimensions, heading/numbering metadata, normalized bbox/page rotation, and reviewWarnings to decide whether the current group kind/layout should be repaired.\nEvidence is required: include evidence.sourceBlockIds copied from the input group.sourceBlockIds and evidence.quotes as [{{\"blockId\":\"...\",\"text\":\"...\"}}] using short source excerpts that justify the suggestion.\nEvery evidence.sourceBlockIds entry and evidence.quotes[].blockId MUST be present in group.sourceBlockIds. If you cannot cite the source blocks, return confidence below 0.85.\nTask: {}.\nAllowed group kinds: {}.\nRepair contract JSON: {}.\nRepair context JSON: {}.\nGroup JSON: {}",
         mode,
         allowed,
+        serde_json::to_string(input.get("repairContract").unwrap_or(&Value::Null))
+            .unwrap_or_default(),
+        serde_json::to_string(input.get("repairContext").unwrap_or(&Value::Null))
+            .unwrap_or_default(),
         serde_json::to_string(input.get("group").unwrap_or(&Value::Null)).unwrap_or_default()
     )
 }

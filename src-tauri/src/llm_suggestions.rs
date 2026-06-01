@@ -112,6 +112,27 @@ pub(crate) fn make_llm_input(
     profile_id: &str,
     mode: &str,
 ) -> Value {
+    let repair_contract = json!({
+        "schema": "Epic8LlmGroupRepairV1",
+        "goal": "Classify or repair one IELTS Reading question group using only cited source evidence.",
+        "allowedPatchOps": ["replace"],
+        "allowedPatchPaths": ["/kind", "/layout/template"],
+        "disallowedOutputs": ["html", "javascript", "readingExamSource", "finalExport"],
+        "evidenceRequired": true,
+        "mustUseOnlyGroupSourceBlocks": true,
+        "highConfidenceAutoApplyThreshold": 0.85
+    });
+    let repair_context = json!({
+        "sourceBlockIds": group.get("sourceBlockIds").cloned().unwrap_or_else(|| json!([])),
+        "reviewWarnings": group.get("reviewWarnings").cloned().unwrap_or_else(|| json!([])),
+        "classificationEvidence": group.get("classificationEvidence").cloned().unwrap_or_else(|| json!([])),
+        "sectionEvidence": group.get("sectionEvidence").cloned().unwrap_or_else(|| json!([])),
+        "continuationEdges": group.get("continuationEdges").cloned().unwrap_or_else(|| json!([])),
+        "currentKind": group.get("kind").cloned().unwrap_or(Value::Null),
+        "currentLayout": group.get("layout").cloned().unwrap_or(Value::Null),
+        "allowOptionReuse": group.get("allowOptionReuse").cloned().unwrap_or(Value::Null),
+        "requiresManualQuestionImport": group.get("requiresManualQuestionImport").cloned().unwrap_or(Value::Bool(false))
+    });
     json!({
         "mode": mode,
         "job": {"jobId": job.job_id, "title": job.title, "category": job.category, "frequency": job.frequency, "tags": job.tags},
@@ -124,6 +145,8 @@ pub(crate) fn make_llm_input(
             "timeoutMs": profile.get("timeoutMs").cloned().unwrap_or_else(|| json!(60000)),
             "forceJson": profile.get("forceJson").cloned().unwrap_or(Value::Bool(true))
         },
+        "repairContract": repair_contract,
+        "repairContext": repair_context,
         "group": group
     })
 }
@@ -226,6 +249,8 @@ fn is_allowed_llm_group_kind(kind: &str) -> bool {
             | "true_false_not_given"
             | "yes_no_not_given"
             | "matching"
+            | "heading_matching"
+            | "matching_information"
             | "classification"
             | "summary_completion"
             | "table_completion"
@@ -238,7 +263,15 @@ fn is_allowed_llm_group_kind(kind: &str) -> bool {
 fn is_allowed_llm_interaction_type(kind: &str) -> bool {
     matches!(
         kind,
-        "radio" | "checkbox" | "text" | "textarea" | "select" | "dragdrop" | "table" | "diagram"
+        "radio"
+            | "checkbox"
+            | "text"
+            | "textarea"
+            | "select"
+            | "dragdrop"
+            | "table"
+            | "diagram"
+            | "matching"
     )
 }
 
@@ -350,6 +383,9 @@ pub(crate) fn llm_suggestion_auto_apply_issues(
                 {
                     issues.push("invalid_layout_template".to_string());
                 }
+            }
+            other if other.starts_with("/questions/") => {
+                issues.push(format!("question_patch_must_use_questions_array:{}", other));
             }
             other => issues.push(format!("unsupported_patch_path:{}", other)),
         }

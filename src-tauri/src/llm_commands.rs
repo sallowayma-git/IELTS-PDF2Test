@@ -14,8 +14,8 @@ use crate::{
     reading_source::{
         answer_key_from_authoring, display_map_from_authoring, question_order_from_authoring,
     },
-    source_review::{source_review_issues, source_review_status},
-    util::{job_dir, read_json, read_json_opt, write_json},
+    source_review::{source_review_issues, source_review_status_for_job},
+    util::{job_dir, read_json, write_json},
     CommandResult, JobStatus, SaveLlmProfileInput, WorkflowStep,
 };
 use chrono::Utc;
@@ -201,8 +201,7 @@ pub(crate) fn apply_llm_suggestion_core(
         }
     }
     let needs_review = refresh_authoring_review_state(&mut ir);
-    let document_ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
-    let source_review = source_review_status(root, job_id, document_ir.as_ref())?;
+    let source_review = source_review_status_for_job(root, job_id)?;
     let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     if let Some(obj) = ir.as_object_mut() {
         obj.insert(

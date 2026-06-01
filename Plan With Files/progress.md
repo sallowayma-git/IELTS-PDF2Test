@@ -824,13 +824,13 @@
   - Added `extract_pdf_images_for_vision`: Python/pypdf embedded-image extraction remains first choice, but Rust `sips` fallback is used if Python extraction fails or returns zero images.
   - Updated `vision_transcription_for_job` to use the unified Rust entrypoint and shared `image_count_from_extraction` helper.
   - Updated environment preflight copy and `sidecars/README.md` to make clear Python/pypdf is no longer required for rendered-page vision fallback on macOS.
-  - Added `rust_sips_fallback_renders_pdf_without_python_extraction` regression test.
+  - Added `pdf_render_adapter_renders_with_macos_sips_without_ocr` regression test.
 
 ### Verification
 | Test | Status |
 |------|--------|
 | `(cd src-tauri && cargo test no_text_pdf_fixture_renders_page_fallback_for_vision)` | pass |
-| `(cd src-tauri && cargo test rust_sips_fallback_renders_pdf_without_python_extraction)` | pass |
+| `(cd src-tauri && cargo test pdf_render_adapter_renders_with_macos_sips_without_ocr)` | pass |
 | `(cd src-tauri && cargo test)` | pass, 35 tests |
 | `(cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings)` | pass |
 | `npm run check` | pass |
@@ -2361,3 +2361,647 @@
 - Text JSON smoke passed: HTTP 200, parsed JSON `{ ok: true, task: "epic8-provider-smoke" }`, latency about 4.4s.
 - Vision message-format smoke passed: HTTP 200, returned parsed JSON with `acceptedImage: true`, and provider usage included `image_tokens: 16`.
 - This proves the configured provider accepts both structured JSON chat completions and OpenAI-style `image_url` content required by the Rust vision transcription path.
+
+## Session: 2026-06-01 / E8-74
+
+### Rust LLM Gateway Mock Provider Regression
+- **Status:** complete for this sub-pass.
+- Actions taken:
+  - Added an in-process mock OpenAI-compatible HTTP server for Rust tests.
+  - Added `rust_llm_gateway_hits_mock_openai_compatible_chat_completion` to verify `run_llm_gateway` posts to `/v1/chat/completions`, requests JSON output, passes bearer auth at runtime, parses provider JSON, injects evidence metadata, and redacts secrets from cached request files.
+  - Added `rust_vision_gateway_sends_image_url_and_parses_transcription` to verify the vision path sends OpenAI-style `image_url` data URLs, does not send local image paths, parses transcription JSON, injects vision evidence metadata, and redacts secrets from cached request files.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test rust_)` | pass; both new mock gateway tests passed |
+| `(cd src-tauri && cargo fmt --check && cargo test)` | pass, 74 tests |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | `cargo fmt --check` failed after adding mock tests | 1 | Ran `cargo fmt`, then reran checks successfully. |
+| 2026-06-01 | `cargo test` was invoked with two test-name filters, which Cargo does not accept | 1 | Used common filter `cargo test rust_` and then full `cargo test`. |
+
+## Session: 2026-06-01 / E8-75
+
+### Live Rust Provider Diagnostic And Prompt Contract Hardening
+- **Status:** complete for this sub-pass.
+- Actions taken:
+  - Added ignored Rust live diagnostic `live_rust_llm_gateway_provider_smoke_text_and_vision` gated by `EPIC8_LIVE_LLM_BASE_URL`, `EPIC8_LIVE_LLM_API_KEY`, and `EPIC8_LIVE_LLM_MODEL`.
+  - The live diagnostic exercises the production Rust `run_llm_gateway` text/group path and vision `image_url` path against a real OpenAI-compatible provider while checking cached request JSON does not contain the API key.
+  - Tightened the Rust group LLM prompt to explicitly require `{ kind, confidence, patch, questions, warnings, evidence }` with arrays for patch/questions/warnings/evidence fields.
+  - Ran the ignored live diagnostic with the temporary provider config supplied by the user; text and vision branches both passed.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test rust_)` | pass; live diagnostic remains ignored by default |
+| live ignored provider diagnostic with user-supplied temporary endpoint/key/model | pass; text and vision branches passed in 10.72s |
+| `(cd src-tauri && cargo fmt --check && cargo test)` | pass; 74 passed, 1 ignored |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | Live provider text path failed with `suggestion_kind_missing` | 1 | Hardened the group LLM prompt to require the exact structured suggestion shape, then reran the live provider diagnostic successfully. |
+| 2026-06-01 | New live test initially missed `allowed_question_kind` import | 1 | Added `use crate::validator::allowed_question_kind;` and reran gateway tests successfully. |
+
+## Session: 2026-06-01 / E8-76
+
+### Complex PDF/DOCX Split And Classification Increment
+- **Status:** complete for this sub-pass; E8-74 remains in progress overall.
+- Actions taken:
+  - Added lightweight layout-aware block normalization in the Rust split path. Blocks now carry page context during ordering and are sorted by page, semantic role, detected column, y/x bbox, then original order.
+  - Added semantic ordering protection so `answer` and `ignore` blocks do not interleave ahead of later-column question content.
+  - Extended deterministic group classification beyond keyword-only basics: multi-choice before single-choice, heading matching, matching information, matching, classification, table completion, summary completion, sentence completion, TFNG and YNNG.
+  - Added explicit classification metadata on split candidates: `kind`, `interaction`, `allowOptionReuse`, selection counts for choose TWO/THREE, confidence, warnings, and source-block evidence.
+  - Propagated candidate classification interaction into `ReadingAuthoringIRV1` question interactions.
+  - Mirrored the same minimal behavior in `src/services/devFallbackBackend.ts` and widened frontend types for new group kinds and interaction metadata.
+  - Added Rust regression tests for two-column out-of-order extraction with continuation blocks, multi-choice selection metadata, classification option reuse, heading matching, table completion, and summary completion.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test layout_aware_split_reorders_two_column_blocks_and_preserves_continuations -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test enhanced_classifier_distinguishes_matching_table_and_completion_types -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test)` | pass; 76 passed, 1 ignored |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | `cargo fmt --check` failed after Rust/TS edits | 1 | Ran `cargo fmt`, then reran checks successfully. |
+| 2026-06-01 | Two-column regression initially sorted a left-column answer block before right-column question blocks | 1 | Added semantic role rank so answer/ignore blocks sort after normal content on the same page. |
+| 2026-06-01 | `npm run check` failed because dev fallback used a temporary `pageIndex` field not present on `DocumentBlock` | 1 | Introduced a local `OrderedBlock` extension type and stripped temporary ordering fields before returning blocks. |
+| 2026-06-01 | `cargo clippy -D warnings` flagged cloned ref in umbrella classification | 1 | Replaced cloned one-element slice with `std::slice::from_ref`. |
+
+### Remaining
+- The current layout-aware logic is a first deterministic increment, not a full semantic section graph. It handles page/column/bbox ordering and continuation grouping but does not yet model rotated-coordinate normalization, font/line metrics, or cross-page node edges explicitly.
+- DOCX table/list structure still benefits from the unified block sequence but needs richer OOXML table/list metadata in `DocumentIRV1` before all matching/table edge cases can be classified with high confidence.
+
+## Session: 2026-06-01 / E8-77
+
+### E8-74 Semantic Split Evidence Increment
+- **Status:** complete for this sub-pass; E8-74 remains in progress overall.
+- Actions taken:
+  - Added structured `sectionEvidence` to split candidates and AuthoringIR groups so each inferred question group carries block id, page index, column, role, text preview, and bbox evidence.
+  - Added `continuationEdges` to split candidates and AuthoringIR groups to expose same-section, cross-column, and cross-page continuation relationships for review and future LLM repair input.
+  - Mirrored the new optional fields in the development fallback backend and TypeScript contracts.
+  - Surfaced section/continuation evidence in GroupEditor so authors can inspect why a group was assembled from adjacent/cross-page blocks.
+  - Extended the two-column regression fixture with a page-2 continuation block and assertions that cross-page continuation evidence survives into AuthoringIR.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test layout_aware_split_reorders_two_column_blocks_and_preserves_continuations -- --nocapture` | pass |
+| `cargo test enhanced_classifier_distinguishes_matching_table_and_completion_types -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 76 passed, 1 ignored |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | `npm run check` failed because `DocumentBlock` did not expose optional `pageIndex` while dev fallback now emits page-aware evidence. | 1 | Added optional `pageIndex?: number` to `src/types/document-ir.ts`, then reran checks successfully. |
+| 2026-06-01 | `cargo test` was invoked with two test-name filters, which Cargo does not accept. | 1 | Reran the two targeted tests as separate commands. |
+
+### Remaining
+- This increment makes the split graph inspectable and repairable, but it is still not a full graph solver. Remaining E8-74 work includes rotated/landscape coordinate normalization, richer DOCX OOXML table/list metadata, and a structured LLM classifier/repair pass that consumes the evidence fields.
+
+## Session: 2026-06-01 / E8-78
+
+### DOCX OOXML Table Metadata Increment
+- **Status:** complete for this sub-pass; E8-74 remains in progress overall.
+- Actions taken:
+  - Changed the Rust DOCX OOXML parser from row-per-table-block output to a single table block preserving structured `table.cells`, `table.rows`, and `table.cols`.
+  - Added DOCX table HTML rendering from the structured table IR instead of reconstructing rows from tab-delimited text.
+  - Added `layoutHints` on DOCX table blocks with `source=docx-ooxml-table`, row count, and column count.
+  - Propagated table row/column metadata into split `sectionEvidence` and AuthoringIR group evidence.
+  - Mirrored the optional `tableRows/tableCols` evidence fields in TypeScript and dev fallback.
+  - Updated GroupEditor evidence display to show table dimensions where available.
+  - Added a Rust regression proving the real `complex-reading.docx` fixture emits table IR and that split evidence contains table row metadata.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test docx_ooxml_parser_preserves_table_ir_for_split_evidence -- --nocapture` | pass |
+| `cargo test complex_docx_fixture_reaches_authoring_ir -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 77 passed, 1 ignored |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | Rust compile failed because one `DocxRawBlock` paragraph construction missed the new `table` field. | 1 | Added `table: None` for paragraph blocks and reran targeted tests successfully. |
+| 2026-06-01 | Targeted tests passed with a dead-code warning for the old `push_docx_block` helper, which would fail under clippy. | 1 | Removed the unused helper before full verification. |
+
+### Remaining
+- DOCX table structure is now preserved, but OOXML list numbering, paragraph styles/headings, and section/column metadata are still not parsed. These remain important for matching/classification prompts whose structure is expressed through numbered options rather than tables.
+
+## Session: 2026-06-01 / E8-79
+
+### DOCX Paragraph Style And Numbering Metadata Increment
+- **Status:** complete for this sub-pass; E8-74 remains in progress overall.
+- Actions taken:
+  - Extended the Rust DOCX OOXML parser to read paragraph properties from `w:pPr`, including `w:pStyle`, `w:numPr/w:ilvl`, and `w:numPr/w:numId`.
+  - Added `layoutHints` for paragraph-origin metadata: `source=docx-ooxml-paragraph`, `styleId`, `headingLevel`, and `numbering` information.
+  - Promoted DOCX heading-style paragraphs to `blockType=header` and numbered paragraphs to `blockType=list` while preserving existing role inference.
+  - Propagated heading and numbering metadata into split `sectionEvidence` and AuthoringIR group evidence.
+  - Mirrored optional `layoutHints`, `headingLevel`, `numberingLevel`, and `numberingId` in TypeScript contracts and dev fallback evidence extraction.
+  - Updated GroupEditor section evidence display to show heading level and numbering level where available.
+  - Added a generated minimal DOCX regression fixture in Rust tests to prove style/numbering metadata is parsed without adding a binary fixture file.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test docx_ooxml_parser_preserves_paragraph_style_and_numbering_metadata -- --nocapture` | pass |
+| `cargo test docx_ooxml_parser_preserves_table_ir_for_split_evidence -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 78 passed, 1 ignored |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | The new DOCX style/numbering test initially failed because `w:pStyle`, `w:ilvl`, and `w:numId` are self-closing OOXML tags emitted as `quick_xml::Event::Empty`, not `Event::Start`. | 1 | Added `Event::Empty` handling for paragraph style and numbering attributes, then reran targeted tests successfully. |
+
+### Remaining
+- DOCX section columns and richer styles from `styles.xml` / `numbering.xml` are not yet resolved; the current increment preserves direct paragraph metadata present in `document.xml`.
+- PDF rotated/landscape coordinate normalization and structured LLM split repair remain the next major E8-74 gaps.
+
+## Session: 2026-06-01 / E8-80
+
+### PDF Rotated-Page BBox Normalization Increment
+- **Status:** complete for this sub-pass; E8-74 remains in progress overall.
+- Actions taken:
+  - Added optional page-level `rotation` / `layoutHints.rotation` handling in split normalization.
+  - Added upright normalized bbox computation for 90/180/270 degree rotated pages before reading-order sorting, column detection, and section evidence generation.
+  - Preserved public block-level `pageRotation` during `dynamic_document_blocks` flattening so later split evidence can report the rotation after temporary sort fields are stripped.
+  - Added `normalizedBbox` and `pageRotation` to split `sectionEvidence` and AuthoringIR evidence.
+  - Mirrored rotation-aware bbox normalization in the dev fallback backend and TypeScript contracts.
+  - Added a Rust regression proving a 90-degree rotated page sorts by normalized reading order, not raw bbox order.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test rotated_page_bbox_is_normalized_before_split_ordering -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 79 passed, 1 ignored |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | Rotation regression initially failed because temporary `_epic8PageRotation` was removed before section evidence was computed, causing `pageRotation=0`. | 1 | Persisted normalized page rotation as public `pageRotation` on flattened blocks while keeping private fields for sorting. |
+
+### Remaining
+- Current Rust `pdf-extract` text parser still synthesizes bbox and does not expose real PDF page rotation. This increment makes split/AuthoringIR ready for a future PDFium or richer PDF adapter that supplies real bbox/rotation metadata.
+- The next high-value gap is structured LLM classifier/repair over the accumulated evidence fields, plus broader real-PDF regression classification.
+
+## Session: 2026-06-01 / E8-81
+
+### Evidence-Aware Structured LLM Repair Contract
+- **Status:** complete for this sub-pass; E8-74 remains in progress overall.
+- Actions taken:
+  - Extended `make_llm_input` with `repairContract` (`Epic8LlmGroupRepairV1`) describing allowed patch ops/paths, disallowed output types, evidence requirements, and auto-apply threshold.
+  - Added `repairContext` carrying `sourceBlockIds`, review warnings, classification evidence, section evidence, continuation edges, current kind/layout, option reuse, and manual-import flags.
+  - Hardened the Rust OpenAI-compatible prompt to require repair-contract compliance, cite only current `group.sourceBlockIds`, use section/continuation/table/heading/numbering/normalized-bbox evidence, and avoid JS/HTML/final export outputs.
+  - Tightened auto-apply validation so direct `/questions/...` JSON patches are rejected; question edits must arrive through the structured `questions` array.
+  - Added regressions proving LLM input carries repair context/evidence and question-field patches are blocked by the auto-apply gate.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test make_llm_input_carries_structured_repair_context_and_evidence -- --nocapture` | pass |
+| `cargo test llm_question_field_patches_are_rejected_in_favor_of_questions_array -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 81 passed, 1 ignored |
+| `git diff --check` | pass |
+
+### Remaining
+- The LLM repair path now receives the right evidence and has stricter output gates, but broader provider-level diagnostics should be rerun when needed to verify real models follow the stricter repair contract.
+- Next high-value work is real PDF sample regression classification using the four files under `Files/`, plus follow-up fixes for failure clusters found there.
+
+## Session: 2026-06-01 / E8-82
+
+### Minimal Editable State Storage Policy
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Added `minimize_process_artifacts_after_authoring` to compress a job to the minimal editable project state after AuthoringIR generation.
+  - Stopped persisting `split-candidates.json` from `build_authoring_ir_core` once the editable AuthoringIR has been built.
+  - Auto pipeline now writes its full `pipeline-report.json` only temporarily, returns the report to the UI, and removes the persisted report during minimization.
+  - Removed default persistence of `pipeline-report-summary.json`; it duplicated process state and violated the minimal-state requirement.
+  - Added cleanup coverage for parser/split/cache/LLM/temp transcription artifacts while preserving diagnostics retention when `keepFullProcessArtifacts=true`.
+  - Changed SourceReview status loading so saved `source-review.json` remains authoritative after `document-ir.json` has been removed.
+  - Applied the same minimization behavior on export/Pack publish-gate failures, preserving blocked project recoverability without retaining intermediates.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture` | pass |
+| `cargo test auto_pipeline_retains_process_artifacts_only_when_diagnostics_enabled -- --nocapture` | pass |
+| `cargo test auto_pipeline_blocks_umbrella_only_manual_import_from_export_ready -- --nocapture` | pass |
+| `cargo test export_core_publish_gate_failure_writes_no_export_or_cleanup -- --nocapture` | pass |
+| `cargo test build_pack_publish_gate_failure_writes_no_pack_or_cleanup -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 82 passed, 1 ignored |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | `export_core_publish_gate_failure_writes_no_export_or_cleanup` first failed because publish-gate failure did not create `authoring-project.json`. | 1 | Exposed project writing through the minimization path and invoked minimization on export/Pack gate failures. |
+| 2026-06-01 | The same export failure test then found stale `document-ir.json` after only writing `authoring-project.json`. | 2 | Replaced the narrow project write with `minimize_process_artifacts_after_authoring`, which writes the project and removes transient parser/split state. |
+
+### Remaining
+- The default persisted state now matches the user's minimal editable-state requirement. The next high-value task is to use the four real PDF samples under `Files/` for pipeline regression/failure clustering while keeping any generated parser/split artifacts transient unless diagnostics retention is enabled.
+
+## Session: 2026-06-01 / E8-83
+
+### Real PDF Auto-Pipeline Regression
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Added `files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate` to run the four PDFs in `Files/` through the real auto pipeline from copied uploads.
+  - Asserted the pipeline keeps only minimal editable state by default: `authoring-ir.json`, `authoring-project.json`, `source-review.json`, `job.json`, and uploads.
+  - Asserted job-local process artifacts are removed: `document-ir.json`, `split-candidates.json`, pipeline reports, LLM logs/suggestions, vision temp files, job cache, and preview cache.
+  - Found and fixed root-level parser cache leakage under `cache/parser/{job}-document-ir.json` by adding job-scoped parser cache cleanup.
+  - Added diagnostics regression coverage that `keepFullProcessArtifacts=true` still retains root parser cache outputs.
+  - Confirmed mixed image/text PDF samples stay in `DocumentReview` with SourceReview when vision gateway is unavailable, while fully text-layer samples proceed to LLM review.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture` | pass |
+| `cargo test files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate -- --nocapture` | pass |
+| `cargo test auto_pipeline_retains_process_artifacts_only_when_diagnostics_enabled -- --nocapture` | pass |
+| `cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 83 passed, 1 ignored |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | New real-PDF auto-pipeline test expected no vision attempt without a configured user profile, but the app has an enabled default placeholder profile, so mixed image/text PDFs correctly attempted vision and failed safely. | 1 | Adjusted the regression to assert product behavior: vision attempt occurs, unavailable gateway is reported, transcription is not applied, and SourceReview remains blocking. |
+
+### Remaining
+- Next high-value work is live provider evaluation on the four real PDFs with the stricter `Epic8LlmGroupRepairV1` contract, then targeted repair/classification improvements based on actual model outputs.
+
+## Session: 2026-06-01 / E8-84
+
+### Live LLM Repair Contract Diagnostic
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Added ignored test `live_llm_repair_contract_on_files_pdf_samples` to run concrete groups from the four real PDFs through a live OpenAI-compatible provider using the structured `Epic8LlmGroupRepairV1` prompt.
+  - Ran the diagnostic with the provided test endpoint/API key/model and captured provider behavior on real PDF-derived groups.
+  - Fixed Rust validator and LLM prompt allowed-kind drift by accepting `heading_matching` and `matching_information` wherever AuthoringIR/frontend already support them.
+  - Tightened static contract validation so specialized matching kinds must explicitly set `allowOptionReuse`.
+  - Fixed LLM auto-apply safety gate to accept the existing `matching` interaction type, aligning Rust safety checks with TypeScript contracts and authoring pipeline output.
+  - Made cached live-input inspection robust for manual scaffold jobs that have no LLM cache.
+
+### Live Diagnostic Result
+| Metric | Value |
+|--------|-------|
+| Concrete groups checked | 6 |
+| High-confidence outputs | 5 |
+| Auto-applicable outputs | 5 |
+| Low-confidence outputs | 1 |
+| Manual scaffold samples | 1 |
+| Blocked high-confidence outputs after fixes | 0 |
+
+### Verification
+| Test | Status |
+|------|--------|
+| `EPIC8_LIVE_LLM_BASE_URL=... EPIC8_LIVE_LLM_API_KEY=... EPIC8_LIVE_LLM_MODEL=mimo-v2.5 cargo test live_llm_repair_contract_on_files_pdf_samples -- --ignored --nocapture` | pass |
+| `cargo test llm_auto_apply_accepts_matching_interaction_type -- --nocapture` | pass |
+| `cargo test rust_contract_validator_accepts_specialized_matching_group_kinds -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 85 passed, 2 ignored |
+| `git diff --check` | pass |
+
+### Error Log Additions
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | First live real-PDF repair diagnostic failed on `invalid_kind:matching_information`. | 1 | Added specialized matching kinds to Rust validator, LLM prompt allowed list, and LLM auto-apply kind gate. |
+| 2026-06-01 | Second live diagnostic failed because one real PDF only produced an umbrella/manual scaffold and no concrete group. | 1 | Changed live diagnostic to record and skip manual scaffold samples; those are intentionally routed to human import rather than LLM repair. |
+| 2026-06-01 | Third live diagnostic showed high-confidence outputs blocked by `invalid_interaction_type:*:matching`. | 1 | Added `matching` to the LLM auto-apply interaction whitelist and added a regression test. |
+| 2026-06-01 | Live diagnostic cache-inspection panicked for a job without LLM cache. | 1 | Made `cached_llm_inputs` return an empty vector when the cache directory is absent. |
+
+### Remaining
+- Extend live diagnostics from sampled concrete groups to a fuller semantic benchmark only after the editor UX and review flows are stable enough to make model-output scoring actionable.
+
+## Session: 2026-06-01 / E8-85
+
+### PDF Render Adapter Boundary
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Replaced the direct public `render_pdf_page_with_sips_fallback` seam with `render_pdf_pages_with_adapter`.
+  - Kept the current macOS implementation on system `sips`, but made the output contract explicit about adapter identity, provider, purpose, and `ocrPerformed=false`.
+  - Added `futureAdapter=pdfium-render-page-renderer` metadata so future PDFium page rendering can plug into the same seam without changing auto-pipeline orchestration.
+  - Updated the regression test to `pdf_render_adapter_renders_with_macos_sips_without_ocr` and asserted the no-OCR adapter metadata.
+  - Preserved the product boundary: no default local OCR engine and no default PDFium package dependency in this increment.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test pdf_render_adapter_renders_with_macos_sips_without_ocr -- --nocapture` | pass |
+| `cargo test no_text_pdf_fixture_renders_page_fallback_for_vision -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 85 passed, 2 ignored |
+| `git diff --check` | pass |
+
+### Remaining
+- Future PDFium should be evaluated as an optional page-render/layout adapter, not as OCR. Real text bbox/rotation extraction for clear text PDFs remains outside this pass.
+
+## Session: 2026-06-01 / E8-86
+
+### DOCX Styles And Numbering Definitions
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Added lightweight Rust parsing for `word/styles.xml` and `word/numbering.xml` inside DOCX files.
+  - Resolved style names, parent style ids, and heading levels from `w:outlineLvl` / inherited heading-style metadata.
+  - Resolved numbering metadata from `numId` through `abstractNumId` to level definitions, including number format and level text.
+  - Extended paragraph `layoutHints` with resolved style and numbering definition fields without changing the stable core block schema.
+  - Added generated DOCX regression `docx_ooxml_parser_resolves_styles_and_numbering_definitions` covering inherited heading styles and numbering definitions.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test docx_ooxml_parser_resolves_styles_and_numbering_definitions -- --nocapture` | pass |
+| `cargo test docx_ooxml_parser_preserves_paragraph_style_and_numbering_metadata -- --nocapture` | pass |
+| `cargo test complex_docx_fixture_reaches_authoring_ir -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 86 passed, 2 ignored |
+| `git diff --check` | pass |
+
+### Remaining
+- DOCX section columns and some advanced numbering overrides remain future enhancements. The common style/numbering definition path is now covered in the Rust-first parser.
+
+## Session: 2026-06-01 / E8-87
+
+### Minimal Editable State Tightening
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Tightened default artifact minimization so successful export/Pack returns cleanup details to the UI but no longer writes `cleanup-summary.json` in ordinary mode.
+  - Preserved `uploads/` after export cleanup as part of the minimum editable/project provenance state, matching the latest product requirement.
+  - Removed default persistence of `validation-report.json` and `publish-readiness-report.json` during post-AuthoringIR/export cleanup; diagnostics retention still preserves process reports.
+  - Changed publish-readiness persistence so `publish-readiness-report.json` is written only when developer diagnostics retention is enabled.
+  - Updated export/Pack/minimization tests to assert no ordinary-mode report leakage and continued source-upload retention.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test export_core -- --nocapture` | pass |
+| `cargo test build_pack -- --nocapture` | pass |
+| `cargo test cleanup_respects_diagnostics_artifact_retention -- --nocapture` | pass |
+| `cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture` | pass |
+| `cargo test files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 86 passed, 2 ignored |
+| `git diff --check` | pass |
+
+### Remaining
+- Continue desktop/frontend smoke and packaged Tauri verification against the minimal-state behavior.
+- Keep diagnostics retention as the only ordinary way to persist parser/split/cache/pipeline/readiness reports.
+
+## Session: 2026-06-01 / E8-88
+
+### Minimal-State UI Alignment
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Added `llmReview` snapshots into `ReadingAuthoringIrV1` group records when auto-pipeline finds low-confidence or auto-apply-blocked suggestions, so the minimal persisted state still carries review work that the author needs to continue.
+  - Updated the dev fallback backend to mirror the same behavior and to clear process artifacts after authoring-stage convergence, keeping browser/dev preview aligned with real Tauri persistence.
+  - Updated LlmReview to fall back to `authoringIr.groups[].llmReview` when `llm-suggestions` are absent, so the page still shows the actionable review item in minimal-state mode.
+  - Updated DocumentReview empty-state copy to explain the minimized persisted state instead of showing a technical missing-document error.
+  - Added a Rust regression proving `llmReview` survives minimization while `llm-suggestions` and `pipeline-report.json` do not.
+  - Ran browser smoke against the local dev server; the dashboard/import wizard rendered correctly and the only console error was a missing `favicon.ico` 404.
+
+### Verification
+| Test / Smoke | Status |
+|--------------|--------|
+| `cargo test auto_pipeline_persists_llm_review_in_authoring_ir_after_minimization -- --nocapture` | pass |
+| `cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture` | pass |
+| `cargo test auto_pipeline_retains_process_artifacts_only_when_diagnostics_enabled -- --nocapture` | pass |
+| `cargo test files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 87 passed, 2 ignored |
+| `git diff --check` | pass |
+| Browser smoke at `http://127.0.0.1:1420/#/jobs/new` | pass; only `favicon.ico` 404 in console, no business-logic error |
+
+### Remaining
+- Continue browser smoke on DocumentReview, LlmReview, Export, and Pack flows with real imported files if needed.
+- Preserve the current rule: the authoritative editable review state now lives in AuthoringIR, not in transient suggestion/report files.
+
+## Session: 2026-06-01 / E8-89
+
+### Minimal Editable State UI E2E Gate
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Completed the full UI E2E smoke for clear-text PDF and scanned/image PDF manual transcription flows.
+  - Tightened UI E2E assertions so the post-auto-pipeline minimized state must not retain `DocumentIR`, `splitCandidates`, `pipelineReport`, or pre-preview `validationReport`.
+  - Kept the allowed short-lived exception explicit: manual transcription may create `DocumentIR` while the author is still in SourceReview/Split, but it must be removed after AuthoringIR is built.
+  - Verified preview/export/Pack can regenerate runtime validation from the minimal editable state and finish with `Cleaned` status.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run e2e:ui-flow` | pass; clear-text and OCR/manual transcription flows reached preview/export/Pack |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 87 passed, 2 ignored |
+| `git diff --check` | pass |
+
+### Remaining
+- Continue reducing the remaining diagnostic/development-only process-state assumptions in UI helpers where possible.
+- A full packaged desktop smoke is still useful after the next backend/UI consolidation pass.
+
+## Session: 2026-06-01 / E8-90
+
+### Packaged Desktop Build And Package Audit
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Ran a production Tauri build and confirmed macOS `.app` and `.dmg` artifacts are generated.
+  - Removed `sidecars/.DS_Store`, which had been copied into the first package as junk metadata.
+  - Added `scripts/package-audit.mjs` and `npm run audit:package` as a repeatable package audit gate.
+  - The audit verifies `externalBin` is empty, app/DMG artifacts exist, no Node/Python runtime, `node_modules`, venv, Tesseract/OCR engine, or PDFium runtime binaries are bundled, and junk metadata files are absent.
+  - Rebuilt the package after cleanup and verified the audit passes.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run tauri build` | pass; produced `src-tauri/target/release/bundle/macos/IELTS Author Studio.app` and `src-tauri/target/release/bundle/dmg/IELTS Author Studio_0.1.0_aarch64.dmg` |
+| `npm run audit:package` | pass; `externalBinCount=0`, app size `16846712` bytes, dmg size `5908322` bytes, no forbidden runtime/OCR/PDFium binaries |
+| `npm run e2e:ui-flow` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 87 passed, 2 ignored |
+| `git diff --check` | pass |
+
+### Remaining
+- A true interactive packaged `.app` smoke against Tauri IPC can still be added later, but packaging and package-content dependency boundaries are now automatically auditable.
+- Keep production package policy: scripts may be resources for diagnostics/legacy fallback, but Node/Python/OCR runtimes must not be bundled as hard dependencies.
+
+## Session: 2026-06-01 / E8-91
+
+### Release Verification Command Hardening
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Hardened `scripts/package-audit.mjs` so it no longer hard-codes the macOS DMG architecture suffix.
+  - The audit now discovers `Product_version_*.dmg`, which supports aarch64, x64, universal, or future target-specific DMG names.
+  - Added `npm run verify:release` as a one-command release gate that runs the Tauri production build and package audit together.
+  - Re-ran the one-command release gate and the normal validation suite.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run verify:release` | pass; build + package audit completed |
+| `npm run audit:package` | pass inside `verify:release`; discovered `IELTS Author Studio_0.1.0_aarch64.dmg` via wildcard pattern |
+| `npm run e2e:ui-flow` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 87 passed, 2 ignored |
+| `git diff --check` | pass |
+
+### Remaining
+- Interactive packaged `.app` IPC smoke remains a future runtime-behavior check; release build and package-content audit are now a single repeatable command.
+
+## Session: 2026-06-01 / E8-92
+
+### Rust Backend Minimal-State End-To-End Regression
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Added `rust_backend_fixture_flow_exports_from_minimal_editable_state`, a Rust backend regression that does not rely on browser/dev fallback.
+  - The test imports the real `complex-reading.txt` fixture, runs `run_auto_pipeline_core`, verifies ordinary-mode minimization, simulates the user completing authoring review, then exports through `export_reading_assets_core`.
+  - The test asserts durable state remains (`authoring-ir.json`, `authoring-project.json`, `source-review.json`, `uploads/`) and process state is removed (`document-ir.json`, `split-candidates.json`, `pipeline-report.json`, validation/readiness reports, LLM temp files, cache/preview/suggestion dirs, job-scoped parser cache outputs).
+  - The first test attempt correctly failed because publish still saw the job as `NeedsReview`; the test now explicitly simulates the UI state transition to `DraftSaved/Authoring` after human verification, preserving the release gate instead of bypassing it.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test rust_backend_fixture_flow_exports_from_minimal_editable_state -- --nocapture` | pass |
+| `npm run e2e:ui-flow` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 88 passed, 2 ignored |
+| `npm run verify:release` | pass |
+| `git diff --check` | pass |
+
+### Remaining
+- Interactive packaged `.app` IPC smoke remains the next runtime-behavior confidence step; this pass closes the Rust backend persistence/export continuity gap.
+
+## Session: 2026-06-01 / E8-93
+
+### DOCX Section Column Metadata
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Added DOCX `sectPr/cols` parsing in the Rust OOXML parser.
+  - Section column metadata is now propagated into paragraph `layoutHints.section.columns` and into split evidence as `sectionColumnCount`.
+  - Added a regression that builds a minimal DOCX containing `w:sectPr/w:cols` and asserts the parsed column count, spacing, and equal-width flags survive into the document IR and split evidence.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test docx_ooxml_parser_preserves_section_column_metadata -- --nocapture` | pass |
+| `npm run e2e:ui-flow` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 89 passed, 2 ignored |
+| `npm run verify:release` | pass |
+| `git diff --check` | pass |
+
+### Remaining
+- Advanced DOCX section behaviors such as multi-section transitions and more complex column overrides remain future work.
+
+## Session: 2026-06-01 / E8-94
+
+### Cross-Page Continuation Evidence Hardening
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Reviewed the existing layout-aware split test for cross-page continuation coverage.
+  - Strengthened `layout_aware_split_reorders_two_column_blocks_and_preserves_continuations` so it now proves the next-page continuation block is retained in split `blockIds`, split `sectionEvidence`, AuthoringIR `sourceBlockIds`, question-level `sourceBlockIds`, and group `sectionEvidence`.
+  - This closes the gap where a continuation edge could exist while the downstream AuthoringIR still lost the page-2 evidence block.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test layout_aware_split_reorders_two_column_blocks_and_preserves_continuations -- --nocapture` | pass |
+| `npm run e2e:ui-flow` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 89 passed, 2 ignored |
+| `npm run verify:release` | pass |
+| `git diff --check` | pass |
+
+### Remaining
+- Add more real-world multi-page samples if users provide PDFs/DOCX where question stems/options/tables span multiple pages in unusual layouts.
+
+## Session: 2026-06-01 / E8-95
+
+### DOCX Table Cell Span Metadata
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Extended the Rust DOCX OOXML table parser to preserve `w:gridSpan` and `w:vMerge` metadata in table cells.
+  - `TableCellIr` now carries optional `colSpan` and `verticalMerge`, and serialized table IR exposes those fields for downstream split/LLM repair evidence.
+  - Added a generated DOCX regression with a spanned header cell and vertical-merge rows, proving `colSpan=2`, `verticalMerge=restart`, and `verticalMerge=continue` survive parsing.
+  - Kept the implementation Rust-first; no Office/Python/Node document engine was introduced.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test docx_ooxml_parser_preserves_table_cell_span_metadata -- --nocapture` | pass |
+| `npm run e2e:ui-flow` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 90 passed, 2 ignored |
+| `npm run verify:release` | pass |
+| `git diff --check` | pass |
+
+### Remaining
+- Table structure still treats complex merged-grid positioning conservatively. If real DOCX samples contain nested tables or elaborate non-rectangular merges, add targeted fixtures before changing the algorithm further.
+
+## Session: 2026-06-01 / E8-96
+
+### DOCX Merged Table Evidence Propagation
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Extended Rust `SplitSectionEvidenceV1` with `tableHasColSpans`, `tableHasVerticalMerges`, and `tableMergedCellCount`.
+  - Added split evidence generation that summarizes `table.cells[].colSpan` and `table.cells[].verticalMerge` without persisting another intermediate artifact.
+  - Updated TypeScript `DocumentIR`/`AuthoringIR` contracts and dev fallback split generation so local dev behavior matches Rust.
+  - Strengthened the DOCX generated regression to assert merged-table evidence survives parser -> split evidence.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test docx_ooxml_parser_preserves_table_cell_span_metadata -- --nocapture` | pass |
+| `npm run check` | pass |
+| `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | pass |
+| `cargo test` | pass; 90 passed, 2 ignored |
+| `npm run e2e:ui-flow` | pass |
+| `git diff --check` | pass |
+
+### Remaining
+- The implementation intentionally does not store full table reconstruction state. If real DOCX files need inherited vertical-merge content or nested-table normalization, add targeted fixtures before expanding the model.
+
+## Session: 2026-06-01 / E8-97
+
+### SourceReview Minimal-State Decoupling
+- **Status:** complete for this sub-pass; Epic 8 remains in progress overall.
+- Actions taken:
+  - Added `source_review_status_for_job`, which prefers persisted `source-review.json` and only falls back to `document-ir.json` for legacy/pre-authoring states.
+  - Added `resolve_source_review_status`, so source review resolution does not regenerate an empty review when `document-ir.json` has already been cleaned.
+  - Updated validation, preview generation, publish readiness, LLM suggestion apply, job detail, and authoring project summary to use the independent source-review state.
+  - Added a regression proving source review warnings and low-confidence summaries survive after `document-ir.json` is removed and can still be resolved correctly.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `cargo test source_review_resolution_survives_minimal_state_without_document_ir -- --nocapture` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings)` | pass; 91 passed, 2 ignored |
+| `npm run e2e:ui-flow` | pass |
+| `git diff --check` | pass |
+
+### Remaining
+- `parse_document`, `run_rule_split`, and `build_authoring_ir` still use `document-ir.json`/`split-candidates.json` as active-step transient artifacts. That is acceptable only before AuthoringIR minimization or when diagnostics retention is enabled.

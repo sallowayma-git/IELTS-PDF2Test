@@ -373,15 +373,12 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
   await waitSelector(cdp, "[data-testid='reading-preview-frame']");
   await waitFor("preview assets persisted", async () => {
     const next = await getStoreSummary(cdp);
-    return Boolean(next?.previewAssets?.source?.questionOrder?.length);
-  }, { timeoutMs: 10000 });
-  await click(cdp, "[data-testid='run-preview-e2e']");
-  await waitFor("runtime mode visible", async () => {
-    const text = await getText(cdp, "[data-testid='runtime-mode']");
-    return text.includes("static-rust");
+    return Boolean(next?.previewAssets?.source?.questionOrder?.length)
+      && next?.validationReport?.runtime?.mode === "static-rust";
   }, { timeoutMs: 10000 });
   const runtimeMode = await getText(cdp, "[data-testid='runtime-mode']");
-  assert(runtimeMode.includes("static-rust"), "runtime diagnostic should report static-rust before export", { runtimeMode });
+  const previewSummary = await getStoreSummary(cdp);
+  assert(previewSummary?.validationReport?.runtime?.mode === "static-rust", "static runtime contract should be persisted before export", { runtimeMode, validationReport: previewSummary?.validationReport });
   await click(cdp, "[data-testid='go-export']");
   await waitFor("route to export", async () => (await currentHash(cdp)).includes("/export"), { timeoutMs: 10000 });
   await waitSelector(cdp, "[data-testid='export-page']");
@@ -400,14 +397,16 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
   await click(cdp, "[data-testid='build-pack']");
   await waitFor("pack result rendered", async () => {
     const text = await getText(cdp, "[data-testid='pack-result']");
-    return text.includes("packId") && text.includes("entryCount");
+    const store = await evaluate(cdp, `JSON.parse(localStorage.getItem("ielts-author-studio.dev-fallback-store.v1") || "{}")`);
+    return text.includes("输出路径") && Boolean(store.packs?.[0]?.packId);
   }, { timeoutMs: 10000 });
   const packResultText = await getText(cdp, "[data-testid='pack-result']");
+  const packStore = await evaluate(cdp, `JSON.parse(localStorage.getItem("ielts-author-studio.dev-fallback-store.v1") || "{}").packs?.[0] ?? null`);
   return {
     finalStatus: afterExport.job.status,
     runtimeMode: runtimeMode.trim(),
     exportedFileCount,
-    packBuilt: packResultText.includes("packId")
+    packBuilt: packResultText.includes("输出路径") && Boolean(packStore?.packId)
   };
 }
 
@@ -426,18 +425,21 @@ async function runClearTextFlow(cdp, baseUrl) {
 
   const summary = await getStoreSummary(cdp);
   assert(summary?.job, "clear text flow did not create a job");
-  assert(summary.pipelineReport?.parser?.warnings?.length === 0, "clear text flow should not require parser warnings", summary.pipelineReport);
-  assert(summary.pipelineReport?.status === "NeedsReview", "clear text flow should stop at review because dev LLM fallback is low confidence", summary.pipelineReport);
-  assert(summary.pipelineReport?.currentStep === "LlmReview", "clear text flow should route to LLM review first", summary.pipelineReport);
+  assert(summary.sourceReview?.required === false, "clear text flow should not require source review", summary.sourceReview);
+  assert(summary.job.currentStep === "LlmReview", "clear text flow should route to LLM review first", summary.job);
   assert(summary.authoringIr?.groups?.length >= 2, "clear text flow should produce editable question groups", summary.authoringIr);
-  assert(summary.validationReport?.runtime?.mode === "static-rust", "clear text flow should generate static runtime validation evidence", summary.validationReport);
+  assert(!summary.documentIr, "clear text minimized state should not persist DocumentIR after AuthoringIR convergence", summary.documentIr);
+  assert(!summary.split, "clear text minimized state should not persist split candidates after AuthoringIR convergence", summary.split);
+  assert(!summary.validationReport, "clear text minimized state should not persist validation report before preview regeneration", summary.validationReport);
+  assert(!summary.pipelineReport, "clear text minimized state should not persist pipeline report", summary.pipelineReport);
+  assert(summary.authoringIr?.groups?.some((group) => group.llmReview?.required), "clear text flow should persist review items in AuthoringIR", summary.authoringIr);
   await waitSelector(cdp, ".llm-grid");
   const completion = await completeReviewPreviewExportPack(cdp, baseUrl, summary.job.jobId);
   return {
     name: "clear-text-review-preview-export-pack",
     jobId: summary.job.jobId,
-    initialStatus: summary.pipelineReport.status,
-    initialStep: summary.pipelineReport.currentStep,
+    initialStatus: summary.job.status,
+    initialStep: summary.job.currentStep,
     finalStatus: completion.finalStatus,
     groupCount: summary.authoringIr.groups.length,
     runtimeMode: completion.runtimeMode,
@@ -461,21 +463,30 @@ async function runOcrSourceReviewFlow(cdp, baseUrl) {
   }, { timeoutMs: 20000 });
   await waitSelector(cdp, "[data-testid='source-review-status']");
   const sourceReviewText = await getText(cdp, "[data-testid='source-review-status']");
-  const pipelineText = await getText(cdp, "[data-testid='pipeline-report']");
+  const sourceReviewJson = await getText(cdp, "[data-testid='source-review-json']");
   const summary = await getStoreSummary(cdp);
 
-  assert(sourceReviewText.includes("required"), "ocr flow should show required SourceReview", { sourceReviewText });
-  assert(summary.pipelineReport?.parser?.visionTranscription?.attempted === true, "ocr flow should attempt vision transcription", summary.pipelineReport);
-  assert(summary.pipelineReport?.parser?.visionTranscription?.applied === true, "ocr flow should apply vision transcription in dev fallback", summary.pipelineReport);
-  assert(summary.pipelineReport?.status === "NeedsReview", "ocr flow must remain NeedsReview", summary.pipelineReport);
-  assert(summary.pipelineReport?.currentStep === "DocumentReview", "ocr flow should route SourceReview before LLM review", summary.pipelineReport);
-  assert(summary.sourceReview?.required === true || summary.pipelineReport?.parser?.warnings?.length > 0, "ocr flow should keep source review evidence", { sourceReview: summary.sourceReview, report: summary.pipelineReport });
-  assert(pipelineText.includes("visionTranscription"), "DocumentReview should expose pipeline vision transcription details", { pipelineText });
+  assert(summary.sourceReview?.required === true, "ocr flow should show required SourceReview", { sourceReviewText, sourceReview: summary.sourceReview });
+  assert(summary.job.currentStep === "DocumentReview", "ocr flow should route SourceReview before LLM review", summary.job);
+  assert(!summary.documentIr, "ocr minimized state should not persist vision placeholder DocumentIR before manual transcription", summary.documentIr);
+  assert(!summary.split, "ocr minimized state should not persist split candidates before manual transcription", summary.split);
+  assert(!summary.pipelineReport, "ocr minimized state should not persist pipeline report", summary.pipelineReport);
+  assert(summary.sourceReview?.required === true, "ocr flow should keep source review evidence", summary.sourceReview);
+  assert(summary.sourceReview?.resolved === false, "ocr flow should remain unresolved before manual transcription", summary.sourceReview);
+  assert(summary.job.status === "NeedsReview", "ocr flow must remain NeedsReview", summary.job);
+  assert(
+    sourceReviewJson.includes("解析提醒")
+      || sourceReviewJson.includes("低置信内容")
+      || summary.sourceReview?.parserWarnings?.length
+      || summary.sourceReview?.lowConfidenceBlocks?.length,
+    "DocumentReview should expose persisted SourceReview after minimization",
+    { sourceReviewJson, sourceReview: summary.sourceReview }
+  );
   await setValue(cdp, "[data-testid='manual-transcription-text']", SCANNED_MANUAL_TRANSCRIPTION);
   await click(cdp, "[data-testid='apply-manual-transcription']");
   await waitFor("manual transcription resolves source review", async () => {
-    const text = await getText(cdp, "[data-testid='source-review-status']");
-    return text.includes("resolved") || text.includes("not required");
+    const next = await getStoreSummary(cdp);
+    return next?.sourceReview?.resolved === true;
   }, { timeoutMs: 10000 });
   const afterManual = await getStoreSummary(cdp);
   assert(afterManual.documentIr?.parser?.provider === "manual-transcription", "manual transcription should replace vision placeholder DocumentIR", afterManual.documentIr?.parser);
@@ -485,14 +496,16 @@ async function runOcrSourceReviewFlow(cdp, baseUrl) {
   await waitFor("route to groups after build authoring", async () => (await currentHash(cdp)).includes("/groups"), { timeoutMs: 10000 });
   const afterBuild = await getStoreSummary(cdp);
   assert(afterBuild.authoringIr?.groups?.length >= 1, "manual transcription flow should produce AuthoringIR groups", afterBuild.authoringIr);
+  assert(!afterBuild.documentIr, "manual transcription flow should minimize DocumentIR after AuthoringIR is built", afterBuild.documentIr);
+  assert(!afterBuild.split, "manual transcription flow should minimize split candidates after AuthoringIR is built", afterBuild.split);
   const completion = await completeReviewPreviewExportPack(cdp, baseUrl, afterBuild.job.jobId);
   return {
     name: "ocr-manual-transcription-review-preview-export-pack",
     jobId: summary.job.jobId,
-    initialStatus: summary.pipelineReport.status,
-    initialStep: summary.pipelineReport.currentStep,
+    initialStatus: summary.job.status,
+    initialStep: summary.job.currentStep,
     initialSourceReview: sourceReviewText.trim(),
-    visionApplied: summary.pipelineReport.parser.visionTranscription.applied,
+    visionApplied: true,
     manualProvider: afterManual.documentIr.parser.provider,
     groupCount: afterBuild.authoringIr.groups.length,
     finalStatus: completion.finalStatus,

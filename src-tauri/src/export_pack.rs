@@ -1,5 +1,8 @@
 use crate::{
-    cleanup::{cleanup_transient_job_artifacts, validation_summary},
+    cleanup::{
+        cleanup_transient_job_artifacts, minimize_process_artifacts_after_authoring,
+        validation_summary,
+    },
     export_artifacts::{build_pack_entry_bundle, build_reading_asset_bundle, PackSource},
     job_store::update_job,
     reading_source::reading_source,
@@ -31,6 +34,8 @@ pub(crate) fn export_reading_assets_core(
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
+        let _ =
+            minimize_process_artifacts_after_authoring(root, job_id, "export_publish_gate_failed")?;
         return Err(format!(
             "export_validation_failed:{}",
             serde_json::to_string(&report).unwrap_or_default()
@@ -113,6 +118,11 @@ pub(crate) fn build_pack_core(
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
+            let _ = minimize_process_artifacts_after_authoring(
+                root,
+                job_id,
+                "pack_publish_gate_failed",
+            )?;
             return Err(format!(
                 "pack_validation_failed:{}:{}",
                 job_id,
