@@ -3,6 +3,7 @@ import { createImportJob, importSourceFile, runAutoPipeline } from "../api/tauri
 import { chooseSourceFile, type PickedPath } from "../api/desktopDialogs";
 import { go } from "../app/router";
 import type { AutoPipelineReport, Frequency, PassageCategory } from "../types";
+import { jobStatusLabel, workflowStepLabel, runtimeModeLabel } from "../utils/displayLabels";
 
 export function ImportWizard({ refresh }: { refresh: () => void }) {
   const [title, setTitle] = useState("The Rise and Fall of Detective Stories");
@@ -58,6 +59,18 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
     }
   }
 
+  function renderAutoReport(report: AutoPipelineReport) {
+    return (
+      <dl>
+        <dt>任务状态</dt><dd>{jobStatusLabel(report.status)}</dd>
+        <dt>当前步骤</dt><dd>{workflowStepLabel(report.currentStep)}</dd>
+        <dt>模型建议</dt><dd>{report.llm.suggestionCount} 条，已自动应用 {report.llm.appliedCount} 条</dd>
+        <dt>仍需审核</dt><dd>{report.authoring?.remainingReviewItems ?? 0} 项</dd>
+        <dt>预览检查</dt><dd>{runtimeModeLabel(report.runtimeMode)}</dd>
+      </dl>
+    );
+  }
+
   return (
     <section className="wizard page-enter" data-testid="import-wizard">
       <div className="section-heading">
@@ -82,8 +95,8 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
             </span>
             <button className="ghost small" data-testid="pick-answer-file" onClick={pickAnswer}>选择答案文件</button>
           </div>
-          <label>解析模式<select data-testid="parse-mode" value={parseMode} onChange={(event) => setParseMode(event.target.value as typeof parseMode)}><option value="auto">auto</option><option value="text">text</option><option value="ocr">ocr</option></select></label>
-          {autoReport ? <details data-testid="auto-pipeline-report"><summary>自动处理结果</summary><pre>{JSON.stringify(autoReport, null, 2)}</pre></details> : null}
+          <label>解析模式<select data-testid="parse-mode" value={parseMode} onChange={(event) => setParseMode(event.target.value as typeof parseMode)}><option value="auto">自动</option><option value="text">纯文本</option><option value="ocr">视觉转录</option></select></label>
+          {autoReport ? <details data-testid="auto-pipeline-report"><summary>自动处理结果</summary>{renderAutoReport(autoReport)}</details> : null}
         </section>
         <section className="form-section">
           <span className="step-number">02</span>

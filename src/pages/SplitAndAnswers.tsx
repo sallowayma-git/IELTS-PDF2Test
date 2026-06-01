@@ -57,7 +57,7 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
     if (!nextSplit) return;
     const saved = await saveSplitAdjustments(jobId, nextSplit);
     setSplit(saved);
-    setSaveMessage("已保存人工修订，后续 Authoring IR 会使用当前 split/answer。");
+    setSaveMessage("已保存人工修订，后续结构编辑会使用当前切分与答案。");
     refresh();
   }
 
@@ -78,7 +78,7 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
       const candidates = current.answerKeyCandidates.length ? [...current.answerKeyCandidates] : [{ source: "manual", answers: {} }];
       const first = { ...candidates[0], answers: { ...candidates[0].answers, [number]: textToAnswer(value) } };
       candidates[0] = first;
-      return { ...current, answerKeyCandidates: candidates, issues: current.issues.filter((issue) => !issue.includes("No answer key detected")) };
+      return { ...current, answerKeyCandidates: candidates, issues: current.issues.filter((issue) => !issue.includes("No answer key detected") && !issue.includes("未识别到答案")) };
     });
   };
   const removeAnswer = (number: string) => {
@@ -100,8 +100,8 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
   return (
     <section className="page-enter">
       <div className="section-heading spread">
-        <div><p className="eyebrow">Rule Split</p><h2>粗切与答案对齐</h2></div>
-        <div className="button-row"><button className="ghost" data-testid="run-rule-split" onClick={run}>运行规则粗切</button><button className="ghost" data-testid="save-split-adjustments" disabled={!split} onClick={() => save()}>保存人工修订</button><button className="primary" data-testid="build-authoring-ir" disabled={!split} onClick={build}>生成 Authoring IR</button></div>
+        <div><p className="eyebrow">题组切分</p><h2>粗切与答案对齐</h2></div>
+        <div className="button-row"><button className="ghost" data-testid="run-rule-split" onClick={run}>运行规则粗切</button><button className="ghost" data-testid="save-split-adjustments" disabled={!split} onClick={() => save()}>保存人工修订</button><button className="primary" data-testid="build-authoring-ir" disabled={!split} onClick={build}>生成可编辑题稿</button></div>
       </div>
       {saveMessage ? <p className="success-text">{saveMessage}</p> : null}
       {split?.issues.length ? <div className="warning-box"><strong>需要复核</strong>{split.issues.map((issue) => <p key={issue}>{issue}</p>)}</div> : null}
@@ -110,7 +110,7 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
           <h3>Passage 区</h3>
           {split?.passageCandidates.map((candidate) => (
             <div className="candidate" key={candidate.title}><strong>{candidate.title}</strong><span>{candidate.range.join(" - ")}</span><small>{candidate.categoryHint}</small></div>
-          )) ?? <p className="empty">尚未生成 passage candidate。</p>}
+          )) ?? <p className="empty">尚未生成文章范围候选。</p>}
           {split?.umbrellaQuestionRanges?.length ? (
             <>
               <h4>总题组范围</h4>
@@ -129,11 +129,11 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
           {split?.questionGroupCandidates.map((group, index) => (
             <div className={`candidate ${group.isUmbrellaRange ? "umbrella-candidate" : ""}`} key={group.groupId}>
               {group.requiresManualQuestionImport ? <p className="error-text">仅检测到总题组范围，需要人工导入具体题干。</p> : null}
-              <label>Heading<input value={group.heading} onChange={(event) => setGroup(index, (item) => ({ ...item, heading: event.target.value }))} /></label>
-              <label>Range<input value={`${group.questionRange[0]}-${group.questionRange[1]}`} onChange={(event) => setGroup(index, (item) => ({ ...item, questionRange: parseRange(event.target.value) }))} /></label>
-              <label>Kind<select value={group.kindHint ?? "short_answer"} onChange={(event) => setGroup(index, (item) => ({ ...item, kindHint: event.target.value as GroupKind }))}>{groupKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
-              <label>Block IDs<input value={group.blockIds.join(", ")} onChange={(event) => setGroup(index, (item) => ({ ...item, blockIds: event.target.value.split(",").map((id) => id.trim()).filter(Boolean) }))} /></label>
-              <label>Instruction<textarea value={group.instructionText} onChange={(event) => setGroup(index, (item) => ({ ...item, instructionText: event.target.value }))} /></label>
+              <label>标题<input value={group.heading} onChange={(event) => setGroup(index, (item) => ({ ...item, heading: event.target.value }))} /></label>
+              <label>题号范围<input value={`${group.questionRange[0]}-${group.questionRange[1]}`} onChange={(event) => setGroup(index, (item) => ({ ...item, questionRange: parseRange(event.target.value) }))} /></label>
+              <label>题型<select value={group.kindHint ?? "short_answer"} onChange={(event) => setGroup(index, (item) => ({ ...item, kindHint: event.target.value as GroupKind }))}>{groupKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+              <label>来源段落<input value={group.blockIds.join(", ")} onChange={(event) => setGroup(index, (item) => ({ ...item, blockIds: event.target.value.split(",").map((id) => id.trim()).filter(Boolean) }))} /></label>
+              <label>说明<textarea value={group.instructionText} onChange={(event) => setGroup(index, (item) => ({ ...item, instructionText: event.target.value }))} /></label>
             </div>
           )) ?? <p className="empty">尚未生成 question groups。</p>}
         </section>

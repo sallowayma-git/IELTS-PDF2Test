@@ -77,24 +77,24 @@ export function Settings({ refresh }: { refresh: () => void }) {
           ) : <p className="empty">尚未执行环境预检。</p>}
         </section>
         <section className="form-section">
-          <h3>大模型 Profiles</h3>
+          <h3>大模型配置</h3>
           {profiles.map((profile) => (
             <div className="profile-row" key={profile.profileId}>
               <span>
                 <strong>{profile.name}</strong>
                 <small>{profile.provider} · {profile.model} · {profile.baseUrl}</small>
                 <small>{secretBackendLabel(profile)}</small>
-                {profile.apiKeySecretRef ? <small>secretRef: {profile.apiKeySecretRef}</small> : null}
+                {profile.apiKeySecretRef ? <small>密钥已保存</small> : null}
                 {profile.secretStorageMessage ? <small>{profile.secretStorageMessage}</small> : null}
               </span>
               <button className="ghost small" onClick={() => test(profile.profileId)}>测试连接</button>
             </div>
           ))}
-          <pre>{result ? JSON.stringify(result, null, 2) : "No test run."}</pre>
+          <pre>{result ? JSON.stringify(result, null, 2) : "尚未测试连接。"}</pre>
         </section>
         <section className="form-section contrast">
-          <h3>新建 Profile</h3>
-          <label>Name<input value={form.name} onChange={(event) => update("name", event.target.value)} /></label>
+          <h3>新建模型配置</h3>
+          <label>名称<input value={form.name} onChange={(event) => update("name", event.target.value)} /></label>
           <label>Provider<select value={form.provider} onChange={(event) => update("provider", event.target.value as LlmProvider)}><option>OpenAiCompatible</option></select><small>当前 gateway 只实现 OpenAI-compatible chat completions；其他 provider 需要新增 adapter 后再开放。</small></label>
           <label>Base URL<input value={form.baseUrl} onChange={(event) => update("baseUrl", event.target.value)} /></label>
           <label>Model<input value={form.model} onChange={(event) => update("model", event.target.value)} /></label>
@@ -103,9 +103,9 @@ export function Settings({ refresh }: { refresh: () => void }) {
           <label>Timeout ms<input type="number" min="1000" step="1000" value={form.timeoutMs} onChange={(event) => update("timeoutMs", Number(event.target.value))} /></label>
           <label className="inline-check"><input type="checkbox" checked={form.forceJson} onChange={(event) => update("forceJson", event.target.checked)} /> 强制 JSON 输出</label>
           <label className="inline-check"><input type="checkbox" checked={form.enabled} onChange={(event) => update("enabled", event.target.checked)} /> 启用</label>
-          <button className="primary wide" onClick={save}>保存 Profile</button>
+          <button className="primary wide" onClick={save}>保存模型配置</button>
         </section>
-        <aside className="inspector"><p className="eyebrow">Storage and parser</p><h3>本地权限边界</h3><p>允许 app data、用户显式选择输入文件、用户显式选择导出目录。API Key 默认写入系统安全存储：macOS 使用 Keychain，Windows 使用 Credential Manager，Linux/其他桌面使用系统 keyring/secret-service。明文 app data 文件兜底默认禁用，仅在设置 `EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK=1` 时允许 dev/emergency 使用。普通 profile JSON 只保存 secret ref 和后端状态。LLM 输出只允许结构化 JSON 建议，不能直接生成最终 JS。</p></aside>
+        <aside className="inspector"><p className="eyebrow">本地权限</p><h3>本地权限边界</h3><p>应用只读取用户主动选择的输入文件和导出目录。API Key 默认写入系统安全存储：macOS 使用 Keychain，Windows 使用 Credential Manager，Linux/其他桌面使用系统 keyring/secret-service。明文兜底默认禁用，仅供开发或紧急诊断开启。模型输出只作为结构化建议，不会直接生成最终发布文件。</p></aside>
         <aside className="inspector">
           <p className="eyebrow">Developer / Diagnostics</p>
           <h3>过程文件保留</h3>

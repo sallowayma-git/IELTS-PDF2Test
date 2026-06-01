@@ -39,15 +39,15 @@ export function AppShell({ route, activeJob, children }: { route: RouteState; ac
           ))}
         </nav>
         <div className="sidebar-note">
-          <span>Command contract</span>
-          <strong>Tauri local commands</strong>
-          <p>界面层只调用设计文档同名 command；桌面运行时优先使用 Rust command；非 Tauri 开发预览仅用于缺 Rust 工具链时的 fallback。</p>
+          <span>本地处理说明</span>
+          <strong>桌面端本地处理</strong>
+          <p>文件解析、题稿生成、校验和导出都在本地应用内完成；开发预览只用于调试，不代表普通用户流程。</p>
         </div>
       </aside>
       <main className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Local authoring workflow</p>
+            <p className="eyebrow">本地处理流程</p>
             <h1>{activeJob ? activeJob.title : "作者端工作台"}</h1>
           </div>
           {activeJob ? (
@@ -55,7 +55,7 @@ export function AppShell({ route, activeJob, children }: { route: RouteState; ac
               <StatusPill status={activeJob.status} />
               <span>{activeJob.category}</span>
               <span>{activeJob.frequency}</span>
-              <span>{activeJob.issueCounts.errors} errors</span>
+              <span>{activeJob.issueCounts.errors} 个错误</span>
             </div>
           ) : (
             <button className="primary" onClick={() => go("/jobs/new")}>新建导题任务</button>

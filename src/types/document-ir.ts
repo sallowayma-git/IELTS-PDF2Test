@@ -21,7 +21,9 @@ export interface DocumentBlock {
   text?: string;
   html?: string;
   table?: TableIr;
+  layoutHints?: Record<string, unknown>;
   bbox?: [number, number, number, number];
+  pageIndex?: number;
   confidence: number;
   roleHint?: BlockRole;
 }
@@ -30,6 +32,8 @@ export interface DocumentPage {
   pageIndex: number;
   width: number;
   height: number;
+  rotation?: number;
+  layoutHints?: Record<string, unknown>;
   blocks: DocumentBlock[];
 }
 

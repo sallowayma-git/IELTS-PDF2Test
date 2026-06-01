@@ -242,7 +242,7 @@ function makeDocumentIr(job: ImportJob, options: ParseOptions): DocumentIr {
       provider: "local-parser-placeholder",
       version: "0.1.0",
       mode: options.mode,
-      warnings: options.mode === "ocr" ? ["OCR confidence is simulated; human confirmation required."] : []
+      warnings: options.mode === "ocr" ? ["OCR 识别结果需要人工确认。"] : []
     }
   };
 }
@@ -272,7 +272,7 @@ function makeManualDocumentIr(job: ImportJob, text: string): DocumentIr {
       provider: "manual-transcription",
       version: "0.3.0",
       mode: "manual",
-      warnings: ["manual transcription supplied by operator; verify against source PDF before publish"]
+      warnings: ["已使用人工转录内容；发布前请对照源文件确认。"]
     }
   };
 }
@@ -295,7 +295,7 @@ Answers
       provider: "vision-llm-transcription",
       version: "0.1.0",
       mode: "ocr",
-      warnings: ["vision LLM transcription; verify against source PDF before publish", "dev-fallback-placeholder"]
+      warnings: ["已使用视觉模型转录；发布前请对照源文件确认。", "开发预览占位结果"]
     }
   };
 }
@@ -316,11 +316,12 @@ function sourceReviewFingerprint(doc?: DocumentIr): string {
 
 function sourceReviewStatus(store: Store, jobId: string): SourceReview {
   const doc = store.documents[jobId];
+  const saved = store.sourceReviews[jobId];
+  if (!doc && saved) return saved;
   const parserWarningsList = parserWarnings(doc);
   const lowConfidenceBlocks = lowConfidenceBlockIds(doc);
   const required = parserWarningsList.length > 0 || lowConfidenceBlocks.length > 0;
   const fingerprint = sourceReviewFingerprint(doc);
-  const saved = store.sourceReviews[jobId];
   const stale = required && Boolean(saved?.resolved) && saved?.fingerprint !== fingerprint;
   return {
     schemaVersion: "SourceReviewV1",
@@ -340,19 +341,46 @@ function sourceReviewIssues(review: SourceReview): ValidationIssue[] {
   if (!review.required || review.resolved) return [];
   const issues: ValidationIssue[] = [];
   for (const warning of review.parserWarnings) {
-    issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path: "$.sourceReview.parserWarnings", message: `Parser warning must be manually resolved before publish: ${warning}` });
+    issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path: "$.sourceReview.parserWarnings", message: `解析提醒需人工确认后才能发布：${warning}` });
   }
   for (const blockId of review.lowConfidenceBlocks) {
-    issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path: `$.sourceReview.lowConfidenceBlocks.${blockId}`, message: "Low-confidence parsed block requires source review before publish." });
+    issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path: `$.sourceReview.lowConfidenceBlocks.${blockId}`, message: "低置信解析内容需人工确认后才能发布。" });
   }
   if (!issues.length) {
-    issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path: "$.sourceReview.resolved", message: "Source document review must be resolved before publish." });
+    issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path: "$.sourceReview.resolved", message: "源文档审核完成后才能发布。" });
   }
   return issues;
 }
 
 function flattenBlocks(doc?: DocumentIr): DocumentBlock[] {
-  return doc?.pages.flatMap((page) => page.blocks) ?? [];
+  type OrderedBlock = DocumentBlock & { pageIndex?: number; __pageWidth: number; __pageHeight: number; __pageRotation: number; __originalOrder: number };
+  return (doc?.pages.flatMap((page, pagePosition) => {
+    const pageIndex = page.pageIndex ?? pagePosition + 1;
+    const pageWidth = page.width ?? 595;
+    const pageHeight = page.height ?? 842;
+    const pageRotation = page.rotation ?? (typeof page.layoutHints?.rotation === "number" ? page.layoutHints.rotation : 0);
+    return page.blocks.map((block, blockPosition) => ({
+      ...block,
+      pageIndex,
+      __pageWidth: pageWidth,
+      __pageHeight: pageHeight,
+      __pageRotation: pageRotation,
+      __originalOrder: blockPosition
+    } as OrderedBlock));
+  }) ?? []).sort((left, right) => {
+    const leftBox = normalizedBlockBbox(left) ?? [0, 0, 0, 0];
+    const rightBox = normalizedBlockBbox(right) ?? [0, 0, 0, 0];
+    const leftRole = left.roleHint === "answer" ? 3 : left.roleHint === "ignore" ? 4 : 0;
+    const rightRole = right.roleHint === "answer" ? 3 : right.roleHint === "ignore" ? 4 : 0;
+    const leftColumn = blockColumn(left);
+    const rightColumn = blockColumn(right);
+    return ((left as OrderedBlock).pageIndex ?? 1) - ((right as OrderedBlock).pageIndex ?? 1)
+      || leftRole - rightRole
+      || leftColumn - rightColumn
+      || leftBox[1] - rightBox[1]
+      || leftBox[0] - rightBox[0]
+      || ((left as typeof left & { __originalOrder?: number }).__originalOrder ?? 0) - ((right as typeof right & { __originalOrder?: number }).__originalOrder ?? 0);
+  }).map(({ __pageWidth: _pageWidth, __pageHeight: _pageHeight, __pageRotation: _pageRotation, __originalOrder: _originalOrder, ...block }) => block as DocumentBlock);
 }
 
 function blockText(block: DocumentBlock): string {
@@ -488,13 +516,142 @@ function detectGroupKind(text: string): GroupKind {
   const lower = text.toLowerCase();
   if (lower.includes("true") && lower.includes("false") && lower.includes("not given")) return "true_false_not_given";
   if (lower.includes("yes") && lower.includes("no") && lower.includes("not given")) return "yes_no_not_given";
+  if (lower.includes("choose") && lower.includes("letter") && (lower.includes("two") || lower.includes("three"))) return "multi_choice";
   if (lower.includes("complete the table") || lower.includes("table below") || lower.includes("|") && lower.includes("complete")) return "table_completion";
+  if (lower.includes("list of headings") || lower.includes("matching headings")) return "heading_matching";
+  if (lower.includes("which paragraph contains") || lower.includes("matching information") || lower.includes("match each statement")) return "matching_information";
+  if (lower.includes("classify") || lower.includes("classification") || lower.includes("according to")) return "classification";
+  if (lower.includes("match") && lower.includes("letter")) return "matching";
   if (lower.includes("choose") && lower.includes("letter") && /\b[A-D]\b/.test(text)) return "single_choice";
-  if (lower.includes("choose") && (lower.includes("two") || lower.includes("three"))) return "multi_choice";
   if (lower.includes("complete the summary")) return "summary_completion";
-  if (lower.includes("complete the sentence")) return "sentence_completion";
+  if (lower.includes("complete the sentence") || lower.includes("complete the sentences")) return "sentence_completion";
   if (lower.includes("short answer")) return "short_answer";
   return "short_answer";
+}
+
+function letterOptionsForText(text: string): string[] {
+  const lower = text.toLowerCase();
+  if (lower.includes("a-g") || lower.includes("list of headings")) return ["A", "B", "C", "D", "E", "F", "G"];
+  if (lower.includes("a-f")) return ["A", "B", "C", "D", "E", "F"];
+  if (lower.includes("a-e")) return ["A", "B", "C", "D", "E"];
+  return ["A", "B", "C", "D"];
+}
+
+function selectionCount(text: string): number | undefined {
+  const lower = text.toLowerCase();
+  if (lower.includes("choose three") || lower.includes("three letters")) return 3;
+  if (lower.includes("choose two") || lower.includes("two letters")) return 2;
+  return undefined;
+}
+
+function optionReuseRule(kind: GroupKind, text: string): { allowOptionReuse: boolean; warning?: string } {
+  const lower = text.toLowerCase();
+  if (lower.includes("may use any letter more than once") || lower.includes("may be used more than once") || lower.includes("use any letter more than once")) return { allowOptionReuse: true };
+  if (lower.includes("each option may be used once only") || lower.includes("use each letter once only") || lower.includes("each letter may be used once only")) return { allowOptionReuse: false };
+  if (kind === "classification" || kind === "matching_information") return { allowOptionReuse: true, warning: "Option reuse was inferred from question type; source wording did not state it explicitly." };
+  if (kind === "heading_matching" || kind === "matching" || kind === "single_choice" || kind === "multi_choice") return { allowOptionReuse: false, warning: "Option reuse was inferred from question type; source wording did not state it explicitly." };
+  return { allowOptionReuse: false };
+}
+
+function classifyGroup(text: string, blockIds: string[]): NonNullable<SplitCandidates["questionGroupCandidates"][number]["classification"]> {
+  const kind = detectGroupKind(text);
+  const reuse = optionReuseRule(kind, text);
+  const warnings = reuse.warning ? [reuse.warning] : [];
+  const interaction =
+    kind === "true_false_not_given" ? { type: "radio" as const, options: ["TRUE", "FALSE", "NOT GIVEN"], allowOptionReuse: reuse.allowOptionReuse }
+    : kind === "yes_no_not_given" ? { type: "radio" as const, options: ["YES", "NO", "NOT GIVEN"], allowOptionReuse: reuse.allowOptionReuse }
+    : kind === "single_choice" ? { type: "radio" as const, options: letterOptionsForText(text), allowOptionReuse: reuse.allowOptionReuse }
+    : kind === "multi_choice" ? { type: "checkbox" as const, options: letterOptionsForText(text), allowOptionReuse: reuse.allowOptionReuse, minSelections: selectionCount(text) ?? 2, maxSelections: selectionCount(text) ?? 2 }
+    : kind === "heading_matching" || kind === "matching" || kind === "matching_information" || kind === "classification" ? { type: "matching" as const, options: letterOptionsForText(text), allowOptionReuse: reuse.allowOptionReuse }
+    : { type: "text" as const, placeholder: "answer" };
+  return { kind, interaction, confidence: warnings.length ? 0.68 : 0.82, warnings, evidence: blockIds };
+}
+
+function blockColumn(block: DocumentBlock): number {
+  const box = normalizedBlockBbox(block);
+  const ordered = block as DocumentBlock & { __pageWidth?: number; __pageHeight?: number; __pageRotation?: number };
+  const pageWidth = [90, 270].includes(normalizeRotation(ordered.__pageRotation ?? 0)) ? ordered.__pageHeight ?? 842 : ordered.__pageWidth ?? 595;
+  return (box?.[0] ?? 0) >= pageWidth * 0.45 ? 1 : 0;
+}
+
+function normalizeRotation(value: number): number {
+  return ((value % 360) + 360) % 360;
+}
+
+function rotatePointToUpright(x: number, y: number, width: number, height: number, rotation: number): [number, number] {
+  switch (normalizeRotation(rotation)) {
+    case 90: return [y, width - x];
+    case 180: return [width - x, height - y];
+    case 270: return [height - y, x];
+    default: return [x, y];
+  }
+}
+
+function normalizedBlockBbox(block: DocumentBlock): [number, number, number, number] | undefined {
+  if (!block.bbox) return undefined;
+  const ordered = block as DocumentBlock & { __pageWidth?: number; __pageHeight?: number; __pageRotation?: number };
+  const rotation = normalizeRotation(ordered.__pageRotation ?? 0);
+  if (rotation === 0) return block.bbox;
+  const width = ordered.__pageWidth ?? 595;
+  const height = ordered.__pageHeight ?? 842;
+  const [x0, y0, x1, y1] = block.bbox;
+  const points = [
+    rotatePointToUpright(x0, y0, width, height, rotation),
+    rotatePointToUpright(x1, y0, width, height, rotation),
+    rotatePointToUpright(x1, y1, width, height, rotation),
+    rotatePointToUpright(x0, y1, width, height, rotation)
+  ];
+  return [
+    Math.min(...points.map(([x]) => x)),
+    Math.min(...points.map(([, y]) => y)),
+    Math.max(...points.map(([x]) => x)),
+    Math.max(...points.map(([, y]) => y))
+  ];
+}
+
+function sectionEvidenceForBlocks(blocks: DocumentBlock[]): NonNullable<SplitCandidates["questionGroupCandidates"][number]["sectionEvidence"]> {
+  const hintNumber = (block: DocumentBlock, path: string[]): number | undefined => {
+    let value: unknown = block.layoutHints;
+    for (const key of path) value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+    return typeof value === "number" ? value : undefined;
+  };
+  const hintString = (block: DocumentBlock, path: string[]): string | undefined => {
+    let value: unknown = block.layoutHints;
+    for (const key of path) value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+    return typeof value === "string" ? value : undefined;
+  };
+  return blocks.map((block) => ({
+    blockId: block.blockId,
+    pageIndex: block.pageIndex ?? 1,
+    column: blockColumn(block),
+    role: block.roleHint ?? "",
+    textPreview: blockText(block).slice(0, 120),
+    bbox: block.bbox,
+    normalizedBbox: normalizedBlockBbox(block),
+    pageRotation: normalizeRotation((block as DocumentBlock & { __pageRotation?: number }).__pageRotation ?? 0),
+    tableRows: block.table?.rows,
+    tableCols: block.table?.cols,
+    headingLevel: hintNumber(block, ["headingLevel"]),
+    numberingLevel: hintNumber(block, ["numbering", "level"]),
+    numberingId: hintString(block, ["numbering", "id"])
+  }));
+}
+
+function continuationEdgesForBlocks(blocks: DocumentBlock[]): NonNullable<SplitCandidates["questionGroupCandidates"][number]["continuationEdges"]> {
+  return blocks.slice(1).map((block, index) => {
+    const previous = blocks[index];
+    const reason = (previous.pageIndex ?? 1) !== (block.pageIndex ?? 1)
+      ? "cross-page-continuation"
+      : blockColumn(previous) !== blockColumn(block)
+        ? "cross-column-continuation"
+        : "same-section-continuation";
+    return {
+      fromBlockId: previous.blockId,
+      toBlockId: block.blockId,
+      reason,
+      confidence: 0.72
+    };
+  });
 }
 
 function parseAnswerText(text: string): Record<string, AnswerValue> {
@@ -586,14 +743,19 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
         return candidateIndex > index && Boolean(detectQuestionHeadingRange(candidateText)) && !isKnownUmbrellaBlock(candidate, allUmbrellaBlocks);
       });
       const included = nextHeadingIndex > -1 ? questionBlocks.slice(index, nextHeadingIndex) : questionBlocks.slice(index);
+      const blockIds = included.map((item) => item.blockId);
+      const classification = classifyGroup(included.map(blockText).join(" "), blockIds);
       return {
         groupId: `group-${index + 1}`,
         heading: text.match(/Questions?\s+\d{1,3}(?:\s*[-–—]\s*\d{1,3})?/i)?.[0] ?? questionHeading(range[0], range[1]),
         questionRange: range,
         instructionText: text,
-        blockIds: included.map((item) => item.blockId),
-        kindHint: detectGroupKind(included.map(blockText).join(" ")),
-        confidence: 0.72
+        blockIds,
+        kindHint: classification.kind,
+        confidence: classification.confidence,
+        classification,
+        sectionEvidence: sectionEvidenceForBlocks(included),
+        continuationEdges: continuationEdgesForBlocks(included)
       };
     })
     .filter(Boolean) as SplitCandidates["questionGroupCandidates"];
@@ -624,18 +786,21 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
       questionRange: [start, end],
       instructionText: questionBlocks.map(blockText).join("\n"),
       blockIds: questionBlocks.map((block) => block.blockId),
-      kindHint: detectGroupKind(questionBlocks.map(blockText).join(" ")),
-      confidence: 0.58
+      kindHint: classifyGroup(questionBlocks.map(blockText).join(" "), questionBlocks.map((block) => block.blockId)).kind,
+      confidence: 0.58,
+      classification: classifyGroup(questionBlocks.map(blockText).join(" "), questionBlocks.map((block) => block.blockId)),
+      sectionEvidence: sectionEvidenceForBlocks(questionBlocks),
+      continuationEdges: continuationEdgesForBlocks(questionBlocks)
     });
   }
 
   const fallbackPassageRange = firstQuestionIndex > 0 ? blocks.slice(0, firstQuestionIndex).map((block) => block.blockId) : blocks.slice(0, Math.max(1, Math.min(3, blocks.length))).map((block) => block.blockId);
   const passageRange = passageBlocks.length ? passageBlocks.map((block) => block.blockId) : fallbackPassageRange;
   const issues = [
-    ...(questionGroupCandidates.length ? [] : ["No question range heading detected; manual split required."]),
-    ...(questionGroupCandidates.some((candidate) => candidate.requiresManualQuestionImport) ? ["Only umbrella question range detected; concrete question prompts must be imported or entered manually."] : []),
-    ...(Object.keys(answerMap).length ? [] : ["No answer key detected; answers must be entered manually."]),
-    ...(firstAnswerIndex >= 0 && firstQuestionIndex >= 0 && firstAnswerIndex < firstQuestionIndex ? ["Answer block appears before question block; verify split order."] : [])
+    ...(questionGroupCandidates.length ? [] : ["未识别到题号范围，请手动切分。"]),
+    ...(questionGroupCandidates.some((candidate) => candidate.requiresManualQuestionImport) ? ["仅识别到总题号范围，请导入或手动填写每道题题干。"] : []),
+    ...(Object.keys(answerMap).length ? [] : ["未识别到答案，请手动填写。"]),
+    ...(firstAnswerIndex >= 0 && firstQuestionIndex >= 0 && firstAnswerIndex < firstQuestionIndex ? ["答案内容出现在题目前，请确认切分顺序。"] : [])
   ];
 
   return {
@@ -698,7 +863,8 @@ function interactionForKind(kind: GroupKind) {
   if (kind === "true_false_not_given") return { type: "radio" as const, options: ["TRUE", "FALSE", "NOT GIVEN"] };
   if (kind === "yes_no_not_given") return { type: "radio" as const, options: ["YES", "NO", "NOT GIVEN"] };
   if (kind === "single_choice") return { type: "radio" as const, options: ["A", "B", "C", "D"] };
-  if (kind === "multi_choice") return { type: "checkbox" as const, options: ["A", "B", "C", "D", "E", "F"] };
+  if (kind === "multi_choice") return { type: "checkbox" as const, options: ["A", "B", "C", "D", "E", "F"], minSelections: 2, maxSelections: 2 };
+  if (kind === "heading_matching" || kind === "matching" || kind === "matching_information" || kind === "classification") return { type: "matching" as const, options: ["A", "B", "C", "D"], allowOptionReuse: kind === "classification" || kind === "matching_information" };
   return { type: "text" as const, placeholder: "answer" };
 }
 
@@ -708,6 +874,10 @@ function templateForKind(kind: GroupKind): string {
     yes_no_not_given: "ynng_list",
     single_choice: "single_choice_list",
     multi_choice: "multi_choice_checkbox",
+    heading_matching: "heading_matching",
+    matching: "matching_list",
+    matching_information: "matching_information",
+    classification: "classification",
     table_completion: "table_completion",
     summary_completion: "summary_text_completion",
     sentence_completion: "inline_text_completion",
@@ -745,7 +915,7 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
         id: idValue,
         displayNumber,
         prompt: requiresManualQuestionImport ? `Manual import required for question ${number}` : promptForQuestion(groupText, number, candidate.heading, end),
-        interaction: interactionForKind(kind),
+        interaction: candidate.classification?.interaction ?? interactionForKind(kind),
         answer: answerByDisplay[displayNumber],
         sourceBlockIds: candidate.blockIds,
         confidence: candidate.confidence,
@@ -760,6 +930,11 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       instruction: [candidate.instructionText],
       questions,
       layout: { template: templateForKind(kind), ...(kind === "table_completion" ? { tableHeaders: ["Question", "Prompt", "Answer"] } : {}) },
+      reviewWarnings: candidate.classification?.warnings ?? [],
+      classificationEvidence: candidate.classification?.evidence ?? candidate.blockIds,
+      sectionEvidence: candidate.sectionEvidence ?? [],
+      continuationEdges: candidate.continuationEdges ?? [],
+      allowOptionReuse: candidate.classification?.interaction.allowOptionReuse,
       sourceBlockIds: candidate.blockIds,
       confidence: candidate.confidence,
       verified: false,
@@ -810,35 +985,35 @@ function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): Validati
   };
 
   if (!ir) {
-    add("AuthoringIR", "$", "Authoring IR is missing.", "Build Authoring IR from split candidates first.");
+    add("AuthoringIR", "$", "可编辑题稿尚未生成。", "请先完成粗切并生成可编辑题稿。");
   } else {
-    if (!ir.exam.examId) add("AuthoringIR", "$.exam.examId", "examId is required.");
-    if (!ir.passage.htmlBlocks.length) add("AuthoringIR", "$.passage.htmlBlocks", "Passage HTML cannot be empty.");
-    if (!ir.groups.length) add("AuthoringIR", "$.groups", "At least one question group is required.");
+    if (!ir.exam.examId) add("AuthoringIR", "$.exam.examId", "缺少题目编号。");
+    if (!ir.passage.htmlBlocks.length) add("AuthoringIR", "$.passage.htmlBlocks", "文章正文不能为空。");
+    if (!ir.groups.length) add("AuthoringIR", "$.groups", "至少需要一个题组。");
     for (const group of ir.groups) {
       if (group.requiresManualQuestionImport && !group.verified) {
-        add("AuthoringIR", `$.groups.${group.groupId}.questions`, "Umbrella question range requires manually imported concrete prompts before publish.");
+        add("AuthoringIR", `$.groups.${group.groupId}.questions`, "仅有总题号范围，发布前需要手动补齐具体题干。");
       }
       for (const question of group.questions) {
-        if (!question.interaction?.type) add("AuthoringIR", `$.groups.${group.groupId}.${question.id}`, "Question interaction is required.");
+        if (!question.interaction?.type) add("AuthoringIR", `$.groups.${group.groupId}.${question.id}`, "题目缺少作答方式。");
         if (!question.answer || (Array.isArray(question.answer) && !question.answer.length)) {
-          add("AuthoringIR", `$.answerKey.${question.id}`, "Every question must have an answer before export.");
+          add("AuthoringIR", `$.answerKey.${question.id}`, "每道题导出前都需要答案。");
         }
         if (question.requiresManualQuestionImport && !question.verified) {
-          add("AuthoringIR", `$.groups.${group.groupId}.${question.id}.prompt`, "Question prompt must be manually imported from the source before publish.");
+          add("AuthoringIR", `$.groups.${group.groupId}.${question.id}.prompt`, "发布前需要从源文档补齐题干并确认。");
         }
       }
     }
 
     const source = toReadingExamSource(ir);
-    if (source.schemaVersion !== "ReadingExamSourceV1") add("ReadingExamSourceV1", "$.schemaVersion", "Invalid schemaVersion.");
-    if (!source.answerKey || !Object.keys(source.answerKey).length) add("ReadingExamSourceV1", "$.answerKey", "answerKey cannot be empty.");
+    if (source.schemaVersion !== "ReadingExamSourceV1") add("ReadingExamSourceV1", "$.schemaVersion", "导出数据版本不正确。");
+    if (!source.answerKey || !Object.keys(source.answerKey).length) add("ReadingExamSourceV1", "$.answerKey", "答案不能为空。");
 
     for (const group of source.questionGroups) {
       for (const qid of group.questionIds) {
         const hasNamedControl = new RegExp(`name=["']${qid}["']|data-question=["']${qid}["']|data-question-id=["']${qid}["']`).test(group.bodyHtml);
         if (!hasNamedControl) {
-          add("DomProtocol", `$.questionGroups.${group.groupId}.bodyHtml`, `No collectible control found for ${qid}.`);
+          add("DomProtocol", `$.questionGroups.${group.groupId}.bodyHtml`, `题目 ${qid} 缺少可填写或可选择的答题控件。`);
         }
       }
     }
@@ -882,6 +1057,7 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
     });
     const nextVerified = groupTotal > 0 && groupTotal === groupVerified;
     if (group.confidence < 0.85 && !nextVerified) needsReview += 1;
+    if (group.reviewWarnings?.length && !nextVerified) needsReview += 1;
     if (group.requiresManualQuestionImport && !nextVerified) needsReview += 1;
     return { ...group, questions, verified: nextVerified };
   });
@@ -904,18 +1080,21 @@ function publishReadinessReport(store: Store, jobId: string, ir: ReadingAuthorin
   const issues: ValidationIssue[] = [...report.issues];
   const add = (path: string, message: string) => issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path, message });
   const humanVerified = ir.audit.humanVerified === true;
-  if (job.status === "NeedsReview") add("$.job.status", "Job is still marked NeedsReview; complete manual review before publish.");
+  if (job.status === "NeedsReview") add("$.job.status", "任务仍需审核；请完成所有人工确认后再发布。");
   issues.push(...sourceReviewIssues(sourceReviewStatus(store, jobId)));
   if (!humanVerified) {
-    add("$.audit.humanVerified", "All questions and answers must be human verified before publish.");
+    add("$.audit.humanVerified", "所有题目和答案都需要人工确认后才能发布。");
   }
   for (const group of ir.groups) {
-    if (group.confidence < 0.85 && !group.verified) add(`$.groups.${group.groupId}.verified`, "Low-confidence group requires human verification before publish.");
-    if (group.requiresManualQuestionImport && !group.verified) add(`$.groups.${group.groupId}.questions`, "Umbrella question range requires manually imported concrete prompts before publish.");
+    if (group.confidence < 0.85 && !group.verified) add(`$.groups.${group.groupId}.verified`, "低置信题组需要人工确认后才能发布。");
+    for (const warning of group.reviewWarnings ?? []) {
+      if (!group.verified) add(`$.groups.${group.groupId}.reviewWarnings`, `题型或选项规则需要人工确认：${warning}`);
+    }
+    if (group.requiresManualQuestionImport && !group.verified) add(`$.groups.${group.groupId}.questions`, "仅有总题号范围，发布前需要手动补齐具体题干。");
     for (const question of group.questions) {
-      if (answerIsEmpty(question.answer)) add(`$.answerKey.${question.id}`, "Question answer is empty; fill or verify the answer before publish.");
-      if (question.confidence < 0.85 && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.verified`, "Low-confidence question requires human verification before publish.");
-      if (question.requiresManualQuestionImport && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.prompt`, "Question prompt must be manually imported from the source before publish.");
+      if (answerIsEmpty(question.answer)) add(`$.answerKey.${question.id}`, "题目答案为空；请填写或确认答案后再发布。");
+      if (question.confidence < 0.85 && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.verified`, "低置信题目需要人工确认后才能发布。");
+      if (question.requiresManualQuestionImport && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.prompt`, "发布前需要从源文档补齐题干并确认。");
     }
   }
   const layerNames: ValidationIssue["layer"][] = ["AuthoringIR", "ReadingExamSourceV1", "DomProtocol", "RuntimePreview"];
@@ -966,22 +1145,22 @@ function applySuggestionPatch(ir: ReadingAuthoringIr, suggestion: LlmSuggestion,
 
 function suggestionAutoApplyIssues(ir: ReadingAuthoringIr, suggestion: LlmSuggestion, selectedPaths: string[]): string[] {
   const issues: string[] = [];
-  if (suggestion.confidence < 0.85) issues.push("confidence_below_auto_apply_threshold");
+  if (suggestion.confidence < 0.85) issues.push("置信度低于自动应用阈值。");
   const group = ir.groups.find((item) => item.groupId === suggestion.groupId);
-  if (!group) return [...issues, "suggestion_group_not_found"];
+  if (!group) return [...issues, "未找到对应题组。"];
   const allowed = new Set(["kind", "layout", "questions"]);
-  for (const path of selectedPaths) if (!allowed.has(path)) issues.push(`unsupported_selected_path:${path}`);
+  for (const path of selectedPaths) if (!allowed.has(path)) issues.push(`不支持自动修改：${path}`);
   const evidence = (suggestion.evidence ?? {}) as { fallback?: boolean; source?: string; sourceBlockIds?: string[]; blockIds?: string[]; quotes?: Array<{ blockId?: string; text?: string }> };
-  if (evidence.fallback) issues.push("fallback_evidence_never_auto_applies");
-  if ((evidence.source ?? "").includes("fallback") || (evidence.source ?? "").includes("heuristic")) issues.push(`non_provider_evidence_source:${evidence.source}`);
+  if (evidence.fallback) issues.push("本地兜底建议不能自动应用。");
+  if ((evidence.source ?? "").includes("fallback") || (evidence.source ?? "").includes("heuristic")) issues.push(`建议来源不符合自动应用要求：${evidence.source}`);
   const groupBlockIds = new Set(group.sourceBlockIds);
   const evidenceBlockIds = evidence.sourceBlockIds ?? evidence.blockIds ?? [];
-  if (!evidenceBlockIds.length) issues.push("evidence_source_block_ids_missing");
-  for (const blockId of evidenceBlockIds) if (!groupBlockIds.has(blockId)) issues.push(`evidence_block_not_in_group:${blockId}`);
-  if (!evidence.quotes?.length) issues.push("evidence_quotes_missing");
+  if (!evidenceBlockIds.length) issues.push("缺少可追溯的来源段落。");
+  for (const blockId of evidenceBlockIds) if (!groupBlockIds.has(blockId)) issues.push(`引用的来源段落不属于当前题组：${blockId}`);
+  if (!evidence.quotes?.length) issues.push("缺少来源摘录。");
   for (const quote of evidence.quotes ?? []) {
-    if (!quote.blockId || !groupBlockIds.has(quote.blockId)) issues.push(`evidence_quote_block_not_in_group:${quote.blockId ?? ""}`);
-    if (!quote.text?.trim()) issues.push(`evidence_quote_text_missing:${quote.blockId ?? ""}`);
+    if (!quote.blockId || !groupBlockIds.has(quote.blockId)) issues.push(`来源摘录不属于当前题组：${quote.blockId ?? ""}`);
+    if (!quote.text?.trim()) issues.push(`来源摘录缺少文字：${quote.blockId ?? ""}`);
   }
   return [...new Set(issues)].sort();
 }
@@ -1057,7 +1236,7 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
   };
 
   if (!assets) {
-    add("preview-assets", "Preview assets must be generated before RuntimePreview E2E.");
+    add("preview-assets", "请先生成预览，再运行预览检查。");
   } else {
     const registry = new Map<string, unknown>();
     const runtime = {
@@ -1072,11 +1251,11 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
       new Function("window", "globalThis", assets.manifestJs)(runtime, runtime);
       new Function("window", "globalThis", assets.wrapperJs)(runtime, runtime);
     } catch (error) {
-      add("runtime.execution", `Generated manifest/wrapper failed to execute: ${error instanceof Error ? error.message : String(error)}`);
+      add("runtime.execution", `预览脚本运行失败：${error instanceof Error ? error.message : String(error)}`);
     }
-    if (!registry.has(source.examId)) add(`${source.examId}.js`, `Generated wrapper did not register ${source.examId}.`);
+    if (!registry.has(source.examId)) add(`${source.examId}.js`, `导出脚本未注册题目 ${source.examId}。`);
     const manifest = runtime.__READING_EXAM_MANIFEST__ as Record<string, unknown> | undefined;
-    if (!manifest?.[source.examId]) add("manifest.js", `Manifest does not contain ${source.examId}.`);
+    if (!manifest?.[source.examId]) add("manifest.js", `清单中缺少题目 ${source.examId}。`);
   }
 
   const collected: Record<string, AnswerValue> = {};
@@ -1084,7 +1263,7 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
     for (const qid of group.questionIds) {
       const controls = controlsFor(group.bodyHtml, qid);
       if (!controls.length) {
-        add(`$.questionGroups.${group.groupId}.bodyHtml`, `No runtime-collectible control or dropzone found for ${qid}.`);
+        add(`$.questionGroups.${group.groupId}.bodyHtml`, `题目 ${qid} 缺少可填写或可拖放的答题区域。`);
         continue;
       }
       const answer = source.answerKey[qid];
@@ -1095,7 +1274,7 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
         const expected = Array.isArray(answer) ? answer : [answer];
         for (const item of expected) {
           if (!values.includes(normalizeAnswer(item))) {
-            add(`$.questionGroups.${group.groupId}.bodyHtml`, `Answer for ${qid} is not present in option values.`);
+            add(`$.questionGroups.${group.groupId}.bodyHtml`, `题目 ${qid} 的答案不在选项中。`);
           }
         }
       }
@@ -1108,8 +1287,8 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
   const firstQid = source.questionOrder[0];
   if (firstQid) wrongAnswers[firstQid] = Array.isArray(wrongAnswers[firstQid]) ? ["__wrong__"] : `${wrongAnswers[firstQid] ?? ""}__wrong__`;
   const wrongScoreInfo = score(source, wrongAnswers);
-  if (scoreInfo.total > 0 && scoreInfo.percent !== 100) add("runtime.scoreInfo", `Correct-answer E2E expected 100%, got ${scoreInfo.percent}%.`);
-  if (scoreInfo.total > 0 && wrongScoreInfo.percent >= scoreInfo.percent) add("runtime.scoreInfo", "Wrong-answer sample did not reduce the runtime score.");
+  if (scoreInfo.total > 0 && scoreInfo.percent !== 100) add("runtime.scoreInfo", `正确答案检查应为 100%，当前为 ${scoreInfo.percent}%。`);
+  if (scoreInfo.total > 0 && wrongScoreInfo.percent >= scoreInfo.percent) add("runtime.scoreInfo", "错误答案样本没有降低得分。");
 
   return {
     jobId,
@@ -1117,9 +1296,9 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
     layers: [{ layer: "RuntimePreview", passed: issues.length === 0, issueCount: issues.length }],
     issues,
     runtime: {
-      adapter: "dev-fallback-static-contract",
+      adapter: "本地基础校验",
       mode: "static-rust",
-      fallbackReason: "Browser dev fallback mirrors the Rust static contract gate; explicit real-runtime E2E remains diagnostic-only.",
+      fallbackReason: "当前为开发预览环境，已执行基础校验；真实运行预览仅作为诊断项。",
       examId: source.examId,
       jobId,
       registeredIds: assets ? [source.examId] : [],
@@ -1206,6 +1385,42 @@ function cleanupDevArtifacts(store: Store, jobId: string, exportSummary: unknown
     message: "中间文件已自动清理，已保留可编辑题目稿。",
     exportSummary,
     generatedAt: now()
+  };
+}
+
+function minimizeDevProcessArtifacts(store: Store, jobId: string): void {
+  if (store.diagnostics.keepFullProcessArtifacts) return;
+  delete store.documents[jobId];
+  delete store.splits[jobId];
+  delete store.validation[jobId];
+  delete store.previews[jobId];
+  delete store.pipelineReports[jobId];
+}
+
+function recordGroupLlmReview(
+  ir: ReadingAuthoringIr,
+  groupId: string,
+  status: "low_confidence" | "auto_apply_blocked",
+  confidence: number,
+  warning: string,
+  suggestion: LlmSuggestion
+): ReadingAuthoringIr {
+  return {
+    ...ir,
+    groups: ir.groups.map((group) => group.groupId === groupId ? {
+      ...group,
+      reviewWarnings: Array.from(new Set([...(group.reviewWarnings ?? []), warning])),
+      llmReview: {
+        required: true,
+        status,
+        confidence,
+        suggestionId: suggestion.suggestionId,
+        suggestedKind: suggestion.kind ?? null,
+        warnings: suggestion.warnings,
+        evidence: suggestion.evidence,
+        recordedAt: now()
+      }
+    } : group)
   };
 }
 
@@ -1404,6 +1619,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         currentStep: "Authoring",
         issueCounts: { errors: 0, warnings: 1, needsReview: authoringReview.needsReview + sourceReviewIssueCount }
       });
+      minimizeDevProcessArtifacts(store, jobId);
       save(store);
       return ir as T;
     }
@@ -1469,6 +1685,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           const autoApplyIssues = suggestionAutoApplyIssues(ir, suggestion, ["kind", "layout", "questions"]);
           if (autoApplyIssues.length) {
             blockedAutoApplyGroups.push(group.groupId);
+            const warning = `LLM suggestion reached confidence threshold but was not safe to auto-apply: ${autoApplyIssues.join(",")}`;
+            ir = recordGroupLlmReview(ir, group.groupId, "auto_apply_blocked", suggestion.confidence, warning, suggestion);
             failures.push(`${group.groupId}:auto_apply_blocked:${autoApplyIssues.join(",")}`);
             continue;
           }
@@ -1476,6 +1694,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           appliedCount += 1;
           highConfidenceAppliedGroups.push(group.groupId);
         } else {
+          const warning = `LLM suggestion confidence ${suggestion.confidence.toFixed(2)} is below auto-apply threshold ${threshold.toFixed(2)}; manual review is required.`;
+          ir = recordGroupLlmReview(ir, group.groupId, "low_confidence", suggestion.confidence, warning, suggestion);
           lowConfidenceGroups.push(group.groupId);
         }
       }
@@ -1504,6 +1724,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       store.validation[jobId] = validationReport;
 
       const review = sourceReviewStatus(store, jobId);
+      store.sourceReviews[jobId] = review;
       const warnings = review.parserWarnings;
       const lowConfidenceBlocks = review.lowConfidenceBlocks;
       const sourceReviewIssueCount = sourceReviewIssues(review).length;
@@ -1548,6 +1769,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         validationReport
       };
       store.pipelineReports[jobId] = pipelineReport;
+      minimizeDevProcessArtifacts(store, jobId);
       save(store);
       return pipelineReport as T;
     }

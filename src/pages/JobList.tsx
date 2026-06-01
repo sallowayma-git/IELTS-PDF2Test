@@ -38,7 +38,7 @@ export function JobList({ jobs, refresh }: { jobs: ImportJob[]; refresh: () => v
             </button>
             <StatusPill status={job.status} />
             <span>{job.category}/{job.frequency}</span>
-            <span>{job.sourceFiles.length} files</span>
+            <span>{job.sourceFiles.length} 个文件</span>
             <button className="ghost small" onClick={() => go(`/jobs/${job.jobId}/${stepPath[job.currentStep] ?? "document"}`)}>打开</button>
             <button className="danger small" onClick={() => remove(job.jobId)}>删除</button>
           </div>

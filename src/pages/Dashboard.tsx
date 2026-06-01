@@ -2,6 +2,7 @@ import { createImportJob, importSourceFile, parseDocument, runRuleSplit, buildAu
 import { StatusPill } from "../components/StatusPill";
 import { go } from "../app/router";
 import type { ImportJob, JobStatus } from "../types";
+import { jobStatusLabel } from "../utils/displayLabels";
 
 const statusOrder: JobStatus[] = ["Working", "NeedsReview", "DraftSaved", "ExportReady", "Exported", "Cleaned"];
 
@@ -27,9 +28,9 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
     <section className="dashboard page-enter">
       <div className="hero-panel">
         <div>
-          <p className="eyebrow">Epic 8 local studio</p>
-          <h2>从导入文档到可加载题库 JS 的本地生产线</h2>
-          <p>当前实现以 Tauri 本地应用为主，界面运行在桌面内嵌界面中；旧 Web 设计仅作为导出契约参考。</p>
+          <p className="eyebrow">本地作者工具</p>
+          <h2>从导入文件到可发布题稿的本地流程</h2>
+          <p>当前实现以桌面本地应用为主，界面运行在桌面窗口内；旧 Web 设计仅作为输出格式参考。</p>
         </div>
         <div className="hero-actions">
           <button className="primary" onClick={() => go("/jobs/new")}>新建导题任务</button>
@@ -40,7 +41,7 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
       <div className="metric-row">
         {counts.map((item) => (
           <div className="metric" key={item.status}>
-            <span>{item.status}</span>
+            <span>{jobStatusLabel(item.status)}</span>
             <strong>{item.count}</strong>
           </div>
         ))}
@@ -68,14 +69,14 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
           </div>
         </section>
         <aside className="inspector">
-          <p className="eyebrow">MVP contract</p>
-          <h3>本阶段验收链路</h3>
+          <p className="eyebrow">工作提示</p>
+          <h3>普通流程</h3>
           <ol className="check-list">
-            <li>上传/创建 Job 并保留来源文件记录</li>
-            <li>生成 Document IR 并可审阅 block</li>
-            <li>规则粗切 Passage、题组和答案</li>
-            <li>编辑 Authoring IR 并模板化渲染</li>
-            <li>导出 ReadingExamSourceV1、单题 JS、manifest</li>
+            <li>选择本地 PDF、DOCX、TXT 或 MD 文件</li>
+            <li>核对解析结果，必要时补充人工转录</li>
+            <li>确认题组、题型和答案</li>
+            <li>编辑可编辑题稿并完成预览校验</li>
+            <li>导出单题文件或加入 Pack</li>
           </ol>
         </aside>
       </div>

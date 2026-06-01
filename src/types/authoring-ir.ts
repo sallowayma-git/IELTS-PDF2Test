@@ -6,6 +6,8 @@ export type GroupKind =
   | "true_false_not_given"
   | "yes_no_not_given"
   | "matching"
+  | "heading_matching"
+  | "matching_information"
   | "classification"
   | "summary_completion"
   | "table_completion"
@@ -13,7 +15,7 @@ export type GroupKind =
   | "short_answer"
   | "sentence_completion";
 
-export type InteractionType = "radio" | "checkbox" | "text" | "textarea" | "select" | "dragdrop" | "table" | "diagram";
+export type InteractionType = "radio" | "checkbox" | "text" | "textarea" | "select" | "dragdrop" | "table" | "diagram" | "matching";
 export type AnswerValue = string | string[];
 
 export interface ExamMetaDraft {
@@ -43,6 +45,9 @@ export interface InteractionSpec {
   type: InteractionType;
   options?: string[];
   placeholder?: string;
+  allowOptionReuse?: boolean;
+  minSelections?: number;
+  maxSelections?: number;
 }
 
 export interface LayoutSpec {
@@ -70,12 +75,26 @@ export interface QuestionGroupDraft {
   instruction: string[];
   questions: QuestionDraft[];
   layout: LayoutSpec;
+  reviewWarnings?: string[];
+  classificationEvidence?: string[];
+  sectionEvidence?: SplitSectionEvidence[];
+  continuationEdges?: SplitContinuationEdge[];
   allowOptionReuse?: boolean;
   sourceBlockIds: string[];
   confidence: number;
   verified: boolean;
   isUmbrellaRange?: boolean;
   requiresManualQuestionImport?: boolean;
+  llmReview?: {
+    required: boolean;
+    status: "low_confidence" | "auto_apply_blocked" | string;
+    confidence: number;
+    suggestionId?: string | null;
+    suggestedKind?: string | null;
+    warnings?: string[];
+    evidence?: unknown;
+    recordedAt?: string;
+  };
 }
 
 export interface AuthoringAudit {
@@ -106,8 +125,40 @@ export interface SplitGroupCandidate {
   blockIds: string[];
   kindHint?: GroupKind;
   confidence: number;
+  classification?: {
+    kind: GroupKind;
+    interaction: InteractionSpec;
+    confidence: number;
+    warnings: string[];
+    evidence: string[];
+  };
+  sectionEvidence?: SplitSectionEvidence[];
+  continuationEdges?: SplitContinuationEdge[];
   isUmbrellaRange?: boolean;
   requiresManualQuestionImport?: boolean;
+}
+
+export interface SplitSectionEvidence {
+  blockId: string;
+  pageIndex: number;
+  column: number;
+  role: string;
+  textPreview: string;
+  bbox?: [number, number, number, number];
+  normalizedBbox?: [number, number, number, number];
+  pageRotation?: number;
+  tableRows?: number;
+  tableCols?: number;
+  headingLevel?: number;
+  numberingLevel?: number;
+  numberingId?: string;
+}
+
+export interface SplitContinuationEdge {
+  fromBlockId: string;
+  toBlockId: string;
+  reason: string;
+  confidence: number;
 }
 
 export interface SplitCandidates {
