@@ -1,16 +1,12 @@
 import type { JobStatus } from "../types";
 
 const labels: Record<JobStatus, string> = {
-  Draft: "草稿",
-  Uploaded: "已上传",
-  Parsed: "已解析",
-  SplitReady: "粗切完成",
-  AuthoringReady: "编辑中",
-  NeedsHumanReview: "待人工",
-  ValidationFailed: "校验失败",
-  PreviewReady: "可预览",
+  Working: "处理中",
+  NeedsReview: "待审核",
+  DraftSaved: "草稿已保存",
   ExportReady: "可导出",
-  Published: "已发布"
+  Exported: "已导出",
+  Cleaned: "已清理"
 };
 
 export function StatusPill({ status }: { status: JobStatus }) {

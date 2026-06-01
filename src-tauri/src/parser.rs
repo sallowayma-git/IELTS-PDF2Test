@@ -1,0 +1,979 @@
+use crate::authoring_pipeline::collapse_whitespace;
+use crate::environment::{command_failure, find_sidecar};
+use crate::util::{read_json, write_json};
+use crate::{hash_bytes, html_escape, main_source_file, CommandResult, ImportJob, SourceFile};
+use chrono::Utc;
+use quick_xml::{events::Event, Reader};
+use serde_json::{json, Value};
+use std::{fs, io::Read, path::Path, process::Command};
+use zip::ZipArchive;
+
+fn role_hint_for_text(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    if lower.starts_with("answers")
+        || lower.starts_with("## answers")
+        || lower.contains("answer key")
+        || lower.contains("答案")
+        || looks_like_answer_key_block(text)
+    {
+        Some("answer")
+    } else if lower.contains("questions ")
+        || lower.starts_with("question ")
+        || lower.contains("true") && lower.contains("false") && lower.contains("not given")
+        || lower.contains("choose one")
+        || lower.contains("complete the")
+    {
+        Some("question")
+    } else if lower.contains("reading passage") || lower.starts_with("passage ") {
+        Some("passage")
+    } else {
+        None
+    }
+}
+
+fn looks_like_answer_key_block(text: &str) -> bool {
+    let mut answer_lines = 0usize;
+    let mut total_lines = 0usize;
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        total_lines += 1;
+        let mut chars = line.chars().peekable();
+        let mut digit_count = 0usize;
+        while chars.peek().is_some_and(|ch| ch.is_ascii_digit()) {
+            digit_count += 1;
+            chars.next();
+        }
+        if digit_count == 0 {
+            return false;
+        }
+        while chars
+            .peek()
+            .is_some_and(|ch| matches!(ch, '.' | ')' | ':' | '、') || ch.is_whitespace())
+        {
+            chars.next();
+        }
+        let answer = chars.collect::<String>();
+        let answer_word_count = answer.split_whitespace().count();
+        if answer.trim().is_empty() || answer_word_count > 6 || answer.contains('?') {
+            return false;
+        }
+        answer_lines += 1;
+    }
+    total_lines >= 2 && answer_lines == total_lines
+}
+
+fn block_type_for_text(text: &str) -> &'static str {
+    let trimmed = text.trim();
+    if trimmed.starts_with('#')
+        || trimmed.to_uppercase().starts_with("READING PASSAGE")
+        || trimmed.to_lowercase().starts_with("questions ")
+    {
+        "header"
+    } else if trimmed.contains('|') && trimmed.matches('|').count() >= 2 {
+        "table"
+    } else if trimmed
+        .lines()
+        .any(|line| line.trim_start().starts_with("- ") || line.trim_start().starts_with("* "))
+    {
+        "list"
+    } else {
+        "paragraph"
+    }
+}
+
+fn markdownish_to_html(text: &str, block_type: &str) -> String {
+    let trimmed = text.trim();
+    match block_type {
+        "header" => format!(
+            "<h3>{}</h3>",
+            html_escape(trimmed.trim_start_matches('#').trim())
+        ),
+        "table" => {
+            let rows = trimmed
+                .lines()
+                .filter(|line| {
+                    (line.contains('|') || line.contains('\t'))
+                        && !line
+                            .trim()
+                            .chars()
+                            .all(|ch| matches!(ch, '|' | '-' | ':' | ' '))
+                })
+                .map(|line| {
+                    let parts = if line.contains('\t') {
+                        line.split('\t').collect::<Vec<_>>()
+                    } else {
+                        line.trim_matches('|').split('|').collect::<Vec<_>>()
+                    };
+                    let cells = parts
+                        .iter()
+                        .map(|cell| format!("<td>{}</td>", html_escape(cell.trim())))
+                        .collect::<String>();
+                    format!("<tr>{}</tr>", cells)
+                })
+                .collect::<String>();
+            format!("<table>{}</table>", rows)
+        }
+        "list" => {
+            let items = trimmed
+                .lines()
+                .map(|line| {
+                    line.trim_start()
+                        .trim_start_matches("- ")
+                        .trim_start_matches("* ")
+                        .trim()
+                })
+                .filter(|line| !line.is_empty())
+                .map(|line| format!("<li>{}</li>", html_escape(line)))
+                .collect::<String>();
+            format!("<ul>{}</ul>", items)
+        }
+        _ => format!("<p>{}</p>", html_escape(trimmed)),
+    }
+}
+
+fn paragraph_text_chunks(content: &str) -> Vec<String> {
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let mut blocks = Vec::new();
+    let mut current = Vec::new();
+
+    for line in normalized.lines() {
+        if line.trim().is_empty() {
+            if !current.is_empty() {
+                blocks.push(current.join("\n"));
+                current.clear();
+            }
+        } else {
+            current.push(line.to_string());
+        }
+    }
+    if !current.is_empty() {
+        blocks.push(current.join("\n"));
+    }
+    blocks
+}
+
+fn semantic_text_chunks(content: &str) -> Vec<String> {
+    let paragraphs = paragraph_text_chunks(content);
+    if paragraphs.len() > 1 {
+        return paragraphs;
+    }
+
+    let text = collapse_whitespace(content);
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    let lower = text.to_lowercase();
+    let mut markers = Vec::new();
+    for pattern in [
+        "reading passage ",
+        "questions ",
+        "question ",
+        "answer key",
+        "answers",
+    ] {
+        markers.extend(lower.match_indices(pattern).map(|(index, _)| index));
+    }
+    markers.sort_unstable();
+    markers.dedup();
+    if markers.len() <= 1 {
+        return vec![text];
+    }
+
+    let mut chunks = Vec::new();
+    if markers[0] > 0 {
+        chunks.push(text[..markers[0]].trim().to_string());
+    }
+    for (position, start) in markers.iter().enumerate() {
+        let end = markers.get(position + 1).copied().unwrap_or(text.len());
+        let chunk = text[*start..end].trim();
+        if !chunk.is_empty() {
+            chunks.push(chunk.to_string());
+        }
+    }
+    chunks
+}
+
+fn document_block(
+    block_id: String,
+    text: &str,
+    page_index: usize,
+    ordinal: usize,
+    confidence: f64,
+) -> Value {
+    let block_type = block_type_for_text(text);
+    let role_hint = role_hint_for_text(text);
+    let y0 = 72 + ((ordinal % 16) as i32 * 42);
+    let mut block = json!({
+        "blockId": block_id,
+        "blockType": block_type,
+        "text": text,
+        "html": markdownish_to_html(text, block_type),
+        "bbox": [72, y0, 520, (y0 + 36).min(794)],
+        "confidence": confidence,
+        "pageIndex": page_index
+    });
+    if let Some(role) = role_hint {
+        block["roleHint"] = json!(role);
+    }
+    block
+}
+
+fn text_document_ir(job: &ImportJob, source: &SourceFile, content: &str, mode: &str) -> Value {
+    let mut blocks = paragraph_text_chunks(content);
+    if blocks.is_empty() {
+        blocks.push(job.title.clone());
+    }
+
+    let document_blocks = blocks
+        .iter()
+        .enumerate()
+        .map(|(index, text)| document_block(format!("b{:03}", index + 1), text, 1, index, 1.0))
+        .collect::<Vec<_>>();
+
+    json!({
+        "schemaVersion": "DocumentIRV1",
+        "jobId": job.job_id,
+        "pages": [{
+            "pageIndex": 1,
+            "width": 595,
+            "height": 842,
+            "blocks": document_blocks
+        }],
+        "assets": [],
+        "parser": {
+            "provider": "local-text-parser",
+            "version": "0.2.0",
+            "mode": mode,
+            "warnings": [],
+            "sourceFileId": source.file_id,
+            "sourceStoredName": source.stored_name
+        }
+    })
+}
+
+fn parse_text_with_rust_parser(
+    job: &ImportJob,
+    source: &SourceFile,
+    upload_path: &Path,
+    output_path: &Path,
+    mode: &str,
+) -> CommandResult<Value> {
+    let content = fs::read_to_string(upload_path)
+        .map_err(|error| format!("rust_text_read_failed:{}:{}", upload_path.display(), error))?;
+    let mut ir = text_document_ir(job, source, &content, mode);
+    let provider = if source.file_type == "md" {
+        "rust-parser:text:markdown"
+    } else {
+        "rust-parser:text:plain"
+    };
+    if let Some(parser) = ir.get_mut("parser").and_then(Value::as_object_mut) {
+        parser.insert("provider".to_string(), json!(provider));
+        parser.insert("version".to_string(), json!("0.3.0"));
+    }
+    write_json(output_path, &ir)?;
+    Ok(ir)
+}
+
+pub(crate) fn manual_transcription_document_ir(
+    job: &ImportJob,
+    content: &str,
+    note: Option<&str>,
+) -> Value {
+    let source = main_source_file(job)
+        .cloned()
+        .unwrap_or_else(|| SourceFile {
+            file_id: "manual-source".to_string(),
+            original_name: "manual-transcription.txt".to_string(),
+            stored_name: "manual-transcription.txt".to_string(),
+            file_type: "txt".to_string(),
+            sha256: hash_bytes(content.as_bytes()),
+            size_bytes: content.len() as u64,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        });
+    let mut ir = text_document_ir(job, &source, content, "manual");
+    if let Some(parser) = ir.get_mut("parser").and_then(Value::as_object_mut) {
+        parser.insert("provider".to_string(), json!("manual-transcription"));
+        parser.insert("version".to_string(), json!("0.3.0"));
+        parser.insert("mode".to_string(), json!("manual"));
+        parser.insert(
+            "warnings".to_string(),
+            json!(["manual transcription supplied by operator; verify against source PDF before publish"]),
+        );
+        if let Some(note) = note.filter(|value| !value.trim().is_empty()) {
+            parser.insert("note".to_string(), json!(note));
+        }
+    }
+    ir
+}
+
+pub(crate) fn vision_transcription_document_ir(
+    job: &ImportJob,
+    content: &str,
+    confidence: f64,
+    warnings: Vec<String>,
+    evidence: Value,
+    note: Option<&str>,
+) -> Value {
+    let source = main_source_file(job)
+        .cloned()
+        .unwrap_or_else(|| SourceFile {
+            file_id: "vision-source".to_string(),
+            original_name: "vision-transcription.txt".to_string(),
+            stored_name: "vision-transcription.txt".to_string(),
+            file_type: "txt".to_string(),
+            sha256: hash_bytes(content.as_bytes()),
+            size_bytes: content.len() as u64,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        });
+    let mut ir = text_document_ir(job, &source, content, "ocr");
+    let normalized_confidence = confidence.clamp(0.0, 1.0);
+    for block in ir
+        .get_mut("pages")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+        .flat_map(|page| {
+            page.get_mut("blocks")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+        })
+    {
+        if let Some(obj) = block.as_object_mut() {
+            obj.insert("confidence".to_string(), json!(normalized_confidence));
+        }
+    }
+    if let Some(parser) = ir.get_mut("parser").and_then(Value::as_object_mut) {
+        parser.insert("provider".to_string(), json!("vision-llm-transcription"));
+        parser.insert("version".to_string(), json!("0.1.0"));
+        parser.insert("mode".to_string(), json!("ocr"));
+        let mut parser_warnings =
+            vec!["vision LLM transcription; verify against source PDF before publish".to_string()];
+        parser_warnings.extend(
+            warnings
+                .into_iter()
+                .filter(|warning| !warning.trim().is_empty()),
+        );
+        parser.insert("warnings".to_string(), json!(parser_warnings));
+        parser.insert("evidence".to_string(), evidence);
+        if let Some(note) = note.filter(|value| !value.trim().is_empty()) {
+            parser.insert("note".to_string(), json!(note));
+        }
+    }
+    ir
+}
+
+fn append_parser_warning(ir: &mut Value, warning: String) {
+    if let Some(parser) = ir.get_mut("parser").and_then(Value::as_object_mut) {
+        let warnings = parser.entry("warnings").or_insert_with(|| json!([]));
+        if let Some(items) = warnings.as_array_mut() {
+            items.push(json!(warning));
+        }
+    }
+}
+
+fn parse_pdf_with_rust_text_extractor(
+    job: &ImportJob,
+    source: &SourceFile,
+    upload_path: &Path,
+    output_path: &Path,
+    mode: &str,
+) -> CommandResult<Value> {
+    let extracted_pages = pdf_extract::extract_text_by_pages(upload_path)
+        .map_err(|error| format!("rust_pdf_extract_failed:{}", error))?;
+    let mut warnings = Vec::<String>::new();
+    let mut block_counter = 1usize;
+    let pages = if extracted_pages.is_empty() {
+        warnings.push("PDF has no readable pages; OCR/manual review required".to_string());
+        vec![json!({
+            "pageIndex": 1,
+            "width": 595,
+            "height": 842,
+            "blocks": [document_block(
+                "b001".to_string(),
+                "[No extractable text on page 1]",
+                1,
+                0,
+                0.2,
+            )]
+        })]
+    } else {
+        extracted_pages
+            .iter()
+            .enumerate()
+            .map(|(page_index, page_text)| {
+                let page_number = page_index + 1;
+                let mut chunks = semantic_text_chunks(page_text);
+                if chunks.is_empty() {
+                    warnings.push(format!(
+                        "page {} has no extractable text; OCR/manual review required",
+                        page_number
+                    ));
+                    chunks.push(format!("[No extractable text on page {}]", page_number));
+                }
+                let blocks = chunks
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, chunk)| {
+                        let is_placeholder = chunk.starts_with("[No extractable text");
+                        let block = document_block(
+                            format!("b{:03}", block_counter),
+                            chunk,
+                            page_number,
+                            ordinal,
+                            if is_placeholder { 0.2 } else { 0.98 },
+                        );
+                        block_counter += 1;
+                        block
+                    })
+                    .collect::<Vec<_>>();
+                json!({
+                    "pageIndex": page_number,
+                    "width": 595,
+                    "height": 842,
+                    "blocks": blocks
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let ir = json!({
+        "schemaVersion": "DocumentIRV1",
+        "jobId": job.job_id,
+        "pages": pages,
+        "assets": [],
+        "parser": {
+            "provider": "rust-parser:pdf:pdf-extract",
+            "version": "0.1.0",
+            "mode": mode,
+            "warnings": warnings,
+            "sourceFileId": source.file_id,
+            "sourceStoredName": source.stored_name
+        }
+    });
+    write_json(output_path, &ir)?;
+    Ok(ir)
+}
+
+#[derive(Debug, Clone)]
+struct DocxRawBlock {
+    kind: &'static str,
+    text: String,
+}
+
+fn is_word_tag(name: &[u8], tag: &[u8]) -> bool {
+    name == tag || name.ends_with(&[b":", tag].concat())
+}
+
+fn push_docx_block(blocks: &mut Vec<DocxRawBlock>, kind: &'static str, text: &str) {
+    let collapsed = collapse_whitespace(text);
+    if !collapsed.is_empty() {
+        blocks.push(DocxRawBlock {
+            kind,
+            text: collapsed,
+        });
+    }
+}
+
+fn parse_docx_document_xml(document_xml: &[u8]) -> CommandResult<Vec<DocxRawBlock>> {
+    let mut reader = Reader::from_reader(document_xml);
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+    let mut blocks = Vec::<DocxRawBlock>::new();
+    let mut in_table = false;
+    let mut in_cell = false;
+    let mut paragraph_text = String::new();
+    let mut cell_text = String::new();
+    let mut row_cells = Vec::<String>::new();
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format!("docx_xml_read_failed:{}", error))?
+        {
+            Event::Start(event) => {
+                let name = event.name().as_ref().to_vec();
+                if is_word_tag(&name, b"tbl") {
+                    in_table = true;
+                } else if is_word_tag(&name, b"tr") && in_table {
+                    row_cells.clear();
+                } else if is_word_tag(&name, b"tc") && in_table {
+                    in_cell = true;
+                    cell_text.clear();
+                } else if is_word_tag(&name, b"p") {
+                    paragraph_text.clear();
+                }
+            }
+            Event::Text(event) => {
+                let text = event
+                    .decode()
+                    .map_err(|error| format!("docx_text_decode_failed:{}", error))?;
+                paragraph_text.push_str(&text);
+            }
+            Event::End(event) => {
+                let name = event.name().as_ref().to_vec();
+                if is_word_tag(&name, b"p") {
+                    let collapsed = collapse_whitespace(&paragraph_text);
+                    if !collapsed.is_empty() {
+                        if in_cell {
+                            if !cell_text.is_empty() {
+                                cell_text.push(' ');
+                            }
+                            cell_text.push_str(&collapsed);
+                        } else if !in_table {
+                            blocks.push(DocxRawBlock {
+                                kind: "paragraph",
+                                text: collapsed,
+                            });
+                        }
+                    }
+                    paragraph_text.clear();
+                } else if is_word_tag(&name, b"tc") && in_table {
+                    row_cells.push(collapse_whitespace(&cell_text));
+                    cell_text.clear();
+                    in_cell = false;
+                } else if is_word_tag(&name, b"tr") && in_table {
+                    if row_cells.iter().any(|cell| !cell.is_empty()) {
+                        push_docx_block(&mut blocks, "table", &row_cells.join("\t"));
+                    }
+                    row_cells.clear();
+                } else if is_word_tag(&name, b"tbl") {
+                    in_table = false;
+                    in_cell = false;
+                    row_cells.clear();
+                    cell_text.clear();
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+
+    Ok(blocks)
+}
+
+fn parse_docx_with_rust_ooxml(
+    job: &ImportJob,
+    source: &SourceFile,
+    upload_path: &Path,
+    output_path: &Path,
+    mode: &str,
+) -> CommandResult<Value> {
+    let file = fs::File::open(upload_path)
+        .map_err(|error| format!("rust_docx_open_failed:{}:{}", upload_path.display(), error))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("rust_docx_zip_open_failed:{}", error))?;
+    let mut document = archive
+        .by_name("word/document.xml")
+        .map_err(|error| format!("rust_docx_missing_document_xml:{}", error))?;
+    let mut document_xml = Vec::new();
+    document
+        .read_to_end(&mut document_xml)
+        .map_err(|error| format!("rust_docx_read_document_xml_failed:{}", error))?;
+
+    let mut warnings = Vec::<String>::new();
+    let mut raw_blocks = parse_docx_document_xml(&document_xml)?;
+    if raw_blocks.is_empty() {
+        warnings.push(
+            "DOCX contains no extractable paragraphs or tables; manual review required".to_string(),
+        );
+        raw_blocks.push(DocxRawBlock {
+            kind: "paragraph",
+            text: upload_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("document")
+                .to_string(),
+        });
+    }
+    let blocks = raw_blocks
+        .iter()
+        .enumerate()
+        .map(|(index, block)| {
+            let mut value =
+                document_block(format!("b{:03}", index + 1), &block.text, 1, index, 0.99);
+            if block.kind == "table" {
+                value["blockType"] = json!("table");
+                value["html"] = json!(markdownish_to_html(&block.text, "table"));
+            }
+            value
+        })
+        .collect::<Vec<_>>();
+
+    let ir = json!({
+        "schemaVersion": "DocumentIRV1",
+        "jobId": job.job_id,
+        "pages": [{
+            "pageIndex": 1,
+            "width": 595,
+            "height": 842,
+            "blocks": blocks
+        }],
+        "assets": [],
+        "parser": {
+            "provider": "rust-parser:docx:ooxml",
+            "version": "0.1.0",
+            "mode": mode,
+            "warnings": warnings,
+            "sourceFileId": source.file_id,
+            "sourceStoredName": source.stored_name
+        }
+    });
+    write_json(output_path, &ir)?;
+    Ok(ir)
+}
+
+fn parse_with_python_sidecar(
+    job_id: &str,
+    input_path: &Path,
+    output_path: &Path,
+    mode: &str,
+) -> CommandResult<Value> {
+    let script = find_sidecar("sidecars/python-parser/parser.py")
+        .ok_or_else(|| "python_parser_sidecar_missing".to_string())?;
+    let output = Command::new("python3")
+        .arg(&script)
+        .arg("parse")
+        .arg("--input")
+        .arg(input_path)
+        .arg("--output")
+        .arg(output_path)
+        .arg("--job-id")
+        .arg(job_id)
+        .arg("--mode")
+        .arg(mode)
+        .output()
+        .map_err(|error| format!("python_parser_spawn_failed:{}:{}", script.display(), error))?;
+    if !output.status.success() {
+        return Err(command_failure("python-parser", &output));
+    }
+    read_json(output_path)
+}
+
+pub(crate) fn extract_pdf_images_with_python_sidecar(
+    job_id: &str,
+    input_path: &Path,
+    output_path: &Path,
+    asset_dir: &Path,
+) -> CommandResult<Value> {
+    let script = find_sidecar("sidecars/python-parser/parser.py")
+        .ok_or_else(|| "python_parser_sidecar_missing".to_string())?;
+    let output = Command::new("python3")
+        .arg(&script)
+        .arg("extract_pdf_images")
+        .arg("--input")
+        .arg(input_path)
+        .arg("--output")
+        .arg(output_path)
+        .arg("--job-id")
+        .arg(job_id)
+        .arg("--asset-dir")
+        .arg(asset_dir)
+        .output()
+        .map_err(|error| format!("python_parser_spawn_failed:{}:{}", script.display(), error))?;
+    if !output.status.success() {
+        return Err(command_failure("python-parser:extract_pdf_images", &output));
+    }
+    read_json(output_path)
+}
+
+pub(crate) fn image_count_from_extraction(extraction: &Value) -> usize {
+    extraction
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|page| {
+            page.get("images")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .count()
+}
+
+pub(crate) fn render_pdf_page_with_sips_fallback(
+    job_id: &str,
+    input_path: &Path,
+    output_path: &Path,
+    asset_dir: &Path,
+    prior_warnings: Vec<String>,
+) -> CommandResult<Value> {
+    fs::create_dir_all(asset_dir)
+        .map_err(|error| format!("create_sips_asset_dir:{}:{}", asset_dir.display(), error))?;
+    let rendered_path = asset_dir.join("page-001-rendered.png");
+    let output = Command::new("sips")
+        .arg("-s")
+        .arg("format")
+        .arg("png")
+        .arg(input_path)
+        .arg("--out")
+        .arg(&rendered_path)
+        .output()
+        .map_err(|error| format!("sips_render_spawn_failed:{}", error))?;
+    if !output.status.success() {
+        return Err(command_failure("sips:render_pdf_page", &output));
+    }
+    let bytes = fs::read(&rendered_path).map_err(|error| {
+        format!(
+            "read_sips_rendered_image:{}:{}",
+            rendered_path.display(),
+            error
+        )
+    })?;
+    if bytes.is_empty() {
+        return Err(format!(
+            "sips_rendered_image_empty:{}",
+            rendered_path.display()
+        ));
+    }
+
+    let mut warnings = prior_warnings
+        .into_iter()
+        .filter(|warning| !warning.trim().is_empty())
+        .collect::<Vec<_>>();
+    warnings.push(
+        "used Rust macOS sips rendered-page fallback for vision transcription; verify page image coverage before publish"
+            .to_string(),
+    );
+    warnings.push(
+        "sips fallback currently renders a preview image, not full OCR or guaranteed multi-page coverage"
+            .to_string(),
+    );
+    let extraction = json!({
+        "schemaVersion": "PdfImageExtractionV1",
+        "jobId": job_id,
+        "sourcePath": input_path.to_string_lossy(),
+        "pages": [{
+            "pageIndex": 1,
+            "width": 595,
+            "height": 842,
+            "images": [{
+                "assetId": "pdf-page-1-rendered",
+                "pageIndex": 1,
+                "fileName": "page-001-rendered.png",
+                "path": rendered_path.to_string_lossy(),
+                "mimeType": "image/png",
+                "width": 0,
+                "height": 0,
+                "sha256": hash_bytes(&bytes),
+                "sizeBytes": bytes.len() as u64,
+                "renderedFallback": true,
+                "renderSource": "rust-macos-sips"
+            }]
+        }],
+        "warnings": warnings,
+        "renderedFallback": true
+    });
+    write_json(output_path, &extraction)?;
+    Ok(extraction)
+}
+
+pub(crate) fn extract_pdf_images_for_vision(
+    job_id: &str,
+    input_path: &Path,
+    output_path: &Path,
+    asset_dir: &Path,
+) -> CommandResult<Value> {
+    match extract_pdf_images_with_python_sidecar(job_id, input_path, output_path, asset_dir) {
+        Ok(extraction) => {
+            if image_count_from_extraction(&extraction) > 0 {
+                Ok(extraction)
+            } else {
+                let warnings = extraction
+                    .get("warnings")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                render_pdf_page_with_sips_fallback(
+                    job_id,
+                    input_path,
+                    output_path,
+                    asset_dir,
+                    warnings,
+                )
+            }
+        }
+        Err(error) => render_pdf_page_with_sips_fallback(
+            job_id,
+            input_path,
+            output_path,
+            asset_dir,
+            vec![format!(
+                "python PDF image extraction failed; used Rust sips fallback: {}",
+                error
+            )],
+        ),
+    }
+}
+
+pub(crate) fn parse_source_document(
+    job: &ImportJob,
+    source: &SourceFile,
+    upload_path: &Path,
+    output_path: &Path,
+    mode: &str,
+) -> CommandResult<Value> {
+    if matches!(source.file_type.as_str(), "txt" | "md") {
+        match parse_text_with_rust_parser(job, source, upload_path, output_path, mode) {
+            Ok(ir) => return Ok(ir),
+            Err(error) => {
+                let fallback =
+                    parse_with_python_sidecar(&job.job_id, upload_path, output_path, mode);
+                return match fallback {
+                    Ok(mut ir) => {
+                        append_parser_warning(
+                            &mut ir,
+                            format!(
+                                "rust text parser failed; used Python parser fallback: {}",
+                                error
+                            ),
+                        );
+                        write_json(output_path, &ir)?;
+                        Ok(ir)
+                    }
+                    Err(python_error) => Ok(parser_failure_document_ir(
+                        job,
+                        source,
+                        mode,
+                        &format!("{}; python fallback failed: {}", error, python_error),
+                    )),
+                };
+            }
+        }
+    }
+    if source.file_type == "pdf" {
+        match parse_pdf_with_rust_text_extractor(job, source, upload_path, output_path, mode) {
+            Ok(ir) => return Ok(ir),
+            Err(error) => {
+                let fallback =
+                    parse_with_python_sidecar(&job.job_id, upload_path, output_path, mode);
+                return match fallback {
+                    Ok(mut ir) => {
+                        append_parser_warning(
+                            &mut ir,
+                            format!(
+                                "rust pdf-extract failed; used Python parser fallback: {}",
+                                error
+                            ),
+                        );
+                        write_json(output_path, &ir)?;
+                        Ok(ir)
+                    }
+                    Err(python_error) => Ok(parser_failure_document_ir(
+                        job,
+                        source,
+                        mode,
+                        &format!("{}; python fallback failed: {}", error, python_error),
+                    )),
+                };
+            }
+        }
+    }
+    if source.file_type == "docx" {
+        match parse_docx_with_rust_ooxml(job, source, upload_path, output_path, mode) {
+            Ok(ir) => return Ok(ir),
+            Err(error) => {
+                let fallback =
+                    parse_with_python_sidecar(&job.job_id, upload_path, output_path, mode);
+                return match fallback {
+                    Ok(mut ir) => {
+                        append_parser_warning(
+                            &mut ir,
+                            format!(
+                                "rust docx OOXML parser failed; used Python parser fallback: {}",
+                                error
+                            ),
+                        );
+                        write_json(output_path, &ir)?;
+                        Ok(ir)
+                    }
+                    Err(python_error) => Ok(parser_failure_document_ir(
+                        job,
+                        source,
+                        mode,
+                        &format!("{}; python fallback failed: {}", error, python_error),
+                    )),
+                };
+            }
+        }
+    }
+
+    parse_with_python_sidecar(&job.job_id, upload_path, output_path, mode)
+        .or_else(|error| Ok(parser_failure_document_ir(job, source, mode, &error)))
+}
+
+pub(crate) fn parser_failure_document_ir(
+    job: &ImportJob,
+    source: &SourceFile,
+    mode: &str,
+    error: &str,
+) -> Value {
+    let warning = format!(
+        "parser failed for {} source {}; manual review required: {}",
+        source.file_type, source.original_name, error
+    );
+    json!({
+        "schemaVersion": "DocumentIRV1",
+        "jobId": job.job_id,
+        "pages": [{
+            "pageIndex": 1,
+            "width": 595,
+            "height": 842,
+            "blocks": [{
+                "blockId": "parser-failure",
+                "blockType": "paragraph",
+                "text": format!("[Parser failed for {}. Manual review required.]", source.original_name),
+                "html": format!("<p>{}</p>", html_escape(&format!("[Parser failed for {}. Manual review required.]", source.original_name))),
+                "bbox": [72, 72, 520, 120],
+                "confidence": 0.0,
+                "roleHint": "ignore"
+            }]
+        }],
+        "assets": [],
+        "parser": {
+            "provider": "python-parser-sidecar:failure",
+            "version": "0.3.0",
+            "mode": mode,
+            "warnings": [warning, "no-sample-content-generated"],
+            "sourceFileId": source.file_id,
+            "sourceStoredName": source.stored_name
+        }
+    })
+}
+
+pub(crate) fn missing_source_document_ir(job: &ImportJob, mode: &str, reason: &str) -> Value {
+    json!({
+        "schemaVersion": "DocumentIRV1",
+        "jobId": job.job_id,
+        "pages": [{
+            "pageIndex": 1,
+            "width": 595,
+            "height": 842,
+            "blocks": [{
+                "blockId": "source-missing",
+                "blockType": "paragraph",
+                "text": "[No main source file is available. Manual import/review required.]",
+                "html": "<p>[No main source file is available. Manual import/review required.]</p>",
+                "bbox": [72, 72, 520, 120],
+                "confidence": 0.0,
+                "roleHint": "ignore"
+            }]
+        }],
+        "assets": [],
+        "parser": {
+            "provider": "local-parser:source-missing",
+            "version": "0.3.0",
+            "mode": mode,
+            "warnings": [format!("main source unavailable; manual review required: {}", reason), "no-sample-content-generated"],
+            "sourceFileId": null,
+            "sourceStoredName": null
+        }
+    })
+}

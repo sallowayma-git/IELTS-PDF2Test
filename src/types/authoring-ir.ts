@@ -29,6 +29,14 @@ export interface PassageDraft {
   title: string;
   htmlBlocks: Array<{ blockId: string; html: string }>;
   sourceBlockIds: string[];
+  questionUmbrellaRanges?: QuestionUmbrellaRange[];
+}
+
+export interface QuestionUmbrellaRange {
+  heading: string;
+  questionRange: [number, number];
+  blockId: string;
+  text: string;
 }
 
 export interface InteractionSpec {
@@ -52,6 +60,7 @@ export interface QuestionDraft {
   sourceBlockIds: string[];
   confidence: number;
   verified: boolean;
+  requiresManualQuestionImport?: boolean;
 }
 
 export interface QuestionGroupDraft {
@@ -65,6 +74,8 @@ export interface QuestionGroupDraft {
   sourceBlockIds: string[];
   confidence: number;
   verified: boolean;
+  isUmbrellaRange?: boolean;
+  requiresManualQuestionImport?: boolean;
 }
 
 export interface AuthoringAudit {
@@ -95,12 +106,20 @@ export interface SplitGroupCandidate {
   blockIds: string[];
   kindHint?: GroupKind;
   confidence: number;
+  isUmbrellaRange?: boolean;
+  requiresManualQuestionImport?: boolean;
 }
 
 export interface SplitCandidates {
   jobId: string;
   passageCandidates: Array<{ range: string[]; title: string; categoryHint: PassageCategory }>;
   questionGroupCandidates: SplitGroupCandidate[];
+  umbrellaQuestionRanges?: Array<{
+    heading: string;
+    questionRange: [number, number];
+    blockId: string;
+    text: string;
+  }>;
   answerKeyCandidates: Array<{ source: string; answers: Record<string, AnswerValue> }>;
   issues: string[];
 }

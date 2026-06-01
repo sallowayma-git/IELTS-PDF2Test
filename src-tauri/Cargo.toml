@@ -22,3 +22,9 @@ sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"
+pdf-extract = "0.10"
+quick-xml = "0.39"
+zip = { version = "2.4.2", default-features = false, features = ["flate2", "deflate-flate2"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+base64 = "0.22"
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }

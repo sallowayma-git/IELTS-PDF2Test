@@ -93,6 +93,15 @@ export function renderGroupBodyHtml(group: QuestionGroupDraft): string {
 
 export function toReadingExamSource(ir: ReadingAuthoringIr): ReadingExamSourceV1 {
   const sourceFile = ir.exam.sourceFiles?.find((source) => source.role === "MainQuestion");
+  const questionUmbrellaRanges = ir.passage.questionUmbrellaRanges ?? [];
+  const questionIntroHtml = questionUmbrellaRanges.length
+    ? `<h3>Questions</h3><ul class="question-umbrella-ranges">${questionUmbrellaRanges
+        .map(
+          (range) =>
+            `<li><strong>${escapeHtml(range.heading)}</strong><span>Q${range.questionRange[0]}-${range.questionRange[1]}</span></li>`
+        )
+        .join("")}</ul>`
+    : "<h3>Questions</h3>";
   return {
     schemaVersion: "ReadingExamSourceV1",
     examId: ir.exam.examId,
@@ -103,7 +112,8 @@ export function toReadingExamSource(ir: ReadingAuthoringIr): ReadingExamSourceV1
       pdfFilename: sourceFile?.originalName ?? "source.pdf",
       legacyPath: "",
       legacyFilename: "",
-      questionIntroHtml: "<h3>Questions</h3>"
+      questionIntroHtml,
+      questionUmbrellaRanges
     },
     passage: {
       blocks: ir.passage.htmlBlocks.map((block) => ({ blockId: block.blockId, kind: "html", html: block.html }))

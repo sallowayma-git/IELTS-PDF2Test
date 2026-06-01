@@ -12,6 +12,12 @@ export interface ReadingExamSourceV1 {
     legacyPath: string;
     legacyFilename: string;
     questionIntroHtml: string;
+    questionUmbrellaRanges?: Array<{
+      heading: string;
+      questionRange: [number, number];
+      blockId: string;
+      text: string;
+    }>;
   };
   passage: {
     blocks: Array<{ blockId: string; kind: "html"; html: string }>;
@@ -55,6 +61,14 @@ export interface PreviewAssets {
 export interface ExportResult {
   examId: string;
   files: Array<{ name: string; content: string }>;
+  outputDir?: string;
+  exportSummary?: unknown;
+  cleanup?: {
+    cleaned?: boolean;
+    retainedFullProcessArtifacts?: boolean;
+    message?: string;
+    [key: string]: unknown;
+  };
 }
 
 export interface BuildPackInput {
@@ -74,5 +88,7 @@ export interface PackBuildResult {
   zipSizeBytes?: number;
   entryCount?: number;
   manifest?: unknown;
+  exportSummary?: unknown;
+  cleanup?: unknown;
   createdAt?: string;
 }

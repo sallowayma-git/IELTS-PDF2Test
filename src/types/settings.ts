@@ -12,7 +12,7 @@ export interface LlmProfilePublic {
   enabled: boolean;
   hasApiKey: boolean;
   apiKeySecretRef?: string;
-  secretStorageBackend?: "keychain" | "file" | "none";
+  secretStorageBackend?: "os" | "keychain" | "file" | "none";
   secretStorageMessage?: string;
 }
 
@@ -33,6 +33,27 @@ export interface LlmTestResult {
   ok: boolean;
   message: string;
   latencyMs: number;
+}
+
+export interface EnvironmentPreflightCheck {
+  name: string;
+  ok: boolean;
+  severity: "error" | "warning" | "info";
+  message: string;
+  details?: unknown;
+}
+
+export interface EnvironmentPreflightReport {
+  schemaVersion: "EnvironmentPreflightV1";
+  ok: boolean;
+  errors: number;
+  warnings: number;
+  checks: EnvironmentPreflightCheck[];
+  generatedAt: string;
+}
+
+export interface DiagnosticsSettings {
+  keepFullProcessArtifacts: boolean;
 }
 
 export interface LlmSuggestion {
@@ -73,8 +94,12 @@ export interface AutoPipelineReport {
     };
   };
   validationPassed: boolean;
+  staticRuntimePassed?: boolean;
   realRuntimePassed?: boolean;
   runtimeMode?: string;
+  authoring?: {
+    remainingReviewItems: number;
+  };
   status: string;
   currentStep: string;
   generatedAt: string;

@@ -14,6 +14,8 @@ export interface ValidationLayerReport {
   layer: ValidationLayer;
   passed: boolean;
   issueCount: number;
+  errorCount?: number;
+  warningCount?: number;
 }
 
 export interface ValidationReport {

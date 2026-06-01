@@ -12,6 +12,7 @@ import type {
   LlmProfilePublic,
   LlmSuggestion,
   LlmTestResult,
+  EnvironmentPreflightReport,
   AutoPipelineReport,
   PackBuildResult,
   ParseOptions,
@@ -25,6 +26,7 @@ import type {
   ValidationIssue,
   ValidationReport
 } from "../types";
+import type { DiagnosticsSettings } from "../types/settings";
 import { buildManifest, buildWrapper, escapeHtml, renderGroupBodyHtml, toReadingExamSource } from "./templateRenderer";
 
 type Store = {
@@ -39,6 +41,7 @@ type Store = {
   suggestions: Record<string, LlmSuggestion[]>;
   pipelineReports: Record<string, AutoPipelineReport>;
   packs: PackBuildResult[];
+  diagnostics: DiagnosticsSettings;
 };
 
 export interface JobDetail {
@@ -89,7 +92,8 @@ function initialStore(): Store {
     ],
     suggestions: {},
     pipelineReports: {},
-    packs: []
+    packs: [],
+    diagnostics: { keepFullProcessArtifacts: false }
   };
 }
 
@@ -365,6 +369,121 @@ function detectQuestionRange(text: string): [number, number] | undefined {
   return undefined;
 }
 
+function isUmbrellaQuestionRange(text: string): boolean {
+  const range = detectQuestionRange(text);
+  return Boolean(range && range[1] > range[0] && hasUmbrellaQuestionContext(text));
+}
+
+function isBareQuestionRangeHeading(text: string): boolean {
+  const range = detectQuestionRange(text);
+  if (!range || range[1] <= range[0] || !isQuestionHeadingText(text)) return false;
+  const heading = questionHeading(range[0], range[1]).toLowerCase().replace(/\s+/g, "");
+  const normalized = text.trimStart().replace(/^#+\s*/, "").toLowerCase().replace(/[–—]/g, "-").replace(/\s+/g, "");
+  const suffix = normalized.slice(heading.length).replace(/[.:;\-\s]+$/g, "");
+  return normalized.startsWith(heading) && !suffix;
+}
+
+function normalizedQuestionContext(text: string): string {
+  return text.toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+}
+
+function hasUmbrellaQuestionContext(text: string): boolean {
+  const lower = normalizedQuestionContext(text);
+  if (!lower.includes("reading passage")) return false;
+  const basedOnPassage = lower.includes("based on reading passage") || lower.includes("based on the reading passage");
+  const passageReference = lower.includes("refer to reading passage")
+    || lower.includes("refer to the reading passage")
+    || lower.includes("relate to reading passage")
+    || lower.includes("relate to the reading passage");
+
+  return lower.includes("which are based on reading passage")
+    || lower.includes("which are based on the reading passage")
+    || lower.includes("which is based on reading passage")
+    || lower.includes("which is based on the reading passage")
+    || (basedOnPassage && (lower.includes("below") || lower.includes("you should spend")))
+    || (passageReference && lower.includes("below"))
+    || (lower.includes("you should spend") && lower.includes("about"));
+}
+
+function nearbyQuestionContext(blocks: DocumentBlock[], index: number): string {
+  return normalizedQuestionContext(blocks.slice(Math.max(0, index - 3), Math.min(blocks.length, index + 4)).map(blockText).join(" "));
+}
+
+function isReadingPassageHeading(text: string): boolean {
+  return text.trimStart().toUpperCase().startsWith("READING PASSAGE");
+}
+
+function isSubstantivePassageBlock(block: DocumentBlock): boolean {
+  const text = blockText(block);
+  return text.length >= 48
+    && (block.roleHint === "passage" || (!isQuestionBlock(block) && !isAnswerBlock(block) && !isReadingPassageHeading(text)));
+}
+
+function hasOpeningQuestionRangePosition(blocks: DocumentBlock[], index: number): boolean {
+  let headerIndex = -1;
+  for (let candidateIndex = index; candidateIndex >= 0; candidateIndex -= 1) {
+    if (isReadingPassageHeading(blockText(blocks[candidateIndex]))) {
+      headerIndex = candidateIndex;
+      break;
+    }
+  }
+  if (headerIndex < 0 || index - headerIndex > 4) return false;
+  return !blocks.slice(headerIndex + 1, index).some(isSubstantivePassageBlock);
+}
+
+function hasLaterConcreteSubgroup(blocks: DocumentBlock[], index: number, start: number, end: number): boolean {
+  return blocks.slice(index + 1).some((candidate) => {
+    const text = blockText(candidate);
+    const range = detectQuestionHeadingRange(text);
+    return Boolean(range
+      && range[1] > range[0]
+      && range[0] >= start
+      && range[1] <= end
+      && !(range[0] === start && range[1] === end)
+      && !isUmbrellaQuestionRange(text));
+  });
+}
+
+function isUmbrellaQuestionBlock(blocks: DocumentBlock[], index: number): boolean {
+  const text = blockText(blocks[index]);
+  if (isUmbrellaQuestionRange(text)) return true;
+  if (!isBareQuestionRangeHeading(text)) return false;
+  const range = detectQuestionRange(text);
+  if (!range) return false;
+  const isFullPassageSpan = range[1] - range[0] >= 9;
+  const nearby = nearbyQuestionContext(blocks, index);
+  const hasOpeningContext = isFullPassageSpan
+    && hasOpeningQuestionRangePosition(blocks, index)
+    && (nearby.includes("reading passage") || (nearby.includes("you should spend") && nearby.includes("about")));
+  return hasOpeningContext || hasLaterConcreteSubgroup(blocks, index, range[0], range[1]);
+}
+
+function isKnownUmbrellaBlock(block: DocumentBlock, umbrellaBlocks: DocumentBlock[]): boolean {
+  return umbrellaBlocks.some((candidate) => candidate.blockId === block.blockId);
+}
+
+function isQuestionHeadingText(text: string): boolean {
+  return text.trimStart().replace(/^#+\s*/, "").toLowerCase().startsWith("questions ")
+    || text.trimStart().replace(/^#+\s*/, "").toLowerCase().startsWith("question ");
+}
+
+function detectQuestionHeadingRange(text: string): [number, number] | undefined {
+  return isQuestionHeadingText(text) ? detectQuestionRange(text) : undefined;
+}
+
+function isQuestionBlock(block: DocumentBlock): boolean {
+  return block.roleHint === "question" || Boolean(detectQuestionRange(blockText(block)));
+}
+
+function isAnswerBlock(block: DocumentBlock): boolean {
+  const text = blockText(block);
+  return block.roleHint === "answer" || /^Answers?/i.test(text) || /answer key/i.test(text);
+}
+
+function questionHeading(start: number, end: number): string {
+  return start === end ? `Questions ${start}` : `Questions ${start}-${end}`;
+}
+
 function detectGroupKind(text: string): GroupKind {
   const lower = text.toLowerCase();
   if (lower.includes("true") && lower.includes("false") && lower.includes("not given")) return "true_false_not_given";
@@ -411,17 +530,30 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
   const blocks = flattenBlocks(doc);
   if (!blocks.length) return makeStaticSplit(jobId);
 
-  const firstQuestionIndex = blocks.findIndex((block) => block.roleHint === "question" || /Questions?\s+\d/i.test(blockText(block)));
-  const firstAnswerIndex = blocks.findIndex((block) => block.roleHint === "answer" || /^Answers?/i.test(blockText(block)) || /answer key/i.test(blockText(block)));
-  const passageBlocks = blocks.filter((block, index) => block.roleHint === "passage" || (firstQuestionIndex >= 0 && index < firstQuestionIndex && block.roleHint !== "ignore"));
-  const questionEndIndex = firstAnswerIndex > firstQuestionIndex ? firstAnswerIndex : undefined;
+  const firstQuestionIndex = blocks.findIndex(isQuestionBlock);
+  const firstConcreteQuestionIndex = blocks.findIndex((block, index) => {
+    const text = blockText(block);
+    return Boolean(detectQuestionHeadingRange(text)) && !isUmbrellaQuestionBlock(blocks, index);
+  });
+  const firstAnswerIndex = blocks.findIndex(isAnswerBlock);
+  const passageBlocks =
+    firstConcreteQuestionIndex >= 0
+      ? blocks.filter((block, index) => index < firstConcreteQuestionIndex && !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
+      : blocks.filter((block) => !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore");
+  const allUmbrellaBlocks = blocks.filter((_, index) => isUmbrellaQuestionBlock(blocks, index));
   const questionBlocks =
-    firstQuestionIndex >= 0
+    firstConcreteQuestionIndex >= 0
       ? blocks
-          .slice(firstQuestionIndex, questionEndIndex)
-          .filter((block) => block.roleHint !== "answer" && block.roleHint !== "ignore")
-      : blocks.filter((block) => block.roleHint === "question" || /Questions?\s+\d/i.test(blockText(block)));
-  const answerBlocks = blocks.filter((block) => block.roleHint === "answer" || /^Answers?/i.test(blockText(block)) || /answer key/i.test(blockText(block)));
+          .slice(firstConcreteQuestionIndex)
+          .filter((block) => !isAnswerBlock(block) && block.roleHint !== "ignore")
+      : allUmbrellaBlocks.length
+        ? allUmbrellaBlocks
+        : firstQuestionIndex >= 0
+          ? blocks
+              .slice(firstQuestionIndex)
+              .filter((block) => !isAnswerBlock(block) && block.roleHint !== "ignore")
+          : blocks.filter(isQuestionBlock);
+  const answerBlocks = blocks.filter(isAnswerBlock);
 
   const answerMap = answerBlocks.reduce<Record<string, AnswerValue>>((acc, block) => ({ ...acc, ...parseAnswerText(blockText(block)) }), {});
   const externalAnswerCandidates = answerSourceCandidates(job);
@@ -429,17 +561,34 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
     Object.assign(answerMap, candidate.answers);
   }
   const answerNumbers = Object.keys(answerMap).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  const umbrellaQuestionRanges = allUmbrellaBlocks
+    .map((block) => {
+      const text = blockText(block);
+      const range = detectQuestionRange(text);
+      if (!range) return null;
+      return {
+        heading: questionHeading(range[0], range[1]),
+        questionRange: range,
+        blockId: block.blockId,
+        text
+      };
+    })
+    .filter((range): range is NonNullable<typeof range> => Boolean(range));
 
   const questionGroupCandidates = questionBlocks
     .map((block, index) => {
       const text = blockText(block);
-      const range = detectQuestionRange(text);
+      if (isKnownUmbrellaBlock(block, allUmbrellaBlocks)) return null;
+      const range = detectQuestionHeadingRange(text);
       if (!range) return null;
-      const nextHeadingIndex = questionBlocks.findIndex((candidate, candidateIndex) => candidateIndex > index && detectQuestionRange(blockText(candidate)));
+      const nextHeadingIndex = questionBlocks.findIndex((candidate, candidateIndex) => {
+        const candidateText = blockText(candidate);
+        return candidateIndex > index && Boolean(detectQuestionHeadingRange(candidateText)) && !isKnownUmbrellaBlock(candidate, allUmbrellaBlocks);
+      });
       const included = nextHeadingIndex > -1 ? questionBlocks.slice(index, nextHeadingIndex) : questionBlocks.slice(index);
       return {
         groupId: `group-${index + 1}`,
-        heading: text.match(/Questions?\s+\d{1,3}(?:\s*[-–—]\s*\d{1,3})?/i)?.[0] ?? `Questions ${range[0]}-${range[1]}`,
+        heading: text.match(/Questions?\s+\d{1,3}(?:\s*[-–—]\s*\d{1,3})?/i)?.[0] ?? questionHeading(range[0], range[1]),
         questionRange: range,
         instructionText: text,
         blockIds: included.map((item) => item.blockId),
@@ -447,17 +596,31 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
         confidence: 0.72
       };
     })
-    .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
+    .filter(Boolean) as SplitCandidates["questionGroupCandidates"];
   questionGroupCandidates.forEach((candidate, index) => {
     candidate.groupId = `group-${index + 1}`;
   });
 
-  if (!questionGroupCandidates.length && questionBlocks.length) {
+  if (!questionGroupCandidates.length && umbrellaQuestionRanges.length) {
+    for (const umbrella of umbrellaQuestionRanges) {
+      questionGroupCandidates.push({
+        groupId: `group-${questionGroupCandidates.length + 1}`,
+        heading: umbrella.heading,
+        questionRange: umbrella.questionRange,
+        instructionText: umbrella.text,
+        blockIds: umbrella.blockId ? [umbrella.blockId] : [],
+        kindHint: "short_answer",
+        confidence: 0.35,
+        isUmbrellaRange: true,
+        requiresManualQuestionImport: true
+      });
+    }
+  } else if (!questionGroupCandidates.length && questionBlocks.length) {
     const start = answerNumbers[0] ?? 1;
     const end = answerNumbers.at(-1) ?? start;
     questionGroupCandidates.push({
       groupId: "group-1",
-      heading: `Questions ${start}-${end}`,
+      heading: questionHeading(start, end),
       questionRange: [start, end],
       instructionText: questionBlocks.map(blockText).join("\n"),
       blockIds: questionBlocks.map((block) => block.blockId),
@@ -470,6 +633,7 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
   const passageRange = passageBlocks.length ? passageBlocks.map((block) => block.blockId) : fallbackPassageRange;
   const issues = [
     ...(questionGroupCandidates.length ? [] : ["No question range heading detected; manual split required."]),
+    ...(questionGroupCandidates.some((candidate) => candidate.requiresManualQuestionImport) ? ["Only umbrella question range detected; concrete question prompts must be imported or entered manually."] : []),
     ...(Object.keys(answerMap).length ? [] : ["No answer key detected; answers must be entered manually."]),
     ...(firstAnswerIndex >= 0 && firstQuestionIndex >= 0 && firstAnswerIndex < firstQuestionIndex ? ["Answer block appears before question block; verify split order."] : [])
   ];
@@ -478,6 +642,7 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
     jobId,
     passageCandidates: [{ range: passageRange, title: inferPassageTitle(job ?? { title: "Untitled Reading" } as ImportJob, passageBlocks), categoryHint: job?.category ?? "P1" }],
     questionGroupCandidates,
+    umbrellaQuestionRanges,
     answerKeyCandidates: [
       ...(Object.keys(answerMap).length ? [{ source: answerBlocks.map((block) => block.blockId).join(",") || "manual", answers: answerMap }] : []),
       ...externalAnswerCandidates
@@ -569,6 +734,7 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
   const passageHtml = passageBlocks.length ? passageBlocks.map((block) => block.html ?? `<p>${escapeHtml(block.text ?? "")}</p>`).join("\n") : `<h2>${escapeHtml(split.passageCandidates[0]?.title ?? job.title)}</h2>`;
   const groups: ReadingAuthoringIr["groups"] = split.questionGroupCandidates.map((candidate, index) => {
     const kind = candidate.kindHint ?? "short_answer";
+    const requiresManualQuestionImport = candidate.requiresManualQuestionImport === true;
     const groupBlocks = candidate.blockIds.map((blockId) => blocksById.get(blockId)).filter(Boolean) as DocumentBlock[];
     const groupText = groupBlocks.map(blockText).join(" ") || candidate.instructionText;
     const [start, end] = candidate.questionRange;
@@ -578,12 +744,13 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       return {
         id: idValue,
         displayNumber,
-        prompt: promptForQuestion(groupText, number, candidate.heading, end),
+        prompt: requiresManualQuestionImport ? `Manual import required for question ${number}` : promptForQuestion(groupText, number, candidate.heading, end),
         interaction: interactionForKind(kind),
         answer: answerByDisplay[displayNumber],
         sourceBlockIds: candidate.blockIds,
         confidence: candidate.confidence,
-        verified: false
+        verified: false,
+        requiresManualQuestionImport
       };
     });
     return {
@@ -595,7 +762,9 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       layout: { template: templateForKind(kind), ...(kind === "table_completion" ? { tableHeaders: ["Question", "Prompt", "Answer"] } : {}) },
       sourceBlockIds: candidate.blockIds,
       confidence: candidate.confidence,
-      verified: false
+      verified: false,
+      isUmbrellaRange: candidate.isUmbrellaRange,
+      requiresManualQuestionImport
     };
   });
 
@@ -617,7 +786,8 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
     passage: {
       title: split.passageCandidates[0]?.title ?? job.title,
       htmlBlocks: [{ blockId: "passage-main", html: passageHtml }],
-      sourceBlockIds: split.passageCandidates[0]?.range ?? []
+      sourceBlockIds: split.passageCandidates[0]?.range ?? [],
+      questionUmbrellaRanges: split.umbrellaQuestionRanges ?? []
     },
     groups,
     answerKey,
@@ -646,10 +816,16 @@ function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): Validati
     if (!ir.passage.htmlBlocks.length) add("AuthoringIR", "$.passage.htmlBlocks", "Passage HTML cannot be empty.");
     if (!ir.groups.length) add("AuthoringIR", "$.groups", "At least one question group is required.");
     for (const group of ir.groups) {
+      if (group.requiresManualQuestionImport && !group.verified) {
+        add("AuthoringIR", `$.groups.${group.groupId}.questions`, "Umbrella question range requires manually imported concrete prompts before publish.");
+      }
       for (const question of group.questions) {
         if (!question.interaction?.type) add("AuthoringIR", `$.groups.${group.groupId}.${question.id}`, "Question interaction is required.");
         if (!question.answer || (Array.isArray(question.answer) && !question.answer.length)) {
           add("AuthoringIR", `$.answerKey.${question.id}`, "Every question must have an answer before export.");
+        }
+        if (question.requiresManualQuestionImport && !question.verified) {
+          add("AuthoringIR", `$.groups.${group.groupId}.${question.id}.prompt`, "Question prompt must be manually imported from the source before publish.");
         }
       }
     }
@@ -706,6 +882,7 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
     });
     const nextVerified = groupTotal > 0 && groupTotal === groupVerified;
     if (group.confidence < 0.85 && !nextVerified) needsReview += 1;
+    if (group.requiresManualQuestionImport && !nextVerified) needsReview += 1;
     return { ...group, questions, verified: nextVerified };
   });
 
@@ -724,29 +901,21 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
 
 function publishReadinessReport(store: Store, jobId: string, ir: ReadingAuthoringIr, report: ValidationReport): ValidationReport {
   const job = requireJob(store, jobId);
-  const documentIr = store.documents[jobId];
   const issues: ValidationIssue[] = [...report.issues];
   const add = (path: string, message: string) => issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path, message });
-  if (report.runtime?.mode !== "real") {
-    issues.push({
-      issueId: id("issue"),
-      severity: "error",
-      layer: "RuntimePreview",
-      path: "runtime.mode",
-      message: `Strict runtime gate requires real unified runtime mode; got '${report.runtime?.mode ?? "unknown"}'.`
-    });
+  const humanVerified = ir.audit.humanVerified === true;
+  if (job.status === "NeedsReview") add("$.job.status", "Job is still marked NeedsReview; complete manual review before publish.");
+  issues.push(...sourceReviewIssues(sourceReviewStatus(store, jobId)));
+  if (!humanVerified) {
+    add("$.audit.humanVerified", "All questions and answers must be human verified before publish.");
   }
-	  const humanVerified = ir.audit.humanVerified === true;
-	  if (job.status === "NeedsHumanReview") add("$.job.status", "Job is still marked NeedsHumanReview; complete manual review before publish.");
-	  issues.push(...sourceReviewIssues(sourceReviewStatus(store, jobId)));
-	  if (!humanVerified) {
-	    add("$.audit.humanVerified", "All questions and answers must be human verified before publish.");
-	  }
   for (const group of ir.groups) {
     if (group.confidence < 0.85 && !group.verified) add(`$.groups.${group.groupId}.verified`, "Low-confidence group requires human verification before publish.");
+    if (group.requiresManualQuestionImport && !group.verified) add(`$.groups.${group.groupId}.questions`, "Umbrella question range requires manually imported concrete prompts before publish.");
     for (const question of group.questions) {
       if (answerIsEmpty(question.answer)) add(`$.answerKey.${question.id}`, "Question answer is empty; fill or verify the answer before publish.");
       if (question.confidence < 0.85 && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.verified`, "Low-confidence question requires human verification before publish.");
+      if (question.requiresManualQuestionImport && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.prompt`, "Question prompt must be manually imported from the source before publish.");
     }
   }
   const layerNames: ValidationIssue["layer"][] = ["AuthoringIR", "ReadingExamSourceV1", "DomProtocol", "RuntimePreview"];
@@ -828,10 +997,10 @@ function refreshAuthoringDerivedFields(ir: ReadingAuthoringIr): ReadingAuthoring
 
 function previewHtml(source: ReturnType<typeof toReadingExamSource>): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
-    body{font-family:Georgia,serif;margin:0;padding:24px;color:#15211f;background:#f5f1e8;line-height:1.6}.layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.8fr);gap:32px}.passage,.questions{background:#fffaf0;border:1px solid #d8cfbf;padding:22px}.choice-row{display:flex;gap:10px;flex-wrap:wrap}.completion-table{width:100%;border-collapse:collapse}.completion-table th,.completion-table td{border:1px solid #c8beaa;padding:8px}input{font:inherit;padding:6px;border:1px solid #9aa391}
+    body{font-family:Georgia,serif;margin:0;padding:24px;color:#15211f;background:#f5f1e8;line-height:1.6}.layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.8fr);gap:32px}.passage,.questions{background:#fffaf0;border:1px solid #d8cfbf;padding:22px}.choice-row{display:flex;gap:10px;flex-wrap:wrap}.completion-table{width:100%;border-collapse:collapse}.completion-table th,.completion-table td{border:1px solid #c8beaa;padding:8px}.question-umbrella-ranges{padding-left:18px;color:#5d4630}input{font:inherit;padding:6px;border:1px solid #9aa391}
   </style></head><body><div class="layout"><article class="passage">${source.passage.blocks
     .map((block) => block.html)
-    .join("")}</article><section class="questions">${source.questionGroups.map((group) => group.bodyHtml).join("")}</section></div></body></html>`;
+    .join("")}</article><section class="questions">${source.meta.questionIntroHtml}${source.questionGroups.map((group) => group.bodyHtml).join("")}</section></div></body></html>`;
 }
 
 function normalizeAnswer(value: AnswerValue | undefined): string {
@@ -948,9 +1117,9 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
     layers: [{ layer: "RuntimePreview", passed: issues.length === 0, issueCount: issues.length }],
     issues,
     runtime: {
-      adapter: "dev-fallback-unified-runtime-contract-simulator",
-      mode: "fallback",
-      fallbackReason: "Development fallback does not execute the external unified runtime.",
+      adapter: "dev-fallback-static-contract",
+      mode: "static-rust",
+      fallbackReason: "Browser dev fallback mirrors the Rust static contract gate; explicit real-runtime E2E remains diagnostic-only.",
       examId: source.examId,
       jobId,
       registeredIds: assets ? [source.examId] : [],
@@ -971,6 +1140,7 @@ function mergeValidationReports(base: ValidationReport, sidecar: ValidationRepor
   const layerNames: ValidationIssue["layer"][] = ["AuthoringIR", "ReadingExamSourceV1", "DomProtocol", "RuntimePreview"];
   return {
     ...base,
+    runtime: sidecar.runtime ?? base.runtime,
     passed: issues.length === 0,
     issues,
     layers: layerNames.map((layer) => ({
@@ -1009,6 +1179,36 @@ function estimateStoredZipSize(entries: Array<{ path: string; content: string }>
   return entries.reduce((total, entry) => total + entry.path.length * 2 + entry.content.length + 128, 22);
 }
 
+function cleanupDevArtifacts(store: Store, jobId: string, exportSummary: unknown): Record<string, unknown> {
+  if (store.diagnostics.keepFullProcessArtifacts) {
+    return {
+      schemaVersion: "CleanupSummaryV1",
+      jobId,
+      cleaned: false,
+      retainedFullProcessArtifacts: true,
+      message: "Developer diagnostics retention is enabled; full process artifacts were kept.",
+      exportSummary,
+      generatedAt: now()
+    };
+  }
+  delete store.documents[jobId];
+  delete store.splits[jobId];
+  delete store.validation[jobId];
+  delete store.previews[jobId];
+  delete store.suggestions[jobId];
+  delete store.pipelineReports[jobId];
+  updateJob(store, jobId, { status: "Cleaned", currentStep: "Export" });
+  return {
+    schemaVersion: "CleanupSummaryV1",
+    jobId,
+    cleaned: true,
+    retainedFullProcessArtifacts: false,
+    message: "中间文件已自动清理，已保留可编辑题目稿。",
+    exportSummary,
+    generatedAt: now()
+  };
+}
+
 export async function devFallbackInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   const store = load();
 
@@ -1018,7 +1218,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const job: ImportJob = {
         jobId: id("import"),
         title: input.title?.trim() || "Untitled Reading",
-        status: "Draft",
+        status: "Working",
         category: input.category ?? "P1",
         frequency: input.frequency ?? "medium",
         tags: input.tags ?? [],
@@ -1091,7 +1291,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         importedAt: now()
       };
       const job = requireJob(store, jobId);
-      updateJob(store, jobId, { sourceFiles: [...job.sourceFiles, source], status: "Uploaded", currentStep: "DocumentReview" });
+      updateJob(store, jobId, { sourceFiles: [...job.sourceFiles, source], status: "Working", currentStep: "DocumentReview" });
       save(store);
       return source as T;
     }
@@ -1104,7 +1304,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       delete store.sourceReviews[jobId];
       const review = sourceReviewStatus(store, jobId);
       updateJob(store, jobId, {
-        status: review.required ? "NeedsHumanReview" : "Parsed",
+        status: review.required ? "NeedsReview" : "Working",
         currentStep: "DocumentReview",
         issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: sourceReviewIssues(review).length }
       });
@@ -1133,7 +1333,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const review = sourceReviewStatus(store, jobId);
       store.sourceReviews[jobId] = { ...review, resolved: true, stale: false, resolvedAt: now(), note: input.note ?? "manual transcription applied" };
       updateJob(store, jobId, {
-        status: "Parsed",
+        status: "Working",
         currentStep: "DocumentReview",
         issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: 0 }
       });
@@ -1149,7 +1349,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const review = sourceReviewStatus(store, jobId);
       store.sourceReviews[jobId] = { ...review, resolved: false, stale: false, resolvedAt: null, note: null };
       updateJob(store, jobId, {
-        status: "NeedsHumanReview",
+        status: "NeedsReview",
         currentStep: "DocumentReview",
         issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: sourceReviewIssues(review).length }
       });
@@ -1164,7 +1364,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 	      store.sourceReviews[jobId] = resolved;
 	      const authoringReviewCount = store.authoring[jobId] ? refreshReviewState(store.authoring[jobId]).needsReview : 0;
 	      updateJob(store, jobId, {
-	        status: authoringReviewCount ? "NeedsHumanReview" : store.authoring[jobId] ? "AuthoringReady" : "Parsed",
+	        status: authoringReviewCount ? "NeedsReview" : store.authoring[jobId] ? "DraftSaved" : "Working",
 	        currentStep: authoringReviewCount ? "Authoring" : "DocumentReview",
 	        issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: authoringReviewCount }
 	      });
@@ -1177,7 +1377,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       requireJob(store, jobId);
       const split = makeSplit(jobId, store.documents[jobId], requireJob(store, jobId));
       store.splits[jobId] = split;
-      updateJob(store, jobId, { status: "SplitReady", currentStep: "Split" });
+      updateJob(store, jobId, { status: "Working", currentStep: "Split" });
       save(store);
       return split as T;
     }
@@ -1200,7 +1400,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const authoringReview = refreshReviewState(ir);
       const sourceReviewIssueCount = sourceReviewIssues(sourceReviewStatus(store, jobId)).length;
       updateJob(store, jobId, {
-        status: authoringReview.needsReview || sourceReviewIssueCount ? "NeedsHumanReview" : "AuthoringReady",
+        status: authoringReview.needsReview || sourceReviewIssueCount ? "NeedsReview" : "DraftSaved",
         currentStep: "Authoring",
         issueCounts: { errors: 0, warnings: 1, needsReview: authoringReview.needsReview + sourceReviewIssueCount }
       });
@@ -1228,15 +1428,15 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         visionTranscription.warnings = documentIr.parser.warnings;
       }
       store.documents[jobId] = documentIr;
-      job = updateJob(store, jobId, { status: "Parsed", currentStep: "DocumentReview" });
+      job = updateJob(store, jobId, { status: "Working", currentStep: "DocumentReview" });
 
       const split = makeSplit(jobId, documentIr, job);
       store.splits[jobId] = split;
-      job = updateJob(store, jobId, { status: "SplitReady", currentStep: "Split" });
+      job = updateJob(store, jobId, { status: "Working", currentStep: "Split" });
 
       let ir = makeAuthoring(job, split, documentIr);
       store.authoring[jobId] = ir;
-      updateJob(store, jobId, { status: "AuthoringReady", currentStep: "Authoring" });
+      updateJob(store, jobId, { status: "DraftSaved", currentStep: "Authoring" });
 
       const lowConfidenceGroups: string[] = [];
       const blockedAutoApplyGroups: string[] = [];
@@ -1284,6 +1484,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         ...refreshAuthoringDerivedFields(ir),
         audit: { ...ir.audit, llmUsed: suggestionCount > 0, updatedAt: now(), revision: ir.audit.revision + 1 }
       };
+      const authoringReview = refreshReviewState(ir);
+      ir = authoringReview.ir;
       store.authoring[jobId] = ir;
 
       const source = toReadingExamSource(ir);
@@ -1306,16 +1508,17 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const lowConfidenceBlocks = review.lowConfidenceBlocks;
       const sourceReviewIssueCount = sourceReviewIssues(review).length;
       const requiresParserReview = sourceReviewIssueCount > 0;
-      const realRuntimePassed = validationReport.passed && validationReport.runtime?.mode === "real";
-      const status = lowConfidenceGroups.length || blockedAutoApplyGroups.length || requiresParserReview ? "NeedsHumanReview" : realRuntimePassed ? "ExportReady" : validationReport.passed ? "PreviewReady" : "ValidationFailed";
-      const currentStep = lowConfidenceGroups.length || blockedAutoApplyGroups.length ? "LlmReview" : requiresParserReview ? "DocumentReview" : realRuntimePassed ? "Export" : "Preview";
+      const requiresAuthoringReview = authoringReview.needsReview > 0;
+      const staticRuntimePassed = validationReport.passed && validationReport.runtime?.mode === "static-rust";
+      const status = lowConfidenceGroups.length || blockedAutoApplyGroups.length || requiresParserReview || requiresAuthoringReview ? "NeedsReview" : staticRuntimePassed ? "ExportReady" : validationReport.passed ? "DraftSaved" : "NeedsReview";
+      const currentStep = requiresParserReview ? "DocumentReview" : lowConfidenceGroups.length || blockedAutoApplyGroups.length ? "LlmReview" : requiresAuthoringReview ? "Authoring" : staticRuntimePassed ? "Export" : "Preview";
       updateJob(store, jobId, {
         status,
         currentStep,
         issueCounts: {
           errors: validationReport.issues.filter((issue) => issue.severity === "error").length,
           warnings: validationReport.issues.filter((issue) => issue.severity === "warning").length,
-          needsReview: lowConfidenceGroups.length + blockedAutoApplyGroups.length + sourceReviewIssueCount
+          needsReview: lowConfidenceGroups.length + blockedAutoApplyGroups.length + sourceReviewIssueCount + authoringReview.needsReview
         }
       });
 
@@ -1333,8 +1536,12 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         },
         parser: { warnings, lowConfidenceBlocks, visionTranscription },
         validationPassed: validationReport.passed,
-        realRuntimePassed,
+        staticRuntimePassed,
+        realRuntimePassed: false,
         runtimeMode: validationReport.runtime?.mode ?? "unknown",
+        authoring: {
+          remainingReviewItems: authoringReview.needsReview
+        },
         status,
         currentStep,
         generatedAt: now(),
@@ -1357,7 +1564,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       });
       store.authoring[jobId] = next.ir;
       updateJob(store, jobId, {
-        status: next.needsReview ? "NeedsHumanReview" : "AuthoringReady",
+        status: next.needsReview ? "NeedsReview" : "DraftSaved",
         currentStep: "Authoring",
         issueCounts: { errors: 0, warnings: 0, needsReview: next.needsReview }
       });
@@ -1375,6 +1582,37 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 
     case "list_llm_profiles": {
       return store.profiles as T;
+    }
+
+    case "run_environment_preflight": {
+      const report: EnvironmentPreflightReport = {
+        schemaVersion: "EnvironmentPreflightV1",
+        ok: true,
+        errors: 0,
+        warnings: 2,
+        generatedAt: now(),
+        checks: [
+          { name: "node", ok: true, severity: "info", message: "Browser dev fallback cannot inspect host Node; real Tauri production does not require Node. Node is only for optional validator/runtime diagnostics." },
+          { name: "rust:text-parser", ok: true, severity: "info", message: "Built-in Rust TXT/MD parsing is available in real Tauri." },
+          { name: "rust:pdf-extract", ok: true, severity: "info", message: "Built-in Rust PDF text-layer extraction is available in real Tauri." },
+          { name: "rust:docx-ooxml", ok: true, severity: "info", message: "Built-in Rust DOCX OOXML extraction is available in real Tauri." },
+          { name: "python3", ok: true, severity: "warning", message: "Python is optional for TXT/MD and clear text PDF/DOCX parsing, but real Tauri still uses it for embedded image extraction and legacy fallback." },
+          { name: "sidecar:node-validator", ok: true, severity: "warning", message: "Node validator is a supplementary parity check; Rust built-in validation is authoritative in real Tauri." },
+          { name: "runtime:unified-html", ok: false, severity: "warning", message: "Browser dev fallback uses simulator; configure real runtime only for explicit E2E diagnostics." },
+          { name: "runtime:unified-python", ok: false, severity: "warning", message: "Browser dev fallback uses simulator; configure real runtime only for explicit E2E diagnostics." }
+        ]
+      };
+      return report as T;
+    }
+
+    case "get_diagnostics_settings": {
+      return store.diagnostics as T;
+    }
+
+    case "save_diagnostics_settings": {
+      store.diagnostics = args.settings as DiagnosticsSettings;
+      save(store);
+      return store.diagnostics as T;
     }
 
     case "save_llm_profile": {
@@ -1427,7 +1665,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         createdAt: now()
       };
       store.suggestions[jobId] = [suggestion, ...(store.suggestions[jobId] ?? [])];
-      updateJob(store, jobId, { status: suggestion.confidence < 0.85 ? "NeedsHumanReview" : "AuthoringReady" });
+      updateJob(store, jobId, { status: suggestion.confidence < 0.85 ? "NeedsReview" : "DraftSaved" });
       save(store);
       return suggestion as T;
     }
@@ -1451,7 +1689,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const next = refreshReviewState(withSuggestionAudit);
       store.authoring[jobId] = next.ir;
       const sourceReviewIssueCount = sourceReviewIssues(sourceReviewStatus(store, jobId)).length;
-      updateJob(store, jobId, { status: next.needsReview || sourceReviewIssueCount ? "NeedsHumanReview" : "AuthoringReady", currentStep: "Authoring", issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: next.needsReview + sourceReviewIssueCount } });
+      updateJob(store, jobId, { status: next.needsReview || sourceReviewIssueCount ? "NeedsReview" : "DraftSaved", currentStep: "Authoring", issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: next.needsReview + sourceReviewIssueCount } });
       save(store);
       return store.authoring[jobId] as T;
     }
@@ -1462,7 +1700,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       store.validation[jobId] = report;
       const sourceReviewIssueCount = sourceReviewIssues(sourceReviewStatus(store, jobId)).length;
       updateJob(store, jobId, {
-        status: sourceReviewIssueCount ? "NeedsHumanReview" : report.passed ? "PreviewReady" : "ValidationFailed",
+        status: sourceReviewIssueCount ? "NeedsReview" : report.passed ? "DraftSaved" : "NeedsReview",
+        currentStep: sourceReviewIssueCount ? "DocumentReview" : "Authoring",
         issueCounts: {
           errors: report.issues.filter((issue) => issue.severity === "error").length,
           warnings: report.issues.filter((issue) => issue.severity === "warning").length,
@@ -1490,14 +1729,14 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const validationReport = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
       if (!validationReport.passed) {
         store.validation[jobId] = validationReport;
-        updateJob(store, jobId, { status: "ValidationFailed", currentStep: "Authoring" });
+        updateJob(store, jobId, { status: "NeedsReview", currentStep: "Authoring" });
         save(store);
         throw new Error(`preview_validation_failed:${validationReport.issues.map((issue) => issue.message).join(";")}`);
       }
       store.previews[jobId] = assets;
       const readiness = publishReadinessReport(store, jobId, ir, validationReport);
       updateJob(store, jobId, {
-        status: readiness.issues.some((issue) => issue.layer === "AuthoringIR") ? "NeedsHumanReview" : "PreviewReady",
+        status: readiness.issues.some((issue) => issue.layer === "AuthoringIR") ? "NeedsReview" : "DraftSaved",
         currentStep: "Preview",
         issueCounts: {
           errors: validationReport.issues.filter((issue) => issue.severity === "error").length,
@@ -1526,10 +1765,10 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       store.previews[jobId] = assets;
       const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
       if (report.passed) {
-        const realRuntimePassed = report.runtime?.mode === "real";
+        const staticRuntimePassed = report.runtime?.mode === "static-rust";
         updateJob(store, jobId, {
-          status: realRuntimePassed ? "ExportReady" : "PreviewReady",
-          currentStep: realRuntimePassed ? "Export" : "Preview"
+          status: staticRuntimePassed ? "ExportReady" : "DraftSaved",
+          currentStep: staticRuntimePassed ? "Export" : "Preview"
         });
       }
       store.validation[jobId] = report;
@@ -1570,9 +1809,12 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           { name: `${source.examId}.js`, content: buildWrapper(source) },
           { name: "manifest.js", content: buildManifest([source]) },
           { name: "preview.html", content: previewHtml(source) }
-        ]
+        ],
+        outputDir: "local://exports",
+        exportSummary: { type: "reading-assets", examId: source.examId, exportedAt: now() }
       };
-      updateJob(store, jobId, { status: "ExportReady", currentStep: "Export" });
+      updateJob(store, jobId, { status: "Exported", currentStep: "Export" });
+      result.cleanup = cleanupDevArtifacts(store, jobId, result.exportSummary);
       save(store);
       return result as T;
     }
@@ -1613,10 +1855,12 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         zipSizeBytes: estimateStoredZipSize(entries),
         entryCount: entries.length,
         manifest,
+        exportSummary: { type: "pack", packId: input.packId, outputPath: `local://packs/${input.packId}.zip`, exportedAt: now() },
         createdAt: manifest.generatedAt
       };
       store.packs.unshift(result);
-      input.jobIds.forEach((jobId) => updateJob(store, jobId, { status: "Published", currentStep: "Pack" }));
+      input.jobIds.forEach((jobId) => updateJob(store, jobId, { status: "Exported", currentStep: "Pack" }));
+      result.cleanup = input.jobIds.map((jobId) => cleanupDevArtifacts(store, jobId, result.exportSummary));
       save(store);
       return result as T;
     }

@@ -1,14 +1,10 @@
 export type JobStatus =
-  | "Draft"
-  | "Uploaded"
-  | "Parsed"
-  | "SplitReady"
-  | "AuthoringReady"
-  | "NeedsHumanReview"
-  | "ValidationFailed"
-  | "PreviewReady"
+  | "Working"
+  | "NeedsReview"
+  | "DraftSaved"
   | "ExportReady"
-  | "Published";
+  | "Exported"
+  | "Cleaned";
 
 export type WorkflowStep =
   | "Upload"

@@ -3,7 +3,7 @@ import { StatusPill } from "../components/StatusPill";
 import { go } from "../app/router";
 import type { ImportJob, JobStatus } from "../types";
 
-const statusOrder: JobStatus[] = ["Draft", "Parsed", "AuthoringReady", "ValidationFailed", "ExportReady", "Published"];
+const statusOrder: JobStatus[] = ["Working", "NeedsReview", "DraftSaved", "ExportReady", "Exported", "Cleaned"];
 
 export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () => void }) {
   const counts = statusOrder.map((status) => ({ status, count: jobs.filter((job) => job.status === status).length }));

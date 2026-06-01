@@ -14,6 +14,8 @@ import html
 import json
 import mimetypes
 import re
+import shutil
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -185,6 +187,54 @@ def image_mime_type(name: str) -> str:
     return guessed or "application/octet-stream"
 
 
+def rendered_image_asset(image_path: Path, page_index: int, source: str) -> dict:
+    raw = image_path.read_bytes()
+    return {
+        "assetId": f"pdf-page-{page_index}-rendered",
+        "pageIndex": page_index,
+        "fileName": image_path.name,
+        "path": str(image_path),
+        "mimeType": image_mime_type(image_path.name),
+        "width": 0,
+        "height": 0,
+        "sha256": sha256_bytes(raw),
+        "sizeBytes": len(raw),
+        "renderedFallback": True,
+        "renderSource": source,
+    }
+
+
+def render_pdf_preview_with_sips(input_path: Path, output_dir: Path, job_id: str) -> tuple[list[dict], list[str]]:
+    warnings: list[str] = []
+    sips = shutil.which("sips")
+    if not sips:
+        return [], ["macOS sips renderer is unavailable; manual transcription required"]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "page-001-rendered.png"
+    try:
+        subprocess.run(
+            [sips, "-s", "format", "png", str(input_path), "--out", str(output_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception as exc:
+        return [], [f"macOS sips rendered-page fallback failed: {exc}; manual transcription required"]
+
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        return [], ["macOS sips rendered-page fallback produced no image; manual transcription required"]
+
+    warnings.append(
+        "used macOS sips rendered-page fallback for vision transcription; verify page image coverage before publish"
+    )
+    warnings.append(
+        "sips fallback currently renders a preview image, not full OCR or guaranteed multi-page coverage"
+    )
+    return [{"pageIndex": 1, "width": PAPER_WIDTH, "height": PAPER_HEIGHT, "images": [rendered_image_asset(output_path, 1, "macos-sips")]}], warnings
+
+
 def extract_pdf_images(input_path: Path, output_dir: Path, job_id: str) -> dict:
     warnings: list[str] = []
     try:
@@ -236,7 +286,12 @@ def extract_pdf_images(input_path: Path, output_dir: Path, job_id: str) -> dict:
         pages.append({"pageIndex": page_index, "width": width, "height": height, "images": page_images})
 
     if not any(page["images"] for page in pages):
-        warnings.append("PDF contains no extractable embedded page images; manual transcription required")
+        rendered_pages, rendered_warnings = render_pdf_preview_with_sips(input_path, output_dir, job_id)
+        warnings.extend(rendered_warnings)
+        if rendered_pages:
+            pages = rendered_pages
+        else:
+            warnings.append("PDF contains no extractable embedded page images; manual transcription required")
 
     return {
         "schemaVersion": "PdfImageExtractionV1",
@@ -244,6 +299,11 @@ def extract_pdf_images(input_path: Path, output_dir: Path, job_id: str) -> dict:
         "sourcePath": str(input_path),
         "pages": pages,
         "warnings": warnings,
+        "renderedFallback": any(
+            image.get("renderedFallback")
+            for page in pages
+            for image in page.get("images", [])
+        ),
     }
 
 

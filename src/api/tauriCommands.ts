@@ -7,6 +7,8 @@ import type {
   ImportJob,
   JobFilter,
   JobMetaPatch,
+  DiagnosticsSettings,
+  EnvironmentPreflightReport,
   LlmProfilePublic,
   LlmSuggestion,
   LlmTestResult,
@@ -102,6 +104,18 @@ export async function renderGroupHtml(jobId: string, groupId: string): Promise<{
 
 export async function listLlmProfiles(): Promise<LlmProfilePublic[]> {
   return command("list_llm_profiles");
+}
+
+export async function runEnvironmentPreflight(): Promise<EnvironmentPreflightReport> {
+  return command("run_environment_preflight");
+}
+
+export async function getDiagnosticsSettings(): Promise<DiagnosticsSettings> {
+  return command("get_diagnostics_settings");
+}
+
+export async function saveDiagnosticsSettings(settings: DiagnosticsSettings): Promise<DiagnosticsSettings> {
+  return command("save_diagnostics_settings", { settings });
 }
 
 export async function saveLlmProfile(input: SaveLlmProfileInput): Promise<LlmProfilePublic> {

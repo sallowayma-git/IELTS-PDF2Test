@@ -101,7 +101,7 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
     <section className="page-enter">
       <div className="section-heading spread">
         <div><p className="eyebrow">Rule Split</p><h2>粗切与答案对齐</h2></div>
-        <div className="button-row"><button className="ghost" onClick={run}>运行规则粗切</button><button className="ghost" disabled={!split} onClick={() => save()}>保存人工修订</button><button className="primary" disabled={!split} onClick={build}>生成 Authoring IR</button></div>
+        <div className="button-row"><button className="ghost" data-testid="run-rule-split" onClick={run}>运行规则粗切</button><button className="ghost" data-testid="save-split-adjustments" disabled={!split} onClick={() => save()}>保存人工修订</button><button className="primary" data-testid="build-authoring-ir" disabled={!split} onClick={build}>生成 Authoring IR</button></div>
       </div>
       {saveMessage ? <p className="success-text">{saveMessage}</p> : null}
       {split?.issues.length ? <div className="warning-box"><strong>需要复核</strong>{split.issues.map((issue) => <p key={issue}>{issue}</p>)}</div> : null}
@@ -111,11 +111,24 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
           {split?.passageCandidates.map((candidate) => (
             <div className="candidate" key={candidate.title}><strong>{candidate.title}</strong><span>{candidate.range.join(" - ")}</span><small>{candidate.categoryHint}</small></div>
           )) ?? <p className="empty">尚未生成 passage candidate。</p>}
+          {split?.umbrellaQuestionRanges?.length ? (
+            <>
+              <h4>总题组范围</h4>
+              {split.umbrellaQuestionRanges.map((range) => (
+                <div className="candidate umbrella-candidate" key={`${range.blockId}-${range.questionRange.join("-")}`}>
+                  <strong>{range.heading}</strong>
+                  <span>Q{range.questionRange[0]}-{range.questionRange[1]}</span>
+                  <small>来自开头说明，作为 Passage 2 总范围保留。</small>
+                </div>
+              ))}
+            </>
+          ) : null}
         </section>
         <section className="form-section">
           <h3>题组区</h3>
           {split?.questionGroupCandidates.map((group, index) => (
-            <div className="candidate" key={group.groupId}>
+            <div className={`candidate ${group.isUmbrellaRange ? "umbrella-candidate" : ""}`} key={group.groupId}>
+              {group.requiresManualQuestionImport ? <p className="error-text">仅检测到总题组范围，需要人工导入具体题干。</p> : null}
               <label>Heading<input value={group.heading} onChange={(event) => setGroup(index, (item) => ({ ...item, heading: event.target.value }))} /></label>
               <label>Range<input value={`${group.questionRange[0]}-${group.questionRange[1]}`} onChange={(event) => setGroup(index, (item) => ({ ...item, questionRange: parseRange(event.target.value) }))} /></label>
               <label>Kind<select value={group.kindHint ?? "short_answer"} onChange={(event) => setGroup(index, (item) => ({ ...item, kindHint: event.target.value as GroupKind }))}>{groupKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>

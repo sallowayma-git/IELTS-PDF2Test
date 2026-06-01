@@ -96,6 +96,8 @@ p { color: var(--muted); }
 .success-text { color: var(--accent); font-weight: 800; }
 .warning-box { border: 1px solid rgba(199,120,56,.5); border-radius: 18px; padding: 14px 16px; margin: 14px 0; background: rgba(199,120,56,.12); }
 .warning-box p { margin: 6px 0 0; color: #7a4a09; }
+.info-box { border: 1px solid rgba(31,138,112,.38); border-radius: 18px; padding: 14px 16px; margin: 14px 0; background: rgba(31,138,112,.10); }
+.info-box p { margin: 6px 0 0; color: #315d52; }
 .inspector, .form-section, .block-list, .document-canvas, .group-nav, .live-preview { border: 1px solid var(--line); border-radius: 24px; background: rgba(255,250,240,.68); padding: 18px; min-width: 0; }
 .form-section.contrast, .inspector { background: rgba(232, 239, 231, .72); }
 .inspector pre, .form-section pre, details pre { overflow: auto; max-height: 360px; background: rgba(19,32,29,.08); border-radius: 16px; padding: 14px; font-size: 12px; }
@@ -124,6 +126,7 @@ textarea { min-height: 120px; resize: vertical; }
 .block-card p { margin-bottom: 0; }
 
 .candidate { border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin: 10px 0; background: rgba(255,255,255,.42); }
+.umbrella-candidate { border-color: rgba(199,120,56,.72); background: rgba(199,120,56,.12); }
 .candidate strong, .candidate span, .candidate small { display: block; }
 .answer-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .answer-grid div { padding: 12px; border-radius: 14px; background: rgba(255,250,240,.72); display: flex; justify-content: space-between; }
@@ -136,8 +139,7 @@ textarea { min-height: 120px; resize: vertical; }
 .question-edit { border: 1px solid var(--line); border-radius: 18px; padding: 12px; background: rgba(255,255,255,.42); }
 .inline-check { display: flex; align-items: center; gap: 8px; }
 .inline-check input { width: auto; }
-.html-preview { background: #fffaf0; border: 1px solid var(--line); border-radius: 18px; padding: 16px; max-height: 420px; overflow: auto; }
-.html-preview .choice-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.html-preview-frame { width: 100%; height: 420px; background: #fffaf0; border: 1px solid var(--line); border-radius: 18px; }
 .completion-table { width: 100%; border-collapse: collapse; }
 .completion-table th, .completion-table td { border: 1px solid var(--line); padding: 8px; }
 .score-ring { width: 92px; height: 92px; display: grid; place-items: center; border: 10px solid rgba(31,138,112,.18); border-top-color: var(--accent); border-radius: 50%; font-weight: 900; font-size: 22px; margin-bottom: 16px; }

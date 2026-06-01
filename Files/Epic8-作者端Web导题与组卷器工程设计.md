@@ -864,3 +864,98 @@ flowchart LR
 3. 最终 HTML 由模板渲染器确定性生成。
 4. 发布前必须通过 Authoring IR、ReadingExamSourceV1、DOM 协议、统一阅读页 E2E 四层校验。
 5. 作者端 Web 是内部工具，不随学生考试端交付。
+
+---
+
+## 最新需求覆盖记录：2026-05-31 18:34 CST
+
+> 本节为当前最新产品决策。本文档早期以“作者端 Web”命名，现仅作为输出契约与旧工程参考；作者端实际产品形态以本地 Tauri 桌面应用为准。若本文早期内容与本节冲突，以本节为准。
+
+### 产品形态修正
+
+- 不再建设独立 Web 作者端。
+- 当前实现目标是本地 Tauri 作者端应用，内嵌前端只承担本地交互 UI。
+- 本文保留价值是说明 `ReadingExamSourceV1`、DOM 协议、JS wrapper、manifest、Pack 输出契约。
+
+### MVP 数据与生命周期修正
+
+早期“Job Store / SQLite 或文件系统”“保存每一步中间结果、LLM 输入输出、人工修改记录”的表述需要收敛：
+
+- MVP 不引入 SQL；文件式 app data 工作区足够支撑转换流程。
+- 原始 PDF/DOCX 副本只作为工作期临时输入，不作为长期留存资产。
+- 中间过程文件只服务解析、审核、调试和导出，不应默认长期保存。
+- 长期可复用资产是最小可编辑结构化题目稿，而不是完整 job 文件夹。
+
+最新生命周期：
+
+```mermaid
+stateDiagram-v2
+  [*] --> Working
+  Working --> NeedsReview: low confidence / image PDF / LLM blocked / validation issue
+  NeedsReview --> Working: human correction
+  Working --> DraftSaved: editable draft persisted
+  DraftSaved --> ExportReady: gates passed
+  ExportReady --> Exported: JS or Pack generated
+  Exported --> Cleaned: transient files removed
+```
+
+导出成功后默认自动清理：
+
+- 删除 `uploads/` 原始文件副本。
+- 删除 parser cache、preview assets、临时图片、临时渲染页图。
+- 删除 `document-ir.json`、`split-candidates.json`、pipeline 大型过程 JSON。
+- 删除 LLM raw call log、视觉转录原始输出、人工转录临时文本。
+- 保留 `authoring-project.json` 或等价可编辑稿、最小 metadata、source summary、review summary、export summary。
+
+开发者选项：
+
+- 设置页提供 `开发者 / 诊断` 入口。
+- `保留完整过程文件` 默认关闭。
+- 开启后可保留 raw logs/cache/uploads/pipeline reports，用于调试；不面向普通工作流。
+
+### SQL 策略修正
+
+SQL 不是 MVP 必需项。未来如果进入题库管理阶段，SQLite 应作为轻量索引层，而不是过程文件仓库。
+
+未来可索引：
+
+- exam metadata、分类、标签、状态、更新时间。
+- 可搜索文本摘要或全文索引字段。
+- 可编辑稿路径、导出历史摘要。
+- source 文件名/type/hash 摘要。
+
+未来不写入 SQL：
+
+- 原始 PDF/DOCX 文件。
+- OCR/视觉转录图片、preview assets、parser cache。
+- LLM 原始请求响应、调试日志全文。
+- 大型 DocumentIR/SplitCandidates/PipelineReport 的长期版本。
+
+### PDF/OCR 策略修正
+
+- 清晰文本 PDF/DOCX 走确定性解析。
+- 图片型 PDF 不默认走本地 OCR 引擎，不在 MVP 内打包 Tesseract/Docling/MinerU 等重量级依赖。
+- 图片型 PDF 的自动路径是视觉 LLM 转录：检测无文本或低置信 -> 抽取或渲染页面图 -> 视觉模型生成文本稿 -> 前端展示给用户审核 -> 用户确认后进入结构化题目稿。
+- 高置信 LLM 建议只有在后端通过 schema/evidence/sourceBlockIds/quotes 验证后才能自动应用；低置信或证据不足必须人工审核。
+- 视觉 LLM 转录属于“源文档转录”，不等同于人工确认；发布/导出前仍必须经过 SourceReview 与 AuthoringReview 门禁。
+
+### PDF 解析依赖调研结论
+
+- Tauri v2 可通过 sidecar/externalBin 和 resources 打包外部二进制或资源，适合未来把 parser/validator 做成自包含 sidecar。参考：[Tauri sidecar](https://v2.tauri.app/develop/sidecar/) 与 [Tauri resources](https://v2.tauri.app/develop/resources/)。
+- `pypdf` 适合文本层抽取，但官方明确其不是 OCR，不能从图片中提取文字，PDF 也没有可靠语义层。参考：[pypdf text extraction](https://pypdf.readthedocs.io/en/3.17.0/user/extract-text.html)。
+- 轻量化生产路线优先考虑 Rust 文本 PDF 解析 crate，例如 `pdf-extract` 或 `pdf_text_extract`，用于清晰文本 PDF，减少宿主 Python 依赖。参考：[pdf-extract](https://docs.rs/crate/pdf-extract/latest)。
+- 对需要页面渲染成图片再交给视觉模型的扫描 PDF，可后续评估 `pdfium-render`；它支持 PDFium 的页面渲染、文本和图片抽取。参考：[pdfium-render](https://docs.rs/pdfium-render/latest/pdfium_render/)。
+- MuPDF/PyMuPDF 不作为默认 MVP 依赖，因为 MuPDF 官方为 AGPL 或商业许可，闭源分发需要单独处理许可。参考：[MuPDF license](https://mupdf.readthedocs.io/en/1.26.9/license.html)。
+
+
+### 2026-05-31 CST 最新需求覆盖说明：Rust 主链路与诊断依赖边界
+
+本节覆盖“不要把 Node、Python、OCR 引擎一起打进包体”的最新工程决策。若与上文早期 sidecar / OCR / real-runtime hard gate 描述冲突，以本节为准。
+
+- 生产主链路尽量 Rust 化：TXT/MD、文本层 PDF、DOCX、LLM HTTP 调用、ReadingExamSourceV1/DOM 静态合同校验、导出与 Pack 均应由 Rust 主程序承担。
+- Node 不进入生产硬依赖：旧 LLM gateway、node-validator、preview E2E 仅保留为开发/CI/诊断资源。普通用户机器不应因为没有 Node 而无法导入、LLM 识别、校验、导出或组 Pack。
+- Python 不进入生产硬依赖：Python parser 只作为 legacy fallback 或嵌入图片抽取辅助路径。清晰文本 PDF/DOCX/TXT/MD 不依赖 Python。
+- 本地 OCR 引擎不进入默认包体：图片型 PDF 或扫描 PDF 通过页面图/嵌入图 -> 视觉 LLM 转录 -> `DocumentIRV1` -> `SourceReview` 人工确认。视觉转录不等同于人工确认。
+- macOS MVP 可使用系统 `sips` 渲染页面图作为视觉 LLM 输入。未来 Windows/Linux 需要时再评估 PDFium page-render adapter；该 adapter 只负责渲染页面，不做本地 OCR。
+- 生产发布门禁为 Rust 静态合同 gate + SourceReview/AuthoringReview。真实 unified runtime E2E 是显式诊断/CI 命令，不作为普通导出/Pack 的硬依赖。
+- 如果未来必须在本地生产环境跑真实 runtime E2E，应优先使用 Tauri WebView/内嵌 JS 可控方案，而不是要求用户安装 Node。

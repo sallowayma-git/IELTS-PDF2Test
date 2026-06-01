@@ -1288,3 +1288,142 @@ stateDiagram-v2
 9. 做复杂题型编辑器。
 10. 做 Pack 组卷发布。
 
+
+---
+
+## 最新需求覆盖记录：2026-05-31 18:34 CST
+
+> 本节为当前最新产品决策。执行 Agent 应优先遵循本节；若与上文早期设计中的 SQLite、长期保留原始上传文件、本地 OCR fallback、后端立即模块拆分等描述冲突，以本节为准。
+
+### 产品形态边界
+
+- 作者端是本地 Tauri 桌面应用；前端只是内嵌在 Tauri 中的操作界面，不再规划独立 Web 作者端。
+- 旧 Web 导题文档继续作为 `ReadingExamSourceV1`、DOM 协议、JS/manifest/Pack 输出契约参考，不作为独立 Web 产品实现目标。
+- 当前 MVP 的核心价值是“PDF/DOCX -> 可编辑结构化题目稿 -> 校验 -> JS/Pack 导出”，不是长期题库管理系统。
+
+### MVP 存储策略：暂不引入 SQL
+
+MVP 不建立 SQLite/SQL 数据库。当前阶段使用 app data 下的文件式工作区即可，理由如下：
+
+- 用户当前主要使用场景是单次或少量批次转换，不需要一开始就做题库级查询、筛选和全文搜索。
+- SQL 不应成为保存大量中间过程文件的容器；否则会把调试缓存、原始副本、LLM raw log 等临时数据长期固化，增加包袱。
+- 未来如果需要管理几百到几千套题，再引入 SQLite 作为索引层，而不是过程数据仓库。
+
+未来 SQLite 只允许索引这些轻量字段：
+
+- 题目/套题 metadata、标签、分类、难度、状态。
+- 可搜索文本摘要或全文索引字段。
+- 可编辑稿路径、最近导出路径、导出历史摘要。
+- source 摘要信息：原文件名、类型、hash、导入时间、审核摘要。
+
+未来 SQLite 不应保存这些内容：
+
+- 原始 PDF/DOCX 文件副本。
+- parser cache、preview assets、临时图片、渲染页图。
+- LLM 原始请求/响应全文、调试日志全文。
+- `document-ir.json`、`split-candidates.json`、pipeline 大型过程 JSON 的长期版本。
+
+### 任务生命周期
+
+当前导题任务采用面向产品的生命周期，而不是把所有内部步骤都暴露给普通用户：
+
+```mermaid
+stateDiagram-v2
+  [*] --> Working
+  Working --> NeedsReview: parser warning / low confidence / vision transcription / LLM blocked / validation issue
+  NeedsReview --> Working: user edits or confirms
+  Working --> DraftSaved: editable authoring draft saved
+  DraftSaved --> ExportReady: validation + DOM + runtime gate passed
+  ExportReady --> Exported: JS or Pack generated
+  Exported --> Cleaned: auto cleanup transient artifacts
+  Cleaned --> DraftSaved: user reopens editable draft
+```
+
+| 状态 | 含义 | 用户视角 |
+|---|---|---|
+| `Working` | 导入、解析、粗切、LLM 识别、结构化稿生成中的工作态 | 系统自动推进，必要时显示进度和风险 |
+| `NeedsReview` | 存在低置信、图片 PDF 转录、LLM 建议被阻断、答案/题型/DOM 校验问题 | 用户必须审核或修正 |
+| `DraftSaved` | 已形成可再次编辑的结构化题目稿 | 用户可退出、回来继续改 |
+| `ExportReady` | 可编辑稿通过发布门禁 | 用户可导出 JS 或组 Pack |
+| `Exported` | 已成功生成 JS/manifest 或 Pack | 系统记录导出摘要 |
+| `Cleaned` | 导出后已自动清理过程态文件，只保留长期有价值内容 | UI 提示“中间文件已自动清理，已保留可编辑题目稿” |
+
+### 自动清理策略
+
+导出 JS 或 Pack 成功后，默认自动执行清理。普通用户不需要手动点击“清理工作区”。UI 只需要给出轻量提示：
+
+> 中间文件已自动清理，已保留可编辑题目稿。
+
+长期保留：
+
+- `authoring-project.json`，作为最小可编辑项目稿，包含或引用 `ReadingAuthoringIRV1`。
+- 最小 metadata：标题、分类、标签、难度、题号范围、更新时间、状态。
+- source summary：原文件名、类型、sha256、大小、导入时间；不保留原始文件副本。
+- review summary：哪些低置信/视觉转录/LLM 建议已由人工确认。
+- export summary：导出时间、导出目录、examId、PackId、校验摘要。
+
+导出成功后默认删除：
+
+- `uploads/` 中的原始 PDF/DOCX/答案文件副本。
+- `cache/`、`preview/`、临时渲染图、临时图片。
+- `document-ir.json`、`split-candidates.json`、大型 `pipeline-report.json`。
+- `llm-suggestions/`、`llm-calls.jsonl`、LLM 原始请求响应缓存。
+- `vision-transcription-output.json`、`vision-transcription.txt`、`manual-transcription.txt`。
+- 可由可编辑稿重新生成的 validation/runtime 中间报告；长期只保留摘要。
+
+开发者调试选项：
+
+- 设置页增加 `开发者 / 诊断` 入口。
+- `保留完整过程文件` 默认关闭。
+- 开启后允许保留 uploads/cache/LLM raw log/pipeline report，便于排查解析与模型问题。
+- 该入口不作为普通业务流程的一部分，不在主工作台要求用户频繁操作。
+
+### PDF 解析与 OCR/视觉模型策略
+
+当前产品不默认打包重量级本地 OCR。图片型 PDF、扫描 PDF 的自动化路径由视觉大模型承担，人工审核仍是发布前硬门禁。
+
+调研依据：
+
+- Tauri v2 支持通过 `externalBin` 打包外部二进制 sidecar，也支持把额外文件作为 resources 打包，用于避免用户自行安装 Node/Python 等依赖。参考：[Tauri sidecar](https://v2.tauri.app/develop/sidecar/) 与 [Tauri resources](https://v2.tauri.app/develop/resources/)。
+- `pypdf` 可抽取 PDF 文本层，但官方明确说明它不是 OCR，无法从图片中抽取文字，且 PDF 本身缺少语义层，表格/段落/页眉页脚只能启发式判断。参考：[pypdf text extraction](https://pypdf.readthedocs.io/en/3.17.0/user/extract-text.html)。
+- `pdfium-render` 可通过 Rust 绑定 PDFium，支持页面渲染、文本和图片抽取；它适合作为未来 rendered-page adapter，把扫描页渲染成图片后交给视觉 LLM。参考：[pdfium-render docs](https://docs.rs/pdfium-render/latest/pdfium_render/)。
+- `pdf-extract` 是纯 Rust PDF 文本抽取库，可作为摆脱宿主 Python/pypdf 的候选，但只解决文本层抽取，不解决图片 OCR。参考：[pdf-extract docs](https://docs.rs/crate/pdf-extract/latest)。
+- MuPDF/ PyMuPDF 能力强，但 MuPDF 官方采用 AGPL 或商业许可；若闭源分发，需要先处理许可问题，不作为 MVP 默认依赖。参考：[MuPDF license](https://mupdf.readthedocs.io/en/1.26.9/license.html)。
+
+推荐实施路线：
+
+1. MVP 继续支持当前 Python `pypdf` parser，但把它视为开发期/过渡实现；Settings preflight 必须提示宿主依赖状态。
+2. 生产打包优先评估纯 Rust 文本 PDF 抽取适配器，例如 `pdf-extract`、`pdf_text_extract` 或同类轻量 crate，用于清晰文本 PDF，减少对宿主 Python 的依赖。
+3. DOCX 继续使用当前 stdlib OOXML 解析或改为 Rust zip/xml 解析，目标同样是减少宿主 Python。
+4. 图片 PDF 不引入 Tesseract/Docling/MinerU 等重量级本地 OCR 作为默认包内依赖。
+5. 图片 PDF 优先走视觉 LLM：检测无文本或低置信 PDF -> 抽取嵌入图片或渲染页面图 -> 发送视觉模型转录 -> 生成 Document IR -> 强制 `NeedsReview` 人工确认。
+6. 对 `pypdf` 无法暴露嵌入图片的扫描页，后续可增加可选 `pdfium-render` adapter：只负责把页面渲染成图片，不做本地 OCR，再交给视觉 LLM。
+7. 视觉模型失败、无网络、无可用 LLM profile 时，保留人工转录兜底。
+
+### 包体与依赖原则
+
+- 当前本机已构建 macOS 产物约为 `.app` 11 MB、`.dmg` 3.5 MB；这是因为 Node/Python/pypdf 仍依赖宿主环境，并未完整打入安装包。
+- 如果把完整 Node、Python、OCR 引擎和模型都打包进应用，包体和维护复杂度会显著上升，不符合当前 MVP 范围。
+- 生产化优先级应是：轻量 Rust 文本解析 > 视觉 LLM 处理图片 PDF > 可选 PDFium 渲染 adapter > 明确 preflight/安装指引。
+- 不应在 MVP 默认打包重量级 OCR 模型或完整文档智能框架。
+
+### Rust 后端单文件策略
+
+`src-tauri/src/lib.rs` 当前较大，但在 MVP 阶段暂不作为阻塞项。原因：
+
+- 当前更重要的是先稳定业务闭环、生命周期、自动清理、导出门禁和依赖策略。
+- 后端拆分应在核心产品状态达到生产级后进行，避免在需求仍快速变化时过早抽象。
+- 后续若继续新增 rendered-page adapter、题库管理、SQLite 索引、复杂题型编辑，再拆分为 storage/parser/pipeline/llm/validator/exporter/pack/settings 等模块。
+
+
+### 2026-05-31 CST 最新需求覆盖说明：Rust 主链路与诊断依赖边界
+
+本节覆盖“不要把 Node、Python、OCR 引擎一起打进包体”的最新工程决策。若与上文早期 sidecar / OCR / real-runtime hard gate 描述冲突，以本节为准。
+
+- 生产主链路尽量 Rust 化：TXT/MD、文本层 PDF、DOCX、LLM HTTP 调用、ReadingExamSourceV1/DOM 静态合同校验、导出与 Pack 均应由 Rust 主程序承担。
+- Node 不进入生产硬依赖：旧 LLM gateway、node-validator、preview E2E 仅保留为开发/CI/诊断资源。普通用户机器不应因为没有 Node 而无法导入、LLM 识别、校验、导出或组 Pack。
+- Python 不进入生产硬依赖：Python parser 只作为 legacy fallback 或嵌入图片抽取辅助路径。清晰文本 PDF/DOCX/TXT/MD 不依赖 Python。
+- 本地 OCR 引擎不进入默认包体：图片型 PDF 或扫描 PDF 通过页面图/嵌入图 -> 视觉 LLM 转录 -> `DocumentIRV1` -> `SourceReview` 人工确认。视觉转录不等同于人工确认。
+- macOS MVP 可使用系统 `sips` 渲染页面图作为视觉 LLM 输入。未来 Windows/Linux 需要时再评估 PDFium page-render adapter；该 adapter 只负责渲染页面，不做本地 OCR。
+- 生产发布门禁为 Rust 静态合同 gate + SourceReview/AuthoringReview。真实 unified runtime E2E 是显式诊断/CI 命令，不作为普通导出/Pack 的硬依赖。
+- 如果未来必须在本地生产环境跑真实 runtime E2E，应优先使用 Tauri WebView/内嵌 JS 可控方案，而不是要求用户安装 Node。

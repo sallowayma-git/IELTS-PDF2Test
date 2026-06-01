@@ -75,7 +75,7 @@
 | 高置信自动落库 | `run_auto_pipeline` 对 `confidence >= threshold` 自动 apply `kind/layout/questions` | 符合用户期望，但应只允许有 evidence 且不改答案；当前 apply 不改 answer，是正确边界 |
 | 低置信人工审核 | `lowConfidenceGroups` 路由 `LlmReview`；parser warnings/low blocks 路由 `DocumentReview`；发布前检查 `humanVerified` | 状态闭环已加强，仍需真实 fixture 验证 |
 | 校验与预览 | Rust 内置校验 + Node DOM validator + preview-e2e fallback/real runner | 四层框架存在；外部统一阅读页最小 real-runtime fixture 已通过，仍需更多题型/命令级集成 |
-| 导出/Pack | 默认 strict real-runtime gate；Pack UI 只列 `ExportReady`；后端导出/Pack 调 `publish_readiness_gate` | P0 硬阻断已补齐 |
+| 导出/Pack | 默认 Rust 静态合同 gate + SourceReview/AuthoringReview；Pack UI 只列 `ExportReady`；真实 runtime E2E 为诊断项 | P0 硬阻断已补齐，且不依赖 host Node/外部 runtime |
 
 ### Code Quality Findings
 | ID | Severity | Finding | Evidence |
@@ -83,8 +83,8 @@
 | CQ-01 | P0 fixed | 发布门禁已统一检查 `NeedsHumanReview`、parser warnings、low-confidence blocks、未验证问题/答案 | `publish_readiness_gate` 已接入 `export_reading_assets` 和 `build_pack` |
 | CQ-02 | P0 fixed | parser sidecar 失败时不再对 PDF/DOCX 生成 sample Document IR | `parser_failure_document_ir` 生成 failure IR |
 | CQ-03 | P0 fixed | `generate_preview_assets` 已先校验，并在仍需人工审核时保持 `NeedsHumanReview` | 预览状态推进已修正 |
-| CQ-04 | P1 | `validate_authoring_ir` 失败时没有更新 `current_step`，通过时只设 `PreviewReady` 不代表真实 runtime | 状态语义比自动流水线弱 |
-| CQ-05 | P1 | `choose_export_dir` Rust command 返回 `None`，实际选择依赖前端 Tauri plugin；后端 command 未完成 | 后端 API 与设计文档不完全一致 |
+| CQ-04 | P1 fixed | `validate_authoring_ir` now updates `current_step` coherently: unresolved SourceReview issues route to `DocumentReview`, AuthoringIR validation failures stay in `Authoring`, and passing validation becomes `DraftSaved`/`Authoring` rather than implying Preview/runtime readiness. | `validation_job_state_routes_review_and_authoring_steps`, `validate_authoring_state_update_overwrites_stale_current_step`, full `cargo test` passed. |
+| CQ-05 | P1 fixed | `choose_export_dir` Rust command now uses `tauri_plugin_dialog::DialogExt` to open a native folder picker and return the selected directory path; frontend plugin remains the primary UI path, but the backend command is no longer a stub. | `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `npm run check` passed. |
 | CQ-06 | P1 | `src-tauri/src/lib.rs` 过大，业务边界混杂 | storage/parser/llm/validator/export/pack/pipeline 全部在单文件 |
 | CQ-07 | P1 | 没有自动化业务测试/fixture | `find` 未发现 repo 自有 test/spec/fixture |
 | CQ-08 | P2 | dev fallback 与真实 Rust 行为不完全一致，浏览器 smoke 不能证明发布门禁 | `src/services/devFallbackBackend.ts` 在浏览器 localStorage 内模拟命令 |
@@ -272,7 +272,7 @@
 | LLM recognition | Structured JSON suggestions only; fallback confidence is below auto-apply threshold; high-confidence apply records `autoApplied` not `verified`. | Trust boundary is much better than before; still needs stronger schema/evidence validation. |
 | High-confidence auto apply | Applies only whitelisted structure fields (`kind`, layout template, prompts/interactions), not answer values. | Reasonable and aligned with “high confidence can auto-apply safe structure, not facts.” |
 | Low-confidence/manual review | Low-confidence LLM suggestions and source parser issues route to review. Publish gate requires `SourceReviewV1.resolved` and `audit.humanVerified`. | Correct hard-gate behavior now exists. UX still needs clearer warnings if user continues editing before resolving source review. |
-| Preview/runtime | Built-in validation + Node validator + runtime E2E sidecar; export/Pack default to strict real-runtime mode. | Strong safety baseline. Packaging still relies on external runtime/node/python dependencies. |
+| Preview/runtime | Rust built-in validation is authoritative; Node validator and runtime E2E are explicit diagnostics only; export/Pack default to Rust static contract mode. | Strong safety baseline without production Node/external runtime dependency. |
 | Export/Pack | Export and Pack call shared core functions and publish readiness gate. | Backend publish safety is currently the strongest part of the implementation. |
 
 ### Verification Refreshed This Audit
@@ -423,3 +423,1390 @@
 ### Remaining Risk
 - This is still implemented with JSON `Value` in the monolithic Rust backend. Typed domain modules remain important for long-term maintainability.
 - Provider-specific JSON Schema validation in the Node gateway is improved but not authoritative; Rust remains the source of truth for safety.
+
+## Implementation Findings: 2026-05-31 17:34 CST
+
+### Environment Preflight
+- Added a production-readiness preflight layer because the packaged app currently depends on host `node`, `python3`, `pypdf`, bundled sidecar scripts, and external unified runtime env vars.
+- The backend now reports `EnvironmentPreflightV1` with per-check `ok`, `severity`, `message`, and details for `node`, `python3`, `python:pypdf`, each sidecar, `EPIC8_UNIFIED_HTML_PATH`, `EPIC8_UNIFIED_PYTHON`, and strict runtime gate status.
+- Settings now shows the preflight result and supports manual rerun, so users can diagnose missing dependencies before import/export/Pack.
+
+### Remaining Risk
+- This reduces support/debug risk but is not full dependency self-containment. A production installer should still bundle Node/Python/pypdf or run a signed setup step.
+- Missing real unified runtime remains a warning in preflight and only affects explicit diagnostics; export/Pack use Rust static contract gates.
+
+## Implementation Findings: 2026-05-31 17:55 CST
+
+### Secret Fallback Hardening
+- API keys no longer fall back to plaintext app-data files by default when Keychain fails.
+- `save_profile_secret` now returns an error if Keychain/OS secure storage is unavailable and `EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK` is not explicitly enabled.
+- `load_profile_secret` and profile redaction ignore legacy plaintext secret files unless the same opt-in environment variable is set.
+- Environment preflight now includes `security:plaintext-secret-fallback`, warning when plaintext fallback is enabled.
+- Settings copy now states that plaintext fallback is disabled by default and is only for dev/emergency use.
+
+### Remaining Risk
+- This is safer than plaintext fallback, but non-macOS secure storage is still not implemented. On non-macOS, users need a future OS credential manager/Stronghold adapter or the explicit dev fallback.
+
+## Implementation Findings: 2026-05-31 18:24 CST
+
+### Path and Webview Hardening
+- Added backend path-segment validation for externally supplied identifiers that touch local filesystem paths: `jobId`, `packId`, `profileId`, and export `examId`.
+- Unsafe identifiers such as `../evil`, nested paths, empty values, and whitespace-containing segments are now rejected at command/core boundaries instead of being sanitized into another real object id.
+- `job_dir` and `secret_path` now also include defense-in-depth invalid-segment fallbacks so missed validation cannot become path traversal.
+- Export wrapper/manifest generation now validates `examId` and JSON-escapes the registry key before inserting it into JavaScript, closing the edited-AuthoringIR asset-path/script-literal risk.
+- Group body preview no longer uses `dangerouslySetInnerHTML` in the privileged React webview. It renders inside a sandboxed iframe; UnifiedPreview iframe is also sandboxed.
+- Tauri CSP is no longer `null`; it now uses an explicit local-app policy with constrained script, style, font, image, frame, and IPC/connect sources.
+
+### Remaining Risk
+- `AUD-16` is still open: the Rust backend remains monolithic and JSON-heavy. The path helpers reduce filesystem risk but do not solve long-term maintainability.
+- The visual preview iframe is safer, but it is still the simplified local template preview. Real unified runtime compatibility is enforced by the sidecar E2E gate, not by the visible iframe UI.
+- CSP should be rechecked when integrating any future remote assets or a real embedded unified runtime UI.
+
+## Implementation Findings: 2026-05-31 18:31 CST
+
+### Preview Semantics Clarification
+- UnifiedPreview now explicitly labels the visible iframe as an isolated local template preview, not proof that the production unified runtime UI has rendered.
+- The page displays the latest `runtime.mode` from the RuntimePreview E2E report and states that export/Pack use Rust static contract gates while real runtime checks are diagnostic.
+- This reduces operator confusion while preserving safety: export/Pack depend on Rust static contract evidence and human review gates; real runtime sidecar evidence is supplemental.
+
+### Remaining Risk
+- `AUD-29` is clarified, not fully solved. A future pass should embed or launch the actual unified runtime UI for visual inspection if product requirements demand visual parity, but the current publish safety gate already tests real runtime compatibility.
+
+## Product Design Update: 2026-05-31 18:34 CST
+
+### Latest Lifecycle and Storage Decision
+- MVP remains a local Tauri conversion workbench, not a full SQL-backed question-bank manager.
+- SQL is not needed for the current MVP because the primary user task is converting PDF/DOCX into editable structured drafts and exports, not long-term management of thousands of exams.
+- The long-term retained artifact should be the editable structured draft (`authoring-project.json` or equivalent `ReadingAuthoringIRV1`) plus metadata/review/export summaries.
+- Original PDF/DOCX copies and intermediate process files should be treated as transient working artifacts and deleted automatically after successful export/Pack.
+- Developer/debug retention is still useful, but must be behind a default-off Settings -> Developer/Diagnostics option.
+
+### Latest Lifecycle
+| State | Meaning | Retention Policy |
+|-------|---------|------------------|
+| `Working` | Import, parse, split, LLM recognition, draft generation are in progress. | Process files may exist temporarily. |
+| `NeedsReview` | Low confidence, image PDF transcription, blocked LLM suggestion, or validation issue requires user intervention. | Keep enough artifacts for review. |
+| `DraftSaved` | Editable structured draft exists and can be reopened. | Keep minimal draft and summaries. |
+| `ExportReady` | Validation, DOM, and runtime gates pass. | Ready to export. |
+| `Exported` | JS/manifest or Pack successfully generated. | Record export summary. |
+| `Cleaned` | Transient files have been automatically removed. | Keep only editable draft, metadata, source summary, review summary, export summary. |
+
+### PDF Parser Dependency Research
+- Tauri v2 supports bundling external binaries through sidecars and including additional files as resources, which is the correct packaging mechanism if future parser/validator binaries must be self-contained: https://v2.tauri.app/develop/sidecar/ and https://v2.tauri.app/develop/resources/.
+- `pypdf` is suitable for extracting an existing PDF text layer, but it is not OCR and cannot extract text from images; scanned/image PDFs require OCR or a visual transcription path: https://pypdf.readthedocs.io/en/3.17.0/user/extract-text.html.
+- `pdf-extract` is a lightweight Rust candidate for text-layer extraction and may reduce reliance on host Python/pypdf, but it does not solve image OCR by itself: https://docs.rs/crate/pdf-extract/latest.
+- `pdfium-render` can render pages and extract text/images through PDFium bindings, making it a plausible future adapter for rendering scanned pages to images before sending them to a vision LLM: https://docs.rs/pdfium-render/latest/pdfium_render/.
+- MuPDF/PyMuPDF is not a default MVP dependency because MuPDF is AGPL/commercial licensed, which creates distribution obligations for closed-source products: https://mupdf.readthedocs.io/en/1.26.9/license.html.
+
+### Packaging Finding
+- Current local macOS build output is small (`.app` about 11 MB, `.dmg` about 3.5 MB) because Node/Python/pypdf are still host dependencies.
+- Bundling full Node, Python, local OCR engines, or document-intelligence frameworks would significantly increase package size and maintenance surface.
+- Recommended direction: lightweight Rust text extraction for text PDFs; vision LLM for image PDFs; optional PDFium page-render adapter only if needed; no default heavyweight local OCR bundle.
+
+### Rust Backend Structure Decision
+- `src-tauri/src/lib.rs` being monolithic is acceptable for the current MVP stabilization phase.
+- Module splitting remains a later engineering improvement after lifecycle, cleanup, dependency packaging, and production gates are stable.
+
+
+## Implementation Findings: 2026-05-31 19:06 CST
+
+### Lifecycle and Cleanup Implementation
+- Product-facing job status now uses the latest lifecycle: `Working`, `NeedsReview`, `DraftSaved`, `ExportReady`, `Exported`, `Cleaned`. Internal workflow detail remains in `currentStep`.
+- Rust keeps backward compatibility for existing local job JSON via serde aliases for old statuses such as `Parsed`, `SplitReady`, `AuthoringReady`, `ValidationFailed`, and `Published`.
+- Successful single-exam export and Pack generation now transition through `Exported` and then automatically run cleanup unless diagnostics retention is enabled.
+- Cleanup writes `authoring-project.json` as the long-term editable project container and keeps `authoring-ir.json` for existing editor compatibility.
+- Cleanup removes transient working artifacts by default: uploads, per-job cache, preview assets, DocumentIR, split candidates, pipeline report, LLM suggestion files/logs, vision/manual transcription temp files, and intermediate validation/runtime reports.
+- Settings now exposes Developer/Diagnostics -> `keepFullProcessArtifacts`, default off. This is not part of the ordinary workflow; it exists for parser/model debugging.
+
+### Remaining Risk
+- The cleanup policy currently keeps `exports/` under the job folder for local exports because generated output is user-visible. If later exports are always outside app data, this can be tightened.
+- Reopening a `Cleaned` job relies on `authoring-ir.json`/`authoring-project.json`; source-document visual review cannot be repeated after cleanup unless diagnostics retention was enabled or the user reimports the source.
+
+## Implementation Findings: 2026-05-31 19:52 CST
+
+### Rust PDF Text Extraction
+- Clear-text PDF parsing now uses the Rust `pdf-extract` crate as the primary path, with parser provider `rust-parser:pdf:pdf-extract`.
+- The Rust path constructs `DocumentIRV1` directly in the Tauri backend, using the same low-confidence/no-text semantics as the prior Python `pypdf` path.
+- If `pdf-extract` errors on a PDF, the backend falls back to the Python parser and records a parser warning that the Rust extractor failed.
+- Existing fixture evidence is sufficient for the current MVP decision: complex text PDF reaches AuthoringIR, while no-text PDF still emits parser warning + low-confidence block and therefore triggers source review.
+- `pdf-extract` pulled in roughly 32 transitive Cargo packages including `lopdf`; this is acceptable for the MVP because release `.app`/`.dmg` still build successfully and it removes host Python/pypdf from the clear-text PDF critical path.
+
+### Remaining Risk
+- `pdf-extract` is still text-layer extraction only. It does not OCR image/scanned PDF pages.
+- `pypdf` and Python remain relevant for embedded PDF image extraction used by vision LLM transcription, DOCX parsing through the current sidecar, and legacy fallback.
+- PDFs whose scanned pages do not expose embedded images still need manual transcription or a future rendered-page adapter such as PDFium feeding page images into the vision LLM.
+
+## Implementation Findings: 2026-05-31 20:11 CST
+
+### Rendered-Page Fallback for Vision LLM
+- The Python parser sidecar now extends `extract_pdf_images`: it still extracts embedded images via `pypdf` first, then falls back to macOS `sips` to render a PNG when no embedded images are exposed.
+- The fallback returns `PdfImageExtractionV1.renderedFallback=true` and image-level `renderedFallback=true`, so the backend and LLM gateway can distinguish rendered page previews from real embedded images.
+- The fallback emits warnings that it is a rendered-page preview and not OCR or guaranteed multi-page coverage.
+- Environment preflight now includes `renderer:macos-sips`, making this local capability visible in Settings.
+- This improves the user-uploaded scanned/no-text PDF path: more files can reach vision LLM transcription instead of immediately requiring manual transcription.
+
+### Remaining Risk
+- This is macOS-specific and relies on the host `sips` tool. It is acceptable for the current macOS local app target but not a complete cross-platform rendering strategy.
+- The `sips` fallback is a lightweight preview renderer, not a full layout/OCR engine. Human SourceReview remains mandatory before publish.
+- If later production scope requires Windows/Linux or reliable multi-page scan rendering, a PDFium-based adapter should replace or supplement this fallback.
+
+## Implementation Findings: 2026-05-31 20:46 CST
+
+### Rust DOCX OOXML Primary Parser
+- Clear-text DOCX parsing now uses a Rust OOXML path first, with provider `rust-parser:docx:ooxml`.
+- The parser reads `word/document.xml` from the DOCX ZIP container, extracts paragraph text, converts table rows into tab-separated table blocks, and emits `DocumentIRV1` directly from the Tauri backend.
+- The existing complex DOCX fixture reaches AuthoringIR through the Rust provider, so host Python is no longer on the clear-text DOCX critical path.
+- Python sidecar remains as a fallback if Rust DOCX parsing fails, which preserves resiliency for unusual OOXML files while reducing the default dependency surface.
+- The `zip` dependency is configured with `flate2` + `deflate-flate2`; `zopfli` is not present in the dependency tree, avoiding unnecessary compression-writing weight for DOCX reads.
+
+### Updated Dependency Risk
+- Clear text PDF and DOCX are now Rust-primary.
+- Python/pypdf are still needed for PDF embedded image extraction, macOS rendered-page fallback orchestration, and legacy parser fallback.
+- Node.js is no longer needed for production LLM, validation, export, or Pack; it remains useful only for optional validator/runtime diagnostics.
+- The OCR strategy remains unchanged by this work: image/no-text PDFs use vision LLM transcription plus mandatory SourceReview, with manual transcription fallback. No heavyweight local OCR is bundled by default.
+
+## Implementation Findings: 2026-05-31 21:02 CST
+
+### Rust-Orchestrated Rendered-Page Fallback
+- Vision transcription for no-text/image PDFs now uses a Rust wrapper for PDF image extraction.
+- The wrapper preserves the preferred path: Python/pypdf extracts embedded images when available.
+- If Python/pypdf is unavailable, fails, or returns zero images, Rust invokes macOS `sips` directly and writes a `PdfImageExtractionV1` result with one rendered PNG image.
+- This reduces host Python/pypdf from a hard dependency for the macOS scanned-PDF vision path; users can still reach vision LLM transcription via rendered page images when only system `sips` is available.
+- This does not add OCR. The generated page PNG is only input to the vision LLM, and the resulting `vision-llm-transcription` DocumentIR still requires SourceReview before export/Pack.
+
+### Updated Dependency Risk
+- Clear text PDF and DOCX are Rust-primary.
+- macOS rendered-page fallback for scanned/no-text PDFs is now Rust-orchestrated through system `sips`.
+- Python/pypdf remain relevant for extracting embedded PDF images and for legacy parser fallback.
+- Node.js and the external unified runtime have been removed from the production hard path; they remain diagnostic dependencies only.
+
+## Implementation Findings: 2026-05-31 21:19 CST
+
+### Rust TXT/MD Primary Parser
+- TXT and Markdown sources now use Rust parsing before Python sidecar fallback.
+- The parser emits `rust-parser:text:plain` for `.txt` and `rust-parser:text:markdown` for `.md`, preserving the existing `DocumentIRV1` shape and downstream split/AuthoringIR behavior.
+- Fixture evidence now covers TXT, Markdown, PDF, and DOCX clear-text parsing into AuthoringIR and answer keys through Rust-primary paths.
+- Markdown answer-list detection was hardened so answer-only blocks such as `1 TRUE` / `2 FALSE` are recognized as answers instead of question prompts.
+
+### Updated Dependency Risk
+- Normal TXT/MD/PDF/DOCX clear-text imports are Rust-primary.
+- Python/pypdf are now limited to embedded PDF image extraction and legacy parser fallback.
+- macOS scanned/no-text rendered-page fallback is Rust-orchestrated through system `sips`.
+- Node.js and the external unified runtime have been removed from the production hard path; they remain diagnostic dependencies only.
+
+## Dependency Strategy Update: 2026-05-31 21:58 CST
+
+### Production Dependency Direction
+- Do not bundle Node, Python, or heavyweight OCR engines into the production app by default.
+- Production main path should be Rust-first: TXT/MD, text-layer PDF, and DOCX are already Rust-primary.
+- Image/no-text PDFs should use page/image rendering plus vision LLM transcription, not local OCR.
+- macOS MVP can rely on system `sips` for rendered page images; future Windows/Linux scan support should evaluate an optional PDFium page-render adapter, not a full Python/OCR/Docling stack.
+- Node has left the production main path: Rust owns OpenAI-compatible LLM HTTP calls and built-in ReadingExamSourceV1/DOM validation. Node validator remains a development parity check only.
+- Preview E2E is now split into production static Rust contract validation and developer/CI/diagnostic real-runtime E2E. If local production E2E becomes mandatory later, prefer an embedded WebView/JS execution approach over a host Node requirement.
+
+
+## Implementation Findings: 2026-05-31 22:49 CST
+
+### Rust Production Path Consolidation
+- Production LLM calls now run in Rust through OpenAI-compatible `/chat/completions` HTTP calls. The Rust gateway covers `classify_group`, `extract_group`, `test_profile`, and `transcribe_pdf_images`.
+- Vision transcription encodes rendered/extracted page images as data URLs and validates returned JSON before converting transcription into `DocumentIRV1`.
+- Rust built-in `ReadingExamSourceV1` and DOM protocol validation is now authoritative. Node validator is disabled unless `EPIC8_NODE_VALIDATOR_DIAGNOSTICS=1`.
+- Export and Pack no longer require external unified runtime E2E. They use Rust static contract validation plus SourceReview/AuthoringReview readiness. The validation report records `runtime.mode=static-rust` for production gates.
+- `run_preview_e2e` remains available as an explicit diagnostic command. It can return `runtime.mode=real` or fallback/error diagnostics, but diagnostic failure no longer demotes an otherwise static-gate-ready job from `ExportReady`.
+
+### Updated Dependency Position
+- Production MVP/macOS should not bundle Node, Python, or local OCR engines.
+- Rust covers normal TXT/MD/PDF/DOCX clear-text imports, LLM HTTP calls, validation, export, and Pack.
+- Python/pypdf remains only for legacy parser fallback and embedded PDF image extraction; macOS `sips` provides a Rust-orchestrated page render fallback for vision LLM input.
+- For Windows/Linux image PDF support, evaluate a lightweight PDFium page-render adapter. It should render pages for vision LLM, not perform local OCR.
+
+### Remaining Risks
+- `src-tauri/src/lib.rs` remains very large and should be split after the current dependency and flow semantics stabilize.
+- Rust LLM gateway still needs live-provider E2E coverage across representative OpenAI-compatible providers.
+- Visible preview is still a sandboxed local template preview; real unified-runtime visual parity remains diagnostic/future work.
+
+
+## Implementation Findings: 2026-05-31 23:16 CST
+
+### Backend Module Decomposition First Cut
+- Extracted common Rust utilities from `src-tauri/src/lib.rs` into `src-tauri/src/util.rs`.
+- The extracted module owns path segment validation, safe job directory helpers, JSON/text/binary IO helpers, deletion helpers, append logging, and the minimal stored-ZIP writer.
+- This reduces `lib.rs` from roughly 8886 lines to 8673 lines and establishes a low-risk pattern for later parser/LLM/validator/export module splits.
+- No business behavior was intentionally changed; existing callers keep the same helper names through `use util::{...}` imports.
+
+### Verification
+- `cargo fmt --check`, `cargo test` (51 tests), `cargo clippy --all-targets -- -D warnings`, `npm run check`, and `git diff --check` passed after the split.
+- A transient Cargo target cache issue initially reported a missing `libzip...rlib`; rebuilding after `cargo clean -p zip` restored the dependency artifact and tests passed. This was local build-cache state, not an application logic failure.
+
+
+## Implementation Findings: 2026-05-31 23:34 CST
+
+### Validator Module Split
+- Extracted the pure ReadingExamSourceV1/DOM contract validator into `src-tauri/src/validator.rs`.
+- Moved qid sorting, allowed question-kind checks, lightweight HTML tag/attribute parsing, collectible control/dropzone checks, `validate_reading_source_contract`, and validation issue/layer helpers.
+- Kept `validate_authoring` in `lib.rs` for now because it still depends on AuthoringIR-to-ReadingExamSource generation and authoring-specific display-number checks.
+- `src-tauri/src/lib.rs` is now about 8258 lines, down from about 8886 lines before the first utility split.
+
+### Verification
+- `cargo fmt --check`, `cargo test` (51 tests), `cargo clippy --all-targets -- -D warnings`, `npm run check`, and `git diff --check` passed after extracting `validator.rs`.
+
+### Next Architecture Seams
+- Parser is the next high-value split, but it touches PDF/DOCX/TXT/MD, source review, and vision image extraction. It should be done in smaller submodules or with typed `DocumentIRV1` structs to avoid increasing JSON-value coupling.
+- LLM gateway is another good seam because it is now Rust-owned and has a clear API boundary around profile payloads, HTTP calls, output validation, and fallback generation.
+
+## Implementation Findings: 2026-05-31 23:58 CST
+
+### LLM Gateway Module Split
+- Extracted the Rust production LLM gateway into `src-tauri/src/llm_gateway.rs`.
+- The new module owns OpenAI-compatible `/chat/completions` calls, JSON-only response parsing, request-cache API-key redaction, vision image data URL encoding, and output normalization for both group suggestions and PDF-image transcription.
+- `src-tauri/src/lib.rs` still owns profile CRUD, secret resolution, job orchestration, deterministic low-confidence fallback, suggestion persistence, source review, and auto-apply policy. This is intentional because those concerns are authoring workflow state, not gateway transport.
+- The split preserves the latest product decision: Node LLM sidecar is not production-path code; Rust owns normal LLM and vision transcription HTTP calls.
+- `lib.rs` is now about 7885 lines. It remains large, but the highest-risk pure infrastructure seams now have independent modules: `util.rs`, `validator.rs`, and `llm_gateway.rs`.
+
+### Verification
+- `cargo fmt --check`, `cargo test` (51 tests), `cargo clippy --all-targets -- -D warnings`, `npm run check`, and `git diff --check` passed after the split.
+
+### Architecture Risk Update
+- Parser code remains the next main concentration of business complexity. It mixes TXT/MD parsing, PDF text-layer extraction, DOCX OOXML parsing, low-confidence block handling, source review, and image-PDF vision preparation.
+- Parser extraction should be incremental and avoid changing the user-facing PDF flow: clear-text inputs stay Rust-primary; image/no-text PDFs still become vision LLM transcription candidates and require SourceReview before publish.
+
+## Implementation Findings: 2026-06-01 00:20 CST
+
+### Parser Module Split
+- Extracted the upload parsing stack into `src-tauri/src/parser.rs`.
+- Parser module now owns deterministic DocumentIR generation for TXT/MD, text-layer PDFs via `pdf-extract`, DOCX via `zip + quick-xml`, parser failure/missing-source placeholders, manual transcription and vision transcription DocumentIR conversion, Python legacy parser fallback, embedded PDF image extraction, and macOS `sips` rendered-page fallback.
+- `lib.rs` still owns source review, split generation, AuthoringIR generation, LLM orchestration, validation, export, and Pack because those are workflow/business-state boundaries rather than parser boundaries.
+- The user-uploaded PDF chain remains consistent with the latest requirement: clear-text PDFs parse in Rust; no-text/low-confidence PDFs prepare page images for vision LLM; vision transcription is not treated as human verification; SourceReview and AuthoringReview remain required before publish.
+- `src-tauri/src/lib.rs` is now about 6922 lines; backend architecture is materially better than the earlier 8300+ line state, but export/pack/storage remain concentrated.
+
+### Verification
+- `cargo fmt --check`, `cargo test` (51 tests), `cargo clippy --all-targets -- -D warnings`, `npm run check`, and `git diff --check` passed after the parser split.
+
+### Residual Parser Risks
+- The `sips` fallback still renders a preview image and is explicitly not guaranteed full multi-page coverage. This is acceptable for macOS MVP only because SourceReview blocks publish until the user verifies the source transcription.
+- Python/pypdf still exists for embedded-image extraction and legacy fallback. It is not production-hard for clear-text TXT/MD/PDF/DOCX parsing, but the product should continue to show dependency/preflight status clearly for diagnostic/legacy paths.
+- Parser output remains JSON `Value`-heavy. A future typed `DocumentIRV1` model would reduce schema drift and make parser/submodule splits safer.
+
+## Implementation Findings: 2026-06-01 00:44 CST
+
+### LLM Profile And Secret Storage Module Split
+- Extracted LLM profile and secret storage into `src-tauri/src/llm_profiles.rs`.
+- The module now owns profile persistence, UI redaction, Keychain references, plaintext file fallback checks, file secret helpers, and profile lookup.
+- `lib.rs` still owns Tauri command handlers and LLM orchestration, which is the correct boundary for now because command handlers combine app state, user payload, profile storage, and gateway testing.
+- The split preserves the latest security requirement: API keys are never cached in LLM request JSON, OS secure storage remains the normal storage backend, and plaintext fallback is opt-in only through `EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK`.
+- `src-tauri/src/lib.rs` is now about 6673 lines. The remaining large concerns are source/authoring workflow, export/pack, cleanup, and command handlers.
+
+### Verification
+- `cargo fmt --check`, `cargo test` (51 tests), `cargo clippy --all-targets -- -D warnings`, `npm run check`, and `git diff --check` passed after the split.
+
+### Architecture Risk Update
+- Export/Pack should not be moved wholesale yet because it currently combines ReadingExamSource generation, static runtime gate, SourceReview/AuthoringReview gate, filesystem writes, job state updates, and cleanup. A safe next step is to extract pure packaging/string-generation helpers first, then later move side-effecting export orchestration.
+
+## Implementation Findings: 2026-06-01 01:08 CST
+
+### Export Artifact Builder Split
+- Extracted pure ReadingExam output builders into `src-tauri/src/export_artifacts.rs`.
+- The new module owns exam id validation, wrapper JS generation, manifest JS generation, pack manifest generation, and a small `ReadingAssetBundle` used by preview/export.
+- Side-effecting workflow code remains in `lib.rs`: runtime gate, SourceReview/AuthoringReview publish gate, writing files, updating job status, Pack ZIP writing, and cleanup. This avoids changing production export semantics while still reducing coupling.
+- Export and Pack tests continue to prove static Rust gate behavior, output file writing, Pack ZIP writing, and cleanup after successful export.
+
+### Verification
+- `cargo fmt --check`, `cargo test` (51 tests), `cargo clippy --all-targets -- -D warnings`, `npm run check`, and `git diff --check` passed after the split.
+
+### Architecture Risk Update
+- Export/Pack remains the next high-value area, but the safest path is staged: pure artifact builders first, then pure pack-entry assembly, then side-effecting filesystem/job orchestration only after tests cover each boundary.
+
+## Implementation Findings: 2026-06-01 / E8-33
+
+### Pack Entry Assembly Split
+- Pack ZIP entry assembly is now isolated from side-effecting workflow orchestration.
+- `src-tauri/src/export_artifacts.rs` owns pure Pack output construction: `pack.json`, manifest JS, and per-exam wrapper JS entries.
+- `src-tauri/src/lib.rs` still owns the correct side effects: reading each job's `authoring-ir.json`, running static runtime validation and publish readiness gates, writing the ZIP and unpacked Pack files, updating job status, and cleanup.
+- A latent fallback mismatch was addressed defensively: when a Pack source lacks `examId`, the fallback ID is injected into the normalized source before wrapper/manifest/Pack generation. That keeps file path, registry key, and Pack manifest aligned.
+
+### Verification
+- `cargo fmt --check`, `cargo test` (52 tests), `cargo clippy --all-targets -- -D warnings`, `npm run check`, and `git diff --check` passed after the split.
+
+### Architecture Risk Update
+- Export/Pack behavior remains production Rust-first and does not add Node, Python, or runtime E2E as a release dependency.
+- The remaining backend concentration is mostly command/workflow orchestration, not pure artifact generation. Future extraction should focus on storage/settings commands or a dedicated export workflow module with tests around job-state transitions and cleanup.
+
+## Implementation Findings: 2026-06-01 / E8-34
+
+### Diagnostics Settings Boundary
+- Diagnostics settings are now separated from workflow orchestration.
+- `src-tauri/src/diagnostics.rs` owns only persistence and the public `DiagnosticsSettings` shape used by Tauri commands and the frontend.
+- Cleanup remains in `lib.rs` because it changes job status, writes authoring-project/export summaries, and removes workflow artifacts. That is a separate export/lifecycle seam, not a settings seam.
+
+### Verification
+- `cargo fmt --check`, `cargo test` (52 tests), `cargo clippy --all-targets -- -D warnings`, `npm run check`, and `git diff --check` passed after extraction.
+
+### Architecture Risk Update
+- This split does not affect production parsing, vision LLM transcription, SourceReview, runtime validation, export, or Pack semantics.
+- The remaining high-risk architecture work is reducing JSON `Value` coupling in DocumentIR/AuthoringIR and moving workflow orchestration only after explicit tests cover state transitions.
+
+## Implementation Findings: 2026-06-01 / E8-35
+
+### Environment And Preflight Boundary
+- Environment/preflight logic is now isolated in `src-tauri/src/environment.rs`.
+- The extracted module owns sidecar discovery, command probing, external runtime env path resolution, strict runtime gate parsing, optional Node-validator diagnostics flag parsing, and the complete `EnvironmentPreflightV1` report.
+- Existing parser and profile modules continue to use shared `find_sidecar` and `command_failure` helpers through the crate boundary, so error formatting and packaged-resource lookup remain consistent.
+- This split is diagnostic/infrastructure only. It does not change import parsing, vision LLM transcription, SourceReview, runtime validation, export, or Pack semantics.
+
+### Verification
+- `cargo fmt --check`, `cargo test` (52 tests), `cargo clippy --all-targets -- -D warnings`, `npm run check`, and `git diff --check` passed after extraction.
+
+### Architecture Risk Update
+- `lib.rs` is down to about 6210 lines, but still contains core workflow logic. The remaining high-value work is to split stateful business workflows carefully with tests around lifecycle transitions.
+- Environment preflight continues to communicate Node/Python/pypdf as optional diagnostics/legacy capabilities, aligned with the Rust-first production path and no bundled local OCR strategy.
+
+## Implementation Findings: 2026-06-01 / E8-36
+
+### Real PDF Sample Audit And Umbrella Question Range Handling
+- The four user-provided P2 PDF samples all contain a valid opening umbrella instruction equivalent to `Questions 14-26`. This is not a false positive; it is the overall Passage 2 question range.
+- The opening umbrella range now flows into split output as `umbrellaQuestionRanges`, so the app preserves the business fact that Passage 2 covers Q14-Q26.
+- The split builder now distinguishes concrete headings from inline references. Headings such as `Questions 14-19`, `Questions 20-23`, and Markdown `## Questions 1-5` are concrete groups; inline references such as `Look at the following statements (Questions 20-23)` are not treated as new group starts.
+- When concrete groups exist, the umbrella range is not converted into a duplicate concrete Q14-Q26 group. This prevents duplicated questions and preserves the later specific interaction groups.
+- When only the umbrella range exists, the app now creates a low-confidence `requiresManualQuestionImport` scaffold instead of pretending concrete prompts exist. AuthoringReview blocks publish until the user imports/edits and verifies the actual prompts and answers.
+- Some samples are mixed text/image PDFs: Rust `pdf-extract` can parse the main text pages while later pages contain image-only or blank content. These correctly remain eligible for vision transcription and SourceReview, because missing image pages may contain answer keys or question content.
+- The 120 sample has answer letters interleaved after earlier groups. The split logic no longer truncates question discovery at the first answer-like block, so later concrete groups `20-23` and `24-26` are retained.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 53 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Error Log Addition
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | Initial real-PDF regression incorrectly asserted every text-layer PDF had no parser warnings. Mixed PDFs with image-only pages legitimately require vision transcription/SourceReview. | 1 | Changed the regression to separate fully text-layer-readable PDFs from mixed text/image PDFs and verify the correct review routing for each. |
+| 2026-06-01 | New heading detection initially broke Markdown fixtures because `## Questions 1-5` was no longer considered a concrete heading. | 1 | Normalized leading Markdown `#` characters before checking heading starts. Full Rust tests passed afterward. |
+| 2026-06-01 | A malformed targeted `cargo test` command passed two filter names; Cargo accepts only one test filter. | 1 | Ran the full `cargo test` suite instead and recorded the command mistake. |
+| 2026-06-01 | `cargo clippy --all-targets -- -D warnings` flagged an unnecessary lazy default in `isUmbrellaRange` serialization. | 1 | Replaced `unwrap_or_else(|| json!(false))` with `unwrap_or(Value::Bool(false))` and reran clippy successfully. |
+
+## Implementation Findings: 2026-06-01 / E8-37
+
+### SourceReview Module Boundary
+- `src-tauri/src/source_review.rs` now owns SourceReview-specific computation and persistence:
+  - `parser_warnings`
+  - `low_confidence_block_ids`
+  - `source_review_fingerprint`
+  - `source_review_status`
+  - `write_source_review_status`
+  - `source_review_issues`
+- The module intentionally keeps JSON `Value` interfaces for now because callers still operate on `DocumentIRV1` and `AuthoringIR` as JSON. This keeps the extraction low risk and avoids changing frontend or persisted contracts.
+- `lib.rs` still owns workflow state transitions after SourceReview results are computed. This is the correct boundary for now because status transitions combine SourceReview, AuthoringReview, LLM auto-apply, runtime validation, export, and cleanup.
+- SourceReview publish semantics are unchanged: unresolved parser warnings or low-confidence blocks produce blocking AuthoringIR issues. Resolving review is fingerprint-aware and becomes stale when the underlying warnings/low-confidence source changes.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test source_review -- --nocapture)` | pass, 5 targeted tests |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 53 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Error Log Addition
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | After extraction, `source_review_fingerprint` was imported for all builds but only used by tests, producing an unused import warning in normal lib builds. | 1 | Split it into a `#[cfg(test)]` import and reran targeted/full tests plus clippy successfully. |
+| 2026-06-01 | Running `cargo test` and `cargo clippy` in parallel caused Cargo file-lock waiting messages. | 1 | Allowed Cargo to serialize naturally; both commands completed successfully. |
+
+## Implementation Findings: 2026-06-01 / E8-38
+
+### Job Store Module Boundary
+- `src-tauri/src/job_store.rs` now owns job persistence and listing:
+  - `make_job`
+  - `load_job`
+  - `save_job`
+  - `update_job`
+  - `list_saved_jobs`
+- Tauri command handlers still own application root resolution, directory creation, delete-job filesystem removal, and business workflow orchestration. This keeps the module boundary narrow and avoids moving status transitions prematurely.
+- `list_jobs` now delegates filtering/sorting to `list_saved_jobs`; the behavior remains the same: optional status filter, optional case-insensitive title/job-id search, and reverse `updated_at` ordering.
+- The job path traversal checks remain covered through existing tests. `job_store` still uses `safe_job_dir` and `validate_path_segment` internally.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 53 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Error Log Addition
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-01 | A targeted `cargo test` command again passed two filter names, which Cargo rejects. | 1 | Switched to full `cargo test` to cover both intended areas and avoid false confidence. |
+| 2026-06-01 | Moving job persistence helpers initially removed `read_json` from `lib.rs` imports, but workflow code still reads AuthoringIR/validation JSON directly. | 1 | Restored `read_json` import for workflow artifact reads; job-specific reads remain in `job_store`. |
+| 2026-06-01 | `safe_job_dir` became unused in normal builds after moving `load_job`; clippy failed under `-D warnings`. | 1 | Moved `safe_job_dir` into a `#[cfg(test)]` import because tests still assert path-helper behavior directly. |
+
+## Implementation Findings: 2026-06-01 / E8-39
+
+### `Questions 14-26` Umbrella Range Product Semantics
+- User clarified that opening instructions such as `Questions 14-26` are valid question-group information, even though they are presented differently from concrete subgroups.
+- Current intended model is two-level:
+  - `umbrellaQuestionRanges`: preserves the Passage 2 total range from the opening instruction.
+  - `questionGroupCandidates`: contains concrete interactive groups such as `Questions 14-19`, `Questions 20-23`, and `Questions 24-26`, or a low-confidence manual-import scaffold when concrete prompts are not available.
+- This avoids two bad outcomes: dropping a valid source range, or generating a duplicate concrete Q14-Q26 group that would duplicate later subgroups.
+- Browser dev fallback now mirrors the Rust production behavior for this distinction, including `requiresManualQuestionImport` validation/readiness blocking.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- There is still no dedicated frontend unit test runner for `devFallbackBackend.ts`; TypeScript checking verifies the contract shape, while Rust regression verifies the production PDF sample behavior.
+- The live vision LLM transcription path remains unproven against scanned/image-only real PDFs with credentials. SourceReview remains mandatory for such cases.
+
+## Implementation Findings: 2026-06-01 / E8-40
+
+### Cleanup Lifecycle Boundary
+- `src-tauri/src/cleanup.rs` now owns cleanup mechanics:
+  - diagnostics retention check through `load_diagnostics_settings`
+  - removal of transient directories such as `uploads`, `cache`, `preview`, and `llm-suggestions`
+  - removal of transient files such as `document-ir.json`, `split-candidates.json`, LLM call logs, transcription temp files, and validation reports
+  - `cleanup-summary.json` generation
+- `lib.rs` intentionally still owns `write_authoring_project` and job state transitions. The cleanup module receives those as closures, keeping state-machine decisions in the workflow layer.
+- This is the right current boundary because cleanup is called by both single export and Pack export, while final job status depends on the surrounding workflow context.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test cleanup -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test export_core_writes_assets_after_static_runtime_gate -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test build_pack_core_writes_zip_after_static_runtime_gate -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 53 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- Export and Pack orchestration still live in `lib.rs`; the next safe extraction would need tests around status transitions, readiness gates, and cleanup ordering before moving more side-effecting code.
+
+## Implementation Findings: 2026-06-01 / E8-41
+
+### LLM Suggestion Boundary
+- `src-tauri/src/llm_suggestions.rs` now owns LLM suggestion data-shaping and safety helpers:
+  - `llm_group_context`
+  - deterministic low-confidence fallback output
+  - `make_llm_input`
+  - `make_vision_transcription_input`
+  - `save_llm_suggestion` / `load_llm_suggestions`
+  - `llm_suggestion_auto_apply_issues`
+  - `apply_suggestion_to_authoring`
+- `lib.rs` still owns stateful orchestration: loading jobs/profiles/secrets, running the Rust LLM gateway, updating AuthoringIR audit fields, SourceReview-aware job status updates, and auto-pipeline flow.
+- This boundary preserves the important safety rule: high-confidence LLM suggestions may apply only whitelisted structural/question patches with provider evidence and source quotes; they do not count as human verification.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test llm -- --nocapture)` | pass, 6 targeted tests |
+| `(cd src-tauri && cargo test)` | pass, 53 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- The LLM provider live path still lacks credential-backed integration evidence in this workspace. The Rust gateway and fallback safety are tested, but live provider quality and latency should be validated when a real OpenAI-compatible profile/API key is available.
+- Auto-pipeline orchestration still lives in `lib.rs`; extracting it safely requires tests over parse -> split -> AuthoringIR -> LLM suggestions -> review status -> static validation.
+
+## Implementation Findings: 2026-06-01 / E8-42
+
+### AuthoringReview Rule Boundary
+- `src-tauri/src/authoring_review.rs` now owns pure AuthoringIR review logic:
+  - recursive empty-answer detection
+  - low-confidence / verified checks
+  - derivation of `audit.humanVerified`
+  - group `verified` refresh based on all question verification
+  - blocking AuthoringIR issues for low confidence, empty answers, and manual-question-import scaffolds
+- `lib.rs` still owns publish readiness orchestration because it must combine job status, SourceReview, AuthoringReview, runtime/static validation, and report persistence.
+- This boundary makes the review semantics easier to test and reduces risk of future LLM/OCR changes bypassing manual review gates.
+
+### Verification
+| Test | Status |
+|------|--------|
+| Targeted AuthoringReview tests | pass |
+| `(cd src-tauri && cargo test)` | pass, 53 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `validate_authoring`, `reading_source`, and publish readiness orchestration still live in `lib.rs`. They are viable future extraction points, but should be split with contract validation and export/Pack tests in the same pass.
+
+## Implementation Findings: 2026-06-01 / E8-43
+
+### Reading Source Contract Boundary
+- `src-tauri/src/reading_source.rs` now owns the pure `ReadingExamSourceV1` assembly path:
+  - HTML escaping and group-body HTML rendering
+  - answer key projection from AuthoringIR
+  - question order and question display map projection
+  - `ReadingExamSourceV1` assembly for export/runtime validation
+- `lib.rs` still owns the stateful orchestration around this contract:
+  - job/source lookup
+  - SourceReview and AuthoringReview gating
+  - `validate_authoring` / `publish_readiness_gate`
+  - runtime/export/Pack command handlers
+- Keeping the source contract builder isolated helps ensure that future refactors or UI changes cannot silently distort the published runtime shape.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test reading_source -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test rust_contract_validator -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test export_core_writes_assets_after_static_runtime_gate -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test build_pack_core_writes_zip_after_static_runtime_gate -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 53 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `validate_authoring`, `validate_for_runtime_gate`, and `publish_readiness_gate` still live in `lib.rs`. They are the next plausible contract-layer seam, but should be split only with tests that directly cover all validation layers and publish blocking behavior.
+
+## Implementation Findings: 2026-06-01 / E8-44
+
+### `Questions 14-26` Opening Range Clarification
+- User confirmed that opening instructions such as `Questions 14-26` are legitimate question-group information, even when they are presented as the overall Passage 2 instruction rather than a concrete interaction block.
+- The implementation now treats this as an umbrella range:
+  - It is preserved in `umbrellaQuestionRanges` for review and downstream context.
+  - It is not duplicated as a concrete Q14-Q26 interaction when later concrete groups exist.
+  - If it is the only detected question range, the app creates a low-confidence manual-question-import scaffold and AuthoringReview blocks publish until concrete prompts/answers are manually completed and verified.
+- The detector was widened from one exact phrase to conservative Passage-level opening patterns while keeping concrete headings out of umbrella classification.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test umbrella_question_range_detection_keeps_opening_instructions_distinct -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo test)` | pass, 54 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- This is still heuristic text detection over parsed PDF text blocks. Vision LLM transcription and manual SourceReview remain required for scanned/image PDFs or ambiguous layouts.
+
+### Revalidation
+- User reconfirmed on 2026-06-01 that opening `Questions 14-26` ranges are correct题组信息 and should be included.
+- The production Rust parser/split path and browser dev fallback already implement this as a two-level model: `umbrellaQuestionRanges` for the Passage-level range, plus concrete `questionGroupCandidates` for publishable interaction groups or a manual-import scaffold when concrete prompts are absent.
+- Targeted regression evidence: `umbrella_question_range_detection_keeps_opening_instructions_distinct` and `files_pdf_samples_reach_expected_review_paths` both passed.
+
+## Implementation Findings: 2026-06-01 / E8-45
+
+### Authoring Validation Boundary
+- `src-tauri/src/authoring_validation.rs` now owns pure AuthoringIR validation and validation-report merging:
+  - `validate_authoring`
+  - `merge_sidecar_validation`
+  - `merge_validation_issues`
+- `lib.rs` still owns stateful workflow orchestration:
+  - static runtime gate file writes and preview asset generation
+  - optional Node validator diagnostics
+  - SourceReview and AuthoringReview publish readiness
+  - export/Pack job state transitions and cleanup
+- This boundary reduces monolithic backend size while keeping high-risk lifecycle behavior in the already-tested command layer.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test validate_authoring_blocks_duplicate_display_numbers_and_gaps -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test validation_warning_does_not_block_runtime_gate_progress -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test rust_contract_validator -- --nocapture)` | pass, 10 tests |
+| `(cd src-tauri && cargo test)` | pass, 54 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `validate_for_runtime_gate`, `publish_readiness_gate`, export, and Pack orchestration still live in `lib.rs`. They are now clearer seams, but should only be extracted with tests that directly cover validation-report persistence, job status transitions, cleanup, and publish-blocking behavior.
+
+## Implementation Findings: 2026-06-01 / E8-46
+
+### Export/Pack Publish Gate Side Effects
+- Positive export/Pack tests already proved successful static gate + publish readiness writes assets and cleanup.
+- New negative tests now prove that publish readiness failure after static validation does not produce final output artifacts and does not trigger cleanup.
+- This is important for PDF/LLM/manual-review safety because LLM output or umbrella-only scaffolds must not become exported runtime content until human verification and SourceReview gates are satisfied.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test export_core_publish_gate_failure_writes_no_export_or_cleanup -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test build_pack_publish_gate_failure_writes_no_pack_or_cleanup -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 56 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- The same publish gate protections should eventually be covered at the Tauri command boundary or UI integration level, but core backend behavior is now directly tested.
+
+## Implementation Findings: 2026-06-01 / E8-47
+
+### Command Lifecycle And Dialog Completion
+- `validate_authoring_ir` now explicitly synchronizes `current_step` with validation outcome:
+  - unresolved SourceReview/parser issues -> `NeedsReview` / `DocumentReview`
+  - AuthoringIR validation failure -> `NeedsReview` / `Authoring`
+  - AuthoringIR validation pass -> `DraftSaved` / `Authoring`
+- This avoids stale workflow state such as a job remaining on `Export` or `Preview` after validation re-runs.
+- `choose_export_dir` is no longer a backend stub. The Rust command opens a native Tauri folder picker on a blocking worker thread and returns the selected path.
+- Browser dev fallback now mirrors the validation-step update so development preview state does not diverge from production Rust behavior.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test validation_job_state_routes_review_and_authoring_steps -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test validate_authoring_state_update_overwrites_stale_current_step -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 58 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- The native directory picker itself is not exercised in an automated UI test because it requires OS dialog interaction. Compile, clippy, and command wiring prove the backend API is implemented; manual desktop smoke can verify user interaction.
+
+## Implementation Findings: 2026-06-01 / E8-48
+
+### Workflow State Module Boundary
+- `src-tauri/src/workflow_state.rs` now owns lifecycle state projection for validation and preview-E2E commands:
+  - `apply_preview_e2e_job_state`
+  - `validation_job_state`
+  - `update_validation_job_state`
+  - shared issue-count projection for validation/runtime report severities
+- This is a deliberately narrow extraction. It moves state transition rules and their tests out of `lib.rs` without moving command orchestration, filesystem artifact generation, export, Pack, or publish readiness gates.
+- The module adds direct tests for both validation and preview lifecycle routing:
+  - SourceReview issues route back to `DocumentReview`.
+  - AuthoringIR validation failures stay in `Authoring`.
+  - Passing AuthoringIR validation becomes `DraftSaved`/`Authoring`.
+  - Preview failure overwrites stale `ExportReady`/`Export`.
+  - Preview success becomes `ExportReady` only when publish readiness also passes.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test workflow_state -- --nocapture)` | pass, 4 tests |
+| `(cd src-tauri && cargo test failed_runtime_validation_downgrades_stale_export_ready_status -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 60 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `lib.rs` is still large at 5375 lines. Export/Pack and auto-pipeline orchestration remain in `lib.rs`; those should be extracted only with stronger command-boundary coverage because they coordinate filesystem side effects, cleanup, publish gates, and job state.
+
+## Implementation Findings: 2026-06-01 / E8-49
+
+### Runtime Validation Module Boundary
+- `src-tauri/src/runtime_validation.rs` now owns the runtime/static validation helper boundary:
+  - `preview_assets_for_source`
+  - `validate_for_runtime_gate`
+  - `run_node_validator_diagnostic`
+  - `validate_with_node_sidecar`
+  - `validate_preview_with_node_sidecar`
+  - `publish_readiness_gate`
+- This module keeps the production validation policy explicit:
+  - Rust static contract validation is the production gate.
+  - Node validator is optional diagnostics only.
+  - Real preview E2E is diagnostics only and cannot by itself determine publishability.
+  - Publish readiness still merges SourceReview and AuthoringReview issues into the validation report.
+- `lib.rs` still owns command orchestration and side-effect-heavy export/Pack flows, which is safer until there is broader command-boundary lifecycle coverage.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test rust_contract_validator -- --nocapture)` | pass, 10 tests |
+| `(cd src-tauri && cargo test publish_gate_blocks_no_text_pdf_until_source_review_resolved -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test preview_e2e_diagnostic_failure_does_not_block_static_export_ready -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 60 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `lib.rs` is still 5185 lines. Export/Pack orchestration and auto-pipeline remain the largest unextracted stateful areas; moving them should wait for command-boundary tests that prove artifact write/cleanup/status side effects.
+
+## Implementation Findings: 2026-06-01 / E8-50
+
+### Opening Umbrella Range Revalidation
+- User clarified again that opening instructions such as `Questions 14-26` are correct question-group information, even when they appear in the passage introduction rather than as a later concrete interaction heading.
+- Current production behavior is correct and should be preserved:
+  - `umbrellaQuestionRanges` stores the Passage-level total range for review/downstream context.
+  - Later concrete headings remain the source of publishable `questionGroupCandidates`.
+  - If only the opening umbrella range is detected, the app creates a low-confidence `requiresManualQuestionImport` scaffold and AuthoringReview blocks publish until concrete prompts/answers are manually imported and verified.
+- The Rust parser already accepts hyphen, en dash, and em dash range separators. E8-50 added explicit regression coverage for the en-dash spelling so future refactors do not accidentally narrow this behavior.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test umbrella_question_range_detection_keeps_opening_instructions_distinct -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `npm run check` | pass |
+
+### Remaining Risk
+- This remains heuristic detection over parsed text blocks. Scanned/image PDFs still require vision transcription plus SourceReview, and umbrella-only detections still require human AuthoringReview before publish.
+
+## Implementation Findings: 2026-06-01 / E8-51
+
+### Authoring Pipeline Module Boundary
+- `src-tauri/src/authoring_pipeline.rs` now owns the pure business rules that transform parsed `DocumentIRV1` plus split candidates into initial `ReadingAuthoringIRV1`:
+  - DocumentIR block flattening/text/html helpers.
+  - Question range, concrete heading, and umbrella range detection.
+  - Answer token parsing and answer-source merge behavior.
+  - Dynamic split candidate generation.
+  - Prompt extraction and initial group/question/answerKey/questionOrder/displayMap construction.
+- The extraction intentionally leaves side effects in `lib.rs`:
+  - Tauri command handlers.
+  - file IO and parser execution for separate answer sources.
+  - SourceReview and AuthoringReview state updates.
+  - LLM profile/provider orchestration.
+  - export/Pack artifact writes, cleanup, and job lifecycle transitions.
+- The module boundary is aligned with current safety constraints: it improves maintainability without moving the filesystem-heavy export/Pack orchestration that still requires strict command-boundary protection.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test umbrella_question_range_detection_keeps_opening_instructions_distinct -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 60 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `authoring_pipeline.rs` is still JSON-heavy and heuristic-based. It is now isolated enough for future typed-domain refactors, but scanned/image PDFs still require vision LLM transcription plus SourceReview, and low-confidence/manual-import outputs still require AuthoringReview before publish.
+- `lib.rs` remains sizeable at 4250 lines. Export/Pack orchestration and auto-pipeline command flow remain the largest stateful areas and should only move with strong artifact/write/cleanup/status tests.
+
+## Implementation Findings: 2026-06-01 / E8-52
+
+### Cleanup And AuthoringProject Boundary
+- `src-tauri/src/cleanup.rs` now owns the successful-export archival/cleanup lifecycle:
+  - `AuthoringProjectV1` generation.
+  - source summary, review summary, validation summary, and export summary assembly.
+  - diagnostics-retention behavior.
+  - transient artifact deletion.
+  - final `Cleaned` job-state transition.
+- `lib.rs` still owns export/Pack artifact writes and publish-gate orchestration. This keeps the high-risk artifact-writing command flow in place while removing the lower-level cleanup/archive details from the command monolith.
+- This boundary matches the product lifecycle decision: successful exports retain editable structured drafts and summaries, while process files are transient unless the developer diagnostics retention switch is enabled.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test cleanup_respects_diagnostics_artifact_retention -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test export_core_writes_assets_after_static_runtime_gate -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test export_core_publish_gate_failure_writes_no_export_or_cleanup -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test build_pack_core_writes_zip_after_static_runtime_gate -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test build_pack_publish_gate_failure_writes_no_pack_or_cleanup -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 60 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `lib.rs` remains 4165 lines and still coordinates export/Pack artifact writes plus auto-pipeline. Those should move only after command-level tests prove every side effect: validation, output writes, cleanup, and job-state transitions.
+
+## Implementation Findings: 2026-06-01 / E8-53
+
+### Auto Pipeline Command-Core Safety Coverage
+- `run_auto_pipeline` now delegates to `run_auto_pipeline_core(root, job_id, input)`, making the real filesystem-backed pipeline directly testable without launching a Tauri app.
+- Added regression coverage for two high-risk user-upload flows:
+  - Clear-text `TXT` fixture can parse/split/build AuthoringIR and pass static runtime validation, but if the LLM gateway fails it stays `NeedsReview` at `LlmReview`; no cleanup/export artifacts are written.
+  - No-text PDF fixture triggers the image/vision path and remains `NeedsReview` at `DocumentReview` with unresolved SourceReview; no cleanup/export artifacts are written.
+- These tests are aligned with the intended product flow: upload should be automatic as far as deterministic parsing/vision/LLM suggestions can go, but uncertainty must route to human review before publish.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test auto_pipeline_keeps_no_text_pdf_blocked_for_source_review -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 62 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- Positive high-confidence LLM auto-apply is still tested at helper level, not through the full command-core path with a controlled provider/mock seam. Add that before extracting auto-pipeline orchestration from `lib.rs`.
+- Live vision LLM transcription remains dependent on provider credentials and should get a diagnostic/live test path when credentials are available.
+
+## Implementation Findings: 2026-06-01 / E8-54
+
+### Opening `Questions 14-26` / `Questions 14–26` As Valid Group Metadata
+- User clarified that an opening instruction range such as `Questions 14-26` is a valid题组范围, even when it is not presented as a later concrete interaction heading.
+- Current product model remains correct:
+  - Store the opening total range in `umbrellaQuestionRanges`.
+  - Use later concrete headings as publishable/editable `questionGroupCandidates`.
+  - Do not create a duplicate concrete Q14-Q26 group when concrete subgroups exist.
+  - Only create `requiresManualQuestionImport` scaffolds when no concrete subgroup prompts are available.
+- Added a minimal Rust regression proving `Questions 14–26 are based on Reading Passage 2 below` is retained while concrete groups `14-19`, `20-23`, and `24-26` remain the actual editable groups.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test opening_umbrella_range_is_included_without_replacing_concrete_groups -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test umbrella_question_range_detection_keeps_opening_instructions_distinct -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo test)` | pass, 63 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+
+### Remaining Risk
+- The umbrella/concrete distinction is still heuristic over parsed text blocks. Image-only/scanned pages remain dependent on vision transcription plus SourceReview before concrete prompts can be trusted.
+
+## Implementation Findings: 2026-06-01 / E8-55
+
+### Full Auto-Pipeline High-Confidence LLM Auto-Apply Coverage
+- Added an internal command-core seam, `run_auto_pipeline_core_with_gateway`, so tests can inject a controlled LLM gateway without weakening production behavior. `run_auto_pipeline_core` still calls the real Rust `run_llm_gateway`.
+- The new regression proves the complete automatic upload pipeline can auto-apply high-confidence, source-evidenced LLM structure suggestions while preserving the human trust boundary:
+  - Valid evidence-backed high-confidence suggestions are applied.
+  - `autoApplied` metadata is recorded on affected groups.
+  - The LLM cannot create `audit.humanVerified` or question `verified=true`.
+  - The LLM does not erase parsed answers in this path.
+  - The job remains in review (`NeedsReview` / `Authoring`) until human verification is completed.
+- This materially strengthens the earlier helper-level tests by proving command orchestration, filesystem writes, suggestion persistence, validation, and job-state projection interact correctly.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test auto_pipeline_high_confidence_llm_auto_applies_without_human_verification -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test auto_pipeline_keeps_no_text_pdf_blocked_for_source_review -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 64 tests |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- The Rust backend still keeps auto-pipeline orchestration in `lib.rs`. With command-core coverage now in place for the major safety paths, extracting that orchestration into a dedicated module is lower risk but still needs careful side-effect preservation.
+- Live-provider LLM and vision transcription coverage remain dependent on credentials and representative scanned PDFs.
+
+## Implementation Findings: 2026-06-01 / E8-56
+
+### Auto Pipeline Module Boundary
+- `src-tauri/src/auto_pipeline.rs` now owns the stateful automatic upload pipeline orchestration:
+  - source parsing when no DocumentIR exists,
+  - SourceReview initialization,
+  - optional vision transcription for no-text/image PDFs,
+  - split candidate generation and answer-source merge,
+  - initial AuthoringIR generation,
+  - LLM suggestion execution/fallback,
+  - high-confidence auto-apply with evidence checks,
+  - static runtime validation,
+  - final job-state and pipeline-report projection.
+- `src-tauri/src/lib.rs` keeps the Tauri command wrapper and other user-facing command orchestration.
+- The module boundary is now backed by command-core tests for LLM failure, no-text PDF SourceReview, and high-confidence LLM auto-apply.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test auto_pipeline_high_confidence_llm_auto_applies_without_human_verification -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test auto_pipeline_llm_failure_keeps_text_import_in_llm_review -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test auto_pipeline_keeps_no_text_pdf_blocked_for_source_review -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 64 tests |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `auto_pipeline.rs` is still JSON-heavy and stateful. It is now isolated for future typed-domain refactors, but export/Pack orchestration remains in `lib.rs` and is still the next high-risk area.
+- Live provider coverage is still not automated because it requires credentials and representative provider configuration.
+
+## Implementation Findings: 2026-06-01 / E8-57
+
+### Export/Pack Module Boundary
+- `src-tauri/src/export_pack.rs` now owns export/Pack artifact-writing orchestration:
+  - single ReadingExamSource asset export,
+  - static runtime and publish-readiness gate enforcement,
+  - Pack source collection and validation,
+  - zip/expanded pack artifact writing,
+  - job transition to `Exported`,
+  - successful-export cleanup invocation.
+- `src-tauri/src/lib.rs` keeps only the Tauri command wrappers for `export_reading_assets` and `build_pack` so Tauri handler macro generation remains in the command module.
+- The boundary is protected by existing tests for both success and failure semantics. This is important because failed publish gates must not write final artifacts or cleanup summaries.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test export_core_writes_assets_after_static_runtime_gate -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test export_core_publish_gate_failure_writes_no_export_or_cleanup -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test build_pack_core_writes_zip_after_static_runtime_gate -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test build_pack_publish_gate_failure_writes_no_pack_or_cleanup -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 64 tests |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `export_pack.rs` remains JSON-heavy and should eventually receive typed request/result structs, but its side-effect boundary is now isolated and covered by command-core tests.
+- `lib.rs` is smaller but still contains many Tauri commands and test fixtures; future splits should prioritize low-risk command domains with existing regression coverage.
+
+## Implementation Findings: 2026-06-01 / E8-58
+
+### Standalone `Questions 14-26` Opening Range Semantics
+- The valid Passage-level range may appear as a full sentence (`Questions 14-26 are based on Reading Passage 2 below`) or as a standalone heading block (`Questions 14–26`) near `READING PASSAGE` after PDF extraction.
+- Production Rust now supports both forms:
+  - Single-block contextual instructions are still recognized by text context.
+  - Bare full-passage opening headings are recognized using neighboring block context and opening position.
+  - Later concrete subgroup headings are not replaced and remain the publishable interaction candidates.
+- The recognition is intentionally conservative:
+  - Bare heading must represent a full-passage span, currently requiring a range width of at least 9.
+  - It must appear in the opening passage position or be followed by concrete subgroups within its range.
+  - Short concrete headings such as `Questions 14-19` should not become umbrella ranges merely because they mention `Reading Passage`.
+- Browser dev fallback mirrors the same behavior so local no-Tauri development remains representative.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test umbrella -- --nocapture)` | pass, 3 tests |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 65 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- The full-passage threshold is heuristic. It fits IELTS Reading passage ranges such as P1 `1-13`, P2 `14-26`, and P3 `27-40`, but future non-IELTS content could require a configurable range policy.
+- Scanned/image PDFs still depend on vision transcription plus SourceReview; this change only hardens deterministic split behavior after text/transcription has produced blocks.
+
+## Implementation Findings: 2026-06-01 / E8-59
+
+### LLM Command-Core Boundary
+- `src-tauri/src/llm_commands.rs` now owns the user-triggered LLM command-core flow:
+  - profile save/test core behavior,
+  - classify/extract suggestion creation,
+  - gateway fallback to deterministic low-confidence suggestions,
+  - suggestion persistence,
+  - high-confidence suggestion application,
+  - answerKey/questionOrder/questionDisplayMap regeneration,
+  - AuthoringReview and SourceReview issue projection into job state.
+- `src-tauri/src/lib.rs` keeps only Tauri wrappers for LLM commands, preserving frontend command names and `generate_handler!` macro scope.
+- `load_llm_api_key` now lives in `llm_profiles.rs`; this keeps API-key retrieval policy next to secret storage policy and avoids coupling command modules to auto-pipeline internals.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test llm -- --nocapture)` | pass, 8 tests |
+| `(cd src-tauri && cargo test auto_pipeline_high_confidence_llm_auto_applies_without_human_verification -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 65 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `llm_commands.rs` still uses JSON-heavy data movement. The extraction makes the boundary explicit, but future typed request/result structs are still needed to reduce field drift.
+- Live-provider coverage remains limited by available credentials/config. Current tests prove fallback, validation, and auto-apply safety semantics, not real provider quality.
+
+## Implementation Findings: 2026-06-01 / E8-60
+
+### Preview/Validation Command-Core Boundary
+- `src-tauri/src/preview_commands.rs` now owns the command-core layer for validation and preview:
+  - `validate_authoring_ir_core`,
+  - `generate_preview_assets_core`,
+  - `run_preview_e2e_core`.
+- The boundary keeps responsibilities clear:
+  - `runtime_validation.rs` owns low-level static contract validation, preview asset writing, publish readiness, and optional Node diagnostics.
+  - `workflow_state.rs` owns job-state transitions for validation and preview diagnostic outcomes.
+  - `lib.rs` only exposes Tauri wrappers for the frontend.
+- The production dependency strategy remains unchanged: static Rust validation is authoritative; Node/real runtime E2E is development/diagnostic only.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test preview -- --nocapture)` | pass, 3 tests |
+| `(cd src-tauri && cargo test runtime_gate -- --nocapture)` | pass, 3 tests |
+| `(cd src-tauri && cargo test validation_job_state -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 65 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `preview_commands.rs` still passes JSON validation reports around directly. Future typed report structs would reduce coupling across `authoring_validation`, `runtime_validation`, and UI-facing command results.
+- Broader UI E2E remains limited; current coverage proves command-core/static runtime behavior, not every rendered interaction path.
+
+## Implementation Findings: 2026-06-01 / E8-61
+
+### Authoring Command-Core Boundary
+- `src-tauri/src/authoring_commands.rs` now owns the command-core layer for document/source-review/split/AuthoringIR operations:
+  - `parse_document_core`,
+  - `apply_manual_transcription_core`,
+  - `apply_vision_transcription_core`,
+  - `resolve_source_review_core`,
+  - `run_rule_split_core`,
+  - `save_split_adjustments_core`,
+  - `build_authoring_ir_core`,
+  - `update_authoring_ir_core`,
+  - `render_group_html_core`.
+- `src-tauri/src/lib.rs` now keeps Tauri command wrappers and shared app wiring for this domain, which preserves command names and macro scope while reducing backend monolith size.
+- The user clarification is now an explicit product invariant: `Questions 14-26` / `Questions 14–26` at the start of Passage 2 is a valid umbrella question-range indicator. It must be preserved under `umbrellaQuestionRanges`, not discarded as instruction noise.
+- When later concrete subgroups exist, the umbrella range must not be duplicated as a concrete Q14-Q26 group. When only the umbrella range exists, the app creates a low-confidence `requiresManualQuestionImport` scaffold and keeps the item in AuthoringReview.
+
+### PDF Upload Chain Finding
+- The current tested chain matches the intended strategy:
+  - text-layer PDF/DOCX/TXT/MD use deterministic Rust parsing and can reach split/AuthoringIR;
+  - image/no-text or mixed PDF pages are eligible for vision transcription and require SourceReview before publish;
+  - manual and vision transcriptions can produce DocumentIR and reach split, but vision output remains review-gated.
+- This confirms the production direction: no bundled local OCR engine is required for MVP/macOS; visual OCR replacement belongs to the LLM vision path plus mandatory human verification.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo check)` | pass |
+| `(cd src-tauri && cargo test umbrella -- --nocapture)` | pass, 3 tests |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test complex_ -- --nocapture)` | pass, 4 tests |
+| `(cd src-tauri && cargo test transcription -- --nocapture)` | pass, 2 tests |
+| `(cd src-tauri && cargo test preview -- --nocapture)` | pass, 3 tests |
+| `(cd src-tauri && cargo test runtime_gate -- --nocapture)` | pass, 3 tests |
+| `(cd src-tauri && cargo test validation_job_state -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 65 tests |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- `authoring_commands.rs` is still JSON-heavy at the boundary with `authoring_pipeline.rs`, `parser.rs`, and `reading_source.rs`. The module split improves ownership, but typed DocumentIR/SplitCandidate/AuthoringIR structs are still needed.
+- Live vision-provider behavior is not covered by these tests. Current verification proves routing, safety gates, and transcription DocumentIR semantics, not external model quality.
+
+## Implementation Findings: 2026-06-01 / E8-62
+
+### Job/Import/Settings Command-Core Boundary
+- `src-tauri/src/job_commands.rs` now owns the command-core layer for local job and import operations:
+  - create/list/get/update/delete job,
+  - import source file,
+  - reveal job folder,
+  - choose export directory,
+  - list LLM profiles,
+  - environment preflight,
+  - diagnostics settings load/save.
+- `src-tauri/src/lib.rs` keeps the Tauri command wrappers and app setup, preserving frontend command names and handler macro scope.
+- App directory setup and file import helpers moved into `src-tauri/src/util.rs`, so file-type detection, filename sanitization, source hashing, app directory creation, and job directory creation are in one utility boundary.
+- `parser.rs` and `llm_profiles.rs` now import `environment::{command_failure, find_sidecar}` directly, reducing root-level coupling.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo check)` | pass |
+| `(cd src-tauri && cargo test job -- --nocapture)` | pass, 3 tests |
+| `(cd src-tauri && cargo test environment_preflight_reports_required_dependency_names -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test complex_ -- --nocapture)` | pass, 4 tests |
+| `(cd src-tauri && cargo test)` | pass, 65 tests |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- Further mechanical extraction from `lib.rs` may have diminishing returns because Tauri command wrappers and shared public DTOs must remain discoverable. The next architecture improvement should prioritize typed domain models for DocumentIR/SplitCandidate/AuthoringIR/validation reports.
+- Job/import command tests mostly prove storage/path safety indirectly through existing fixtures. Broader UI E2E for actual desktop file picker behavior remains outside current automated coverage.
+
+## Implementation Findings: 2026-06-01 / E8-63
+
+### Typed Domain Seam: SourceReviewV1
+- `SourceReviewV1` is now a real Rust struct in `src-tauri/src/source_review.rs`.
+- `source_review_status` constructs the typed struct and serializes it back to the same JSON contract used by the rest of the app.
+- `write_source_review_status` round-trips through the typed struct before persisting.
+- `source_review_issues` can parse either typed or legacy JSON input, so the seam is backward-compatible with existing saved fixtures and tests.
+
+### Why This Seam Matters
+- Source review is the hard publish gate for parser warnings and low-confidence PDF paths. Typing this boundary reduces the risk of field drift where `resolvedAt`, `note`, or the `parserWarnings` / `lowConfidenceBlocks` arrays are renamed or malformed.
+- The seam is narrow enough to verify thoroughly without changing the frontend contract or the existing persistence file format.
+
+### Verification
+| Test | Status |
+|------|--------|
+| `(cd src-tauri && cargo test source_review_status_preserves_v1_json_contract -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test source_review -- --nocapture)` | pass, 7 tests |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 66 tests |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+### Remaining Risk
+- Only one typed seam is in place. `DocumentIR`, `SplitCandidates`, `ReadingAuthoringIR`, and validation/export report structures still rely heavily on `serde_json::Value`.
+- The current seam proves the pattern, but it does not yet remove the broader JSON drift risk in the main pipeline.
+
+## 2026-06-01 / E8-64 Findings
+
+### SplitCandidates Typed Seam
+- `make_dynamic_split_candidates` now constructs typed DTOs before returning the existing JSON contract. This preserves frontend compatibility while reducing backend field-name drift risk.
+- The DTO coverage includes `SplitCandidatesV1`, `PassageCandidateV1`, `SplitGroupCandidateV1`, `UmbrellaQuestionRangeV1`, and `AnswerKeyCandidateV1`.
+- Optional manual-review flags on split groups use `skip_serializing_if = "Option::is_none"`, so ordinary concrete groups keep the same compact JSON shape while umbrella-only scaffolds still expose `isUmbrellaRange` and `requiresManualQuestionImport`.
+
+### Opening `Questions 14-26` / `Questions 14–26` Product Rule
+- The opening total question range is valid metadata and must be preserved in `umbrellaQuestionRanges`.
+- It must not become a duplicate concrete Q14-Q26 group when later concrete subgroups such as Q14-19, Q20-23, and Q24-26 are available.
+- If the opening range is the only question range recognized after PDF extraction or vision transcription, the app must create a low-confidence manual import scaffold and block publish/release until concrete prompts are manually imported and reviewed.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `(cd src-tauri && cargo test umbrella -- --nocapture)` | pass, 4 tests |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 67 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+## 2026-06-01 / E8-65 Findings
+
+### ReadingAuthoringIR Typed Seam
+- `make_dynamic_authoring_ir` now constructs `ReadingAuthoringIrV1` typed DTOs before serializing to the existing JSON contract.
+- Stable contract fields are typed: `schemaVersion`, `jobId`, `exam`, `passage`, `groups`, `questions`, `answerKey`, `questionOrder`, `questionDisplayMap`, and `audit`.
+- Flexible DSL fields remain JSON values by design: `interaction` and `layout` still allow future controls/templates without requiring immediate Rust enum churn.
+- `answerKey`, `questionOrder`, and `questionDisplayMap` are now derived from typed groups/questions, reducing the risk of mismatched ids or display numbers during generation.
+
+### Review Gate Boundary
+- Structural validation and publish readiness are intentionally different gates.
+- Umbrella-only `Questions 14-26` scaffolds may pass structural validation because the generated source shape is valid, but they remain blocked by AuthoringReview/publish readiness until manual prompt import and verification are complete.
+- This is the correct product behavior for scanned/partial PDF cases: the app can preserve recoverable structure while refusing to publish unverified concrete question prompts.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `(cd src-tauri && cargo test reading_authoring_ir_v1_preserves_manual_import_contract -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 68 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+## 2026-06-01 / E8-66 Findings
+
+### ReadingExamSourceV1 Typed Seam
+- `reading_source(authoring)` now constructs `ReadingExamSourceV1` typed DTOs before serializing to the existing JSON contract.
+- The passage block contract is now normalized explicitly to `{ blockId, kind: "html", html }`, which matches the frontend/runtime `ReadingExamSourceV1` type definition.
+- The export/runtime boundary continues to work with existing preview, runtime validation, and pack/export consumers because the external JSON shape is unchanged.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `(cd src-tauri && cargo test reading_source_v1_preserves_export_contract -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test reading_source_uses_real_source_metadata_and_review_status -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 69 tests |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+## 2026-06-01 / E8-67 Findings
+
+### ValidationReport Typed Seam
+- `validate_authoring` now emits `ValidationReportV1` through typed Rust DTOs while preserving the existing frontend JSON contract.
+- `validation_layers` now returns typed `ValidationLayerReportV1` entries, keeping `issueCount`, `errorCount`, and `warningCount` stable across AuthoringIR, ReadingExamSourceV1, DomProtocol, and RuntimePreview layers.
+- The `runtime` field intentionally remains an optional JSON extension because real-runtime diagnostics and fallback reports can add variable provider-specific payloads.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `(cd src-tauri && cargo test validation_report_v1_preserves_static_runtime_contract -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test runtime_gate -- --nocapture)` | pass, 3 tests |
+| `(cd src-tauri && cargo test preview -- --nocapture)` | pass, 3 tests |
+| `(cd src-tauri && cargo test)` | pass, 70 tests |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+## 2026-06-01 / E8-68 Findings
+
+### Auto-Pipeline Publish Safety
+- Rust production auto-pipeline already considered `remaining_authoring_review` when projecting status, so umbrella-only/manual-import drafts do not become `ExportReady` even if structural validation and static runtime contract pass.
+- Added an explicit regression for umbrella-only `Questions 14–26` auto-pipeline behavior. The pipeline report can show `validationPassed=true` and `staticRuntimePassed=true`, but final status remains `NeedsReview` while `authoring.remainingReviewItems > 0`.
+- Browser dev fallback was weaker: it did not include AuthoringReview in `run_auto_pipeline` status projection. It now mirrors Rust by using `refreshReviewState` and adding `authoring.remainingReviewItems` to the report.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `(cd src-tauri && cargo test auto_pipeline_blocks_umbrella_only_manual_import_from_export_ready -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test auto_pipeline -- --nocapture)` | pass, 4 tests |
+| `(cd src-tauri && cargo test)` | pass, 71 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+## 2026-06-01 / E8-69 Findings
+
+### Opening Question Range Product Semantics
+- User clarified that opening instructions like `Questions 14-26` / `Questions 14–26` are correct question-group information, even when they are presented as passage-level setup rather than a concrete interactive subgroup heading.
+- The correct model is two-level:
+  - Opening full-passage range is retained as umbrella metadata and review context.
+  - Concrete later subgroups such as `Questions 14-19`, `Questions 20-23`, and `Questions 24-26` remain the publishable interaction groups when present.
+  - If only the umbrella range exists, the app still creates a low-confidence `requiresManualQuestionImport` scaffold and blocks publish until concrete prompts are manually entered/verified.
+
+### Implementation Finding
+- Previously, the umbrella range was visible in `SplitCandidatesV1.umbrellaQuestionRanges`, but it did not reliably survive into later AuthoringIR/export metadata.
+- `ReadingAuthoringIRV1.passage.questionUmbrellaRanges` now carries the opening range forward after AuthoringIR generation.
+- `ReadingExamSourceV1.meta.questionUmbrellaRanges` and `meta.questionIntroHtml` now preserve and render the opening range in preview/export source metadata.
+- Browser dev fallback and frontend template rendering now mirror the Rust path, preventing production/dev drift.
+- GroupEditor and UnifiedPreview now show the preserved opening total range, so users can see that the opening instruction was included instead of discarded.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `(cd src-tauri && cargo test opening_umbrella_range_is_included_without_replacing_concrete_groups -- --nocapture)` | pass |
+| `(cd src-tauri && cargo test umbrella -- --nocapture)` | pass, 5 tests |
+| `(cd src-tauri && cargo fmt --check && cargo test)` | pass, 71 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `npm run check` | pass |
+| `git diff --check` | pass |
+
+## 2026-06-01 / E8-70 Findings
+
+### Opening `Questions 14-26` Reconfirmation
+- User reconfirmed that `Questions 14-26` / `Questions 14–26` at the start of the passage is a valid题组范围, just presented differently from later concrete subgroups.
+- Current production behavior matches this rule:
+  - Full-sentence openings such as `Questions 14–26 are based on Reading Passage 2 below` are detected as umbrella question ranges.
+  - Standalone extracted headings such as `Questions 14–26` near `READING PASSAGE 2` are also detected as umbrella question ranges.
+  - The opening range is preserved as metadata in split, AuthoringIR, ReadingExamSource, preview, and export context.
+  - Concrete later groups remain the publishable interaction groups when available.
+  - If the opening range is the only detected question structure, the app creates a low-confidence `requiresManualQuestionImport` scaffold and keeps AuthoringReview blocking export.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `npm run check` | pass |
+| `(cd src-tauri && cargo test umbrella -- --nocapture)` | pass, 5 tests |
+| `(cd src-tauri && cargo test files_pdf_samples_reach_expected_review_paths -- --nocapture)` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass |
+| `(cd src-tauri && cargo test)` | pass, 72 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+## 2026-06-01 / E8-71 Findings
+
+### Browser UI-Flow Diagnostic Coverage
+- Added `sidecars/ui-flow-e2e/ui-flow-e2e.mjs` as a development/CI diagnostic script. It uses host Chrome/Chromium through the DevTools Protocol directly, so no Playwright/Puppeteer dependency is added and no browser automation runtime is bundled into production.
+- Added `npm run e2e:ui-flow` as the entrypoint.
+- The diagnostic currently covers:
+  - Clear-text import through ImportWizard and auto-pipeline.
+  - Low-confidence dev LLM fallback routing to `LlmReview`.
+  - Static runtime validation evidence present as `runtime.mode = static-rust`.
+  - OCR/scanned-like import through `parseMode=ocr`.
+  - Vision transcription application in dev fallback.
+  - SourceReview-first routing to `DocumentReview` when parser/vision review is required.
+
+### Drift Fixed
+- The first UI-flow run found that dev fallback `mergeValidationReports` kept RuntimePreview layer pass/fail counts but dropped the `runtime` extension object, so UI diagnostics could not observe `runtime.mode = static-rust`.
+- `src/services/devFallbackBackend.ts` now preserves `sidecar.runtime ?? base.runtime` when merging validation reports.
+- This is a dev fallback alignment fix, not a production gate change. Rust production validation reports already preserve runtime evidence.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `npm run e2e:ui-flow` | pass; clear text routed to `LlmReview` with `runtimeMode=static-rust`; OCR routed to `DocumentReview` with SourceReview `required` and `visionApplied=true` |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test)` | pass, 72 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+## 2026-06-01 / E8-72 Findings
+
+### UI E2E Expanded To Review/Preview/Export/Pack
+- The UI-flow diagnostic now proves more than initial routing:
+  - Clear-text import reaches low-confidence LLM review.
+  - A simulated human verification step marks all AuthoringIR questions verified and preserves answer key/order/display-map consistency.
+  - GroupEditor validation routes to UnifiedPreview.
+  - Preview assets and RuntimePreview diagnostics are generated through the UI.
+  - Export emits four files in the UI (`json`, exam wrapper JS, `manifest.js`, `preview.html`) and then cleanup advances the job to `Cleaned`.
+  - PackBuilder can select the exported/cleaned job and build a pack result.
+- Added stable `data-testid` hooks to GroupEditor, UnifiedPreview, and PackBuilder for those user-visible actions.
+- The OCR/scanned path remains intentionally blocked at SourceReview, validating that image/vision output does not skip human source verification.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `npm run e2e:ui-flow` | pass; clear text review/preview/export/pack completed with finalStatus `Cleaned`, `runtimeMode=static-rust`, `exportedFileCount=4`, `packBuilt=true`; OCR remained `NeedsReview` at `DocumentReview` with SourceReview `required` and `visionApplied=true` |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test)` | pass, 72 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+## 2026-06-01 / E8-73 Findings
+
+### Scanned PDF Manual Recovery Path
+- The UI-flow diagnostic now covers the full scanned/image-PDF recovery path:
+  - `parseMode=ocr` causes vision transcription to be attempted/applied in dev fallback.
+  - The job remains `NeedsReview` at `DocumentReview` with SourceReview required.
+  - The author can paste manual transcription text through DocumentReview.
+  - The manual transcription creates a `manual-transcription` DocumentIR and resolves source review risk for the test fixture.
+  - Rule split and AuthoringIR generation work from that manual text.
+  - Human verification then allows Preview, RuntimePreview diagnostic, Export, and Pack.
+- This matches the intended product workflow: scanned/vision output is never silently trusted; manual or human-verified transcription can become publishable only after review gates are satisfied.
+
+### Verification Snapshot
+| Command | Result |
+|---------|--------|
+| `npm run e2e:ui-flow` | pass; OCR path initial SourceReview `required`, `visionApplied=true`, manual provider `manual-transcription`, finalStatus `Cleaned`, `runtimeMode=static-rust`, `exportedFileCount=4`, `packBuilt=true`; clear text path also passed |
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check && cargo test)` | pass, 72 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+## Implementation Findings: 2026-06-01 Cross-Platform API Key Storage
+
+### Secret Storage Product Rule
+- User clarified that API-key storage cannot overfit to macOS Keychain because the authoring app also targets Windows.
+- The implementation now uses the Rust `keyring` crate as the default OS secure storage adapter instead of shelling out to `/usr/bin/security` directly.
+- Runtime semantics:
+  - macOS: system Keychain via `keyring`.
+  - Windows: Credential Manager via `keyring`.
+  - Other desktop platforms: system keyring/secret-service where available.
+  - Plaintext app-data secret files remain disabled unless `EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK=1` is explicitly set.
+- UI copy now says “系统安全存储” and lists macOS Keychain / Windows Credential Manager / system keyring instead of implying a macOS-only production path.
+- Environment preflight now includes `security:os-secret-storage` plus the existing plaintext fallback warning.
+
+### Verification Evidence
+| Command | Result |
+|---------|--------|
+| `npm run check` | pass |
+| `(cd src-tauri && cargo fmt --check)` | pass after formatting |
+| `(cd src-tauri && cargo test)` | pass, 72 tests |
+| `(cd src-tauri && cargo clippy --all-targets -- -D warnings)` | pass |
+| `git diff --check` | pass |
+
+### Residual Risk
+- This machine verifies macOS compilation and behavior only. Windows Credential Manager must still be smoke-tested on Windows before claiming cross-platform release readiness.
+
+### Keyring Feature Audit
+- `keyring` 3.6.3 does not enable native platform backends through default features alone.
+- `src-tauri/Cargo.toml` now explicitly enables `apple-native`, `windows-native`, `linux-native-sync-persistent`, and `crypto-rust`.
+- `cargo tree -e features -i keyring` verified that the compiled feature graph includes all three production backend families.
+
+### Real Provider Smoke Evidence
+- User-supplied OpenAI-compatible endpoint/model was tested without persisting the API key into repository files.
+- Text path returned HTTP 200 and valid JSON content.
+- Vision path accepted an OpenAI-style `image_url` message and returned HTTP 200 with image token usage.
+- Next deeper provider validation should run the Rust `run_llm_gateway`/auto-pipeline path against a real rendered PDF page, but the provider capability itself is no longer unverified.
