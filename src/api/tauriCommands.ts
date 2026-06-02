@@ -58,8 +58,8 @@ export async function deleteJob(jobId: string): Promise<void> {
   return command("delete_job", { jobId });
 }
 
-export async function importSourceFile(jobId: string, filePath: string, role: SourceFileRole, sizeBytes = 0): Promise<SourceFile> {
-  return command("import_source_file", { jobId, filePath, role, sizeBytes });
+export async function importSourceFile(jobId: string, filePath: string, role: SourceFileRole, sizeBytes = 0, textContent?: string): Promise<SourceFile> {
+  return command("import_source_file", { jobId, filePath, role, sizeBytes, textContent });
 }
 
 export async function parseDocument(jobId: string, options: ParseOptions): Promise<DocumentIr> {

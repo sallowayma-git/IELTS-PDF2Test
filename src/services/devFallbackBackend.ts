@@ -32,6 +32,7 @@ import { buildManifest, buildWrapper, escapeHtml, renderGroupBodyHtml, toReading
 type Store = {
   jobs: ImportJob[];
   documents: Record<string, DocumentIr>;
+  sourceTexts: Record<string, Record<string, string>>;
   splits: Record<string, SplitCandidates>;
   authoring: Record<string, ReadingAuthoringIr>;
   validation: Record<string, ValidationReport>;
@@ -71,6 +72,7 @@ function initialStore(): Store {
   return {
     jobs: [],
     documents: {},
+    sourceTexts: {},
     splits: {},
     authoring: {},
     validation: {},
@@ -134,117 +136,33 @@ function detectFileType(name: string): SourceFile["fileType"] {
   return "unknown";
 }
 
-function sampleBlocks(job: ImportJob): DocumentBlock[] {
-  return [
-    {
-      blockId: "b001",
-      blockType: "header",
-      text: "READING PASSAGE 1",
-      html: "<h2>READING PASSAGE 1</h2>",
-      bbox: [72, 60, 460, 88],
-      confidence: 0.99,
-      roleHint: "passage"
-    },
-    {
-      blockId: "b002",
-      blockType: "paragraph",
-      text: job.title || "The Rise and Fall of Detective Stories",
-      html: `<h3>${escapeHtml(job.title || "The Rise and Fall of Detective Stories")}</h3>`,
-      bbox: [72, 100, 520, 130],
-      confidence: 0.97,
-      roleHint: "passage"
-    },
-    {
-      blockId: "b003",
-      blockType: "paragraph",
-      text: "Detective fiction developed from short literary experiments into a recognizable public genre. Early writers used clues, alibis, and narrators to teach readers how to reason through a mystery.",
-      html: "<p>Detective fiction developed from short literary experiments into a recognizable public genre. Early writers used clues, alibis, and narrators to teach readers how to reason through a mystery.</p>",
-      bbox: [72, 145, 520, 210],
-      confidence: 0.96,
-      roleHint: "passage"
-    },
-    {
-      blockId: "b004",
-      blockType: "paragraph",
-      text: "Questions 1-5 Do the following statements agree with the information given in Reading Passage 1? TRUE if the statement agrees, FALSE if it contradicts, NOT GIVEN if there is no information.",
-      html: "<h3>Questions 1-5</h3><p>Do the following statements agree with the information given in Reading Passage 1?</p>",
-      bbox: [72, 250, 520, 320],
-      confidence: 0.94,
-      roleHint: "question"
-    },
-    {
-      blockId: "b005",
-      blockType: "list",
-      text: "1 Detective fiction first appeared as a public genre before short literary experiments. 2 Early detective stories trained readers to interpret clues. 3 Every early detective writer used a police officer as narrator. 4 Alibis were one device used in the genre. 5 The passage says detective fiction disappeared in the twentieth century.",
-      html: "<ol><li>Detective fiction first appeared as a public genre before short literary experiments.</li><li>Early detective stories trained readers to interpret clues.</li><li>Every early detective writer used a police officer as narrator.</li><li>Alibis were one device used in the genre.</li><li>The passage says detective fiction disappeared in the twentieth century.</li></ol>",
-      bbox: [72, 330, 520, 520],
-      confidence: 0.91,
-      roleHint: "question"
-    },
-    {
-      blockId: "b006",
-      blockType: "paragraph",
-      text: "Questions 6-8 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.",
-      html: "<h3>Questions 6-8</h3><p>Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</p>",
-      bbox: [72, 540, 520, 590],
-      confidence: 0.95,
-      roleHint: "question"
-    },
-    {
-      blockId: "b007",
-      blockType: "table",
-      text: "Feature | Function | clues | help readers reason | alibis | complicate the mystery | narrators | guide interpretation",
-      html: "<table><tr><th>Feature</th><th>Function</th></tr><tr><td>clues</td><td>help readers reason</td></tr><tr><td>alibis</td><td>complicate the mystery</td></tr><tr><td>narrators</td><td>guide interpretation</td></tr></table>",
-      table: {
-        rows: 4,
-        cols: 2,
-        cells: [
-          { row: 0, col: 0, text: "Feature" },
-          { row: 0, col: 1, text: "Function" },
-          { row: 1, col: 0, text: "clues" },
-          { row: 1, col: 1, text: "help readers reason" },
-          { row: 2, col: 0, text: "alibis" },
-          { row: 2, col: 1, text: "complicate the mystery" },
-          { row: 3, col: 0, text: "narrators" },
-          { row: 3, col: 1, text: "guide interpretation" }
-        ]
-      },
-      bbox: [72, 600, 520, 760],
-      confidence: 0.93,
-      roleHint: "question"
-    },
-    {
-      blockId: "b008",
-      blockType: "paragraph",
-      text: "Answers 1 FALSE 2 TRUE 3 NOT GIVEN 4 TRUE 5 FALSE 6 clues 7 alibis 8 narrators",
-      html: "<p>Answers: 1 FALSE; 2 TRUE; 3 NOT GIVEN; 4 TRUE; 5 FALSE; 6 clues; 7 alibis; 8 narrators.</p>",
-      bbox: [72, 780, 520, 820],
-      confidence: 0.9,
-      roleHint: "answer"
-    }
-  ];
+function mainSourceFile(job: ImportJob): SourceFile | undefined {
+  return job.sourceFiles.find((source) => source.role === "MainQuestion");
 }
 
-function makeDocumentIr(job: ImportJob, options: ParseOptions): DocumentIr {
-  return {
-    schemaVersion: "DocumentIRV1",
-    jobId: job.jobId,
-    pages: [
-      {
-        pageIndex: 1,
-        width: 595,
-        height: 842,
-        blocks: sampleBlocks(job)
+function devFallbackUnsupportedSourceMessage(source?: SourceFile): string {
+  const name = source?.originalName ?? "未选择文件";
+  const type = source?.fileType ?? "unknown";
+  return `浏览器开发预览无法解析 ${type.toUpperCase()} 文件“${name}”。请使用 Tauri 桌面应用运行真实解析，或上传 TXT/MD 文本文件/在文档审核页粘贴人工转录；系统不会再生成演示内容作为替代。`;
+}
+
+function makeDocumentIr(job: ImportJob, options: ParseOptions, sourceTexts: Record<string, string> = {}): DocumentIr {
+  const source = mainSourceFile(job);
+  const text = source ? sourceTexts[source.fileId]?.trim() : "";
+  if (text) {
+    const ir = makeManualDocumentIr(job, text);
+    return {
+      ...ir,
+      parser: {
+        provider: "browser-dev-text-file",
+        version: "0.3.0",
+        mode: options.mode === "ocr" ? "text" : options.mode,
+        warnings: ["浏览器开发预览仅使用已上传 TXT/MD 文本；PDF/DOCX 请使用 Tauri 桌面解析。"]
       }
-    ],
-    assets: [],
-    parser: {
-      provider: "local-parser-placeholder",
-      version: "0.1.0",
-      mode: options.mode,
-      warnings: options.mode === "ocr" ? ["OCR 识别结果需要人工确认。"] : []
-    }
-  };
+    };
+  }
+
+  throw new Error(devFallbackUnsupportedSourceMessage(source));
 }
 
 function makeManualDocumentIr(job: ImportJob, text: string): DocumentIr {
@@ -688,7 +606,15 @@ function inferPassageTitle(job: ImportJob, passageBlocks: DocumentBlock[]): stri
 
 function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandidates {
   const blocks = flattenBlocks(doc);
-  if (!blocks.length) return makeStaticSplit(jobId);
+  if (!blocks.length) {
+    return {
+      jobId,
+      passageCandidates: [],
+      questionGroupCandidates: [],
+      answerKeyCandidates: [],
+      issues: ["未解析到真实文档内容；请重新导入可解析文件或粘贴人工转录。"]
+    };
+  }
 
   const firstQuestionIndex = blocks.findIndex(isQuestionBlock);
   const firstConcreteQuestionIndex = blocks.findIndex((block, index) => {
@@ -816,49 +742,6 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
       ...externalAnswerCandidates
     ],
     issues
-  };
-}
-
-function makeStaticSplit(jobId: string): SplitCandidates {
-  return {
-    jobId,
-    passageCandidates: [{ range: ["b001", "b002", "b003"], title: "The Rise and Fall of Detective Stories", categoryHint: "P1" }],
-    questionGroupCandidates: [
-      {
-        groupId: "group-1",
-        heading: "Questions 1-5",
-        questionRange: [1, 5],
-        instructionText: "Do the following statements agree with the information given in Reading Passage 1?",
-        blockIds: ["b004", "b005"],
-        kindHint: "true_false_not_given",
-        confidence: 0.88
-      },
-      {
-        groupId: "group-2",
-        heading: "Questions 6-8",
-        questionRange: [6, 8],
-        instructionText: "Complete the table below. Choose ONE WORD ONLY from the passage for each answer.",
-        blockIds: ["b006", "b007"],
-        kindHint: "table_completion",
-        confidence: 0.84
-      }
-    ],
-    answerKeyCandidates: [
-      {
-        source: "local-answer-block:b008",
-        answers: {
-          "1": "FALSE",
-          "2": "TRUE",
-          "3": "NOT GIVEN",
-          "4": "TRUE",
-          "5": "FALSE",
-          "6": "clues",
-          "7": "alibis",
-          "8": "narrators"
-        }
-      }
-    ],
-    issues: []
   };
 }
 
@@ -1510,6 +1393,10 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       };
       const job = requireJob(store, jobId);
       updateJob(store, jobId, { sourceFiles: [...job.sourceFiles, source], status: "Working", currentStep: "DocumentReview" });
+      const textContent = typeof args.textContent === "string" ? args.textContent.trim() : "";
+      if (textContent) {
+        store.sourceTexts[jobId] = { ...(store.sourceTexts[jobId] ?? {}), [source.fileId]: textContent };
+      }
       save(store);
       return source as T;
     }
@@ -1517,7 +1404,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "parse_document": {
       const jobId = args.jobId as string;
       const job = requireJob(store, jobId);
-      const ir = makeDocumentIr(job, (args.options ?? { mode: "auto" }) as ParseOptions);
+      const ir = makeDocumentIr(job, (args.options ?? { mode: "auto" }) as ParseOptions, store.sourceTexts[jobId]);
       store.documents[jobId] = ir;
       delete store.sourceReviews[jobId];
       const review = sourceReviewStatus(store, jobId);
@@ -1533,7 +1420,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 	    case "rerun_ocr": {
 	      const jobId = args.jobId as string;
 	      const job = requireJob(store, jobId);
-	      const ir = makeDocumentIr(job, { mode: "ocr" });
+	      const ir = makeDocumentIr(job, { mode: "ocr" }, store.sourceTexts[jobId]);
 	      store.documents[jobId] = ir;
 	      delete store.sourceReviews[jobId];
 	      save(store);
@@ -1633,7 +1520,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const threshold = Math.min(1, Math.max(0, input.confidenceThreshold ?? 0.85));
       let job = requireJob(store, jobId);
 
-      let documentIr = store.documents[jobId] ?? makeDocumentIr(job, { mode: input.parseMode ?? "auto" });
+      let documentIr = store.documents[jobId] ?? makeDocumentIr(job, { mode: input.parseMode ?? "auto" }, store.sourceTexts[jobId]);
       const visionTranscription = { attempted: false, applied: false, profileId: input.profileId ?? store.profiles.find((profile) => profile.enabled)?.profileId ?? "profile-local-placeholder", warnings: [] as string[], failure: null as string | null, confidence: undefined as number | undefined };
       if (
         documentIr.parser.mode === "ocr" &&

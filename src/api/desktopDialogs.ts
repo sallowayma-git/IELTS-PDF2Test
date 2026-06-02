@@ -7,6 +7,9 @@ export interface PickedPath {
   path: string;
   name: string;
   sizeBytes: number;
+  titleHint?: string;
+  textContent?: string;
+  requiresDesktopParser?: boolean;
 }
 
 function nameFromPath(path: string): string {
@@ -16,7 +19,8 @@ function nameFromPath(path: string): string {
 function takeDevPickedPath(): PickedPath | null {
   const fromQuery = new URLSearchParams(window.location.search).get("epic8DevPickedPath");
   if (fromQuery) {
-    return { path: fromQuery, name: nameFromPath(fromQuery), sizeBytes: 0 };
+    const name = nameFromPath(fromQuery);
+    return { path: fromQuery, name, sizeBytes: 0, titleHint: cleanFileStem(name) };
   }
 
   const raw = window.localStorage.getItem(DEV_PICKED_PATHS_KEY);
@@ -32,10 +36,12 @@ function takeDevPickedPath(): PickedPath | null {
     }
     const path = typeof first === "string" ? first : first.path;
     if (!path) return null;
+    const name = typeof first === "string" ? nameFromPath(path) : first.name ?? nameFromPath(path);
     return {
       path,
-      name: typeof first === "string" ? nameFromPath(path) : first.name ?? nameFromPath(path),
-      sizeBytes: typeof first === "string" ? 0 : first.sizeBytes ?? 0
+      name,
+      sizeBytes: typeof first === "string" ? 0 : first.sizeBytes ?? 0,
+      titleHint: typeof first === "string" ? cleanFileStem(name) : first.titleHint ?? cleanFileStem(name)
     };
   } catch {
     window.localStorage.removeItem(DEV_PICKED_PATHS_KEY);
@@ -52,15 +58,63 @@ export async function chooseSourceFile(): Promise<PickedPath | null> {
       filters: [{ name: "IELTS source documents", extensions: ["pdf", "docx", "txt", "md"] }]
     });
     if (!selected || Array.isArray(selected)) return null;
-    return { path: selected, name: nameFromPath(selected), sizeBytes: 0 };
+    const name = nameFromPath(selected);
+    return { path: selected, name, sizeBytes: 0, titleHint: cleanFileStem(name) };
   }
 
   const preset = takeDevPickedPath();
   if (preset) return preset;
 
-  const fallback = window.prompt("非 Tauri 开发预览：输入本地文件路径或文件名", "demo-reading.pdf");
-  if (!fallback) return null;
-  return { path: fallback, name: nameFromPath(fallback), sizeBytes: 0 };
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".pdf,.docx,.txt,.md,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    input.style.position = "fixed";
+    input.style.left = "-9999px";
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      resolve({
+        path: file.name,
+        name: file.name,
+        sizeBytes: file.size,
+        ...(await browserFileMetadata(file))
+      });
+    }, { once: true });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+function cleanFileStem(name: string): string {
+  return name
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function browserFileMetadata(file: File): Promise<Pick<PickedPath, "titleHint" | "textContent" | "requiresDesktopParser">> {
+  if (/\.(txt|md)$/i.test(file.name) || /^text\//.test(file.type)) {
+    const text = await file.text();
+    const candidate = text
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^#+\s*/, "").trim())
+      .find((line) => line.length >= 4
+        && line.length <= 120
+        && !/^questions?\s+\d/i.test(line)
+        && !/^answers?\b/i.test(line)
+        && !/^reading passage\s+\d/i.test(line)
+        && !/^you should spend\b/i.test(line));
+    return { titleHint: candidate || cleanFileStem(file.name) || undefined, textContent: text };
+  }
+
+  const fromName = cleanFileStem(file.name);
+  return { titleHint: fromName || undefined, requiresDesktopParser: true };
 }
 
 export async function chooseExportDirectory(): Promise<string | null> {

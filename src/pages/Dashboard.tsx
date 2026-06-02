@@ -1,4 +1,3 @@
-import { createImportJob, importSourceFile, parseDocument, runRuleSplit, buildAuthoringIr } from "../api/tauriCommands";
 import { StatusPill } from "../components/StatusPill";
 import { go } from "../app/router";
 import type { ImportJob, JobStatus } from "../types";
@@ -8,21 +7,6 @@ const statusOrder: JobStatus[] = ["Working", "NeedsReview", "DraftSaved", "Expor
 
 export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () => void }) {
   const counts = statusOrder.map((status) => ({ status, count: jobs.filter((job) => job.status === status).length }));
-
-  async function createDemo() {
-    try {
-      const job = await createImportJob({ title: "The Rise and Fall of Detective Stories", category: "P1", frequency: "medium", tags: ["demo", "mvp"] });
-      await importSourceFile(job.jobId, "demo-reading.pdf", "MainQuestion", 512000);
-      await parseDocument(job.jobId, { mode: "auto" });
-      await runRuleSplit(job.jobId);
-      await buildAuthoringIr(job.jobId);
-      refresh();
-      go(`/jobs/${job.jobId}/groups`);
-    } catch (error) {
-      console.error(error);
-      go("/jobs/new");
-    }
-  }
 
   return (
     <section className="dashboard page-enter">
@@ -34,7 +18,6 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
         </div>
         <div className="hero-actions">
           <button className="primary" onClick={() => go("/jobs/new")}>新建导题任务</button>
-          <button className="ghost" onClick={createDemo}>开发演示任务</button>
         </div>
       </div>
 
@@ -65,7 +48,7 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
                 <span>{job.updatedAt.slice(0, 10)}</span>
               </button>
             ))}
-            {!jobs.length ? <p className="empty">暂无任务。创建一个任务或生成演示任务开始。</p> : null}
+            {!jobs.length ? <p className="empty">暂无任务。创建一个任务开始。</p> : null}
           </div>
         </section>
         <aside className="inspector">

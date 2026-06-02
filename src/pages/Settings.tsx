@@ -105,7 +105,6 @@ export function Settings({ refresh }: { refresh: () => void }) {
           <label className="inline-check"><input type="checkbox" checked={form.enabled} onChange={(event) => update("enabled", event.target.checked)} /> 启用</label>
           <button className="primary wide" onClick={save}>保存模型配置</button>
         </section>
-        <aside className="inspector"><p className="eyebrow">本地权限</p><h3>本地权限边界</h3><p>应用只读取用户主动选择的输入文件和导出目录。API Key 默认写入系统安全存储：macOS 使用 Keychain，Windows 使用 Credential Manager，Linux/其他桌面使用系统 keyring/secret-service。明文兜底默认禁用，仅供开发或紧急诊断开启。模型输出只作为结构化建议，不会直接生成最终发布文件。</p></aside>
         <aside className="inspector">
           <p className="eyebrow">Developer / Diagnostics</p>
           <h3>过程文件保留</h3>

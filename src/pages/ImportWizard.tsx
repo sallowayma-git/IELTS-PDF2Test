@@ -6,11 +6,11 @@ import type { AutoPipelineReport, Frequency, PassageCategory } from "../types";
 import { jobStatusLabel, workflowStepLabel, runtimeModeLabel } from "../utils/displayLabels";
 
 export function ImportWizard({ refresh }: { refresh: () => void }) {
-  const [title, setTitle] = useState("The Rise and Fall of Detective Stories");
+  const [title, setTitle] = useState("");
   const [category, setCategory] = useState<PassageCategory>("P1");
   const [frequency, setFrequency] = useState<Frequency>("medium");
   const [parseMode, setParseMode] = useState<"auto" | "text" | "ocr">("auto");
-  const [tags, setTags] = useState("demo,mvp");
+  const [tags, setTags] = useState("");
   const [sourceFile, setSourceFile] = useState<PickedPath | null>(null);
   const [answerFile, setAnswerFile] = useState<PickedPath | null>(null);
   const [busy, setBusy] = useState(false);
@@ -18,7 +18,9 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
   const [error, setError] = useState<string | undefined>();
 
   async function pickSource() {
-    setSourceFile(await chooseSourceFile());
+    const picked = await chooseSourceFile();
+    setSourceFile(picked);
+    if (picked?.titleHint) setTitle(picked.titleHint);
   }
 
   async function pickAnswer() {
@@ -30,12 +32,16 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
       setError("请选择主文件后再创建任务。生产流程不能静默使用 demo 文件。");
       return;
     }
+    if (sourceFile.requiresDesktopParser) {
+      setError("当前浏览器开发预览不能解析 PDF/DOCX 的真实内容。请在 Tauri 桌面应用中导入该文件，或先上传 TXT/MD 文本/使用人工转录；系统不会用演示内容替代真实解析。");
+      return;
+    }
     setBusy(true);
     setError(undefined);
     try {
       const job = await createImportJob({ title, category, frequency, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean) });
-      await importSourceFile(job.jobId, sourceFile.path, "MainQuestion", sourceFile.sizeBytes);
-      if (answerFile) await importSourceFile(job.jobId, answerFile.path, "AnswerKey", answerFile.sizeBytes);
+      await importSourceFile(job.jobId, sourceFile.path, "MainQuestion", sourceFile.sizeBytes, sourceFile.textContent);
+      if (answerFile) await importSourceFile(job.jobId, answerFile.path, "AnswerKey", answerFile.sizeBytes, answerFile.textContent);
       const report = await runAutoPipeline(job.jobId, { confidenceThreshold: 0.85, parseMode });
       setAutoReport(report);
       refresh();
@@ -108,8 +114,8 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
         </section>
         <section className="form-section contrast">
           <span className="step-number">03</span>
-          <h3>本地权限边界</h3>
-          <p>导入只读取用户通过系统对话框显式选择的文件；Rust command 会复制到 app data 的 job uploads 目录并记录 hash。</p>
+          <h3>创建任务</h3>
+          <p>选择主文件后会创建导题任务；答案文件可选，通常可随主文件一并导入。</p>
           {error ? <p className="error-text" data-testid="import-error">{error}</p> : null}
           <button className="primary wide" data-testid="create-and-auto-process" disabled={busy || !sourceFile} onClick={submit}>{busy ? "自动处理中..." : "创建并自动处理"}</button>
         </section>
