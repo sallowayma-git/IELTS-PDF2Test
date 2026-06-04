@@ -374,13 +374,126 @@ fn generate_reading_source_from_path(path: &Path) -> CommandResult<Value> {
     }))
 }
 
+fn cli_option_value(args: &[String], key: &str) -> Option<String> {
+    args.windows(2).find_map(|pair| {
+        if pair.first().map(String::as_str) == Some(key) {
+            pair.get(1).cloned()
+        } else {
+            None
+        }
+    })
+}
+
+fn run_auto_pipeline_from_path(path: &Path, args: &[String]) -> CommandResult<Value> {
+    if !path.exists() || !path.is_file() {
+        return Err(format!("source_file_not_readable:{}", path.display()));
+    }
+    let base_url = cli_option_value(args, "--llm-base-url")
+        .or_else(|| env::var("EPIC8_LIVE_LLM_BASE_URL").ok())
+        .ok_or_else(|| "missing_llm_base_url".to_string())?;
+    let model = cli_option_value(args, "--llm-model")
+        .or_else(|| env::var("EPIC8_LIVE_LLM_MODEL").ok())
+        .ok_or_else(|| "missing_llm_model".to_string())?;
+    let api_key = cli_option_value(args, "--llm-api-key")
+        .or_else(|| env::var("EPIC8_LIVE_LLM_API_KEY").ok())
+        .ok_or_else(|| "missing_llm_api_key".to_string())?;
+    let profile_id =
+        cli_option_value(args, "--llm-profile-id").unwrap_or_else(|| "profile-cli-live".to_string());
+    let root = cli_option_value(args, "--app-root")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            env::temp_dir().join(format!(
+                "ielts-author-studio-live-{}",
+                uuid::Uuid::new_v4().simple()
+            ))
+        });
+
+    util::ensure_app_dirs(&root)?;
+    diagnostics::write_diagnostics_settings(
+        &root,
+        &DiagnosticsSettings {
+            keep_full_process_artifacts: true,
+        },
+    )?;
+    let profile = json!({
+        "profileId": profile_id,
+        "name": "CLI Live API",
+        "provider": "OpenAiCompatible",
+        "baseUrl": base_url,
+        "model": model,
+        "temperature": 0,
+        "timeoutMs": 240000u64,
+        "forceJson": true,
+        "enabled": true
+    });
+    llm_profiles::save_profiles(&root, &[profile])?;
+    env::set_var("EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK", "1");
+    llm_profiles::file_save_secret(&root, &profile_id, &api_key)?;
+
+    let original_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("source.pdf")
+        .to_string();
+    let (sha256, size_bytes, bytes) = util::hash_file_or_path(path)?;
+    let stored_name = format!("{}-{}", &sha256[..8], util::sanitize_filename(&original_name));
+    let source = SourceFile {
+        file_id: "file-cli-main".to_string(),
+        original_name: original_name.clone(),
+        stored_name: stored_name.clone(),
+        file_type: util::file_type_from_name(&original_name).to_string(),
+        sha256,
+        size_bytes,
+        role: "MainQuestion".to_string(),
+        imported_at: Utc::now(),
+    };
+    let mut job = job_store::make_job(CreateJobInput {
+        title: Some(title_from_source_path(path)),
+        category: Some(inferred_category_from_name(&original_name)),
+        frequency: Some("medium".to_string()),
+        tags: Some(vec!["cli-live-api".to_string()]),
+        llm_profile_id: Some(profile_id.clone()),
+    });
+    job.source_files = vec![source.clone()];
+    let dir = util::job_dir(&root, &job.job_id);
+    util::ensure_job_dirs(&dir)?;
+    util::write_bytes(
+        &dir.join("uploads").join(&stored_name),
+        &bytes.ok_or_else(|| format!("source_file_not_readable:{}", path.display()))?,
+    )?;
+    job_store::save_job(&root, &job)?;
+
+    let report = auto_pipeline::run_auto_pipeline_core(
+        &root,
+        &job.job_id,
+        Some(AutoPipelineInput {
+            profile_id: Some(profile_id),
+            confidence_threshold: Some(0.85),
+            parse_mode: Some("auto".to_string()),
+            target: Some("editableDraft".to_string()),
+            allow_overwrite: Some(false),
+        }),
+    )?;
+    let authoring_ir = util::read_json_opt(&dir.join("authoring-ir.json"))?;
+    let project = util::read_json_opt(&dir.join("authoring-project.json"))?;
+    Ok(json!({
+        "schemaVersion": "LiveAutoPipelineCliResultV1",
+        "appRoot": root,
+        "sourcePath": path.to_string_lossy(),
+        "job": job_store::load_job(&root, &job.job_id)?,
+        "report": report,
+        "authoringIr": authoring_ir,
+        "authoringProject": project,
+        "generatedAt": Utc::now().to_rfc3339()
+    }))
+}
+
 fn run_cli(args: &[String]) -> CommandResult<bool> {
-    if args.first().map(String::as_str) != Some("--generate-reading-source") {
+    let command = args.first().map(String::as_str);
+    if !matches!(command, Some("--generate-reading-source" | "--run-auto-pipeline")) {
         return Ok(false);
     }
-    let source = args
-        .get(1)
-        .ok_or_else(|| "missing_source_path".to_string())?;
+    let source = args.get(1).ok_or_else(|| "missing_source_path".to_string())?;
     let mut out_path: Option<PathBuf> = None;
     let mut index = 2usize;
     while index < args.len() {
@@ -389,10 +502,21 @@ fn run_cli(args: &[String]) -> CommandResult<bool> {
                 out_path = args.get(index + 1).map(PathBuf::from);
                 index += 2;
             }
+            "--app-root" | "--llm-base-url" | "--llm-model" | "--llm-api-key"
+            | "--llm-profile-id" => {
+                if args.get(index + 1).is_none() {
+                    return Err(format!("missing_value_for_cli_arg:{}", args[index]));
+                }
+                index += 2;
+            }
             other => return Err(format!("unknown_cli_arg:{}", other)),
         }
     }
-    let result = generate_reading_source_from_path(&PathBuf::from(source))?;
+    let result = if command == Some("--generate-reading-source") {
+        generate_reading_source_from_path(&PathBuf::from(source))?
+    } else {
+        run_auto_pipeline_from_path(&PathBuf::from(source), args)?
+    };
     if let Some(path) = out_path {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -3499,7 +3623,7 @@ Answers
     }
 
     #[test]
-    fn auto_pipeline_keeps_no_text_pdf_blocked_for_source_review() {
+    fn auto_pipeline_keeps_no_text_pdf_review_visible_in_authoring() {
         let root = temp_test_root();
         ensure_app_dirs(&root).unwrap();
         let mut job = test_job();
@@ -3539,11 +3663,30 @@ Answers
         );
         assert_eq!(
             report.get("currentStep").and_then(Value::as_str),
-            Some("DocumentReview")
+            Some("Authoring")
+        );
+        assert_eq!(
+            report.get("nextRoute").and_then(Value::as_str),
+            Some("groups")
+        );
+        assert_eq!(
+            report.get("userStatus").and_then(Value::as_str),
+            Some("needsConfirmation")
+        );
+        assert!(report
+            .get("userMessage")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("题稿已生成"));
+        assert_eq!(
+            report
+                .pointer("/authoring/remainingReviewItems")
+                .and_then(Value::as_u64),
+            Some(0)
         );
         let saved = load_job(&root, &job.job_id).unwrap();
         assert_eq!(saved.status, JobStatus::NeedsReview);
-        assert_eq!(saved.current_step, WorkflowStep::DocumentReview);
+        assert_eq!(saved.current_step, WorkflowStep::Authoring);
         assert!(saved.issue_counts.needs_review > 0);
         let review = source_review_status(
             &root,
@@ -3565,7 +3708,7 @@ Answers
     }
 
     #[test]
-    fn auto_pipeline_routes_source_review_before_llm_review_when_both_block() {
+    fn auto_pipeline_reports_source_review_before_llm_review_in_authoring() {
         let root = temp_test_root();
         ensure_app_dirs(&root).unwrap();
         let mut job = test_job();
@@ -3626,11 +3769,24 @@ Answers
         );
         assert_eq!(
             report.get("currentStep").and_then(Value::as_str),
-            Some("DocumentReview")
+            Some("Authoring")
         );
+        assert_eq!(
+            report.get("nextRoute").and_then(Value::as_str),
+            Some("groups")
+        );
+        assert_eq!(
+            report.get("userStatus").and_then(Value::as_str),
+            Some("needsConfirmation")
+        );
+        assert!(report
+            .get("userMessage")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("源文件识别结果"));
         let saved = load_job(&root, &job.job_id).unwrap();
         assert_eq!(saved.status, JobStatus::NeedsReview);
-        assert_eq!(saved.current_step, WorkflowStep::DocumentReview);
+        assert_eq!(saved.current_step, WorkflowStep::Authoring);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -4397,6 +4553,154 @@ Answers
             !body_html.contains("Questions 8-13 item 11")
                 && !body_html.contains("Questions 8-13 第 11 题")
         );
+    }
+
+    #[test]
+    fn cloud_outline_completion_family_diff_does_not_override_local_inline_notes() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-cloud-compare",
+                "name": "Cloud Compare Test",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 60000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
+        let mut job = make_job(CreateJobInput {
+            title: Some("Cloud Notes Compare".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["cloud-compare-regression".to_string()]),
+            llm_profile_id: Some("profile-cloud-compare".to_string()),
+        });
+        attach_fixture_source(&root, &mut job, "no-text.pdf", "MainQuestion");
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"passage","blockType":"paragraph","text":"The artist combined several techniques across a long career.","html":"<p>The artist combined several techniques.</p>","bbox":[72,80,520,180],"confidence":0.98,"roleHint":"passage"},
+                    {"blockId":"q8-13","blockType":"paragraph","text":"Questions 8-13 Complete the notes below. Write ONE WORD ONLY from the passage for each answer. Early work: 8……… first appeared in local shows. 9……… she gave her artworks 1953 exhibition: a very old method called 10……… was used for some prints was inspired by 11……… about Chinese art Old age: still interested in art and 12………. worked for nearly six decades, making more than 13………. artworks","html":"<p>Questions 8-13 Complete the notes below.</p>","bbox":[72,220,520,430],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 8 symbols 9 titles 10 stencilling 11 books 12 travel 13 400","html":"<p>Answers 8 symbols 9 titles 10 stencilling 11 books 12 travel 13 400</p>","bbox":[72,700,520,760],"confidence":0.92,"roleHint":"answer"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+        write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), &doc).unwrap();
+        write_source_review_status(&root, &job.job_id, Some(&doc), true, None).unwrap();
+
+        let report = run_auto_pipeline_core_with_gateway(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                parse_mode: Some("auto".to_string()),
+                confidence_threshold: Some(0.85),
+                profile_id: Some("profile-cloud-compare".to_string()),
+                target: Some("editableDraft".to_string()),
+                allow_overwrite: None,
+            }),
+            |_root, _job_id, command_name, _input, _api_key| match command_name {
+                "extract_pdf_image_answers" => Ok(json!({
+                    "answers": {
+                        "8": "symbols",
+                        "9": "titles",
+                        "10": "stencilling",
+                        "11": "books",
+                        "12": "travel",
+                        "13": "400"
+                    },
+                    "confidence": 0.99,
+                    "warnings": [],
+                    "evidence": [{"questionNumber": "8", "pageIndex": 1, "quote": "8 symbols"}]
+                })),
+                "generate_pdf_reading_outline" => Ok(json!({
+                    "title": "Cloud Notes Compare",
+                    "groups": [{
+                        "range": [8, 13],
+                        "kind": "summary_completion",
+                        "layoutHint": "list",
+                        "questionIds": ["q8", "q9", "q10", "q11", "q12", "q13"],
+                        "notesText": "",
+                        "confidence": 0.9,
+                        "evidence": {
+                            "quotes": [{"pageIndex": 1, "text": "Questions 8-13 Complete the notes below"}]
+                        }
+                    }],
+                    "answerKey": {
+                        "8": "symbols",
+                        "9": "titles",
+                        "10": "stencilling",
+                        "11": "books",
+                        "12": "travel",
+                        "13": "400"
+                    },
+                    "confidence": 0.9,
+                    "warnings": []
+                })),
+                other => Err(format!("unexpected_command:{}", other)),
+            },
+        )
+        .unwrap();
+
+        let cloud = report.pointer("/quality/cloudComparison").unwrap();
+        assert_eq!(cloud.get("attempted").and_then(Value::as_bool), Some(true));
+        assert_eq!(cloud.get("passed").and_then(Value::as_bool), Some(true));
+        assert_eq!(cloud.get("warningCount").and_then(Value::as_u64), Some(0));
+        let issues = cloud
+            .pointer("/comparison/issues")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            issues.is_empty(),
+            "completion-family naming/layout differences should not become issues: {}",
+            serde_json::to_string_pretty(&issues).unwrap()
+        );
+        let observations = cloud
+            .pointer("/comparison/observations")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(observations.iter().any(|item| {
+            item.get("kind").and_then(Value::as_str)
+                == Some("cloud_completion_kind_normalized")
+        }));
+        assert!(observations.iter().any(|item| {
+            item.get("kind").and_then(Value::as_str)
+                == Some("cloud_layout_deprioritized_by_local_inline_notes")
+        }));
+        let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        assert_eq!(
+            ir.pointer("/groups/0/layout/layoutHint")
+                .and_then(Value::as_str),
+            Some("inline_completion")
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(|question| question.get("id").and_then(Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["q8", "q9", "q10", "q11", "q12", "q13"]
+        );
+        assert_eq!(ir.pointer("/answerKey/q13").and_then(Value::as_str), Some("400"));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -6338,8 +6642,8 @@ Answers
         samples.sort();
         assert_eq!(samples.len(), 4);
 
-        let mut source_review_routed = 0usize;
-        let mut authoring_or_llm_routed = 0usize;
+        let mut source_review_required = 0usize;
+        let mut authoring_or_llm_required = 0usize;
         for sample in samples {
             let root = temp_test_root();
             ensure_app_dirs(&root).unwrap();
@@ -6450,62 +6754,96 @@ Answers
                 source_review.get("required").and_then(Value::as_bool) == Some(true);
             let review_issues = source_review_issues(&source_review);
             if review_required {
-                source_review_routed += 1;
+                source_review_required += 1;
                 assert!(!review_issues.is_empty());
-                assert_eq!(saved.status, JobStatus::NeedsReview);
-                assert_eq!(saved.current_step, WorkflowStep::DocumentReview);
-                assert_eq!(
-                    report.get("currentStep").and_then(Value::as_str),
-                    Some("DocumentReview")
-                );
-                assert_eq!(
-                    report
-                        .pointer("/parser/visionTranscription/attempted")
-                        .and_then(Value::as_bool),
-                    Some(true),
-                    "{} should attempt vision transcription for mixed image/text PDFs",
-                    original_name
-                );
-                assert_eq!(
-                    report
-                        .pointer("/parser/visionTranscription/applied")
-                        .and_then(Value::as_bool),
-                    Some(false),
-                    "{} should not apply failed/unavailable vision transcription",
-                    original_name
-                );
-                assert!(
-                    report
-                        .pointer("/parser/visionTranscription/failure")
-                        .is_some_and(|failure| !failure.is_null()),
-                    "{} should report the unavailable vision gateway while preserving SourceReview",
-                    original_name
-                );
-            } else {
-                authoring_or_llm_routed += 1;
                 assert_eq!(saved.status, JobStatus::NeedsReview);
                 assert_eq!(saved.current_step, WorkflowStep::Authoring);
                 assert_eq!(
                     report.get("currentStep").and_then(Value::as_str),
                     Some("Authoring")
                 );
-                assert!(report
+                assert_eq!(
+                    report.get("nextRoute").and_then(Value::as_str),
+                    Some("groups")
+                );
+                assert_eq!(
+                    report.get("userStatus").and_then(Value::as_str),
+                    Some("needsConfirmation")
+                );
+                assert!(
+                    report
+                        .get("userMessage")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .contains("题稿已生成"),
+                    "{} should keep a user-facing confirmation message visible on the editable draft route",
+                    original_name
+                );
+                let vision_attempted = report
+                    .pointer("/parser/visionTranscription/attempted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if vision_attempted {
+                    assert_eq!(
+                        report
+                            .pointer("/parser/visionTranscription/applied")
+                            .and_then(Value::as_bool),
+                        Some(false),
+                        "{} should not apply failed/unavailable vision transcription",
+                        original_name
+                    );
+                    assert!(
+                        report
+                            .pointer("/parser/visionTranscription/failure")
+                            .is_some_and(|failure| !failure.is_null()),
+                        "{} should report the unavailable vision gateway while preserving source review",
+                        original_name
+                    );
+                } else {
+                    let ir: Value = read_json(&job_path.join("authoring-ir.json")).unwrap();
+                    assert!(
+                        ir.get("groups")
+                            .and_then(Value::as_array)
+                            .map(|groups| !groups.is_empty())
+                            .unwrap_or(false),
+                        "{} may skip full-page vision transcription only after local text produced editable groups",
+                        original_name
+                    );
+                }
+            } else {
+                authoring_or_llm_required += 1;
+                assert_eq!(saved.status, JobStatus::NeedsReview);
+                assert_eq!(saved.current_step, WorkflowStep::Authoring);
+                assert_eq!(
+                    report.get("currentStep").and_then(Value::as_str),
+                    Some("Authoring")
+                );
+                let llm_failed = report
                     .pointer("/llm/failures")
                     .and_then(Value::as_array)
                     .map(|failures| !failures.is_empty())
-                    .unwrap_or(false));
+                    .unwrap_or(false);
+                let remaining_review_items = report
+                    .pointer("/authoring/remainingReviewItems")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                assert!(
+                    llm_failed || remaining_review_items > 0,
+                    "{} should explain why the editable draft still needs confirmation",
+                    original_name
+                );
             }
 
             let _ = fs::remove_dir_all(root);
         }
 
         assert!(
-            source_review_routed >= 3,
-            "mixed image/text samples should route to SourceReview"
+            source_review_required >= 3,
+            "mixed image/text samples should still require source review"
         );
         assert!(
-            authoring_or_llm_routed >= 1,
-            "at least one fully text-layer sample should proceed beyond SourceReview"
+            authoring_or_llm_required >= 1,
+            "at least one fully text-layer sample should require authoring or LLM review"
         );
     }
 }

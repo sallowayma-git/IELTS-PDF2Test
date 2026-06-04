@@ -235,6 +235,78 @@ def render_pdf_preview_with_sips(input_path: Path, output_dir: Path, job_id: str
     return [{"pageIndex": 1, "width": PAPER_WIDTH, "height": PAPER_HEIGHT, "images": [rendered_image_asset(output_path, 1, "macos-sips")]}], warnings
 
 
+def render_pdf_pages_with_pymupdf(input_path: Path, output_dir: Path, job_id: str) -> tuple[list[dict], list[str]]:
+    try:
+        import fitz  # type: ignore
+    except Exception as exc:  # pragma: no cover - depends on host env
+        return [], [f"PyMuPDF renderer unavailable: {exc}"]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pages: list[dict] = []
+    warnings = ["used PyMuPDF rendered-page fallback for vision input"]
+    try:
+        with fitz.open(str(input_path)) as document:
+            for page_index, page in enumerate(document, start=1):
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                output_path = output_dir / f"page-{page_index:03d}-rendered.png"
+                pixmap.save(str(output_path))
+                pages.append(
+                    {
+                        "pageIndex": page_index,
+                        "width": int(page.rect.width or PAPER_WIDTH),
+                        "height": int(page.rect.height or PAPER_HEIGHT),
+                        "images": [rendered_image_asset(output_path, page_index, "pymupdf")],
+                    }
+                )
+    except Exception as exc:
+        return [], [f"PyMuPDF rendered-page fallback failed: {exc}"]
+    return pages, warnings
+
+
+def render_pdf_pages_with_pdftoppm(input_path: Path, output_dir: Path, job_id: str) -> tuple[list[dict], list[str]]:
+    pdftoppm = shutil.which("pdftoppm")
+    if not pdftoppm:
+        return [], ["Poppler pdftoppm renderer is unavailable"]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    prefix = output_dir / "page"
+    try:
+        subprocess.run(
+            [pdftoppm, "-png", "-r", "180", str(input_path), str(prefix)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except Exception as exc:
+        return [], [f"Poppler pdftoppm rendered-page fallback failed: {exc}"]
+
+    rendered = sorted(output_dir.glob("page-*.png"))
+    if not rendered:
+        return [], ["Poppler pdftoppm rendered-page fallback produced no images"]
+    pages = []
+    for page_index, image_path in enumerate(rendered, start=1):
+        pages.append(
+            {
+                "pageIndex": page_index,
+                "width": PAPER_WIDTH,
+                "height": PAPER_HEIGHT,
+                "images": [rendered_image_asset(image_path, page_index, "pdftoppm")],
+            }
+        )
+    return pages, ["used Poppler pdftoppm rendered-page fallback for vision input"]
+
+
+def render_pdf_pages_for_vision(input_path: Path, output_dir: Path, job_id: str) -> tuple[list[dict], list[str]]:
+    all_warnings: list[str] = []
+    for renderer in (render_pdf_pages_with_pymupdf, render_pdf_pages_with_pdftoppm, render_pdf_preview_with_sips):
+        pages, warnings = renderer(input_path, output_dir, job_id)
+        all_warnings.extend(warnings)
+        if any(page.get("images") for page in pages):
+            return pages, all_warnings
+    return [], all_warnings
+
+
 def extract_pdf_images(input_path: Path, output_dir: Path, job_id: str) -> dict:
     warnings: list[str] = []
     try:
@@ -286,7 +358,7 @@ def extract_pdf_images(input_path: Path, output_dir: Path, job_id: str) -> dict:
         pages.append({"pageIndex": page_index, "width": width, "height": height, "images": page_images})
 
     if not any(page["images"] for page in pages):
-        rendered_pages, rendered_warnings = render_pdf_preview_with_sips(input_path, output_dir, job_id)
+        rendered_pages, rendered_warnings = render_pdf_pages_for_vision(input_path, output_dir, job_id)
         warnings.extend(rendered_warnings)
         if rendered_pages:
             pages = rendered_pages

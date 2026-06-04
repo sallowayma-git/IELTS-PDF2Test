@@ -331,6 +331,15 @@ function sourceReviewIssues(review: SourceReview): ValidationIssue[] {
   return issues;
 }
 
+function documentNeedsVisionTranscription(doc?: DocumentIr, requestedMode?: ParseOptions["mode"]): boolean {
+  if (!doc || doc.parser.provider === "vision-llm-transcription") return false;
+  const warnings = parserWarnings(doc).join("\n").toLowerCase();
+  return requestedMode === "ocr"
+    || warnings.includes("no extractable text")
+    || warnings.includes("ocr/manual review required")
+    || lowConfidenceBlockIds(doc).length > 0;
+}
+
 function flattenBlocks(doc?: DocumentIr): DocumentBlock[] {
   type OrderedBlock = DocumentBlock & { pageIndex?: number; __pageWidth: number; __pageHeight: number; __pageRotation: number; __originalOrder: number };
   return (doc?.pages.flatMap((page, pagePosition) => {
@@ -732,6 +741,57 @@ function inferGroupRangeEnd(text: string, start: number, headingEnd: number, all
   return inferredEnd;
 }
 
+function findPromptBoundary(text: string, from: number, nextNumber: number, kind: GroupKind): number {
+  let boundary = findFinalPromptBoundary(text, from);
+  const nextMarker = findNumberMarker(text, nextNumber, from);
+  if (nextMarker) boundary = Math.min(boundary, nextMarker[0]);
+  if (kind === "heading_matching" || kind === "matching" || kind === "matching_information" || kind === "classification") {
+    const lower = text.toLowerCase();
+    for (const marker of [" list of headings", " list of people", " list of researchers", " list of names", " list of options"]) {
+      const index = lower.slice(from).indexOf(marker);
+      if (index >= 0) boundary = Math.min(boundary, from + index);
+    }
+  }
+  return boundary;
+}
+
+function inferGroupRangeEndFromMarkers(text: string, start: number, headingEnd: number, kind: GroupKind): number {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  let inferredEnd = Math.max(start, headingEnd);
+  let cursor = 0;
+  for (let number = start; number <= inferredEnd; number += 1) {
+    const marker = findNumberMarker(normalized, number, cursor);
+    if (marker) cursor = marker[1];
+  }
+  while (inferredEnd < start + 20) {
+    const next = inferredEnd + 1;
+    const marker = findNumberMarker(normalized, next, cursor);
+    if (!marker) break;
+    const preceding = normalized.slice(Math.min(cursor, normalized.length), marker[0]).toLowerCase().replace(/[‐‑‒–—]/g, "-");
+    if (preceding.includes("questions ") || preceding.includes("answers") || preceding.includes("answer key")) break;
+    if (kind === "single_choice") {
+      const segment = normalized.slice(marker[1], findFinalPromptBoundary(normalized, marker[1])).toLowerCase();
+      const hasAbcd = [" a ", " b ", " c ", " d "].every((item) => segment.includes(item));
+      if (!hasSingleChoiceOptionRun(segment) && !hasAbcd) break;
+    } else if (kind === "heading_matching") {
+      const segment = normalized.slice(marker[1], findPromptBoundary(normalized, marker[1], next + 1, kind)).trim();
+      const words = segment.split(/\s+/).filter(Boolean);
+      const firstWord = words[0]?.replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "").toLowerCase();
+      if (words.length > 8 || !["section", "paragraph", "part"].includes(firstWord ?? "")) break;
+    } else if (kind === "matching" || kind === "matching_information" || kind === "classification") {
+      const segment = normalized.slice(marker[1], findPromptBoundary(normalized, marker[1], next + 1, kind)).trim();
+      const wordCount = segment.split(/\s+/).filter(Boolean).length;
+      const firstWord = segment.split(/\s+/)[0]?.replace(/^[^a-z0-9]+|[^a-z0-9]+$/gi, "").toLowerCase();
+      const looksLikeSectionLabel = wordCount <= 8 && ["section", "paragraph", "part"].includes(firstWord ?? "");
+      const looksLikeShortPrompt = wordCount <= 24 && !segment.includes(".") && !segment.includes("?") && !segment.toLowerCase().includes(" reading passage ");
+      if (!looksLikeSectionLabel && !looksLikeShortPrompt) break;
+    }
+    inferredEnd = next;
+    cursor = marker[1];
+  }
+  return inferredEnd;
+}
+
 function letterOptionsForText(text: string): string[] {
   const lower = text.toLowerCase();
   const normalized = lower.replace(/[‐‑‒–—]/g, "-");
@@ -981,10 +1041,13 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
       const classification = classifyGroup(combined, blockIds);
       const allowBlankExtension = ["summary_completion", "sentence_completion", "diagram_completion"].includes(classification.kind);
       const allowListExtension = ["true_false_not_given", "yes_no_not_given"].includes(classification.kind);
-      const end = inferGroupRangeEnd(combined, range[0], range[1], allowBlankExtension, allowListExtension);
+      const end = Math.max(
+        inferGroupRangeEnd(combined, range[0], range[1], allowBlankExtension, allowListExtension),
+        inferGroupRangeEndFromMarkers(combined, range[0], range[1], classification.kind)
+      );
       return {
         groupId: `group-${index + 1}`,
-        heading: text.match(/Questions?\s+\d{1,3}(?:\s*(?:[-–—]|and)\s*\d{1,3})?/i)?.[0] ?? questionHeading(range[0], range[1]),
+        heading: questionHeading(range[0], end),
         questionRange: [range[0], end],
         instructionText: text,
         blockIds,
@@ -1083,7 +1146,7 @@ function templateForKind(kind: GroupKind): string {
   return mapping[kind] ?? "short_answer_list";
 }
 
-function promptForQuestion(groupText: string, number: number, fallbackHeading: string, rangeEnd: number): string {
+function promptForQuestion(groupText: string, number: number, fallbackHeading: string, rangeEnd: number, kind: GroupKind): string {
   const normalized = groupText.replace(/\s+/g, " ").trim();
   const blankMarker = findNumberedBlankMarker(normalized, number, 0);
   if (blankMarker) {
@@ -1094,9 +1157,14 @@ function promptForQuestion(groupText: string, number: number, fallbackHeading: s
   }
   const escaped = String(number).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const next = String(number + 1).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const nextBoundary = number < rangeEnd ? `\\s+${next}[).]?\\s+` : "\\s+(?:Questions?\\s+\\d|Answers?|Answer\\s+Key)\\b|$";
-  const match = normalized.match(new RegExp(`(?:^|\\s)${escaped}[).]?\\s+(.+?)(?=${nextBoundary})`, "i"));
+  const nextBoundary = number < rangeEnd ? findPromptBoundary(normalized, 0, number + 1, kind) : findFinalPromptBoundary(normalized, 0);
+  const match = normalized.match(new RegExp(`(?:^|\\s)${escaped}[).]?\\s+(.+?)(?=\\s+${next}[).]?\\s+|\\s+(?:Questions?\\s+\\d|Answers?|Answer\\s+Key)\\b|$)`, "i"));
   if (match?.[1]) return match[1].replace(/^Questions?\s+\d+(?:\s*[-–—]\s*\d+)?\s*/i, "").trim();
+  const marker = findNumberMarker(normalized, number, 0);
+  if (marker) {
+    const prompt = normalized.slice(marker[1], nextBoundary).trim();
+    if (prompt) return prompt;
+  }
   return `${fallbackHeading} 第 ${number} 题`;
 }
 
@@ -1128,7 +1196,7 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       return {
         id: idValue,
         displayNumber,
-        prompt: requiresManualQuestionImport ? `Manual import required for question ${number}` : promptForQuestion(groupText, number, candidate.heading, end),
+        prompt: requiresManualQuestionImport ? `Manual import required for question ${number}` : promptForQuestion(groupText, number, candidate.heading, end, kind),
         interaction: candidate.classification?.interaction ?? interactionForKind(kind),
         answer: answerByDisplay[displayNumber],
         sourceBlockIds: candidate.blockIds,
@@ -1141,7 +1209,7 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       groupId: candidate.groupId || `group-${index + 1}`,
       kind,
       questionRange: candidate.questionRange,
-      instruction: [candidate.instructionText],
+      instruction: [candidate.heading],
       questions,
       layout: {
         template: templateForKind(kind),
@@ -1874,9 +1942,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       let documentIr = store.documents[jobId] ?? makeDocumentIr(job, { mode: input.parseMode ?? "auto" }, store.sourceTexts[jobId]);
       const visionTranscription = { attempted: false, applied: false, profileId: input.profileId ?? store.profiles.find((profile) => profile.enabled)?.profileId ?? "profile-local-placeholder", warnings: [] as string[], failure: null as string | null, confidence: undefined as number | undefined };
       if (
-        documentIr.parser.mode === "ocr" &&
-        documentIr.parser.provider !== "vision-llm-transcription" &&
-        documentIr.parser.warnings.length
+        documentNeedsVisionTranscription(documentIr, input.parseMode)
       ) {
         visionTranscription.attempted = true;
         documentIr = makeVisionDocumentIr(job);
@@ -1976,11 +2042,11 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const staticRuntimePassed = validationReport.passed && validationReport.runtime?.mode === "static-rust";
       const hasReviewBlocks = lowConfidenceGroups.length > 0 || blockedAutoApplyGroups.length > 0 || requiresParserReview || requiresAuthoringReview;
       const status = hasReviewBlocks ? "NeedsReview" : target === "editableDraft" ? "DraftSaved" : staticRuntimePassed ? "ExportReady" : validationReport.passed ? "DraftSaved" : "NeedsReview";
-      const currentStep = requiresParserReview ? "DocumentReview" : target === "editableDraft" || requiresAuthoringReview || lowConfidenceGroups.length || blockedAutoApplyGroups.length ? "Authoring" : staticRuntimePassed ? "Export" : "Preview";
-      const nextRoute = requiresParserReview ? "document" : "groups";
+      const currentStep = target === "editableDraft" || requiresParserReview || requiresAuthoringReview || lowConfidenceGroups.length || blockedAutoApplyGroups.length ? "Authoring" : staticRuntimePassed ? "Export" : "Preview";
+      const nextRoute = "groups";
       const userStatus = hasReviewBlocks ? "needsConfirmation" : "draftReady";
       const userMessage = requiresParserReview
-        ? "题稿已生成，但源文件识别结果需要你确认后再继续。"
+        ? "题稿已生成，但源文件识别结果需要你确认。"
         : lowConfidenceGroups.length || blockedAutoApplyGroups.length
           ? "题稿已生成，请在题稿编辑页确认部分识别结果。"
           : requiresAuthoringReview
@@ -2008,7 +2074,29 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           blockedAutoApplyGroups,
           failures
         },
-        parser: { warnings, lowConfidenceBlocks, visionTranscription },
+        parser: {
+          warnings,
+          lowConfidenceBlocks,
+          visionTranscription,
+          visionAnswerExtraction: {
+            attempted: false,
+            applied: false,
+            profileId,
+            answerCount: 0,
+            warnings: [],
+            failure: null
+          }
+        },
+        quality: {
+          cloudComparison: {
+            attempted: false,
+            passed: false,
+            profileId,
+            warningCount: 0,
+            failure: null,
+            issues: []
+          }
+        },
         validationPassed: validationReport.passed,
         staticRuntimePassed,
         realRuntimePassed: false,

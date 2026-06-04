@@ -899,6 +899,111 @@ fn infer_dynamic_group_range_end(
     inferred_end
 }
 
+fn infer_dynamic_group_range_end_from_markers(
+    text: &str,
+    start: u32,
+    heading_end: u32,
+    kind: &str,
+) -> u32 {
+    if kind == "heading_matching" {
+        let normalized = collapse_whitespace(text);
+        let mut inferred_end = heading_end.max(start);
+        let mut cursor = 0usize;
+        for number in start..=inferred_end {
+            if let Some((_, marker_end)) = find_dynamic_number_marker(&normalized, number, cursor) {
+                cursor = marker_end;
+            }
+        }
+        while inferred_end < start.saturating_add(20) {
+            let next = inferred_end + 1;
+            let Some((_, marker_end)) = find_dynamic_number_marker(&normalized, next, cursor) else {
+                break;
+            };
+            let segment_end = find_dynamic_prompt_boundary(&normalized, marker_end, next + 1, kind);
+            let segment = normalized[marker_end..segment_end].trim();
+            let word_count = segment.split_whitespace().count();
+            let first_word = segment
+                .to_lowercase()
+                .split_whitespace()
+                .next()
+                .map(|word| word.trim_matches(|ch: char| !ch.is_alphanumeric()).to_string());
+            if word_count > 8
+                || !matches!(first_word.as_deref(), Some("section" | "paragraph" | "part"))
+            {
+                break;
+            }
+            inferred_end = next;
+            cursor = marker_end;
+        }
+        return inferred_end;
+    }
+    let normalized = collapse_whitespace(text);
+    let mut inferred_end = heading_end.max(start);
+    let max_lookahead = start.saturating_add(20);
+    let mut cursor = 0usize;
+    for number in start..=inferred_end {
+        if let Some((_, marker_end)) = find_dynamic_number_marker(&normalized, number, cursor) {
+            cursor = marker_end;
+        }
+    }
+    while inferred_end < max_lookahead {
+        let next = inferred_end + 1;
+        let Some((marker_start, marker_end)) = find_dynamic_number_marker(&normalized, next, cursor)
+        else {
+            break;
+        };
+        let preceding = normalized[cursor.min(normalized.len())..marker_start]
+            .to_lowercase()
+            .replace(['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}'], "-");
+        if preceding.contains("questions ")
+            || preceding.contains("answers")
+            || preceding.contains("answer key")
+        {
+            break;
+        }
+        if kind == "single_choice" {
+            let segment_end = find_dynamic_final_prompt_boundary(&normalized, marker_end);
+            let segment = normalized[marker_end..segment_end].to_lowercase();
+            let has_abcd = [" a ", " b ", " c ", " d "]
+                .iter()
+                .all(|marker| segment.contains(*marker));
+            if !has_dynamic_single_choice_option_run(&segment) && !has_abcd {
+                break;
+            }
+        } else if matches!(kind, "matching" | "matching_information" | "classification") {
+            let segment_end = find_dynamic_prompt_boundary(&normalized, marker_end, next + 1, kind);
+            let segment = normalized[marker_end..segment_end].trim();
+            let segment_word_count = segment.split_whitespace().count();
+            let looks_like_section_label = segment_word_count <= 8
+                && segment
+                    .to_lowercase()
+                    .split_whitespace()
+                    .next()
+                    .map(|word| {
+                        matches!(
+                            word.trim_matches(|ch: char| !ch.is_alphanumeric()),
+                            "section" | "paragraph" | "part"
+                        )
+                    })
+                    .unwrap_or(false);
+            let looks_like_short_prompt = segment_word_count <= 24
+                && !segment.contains('.')
+                && !segment.contains('?')
+                && !segment.to_lowercase().contains(" reading passage ");
+            if kind == "heading_matching" {
+                if !looks_like_section_label {
+                    break;
+                }
+            } else if !looks_like_section_label && !looks_like_short_prompt {
+                break;
+            }
+        }
+        inferred_end = next;
+        cursor = marker_end;
+    }
+    inferred_end
+}
+
 fn is_dynamic_question_block(block: &Value) -> bool {
     dynamic_block_role(block) == "question"
         || detect_dynamic_question_range(&dynamic_block_text(block)).is_some()
@@ -1609,7 +1714,13 @@ pub(crate) fn make_dynamic_split_candidates(
             heading_end,
             allow_blank_extension,
             allow_list_extension,
-        );
+        )
+        .max(infer_dynamic_group_range_end_from_markers(
+            &combined,
+            start,
+            heading_end,
+            &classification.kind,
+        ));
         let layout_hint = dynamic_layout_hint_for_group(&classification.kind, &combined);
         let section_evidence = split_section_evidence_for_blocks(included);
         let continuation_edges = split_continuation_edges_for_blocks(included);
@@ -1869,18 +1980,47 @@ fn find_dynamic_final_prompt_boundary(text: &str, from: usize) -> usize {
         .unwrap_or(text.len())
 }
 
+fn find_dynamic_prompt_boundary(
+    text: &str,
+    from: usize,
+    next_number: u32,
+    group_kind: &str,
+) -> usize {
+    let mut boundary = find_dynamic_final_prompt_boundary(text, from);
+    if let Some((next_start, _)) = find_dynamic_number_marker(text, next_number, from) {
+        boundary = boundary.min(next_start);
+    }
+    if matches!(
+        group_kind,
+        "heading_matching" | "matching" | "matching_information" | "classification"
+    ) {
+        let lower = text.to_lowercase();
+        for marker in [
+            " list of headings",
+            " list of people",
+            " list of researchers",
+            " list of names",
+            " list of options",
+        ] {
+            if let Some(relative) = lower[from..].find(marker) {
+                boundary = boundary.min(from + relative);
+            }
+        }
+    }
+    boundary
+}
+
 fn dynamic_prompt_for_question(
     group_text: &str,
     number: u32,
     fallback_heading: &str,
     range_end: u32,
+    group_kind: &str,
 ) -> String {
     let normalized = collapse_whitespace(group_text);
     if let Some((_, content_start)) = find_dynamic_number_marker(&normalized, number, 0) {
         let boundary = if number < range_end {
-            find_dynamic_number_marker(&normalized, number + 1, content_start)
-                .map(|(next_start, _)| next_start)
-                .unwrap_or(normalized.len())
+            find_dynamic_prompt_boundary(&normalized, content_start, number + 1, group_kind)
         } else {
             find_dynamic_final_prompt_boundary(&normalized, content_start)
         };
@@ -2043,7 +2183,10 @@ pub(crate) fn make_dynamic_authoring_ir(
         .map(|(index, candidate)| {
             let kind = candidate.get("kindHint").and_then(Value::as_str).unwrap_or("short_answer");
             let heading = candidate.get("heading").and_then(Value::as_str).unwrap_or("Questions");
-            let instruction_text = candidate.get("instructionText").and_then(Value::as_str).unwrap_or(heading);
+            let instruction_text = candidate
+                .get("instructionText")
+                .and_then(Value::as_str)
+                .unwrap_or(heading);
             let requires_manual_question_import = candidate
                 .get("requiresManualQuestionImport")
                 .and_then(Value::as_bool)
@@ -2111,7 +2254,7 @@ pub(crate) fn make_dynamic_authoring_ir(
                         prompt: if requires_manual_question_import {
                             format!("Manual import required for question {}", number)
                         } else {
-                            dynamic_prompt_for_question(&group_text, number, heading, end)
+                            dynamic_prompt_for_question(&group_text, number, heading, end, kind)
                         },
                         interaction: dynamic_interaction_from_candidate(candidate, kind),
                         answer: answer_by_display
@@ -2150,7 +2293,7 @@ pub(crate) fn make_dynamic_authoring_ir(
                     .unwrap_or_else(|| format!("group-{}", index + 1)),
                 kind: kind.to_string(),
                 question_range: [start, end],
-                instruction: vec![instruction_text.to_string()],
+                instruction: vec![heading.to_string()],
                 questions,
                 layout,
                 review_warnings,

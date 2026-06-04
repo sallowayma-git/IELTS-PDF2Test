@@ -254,6 +254,7 @@ function semanticKindFromBody(body) {
   if (text.includes("true") && text.includes("false") && text.includes("not given")) return "true_false_not_given";
   if (text.includes("yes") && text.includes("no") && text.includes("not given")) return "yes_no_not_given";
   if (text.includes("list of headings") || text.includes("correct heading for each")) return "heading_matching";
+  if (text.includes("classify the following") || text.includes("classify each") || text.includes("classify ")) return "matching";
   if (text.includes("which paragraph contains") || text.includes("which section contains") || text.includes("which paragraph has")) return "matching_information";
   if (text.includes("match each statement") || text.includes("match each person") || text.includes("match each opinion") || text.includes("look at the following")) return "matching";
   if (text.includes("complete each sentence") && (text.includes("correct ending") || text.includes("list of endings"))) return "matching";

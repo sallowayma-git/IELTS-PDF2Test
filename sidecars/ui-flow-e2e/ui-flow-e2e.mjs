@@ -280,12 +280,17 @@ async function currentHash(cdp) {
   return evaluate(cdp, "window.location.hash");
 }
 
-async function getStoreSummary(cdp) {
+async function getStoreSummary(cdp, requestedJobId = undefined) {
   return evaluate(cdp, `(() => {
     const raw = localStorage.getItem("ielts-author-studio.dev-fallback-store.v1");
     if (!raw) return null;
     const store = JSON.parse(raw);
-    const job = store.jobs?.[0];
+    const explicitJobId = ${jsString(requestedJobId ?? null)};
+    const routeJobId = window.location.hash.match(/#\\/?jobs\\/([^/]+)/)?.[1];
+    const jobId = explicitJobId || routeJobId;
+    const job = jobId
+      ? store.jobs?.find((item) => item.jobId === jobId)
+      : store.jobs?.[0];
     if (!job) return null;
     return {
       job,
@@ -374,12 +379,12 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
   await click(cdp, "[data-testid='generate-preview-assets']");
   await waitSelector(cdp, "[data-testid='reading-preview-frame']");
   await waitFor("preview assets persisted", async () => {
-    const next = await getStoreSummary(cdp);
+    const next = await getStoreSummary(cdp, jobId);
     return Boolean(next?.previewAssets?.source?.questionOrder?.length)
       && next?.validationReport?.runtime?.mode === "static-rust";
   }, { timeoutMs: 10000 });
   const runtimeMode = await getText(cdp, "[data-testid='runtime-mode']");
-  const previewSummary = await getStoreSummary(cdp);
+  const previewSummary = await getStoreSummary(cdp, jobId);
   assert(previewSummary?.validationReport?.runtime?.mode === "static-rust", "static runtime contract should be persisted before export", { runtimeMode, validationReport: previewSummary?.validationReport });
   await click(cdp, "[data-testid='go-export']");
   await waitFor("route to export", async () => (await currentHash(cdp)).includes("/export"), { timeoutMs: 10000 });
@@ -390,7 +395,7 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
     return count >= 4;
   }, { timeoutMs: 10000 });
   const exportedFileCount = await evaluate(cdp, `document.querySelectorAll("[data-testid='export-file']").length`);
-  const afterExport = await getStoreSummary(cdp);
+  const afterExport = await getStoreSummary(cdp, jobId);
   assert(["Exported", "Cleaned"].includes(afterExport.job.status), "export should advance job to exported/cleaned state", afterExport.job);
   await navigate(cdp, `${baseUrl}/#/packs`);
   await waitSelector(cdp, "[data-testid='pack-builder']");
@@ -458,23 +463,27 @@ async function runOcrSourceReviewFlow(cdp, baseUrl) {
   await setValue(cdp, "[data-testid='job-title-input']", "UI E2E Scanned PDF");
   await setValue(cdp, "[data-testid='parse-mode']", "ocr");
   await click(cdp, "[data-testid='create-and-auto-process']");
-  await waitFor("ocr source review route", async () => {
+  await waitFor("ocr editable draft route", async () => {
     const hash = await currentHash(cdp);
-    return hash.includes("/document");
+    return hash.includes("/groups");
   }, { timeoutMs: 20000 });
-  await waitSelector(cdp, "[data-testid='source-review-status']");
-  const sourceReviewText = await getText(cdp, "[data-testid='source-review-status']");
-  const sourceReviewJson = await getText(cdp, "[data-testid='source-review-json']");
+  await waitSelector(cdp, "[data-testid='group-editor']");
   const summary = await getStoreSummary(cdp);
 
-  assert(summary.sourceReview?.required === true, "ocr flow should show required SourceReview", { sourceReviewText, sourceReview: summary.sourceReview });
-  assert(summary.job.currentStep === "DocumentReview", "ocr flow should route SourceReview before LLM review", summary.job);
+  assert(summary.sourceReview?.required === true, "ocr flow should keep required source review evidence", { sourceReview: summary.sourceReview });
+  assert(summary.job.currentStep === "Authoring", "ocr flow should route directly to editable draft", summary.job);
+  assert(summary.authoringIr?.groups?.length >= 1, "ocr flow should still produce an editable draft shell", summary.authoringIr);
   assert(!summary.documentIr, "ocr minimized state should not persist vision placeholder DocumentIR before manual transcription", summary.documentIr);
   assert(!summary.split, "ocr minimized state should not persist split candidates before manual transcription", summary.split);
   assert(!summary.pipelineReport, "ocr minimized state should not persist pipeline report", summary.pipelineReport);
   assert(summary.sourceReview?.required === true, "ocr flow should keep source review evidence", summary.sourceReview);
   assert(summary.sourceReview?.resolved === false, "ocr flow should remain unresolved before manual transcription", summary.sourceReview);
   assert(summary.job.status === "NeedsReview", "ocr flow must remain NeedsReview", summary.job);
+
+  await navigate(cdp, `${baseUrl}/#/jobs/${summary.job.jobId}/document`);
+  await waitSelector(cdp, "[data-testid='source-review-status']");
+  const sourceReviewText = await getText(cdp, "[data-testid='source-review-status']");
+  const sourceReviewJson = await getText(cdp, "[data-testid='source-review-json']");
   assert(
     sourceReviewJson.includes("解析提醒")
       || sourceReviewJson.includes("低置信内容")
@@ -486,16 +495,16 @@ async function runOcrSourceReviewFlow(cdp, baseUrl) {
   await setValue(cdp, "[data-testid='manual-transcription-text']", SCANNED_MANUAL_TRANSCRIPTION);
   await click(cdp, "[data-testid='apply-manual-transcription']");
   await waitFor("manual transcription resolves source review", async () => {
-    const next = await getStoreSummary(cdp);
+    const next = await getStoreSummary(cdp, summary.job.jobId);
     return next?.sourceReview?.resolved === true;
   }, { timeoutMs: 10000 });
-  const afterManual = await getStoreSummary(cdp);
+  const afterManual = await getStoreSummary(cdp, summary.job.jobId);
   assert(afterManual.documentIr?.parser?.provider === "manual-transcription", "manual transcription should replace vision placeholder DocumentIR", afterManual.documentIr?.parser);
   await click(cdp, "[data-testid='go-split']");
   await waitFor("route to split after manual transcription", async () => (await currentHash(cdp)).includes("/split"), { timeoutMs: 10000 });
   await click(cdp, "[data-testid='build-authoring-ir']");
   await waitFor("route to groups after build authoring", async () => (await currentHash(cdp)).includes("/groups"), { timeoutMs: 10000 });
-  const afterBuild = await getStoreSummary(cdp);
+  const afterBuild = await getStoreSummary(cdp, summary.job.jobId);
   assert(afterBuild.authoringIr?.groups?.length >= 1, "manual transcription flow should produce AuthoringIR groups", afterBuild.authoringIr);
   assert(!afterBuild.documentIr, "manual transcription flow should minimize DocumentIR after AuthoringIR is built", afterBuild.documentIr);
   assert(!afterBuild.split, "manual transcription flow should minimize split candidates after AuthoringIR is built", afterBuild.split);

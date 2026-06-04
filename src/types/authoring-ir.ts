@@ -101,7 +101,7 @@ export interface QuestionGroupDraft {
 export interface AuthoringAudit {
   llmUsed: boolean;
   humanVerified: boolean;
-  issues: string[];
+  issues: Array<string | { message?: string; [key: string]: unknown }>;
   revision: number;
   updatedAt: string;
 }

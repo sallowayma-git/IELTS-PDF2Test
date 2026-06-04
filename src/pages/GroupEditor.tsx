@@ -22,6 +22,11 @@ const groupKindLabels: Record<GroupKind, string> = {
   sentence_completion: "句子填空"
 };
 
+function auditIssueText(issue: string | { message?: string; [key: string]: unknown }): string {
+  if (typeof issue === "string") return issue;
+  return typeof issue.message === "string" ? issue.message : "";
+}
+
 function buildGroupPreviewSrcDoc(group: QuestionGroupDraft): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     body{font-family:Georgia,serif;margin:0;padding:16px;background:#fffaf0;color:#17211f;line-height:1.55}
@@ -67,6 +72,7 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
   }
 
   const currentGroup = activeGroup;
+  const auditIssues = (ir.audit.issues ?? []).map(auditIssueText).filter(Boolean);
 
   function updateGroup(mutator: (group: QuestionGroupDraft) => QuestionGroupDraft) {
     if (!ir || !currentGroup) return;
@@ -89,6 +95,12 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
           ))}
         </aside>
         <section className="form-section editor-form">
+          {auditIssues.length ? (
+            <div className="warning-box" data-testid="authoring-audit-warnings">
+              <strong>需要确认</strong>
+              {auditIssues.slice(0, 6).map((issue, index) => <p key={`${index}-${issue}`}>{issue}</p>)}
+            </div>
+          ) : null}
           {ir.passage.questionUmbrellaRanges?.length ? (
             <div className="info-box" data-testid="umbrella-ranges">
               <strong>开头总题组范围已纳入</strong>

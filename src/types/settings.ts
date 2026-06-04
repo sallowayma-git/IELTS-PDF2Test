@@ -92,6 +92,25 @@ export interface AutoPipelineReport {
       failure?: string | null;
       confidence?: number;
     };
+    visionAnswerExtraction?: {
+      attempted: boolean;
+      applied: boolean;
+      profileId?: string | null;
+      answerCount?: number;
+      warnings?: string[];
+      failure?: string | null;
+      confidence?: number;
+    };
+  };
+  quality?: {
+    cloudComparison?: {
+      attempted: boolean;
+      passed: boolean;
+      profileId?: string | null;
+      warningCount?: number;
+      failure?: string | null;
+      issues?: Array<{ message?: string; [key: string]: unknown }>;
+    };
   };
   validationPassed: boolean;
   staticRuntimePassed?: boolean;

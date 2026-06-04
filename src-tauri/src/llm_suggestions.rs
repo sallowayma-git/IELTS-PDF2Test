@@ -178,6 +178,91 @@ pub(crate) fn make_vision_transcription_input(
     })
 }
 
+pub(crate) fn make_vision_answer_extraction_input(
+    profile: &Value,
+    job: &ImportJob,
+    profile_id: &str,
+    extraction: &Value,
+) -> Value {
+    json!({
+        "mode": "extract_pdf_image_answers",
+        "job": {"jobId": job.job_id, "title": job.title, "category": job.category, "frequency": job.frequency, "tags": job.tags},
+        "profile": profile_payload(profile, profile_id),
+        "pages": extraction.get("pages").cloned().unwrap_or_else(|| json!([])),
+        "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        "outputContract": {
+            "schema": "PdfImageAnswerKeyV1",
+            "jsonOnly": true,
+            "shape": {
+                "answers": {"questionNumber": "answer text or array of answer texts"},
+                "confidence": 0.0,
+                "warnings": [],
+                "evidence": [{"questionNumber": "8", "pageIndex": 5, "quote": "short visible text"}]
+            },
+            "rules": [
+                "Only extract answer keys visible in the supplied PDF images.",
+                "Use question number strings without q prefix, for example \"8\".",
+                "Do not invent missing answers; omit uncertain question numbers.",
+                "Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase."
+            ]
+        }
+    })
+}
+
+pub(crate) fn make_cloud_paper_generation_input(
+    profile: &Value,
+    job: &ImportJob,
+    profile_id: &str,
+    source: &crate::SourceFile,
+    pdf_path: &Path,
+    extraction: &Value,
+) -> Value {
+    json!({
+        "mode": "generate_pdf_reading_outline",
+        "job": {"jobId": job.job_id, "title": job.title, "category": job.category, "frequency": job.frequency, "tags": job.tags},
+        "profile": profile_payload(profile, profile_id),
+        "sourceFile": {
+            "fileId": source.file_id,
+            "originalName": source.original_name,
+            "fileType": source.file_type,
+            "sha256": source.sha256,
+            "sizeBytes": source.size_bytes
+        },
+        "pdfPath": pdf_path.to_string_lossy(),
+        "pages": extraction.get("pages").cloned().unwrap_or_else(|| json!([])),
+        "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        "outputContract": {
+            "schema": "CloudReadingOutlineV1",
+            "jsonOnly": true,
+            "shape": {
+                "title": "paper title",
+                "groups": [{
+                    "range": [1, 5],
+                    "kind": "true_false_not_given",
+                    "layoutHint": "list",
+                    "questionIds": ["q1"],
+                    "notesText": "",
+                    "confidence": 0.0,
+                    "evidence": {"quotes": [{"pageIndex": 1, "text": "short visible source excerpt"}]}
+                }],
+                "answerKey": {"1": "TRUE"},
+                "confidence": 0.0,
+                "warnings": []
+            },
+            "rules": [
+                "Return an outline for comparison only, not JavaScript or HTML.",
+                "Do not invent passage facts or answers.",
+                "Use only question-group ranges, question kinds, layout hints, and visible answers.",
+                "Question kinds must use the local group-kind enum names.",
+                "Every group must include evidence.quotes copied from visible PDF text. If evidence is missing, lower group confidence below 0.75.",
+                "When the source says Complete the notes below, note completion, notes, or uses numbered ellipsis/blank markers such as 8……… or 8 ______, keep the whole range as one completion group.",
+                "For notes completion groups, set layoutHint to inline_completion, include qN ids for every blank in the same group, and copy the continuous notes text into notesText.",
+                "Do not rewrite notes completion into a list of independent short-answer items."
+            ]
+        }
+    })
+}
+
 pub(crate) fn save_llm_suggestion(
     root: &Path,
     job_id: &str,
