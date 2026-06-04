@@ -58,8 +58,15 @@ export async function deleteJob(jobId: string): Promise<void> {
   return command("delete_job", { jobId });
 }
 
-export async function importSourceFile(jobId: string, filePath: string, role: SourceFileRole, sizeBytes = 0, textContent?: string): Promise<SourceFile> {
-  return command("import_source_file", { jobId, filePath, role, sizeBytes, textContent });
+export async function importSourceFile(
+  jobId: string,
+  filePath: string,
+  role: SourceFileRole,
+  sizeBytes = 0,
+  textContent?: string,
+  binaryContentBase64?: string
+): Promise<SourceFile> {
+  return command("import_source_file", { jobId, filePath, role, sizeBytes, textContent, binaryContentBase64 });
 }
 
 export async function parseDocument(jobId: string, options: ParseOptions): Promise<DocumentIr> {
@@ -82,16 +89,16 @@ export async function resolveSourceReview(jobId: string, note?: string): Promise
   return command("resolve_source_review", { jobId, note });
 }
 
-export async function runRuleSplit(jobId: string): Promise<SplitCandidates> {
-  return command("run_rule_split", { jobId });
+export async function runRuleSplit(jobId: string, input?: { allowOverwrite?: boolean }): Promise<SplitCandidates> {
+  return command("run_rule_split", { jobId, input });
 }
 
 export async function saveSplitAdjustments(jobId: string, patch: SplitCandidates): Promise<SplitCandidates> {
   return command("save_split_adjustments", { jobId, patch });
 }
 
-export async function buildAuthoringIr(jobId: string): Promise<ReadingAuthoringIr> {
-  return command("build_authoring_ir", { jobId });
+export async function buildAuthoringIr(jobId: string, input?: { allowOverwrite?: boolean }): Promise<ReadingAuthoringIr> {
+  return command("build_authoring_ir", { jobId, input });
 }
 
 export async function updateAuthoringIr(jobId: string, patch: AuthoringPatch): Promise<ReadingAuthoringIr> {
@@ -150,7 +157,7 @@ export async function runPreviewE2e(jobId: string): Promise<ValidationReport> {
   return command("run_preview_e2e", { jobId });
 }
 
-export async function runAutoPipeline(jobId: string, input?: { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"] }): Promise<AutoPipelineReport> {
+export async function runAutoPipeline(jobId: string, input?: { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"]; target?: "editableDraft"; allowOverwrite?: boolean }): Promise<AutoPipelineReport> {
   return command("run_auto_pipeline", { jobId, input });
 }
 

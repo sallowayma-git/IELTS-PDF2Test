@@ -12,9 +12,9 @@ export const jobStatusLabels: Record<JobStatus, string> = {
 export const workflowStepLabels: Record<WorkflowStep, string> = {
   Upload: "上传文件",
   DocumentReview: "核对源文档",
-  Split: "切分题组与答案",
-  Authoring: "编辑可编辑题稿",
-  LlmReview: "审核模型建议",
+  Split: "识别题组与答案",
+  Authoring: "题稿编辑",
+  LlmReview: "确认识别结果",
   Preview: "预览与校验",
   Export: "导出",
   Pack: "组卷"
@@ -44,7 +44,7 @@ export function validationLayerLabel(layer: ValidationLayer | string): string {
 export function runtimeModeLabel(mode: string | undefined): string {
   if (!mode) return "未运行";
   if (mode === "real") return "真实预览已通过";
-  if (mode === "static-rust") return "基础校验已通过";
+  if (mode === "static-rust") return "基础检查已通过";
   if (mode === "fallback") return "开发预览检查";
   return mode;
 }

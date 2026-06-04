@@ -1,4 +1,5 @@
 import { devFallbackInvoke } from "../services/devFallbackBackend";
+import type { DocumentIr } from "../types";
 
 const isTauriRuntime = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const DEV_PICKED_PATHS_KEY = "ielts-author-studio.dev-fallback-picked-paths.v1";
@@ -9,6 +10,8 @@ export interface PickedPath {
   sizeBytes: number;
   titleHint?: string;
   textContent?: string;
+  binaryContentBase64?: string;
+  parsedDocumentIr?: DocumentIr;
   requiresDesktopParser?: boolean;
 }
 
@@ -20,7 +23,7 @@ function takeDevPickedPath(): PickedPath | null {
   const fromQuery = new URLSearchParams(window.location.search).get("epic8DevPickedPath");
   if (fromQuery) {
     const name = nameFromPath(fromQuery);
-    return { path: fromQuery, name, sizeBytes: 0, titleHint: cleanFileStem(name) };
+    return { path: fromQuery, name, sizeBytes: 0, titleHint: cleanFileStem(name), requiresDesktopParser: false };
   }
 
   const raw = window.localStorage.getItem(DEV_PICKED_PATHS_KEY);
@@ -41,7 +44,8 @@ function takeDevPickedPath(): PickedPath | null {
       path,
       name,
       sizeBytes: typeof first === "string" ? 0 : first.sizeBytes ?? 0,
-      titleHint: typeof first === "string" ? cleanFileStem(name) : first.titleHint ?? cleanFileStem(name)
+      titleHint: typeof first === "string" ? cleanFileStem(name) : first.titleHint ?? cleanFileStem(name),
+      requiresDesktopParser: !/\.(txt|md|pdf|docx)$/i.test(name)
     };
   } catch {
     window.localStorage.removeItem(DEV_PICKED_PATHS_KEY);
@@ -49,45 +53,55 @@ function takeDevPickedPath(): PickedPath | null {
   }
 }
 
-export async function chooseSourceFile(): Promise<PickedPath | null> {
+export async function chooseSourceFiles(): Promise<PickedPath[]> {
   if (isTauriRuntime()) {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const selected = await open({
-      multiple: false,
+      multiple: true,
       directory: false,
       filters: [{ name: "IELTS source documents", extensions: ["pdf", "docx", "txt", "md"] }]
     });
-    if (!selected || Array.isArray(selected)) return null;
-    const name = nameFromPath(selected);
-    return { path: selected, name, sizeBytes: 0, titleHint: cleanFileStem(name) };
+    if (!selected) return [];
+    const selectedPaths = Array.isArray(selected) ? selected : [selected];
+    return selectedPaths.map((path) => {
+      const name = nameFromPath(path);
+      return { path, name, sizeBytes: 0, titleHint: cleanFileStem(name) };
+    });
   }
 
   const preset = takeDevPickedPath();
-  if (preset) return preset;
+  if (preset) return [preset];
 
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
+    input.multiple = true;
     input.accept = ".pdf,.docx,.txt,.md,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     input.style.position = "fixed";
     input.style.left = "-9999px";
     input.addEventListener("change", async () => {
-      const file = input.files?.[0];
+      const files = Array.from(input.files ?? []);
       input.remove();
-      if (!file) {
-        resolve(null);
+      if (!files.length) {
+        resolve([]);
         return;
       }
-      resolve({
+      const picked = await Promise.all(files.map(async (file) => ({
         path: file.name,
         name: file.name,
         sizeBytes: file.size,
         ...(await browserFileMetadata(file))
-      });
+      })));
+      resolve(picked);
     }, { once: true });
     document.body.appendChild(input);
     input.click();
   });
+}
+
+export async function chooseSourceFile(): Promise<PickedPath | null> {
+  const files = await chooseSourceFiles();
+  return files[0] ?? null;
 }
 
 function cleanFileStem(name: string): string {
@@ -98,7 +112,18 @@ function cleanFileStem(name: string): string {
     .trim();
 }
 
-async function browserFileMetadata(file: File): Promise<Pick<PickedPath, "titleHint" | "textContent" | "requiresDesktopParser">> {
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return window.btoa(binary);
+}
+
+async function browserFileMetadata(file: File): Promise<Pick<PickedPath, "titleHint" | "textContent" | "binaryContentBase64" | "requiresDesktopParser">> {
   if (/\.(txt|md)$/i.test(file.name) || /^text\//.test(file.type)) {
     const text = await file.text();
     const candidate = text
@@ -114,6 +139,9 @@ async function browserFileMetadata(file: File): Promise<Pick<PickedPath, "titleH
   }
 
   const fromName = cleanFileStem(file.name);
+  if (/\.(pdf|docx)$/i.test(file.name)) {
+    return { titleHint: fromName || undefined, binaryContentBase64: await fileToBase64(file) };
+  }
   return { titleHint: fromName || undefined, requiresDesktopParser: true };
 }
 

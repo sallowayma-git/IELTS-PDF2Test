@@ -30,6 +30,8 @@ function buildGroupPreviewSrcDoc(group: QuestionGroupDraft): string {
     .completion-table{width:100%;border-collapse:collapse}
     .completion-table th,.completion-table td{border:1px solid #d8d0c0;padding:8px}
     input{font:inherit;padding:6px}
+    .notes-completion{white-space:pre-wrap}
+    .inline-completion input{width:8em;margin:0 4px}
   </style></head><body>${renderGroupBodyHtml(group)}</body></html>`;
 }
 
@@ -61,7 +63,7 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
   }
 
   if (!ir || !activeGroup) {
-    return <section className="page-enter"><p className="empty">可编辑题稿尚未生成。请先完成粗切。</p></section>;
+    return <section className="page-enter"><p className="empty">题稿尚未生成。请先开始生成题稿，或在题组确认页保存后进入题稿编辑。</p></section>;
   }
 
   const currentGroup = activeGroup;
@@ -75,8 +77,8 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
   return (
     <section className="group-editor page-enter" data-testid="group-editor">
       <div className="section-heading spread">
-        <div><p className="eyebrow">可编辑题稿</p><h2>题组结构化编辑器</h2></div>
-        <div className="button-row"><button className="ghost" data-testid="go-llm-review" onClick={() => go(`/jobs/${jobId}/llm-review`)}>LLM 建议</button><button className="primary" data-testid="validate-and-preview" onClick={validate}>校验并预览</button></div>
+        <div><p className="eyebrow">题稿编辑</p><h2>题稿编辑</h2></div>
+        <div className="button-row"><button className="ghost" data-testid="go-llm-review" onClick={() => go(`/jobs/${jobId}/llm-review`)}>需要确认的识别结果</button><button className="primary" data-testid="validate-and-preview" onClick={validate}>检查并预览</button></div>
       </div>
       <div className="editor-grid">
         <aside className="group-nav">

@@ -85,6 +85,8 @@ pub(crate) struct SplitGroupCandidateV1 {
     pub instruction_text: String,
     pub block_ids: Vec<String>,
     pub kind_hint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layout_hint: Option<String>,
     pub confidence: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub classification: Option<GroupClassificationV1>,
@@ -642,6 +644,20 @@ fn detect_dynamic_question_range(text: &str) -> Option<(u32, u32)> {
             }
         }
     }
+    let after_first = text[index..].to_lowercase();
+    let trimmed = after_first.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("and") {
+        if rest
+            .chars()
+            .next()
+            .map(|ch| ch.is_whitespace())
+            .unwrap_or(false)
+        {
+            if let Some((end, _)) = parse_number_after(rest, 0) {
+                return Some((start, end));
+            }
+        }
+    }
     Some((start, start))
 }
 
@@ -835,6 +851,54 @@ fn detect_dynamic_question_heading_range(text: &str) -> Option<(u32, u32)> {
     }
 }
 
+fn infer_dynamic_group_range_end(
+    text: &str,
+    start: u32,
+    heading_end: u32,
+    allow_blank_extension: bool,
+    allow_list_extension: bool,
+) -> u32 {
+    if !allow_blank_extension && !allow_list_extension {
+        return heading_end.max(start);
+    }
+    let normalized = collapse_whitespace(text);
+    let mut inferred_end = heading_end.max(start);
+    let max_lookahead = start.saturating_add(20);
+    let mut cursor = 0usize;
+    for number in start..=inferred_end {
+        if let Some((_, marker_end)) =
+            find_dynamic_numbered_blank_marker(&normalized, number, cursor)
+        {
+            cursor = marker_end;
+        } else if allow_list_extension {
+            if let Some((_, marker_end)) = find_dynamic_number_marker(&normalized, number, cursor) {
+                cursor = marker_end;
+            }
+        }
+    }
+    while inferred_end < max_lookahead {
+        let next = inferred_end + 1;
+        if allow_blank_extension {
+            if let Some((_, marker_end)) =
+                find_dynamic_numbered_blank_marker(&normalized, next, cursor)
+            {
+                inferred_end = next;
+                cursor = marker_end;
+                continue;
+            }
+        }
+        if allow_list_extension {
+            if let Some((_, marker_end)) = find_dynamic_number_marker(&normalized, next, cursor) {
+                inferred_end = next;
+                cursor = marker_end;
+                continue;
+            }
+        };
+        break;
+    }
+    inferred_end
+}
+
 fn is_dynamic_question_block(block: &Value) -> bool {
     dynamic_block_role(block) == "question"
         || detect_dynamic_question_range(&dynamic_block_text(block)).is_some()
@@ -853,54 +917,315 @@ fn detect_dynamic_group_kind(text: &str) -> &'static str {
         "true_false_not_given"
     } else if lower.contains("yes") && lower.contains("no") && lower.contains("not given") {
         "yes_no_not_given"
-    } else if lower.contains("choose")
-        && (lower.contains("two") || lower.contains("three"))
-        && lower.contains("letter")
-    {
+    } else if is_dynamic_multi_choice_text(text) {
         "multi_choice"
     } else if lower.contains("complete the table")
         || lower.contains("table below")
         || (lower.contains('|') && lower.contains("complete"))
     {
         "table_completion"
+    } else if lower.contains("complete the flow chart")
+        || lower.contains("complete the flow-chart")
+        || lower.contains("flow chart below")
+        || lower.contains("flow-chart below")
+        || lower.contains("label the diagram")
+    {
+        "diagram_completion"
     } else if lower.contains("list of headings") || lower.contains("matching headings") {
         "heading_matching"
-    } else if lower.contains("which paragraph contains")
-        || lower.contains("matching information")
-        || lower.contains("match each statement")
-    {
-        "matching_information"
     } else if lower.contains("classify")
         || lower.contains("classification")
-        || lower.contains("according to")
+        || lower.contains("according to which")
     {
         "classification"
+    } else if lower.contains("which paragraph contains")
+        || lower.contains("which section contains")
+        || lower.contains("matching information")
+    {
+        "matching_information"
+    } else if is_dynamic_sentence_ending_matching_text(text) {
+        "matching"
+    } else if is_dynamic_matching_prompt_text(&normalized_dynamic_instruction_text(text)) {
+        "matching"
     } else if lower.contains("match") && lower.contains("letter") {
         "matching"
-    } else if lower.contains("choose") && lower.contains("letter") {
-        "single_choice"
     } else if lower.contains("complete the summary") {
         "summary_completion"
+    } else if is_dynamic_notes_completion_text(text) {
+        "sentence_completion"
     } else if lower.contains("complete the sentence") || lower.contains("complete the sentences") {
         "sentence_completion"
+    } else if has_dynamic_numbered_inline_blanks(text) {
+        "sentence_completion"
+    } else if is_dynamic_single_choice_text(text) {
+        "single_choice"
     } else {
         "short_answer"
     }
 }
 
+fn normalized_dynamic_instruction_text(text: &str) -> String {
+    collapse_whitespace(text).to_lowercase().replace(
+        ['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}'],
+        "-",
+    )
+}
+
+fn is_dynamic_multi_choice_text(text: &str) -> bool {
+    let normalized = normalized_dynamic_instruction_text(text);
+    normalized.contains("choose two letters")
+        || normalized.contains("choose three letters")
+        || normalized.contains("choose two correct letters")
+        || normalized.contains("choose three correct letters")
+}
+
+fn has_dynamic_single_choice_option_run(normalized: &str) -> bool {
+    [
+        "a, b, c or d",
+        "a, b, c, or d",
+        "a, b or c",
+        "a, b, c",
+        "a-d",
+        "a-c",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+}
+
+fn is_dynamic_matching_prompt_text(normalized: &str) -> bool {
+    normalized.contains("which paragraph contains")
+        || normalized.contains("which section contains")
+        || normalized.contains("match each statement")
+        || normalized.contains("match each person")
+        || normalized.contains("match each opinion")
+        || normalized.contains("match each sentence")
+        || normalized.contains("match each with")
+        || normalized.contains("look at the following")
+        || normalized.contains("list of headings")
+        || normalized.contains("correct heading for each")
+}
+
+fn is_dynamic_single_choice_text(text: &str) -> bool {
+    let normalized = normalized_dynamic_instruction_text(text);
+    if is_dynamic_matching_prompt_text(&normalized) {
+        return false;
+    }
+    if normalized.contains("choose the correct letter")
+        && has_dynamic_single_choice_option_run(&normalized)
+    {
+        return true;
+    }
+    if normalized.contains("which of the following")
+        && has_dynamic_single_choice_option_run(&normalized)
+    {
+        return true;
+    }
+    let option_hits = [" a ", " b ", " c ", " d "]
+        .iter()
+        .filter(|marker| normalized.contains(**marker))
+        .count();
+    option_hits >= 4
+        && [
+            "what ",
+            "why ",
+            "which ",
+            "according to ",
+            "writer",
+            "article",
+            "purpose",
+            "title",
+        ]
+        .iter()
+        .any(|marker| normalized.contains(marker))
+}
+
+fn is_dynamic_notes_completion_text(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("complete the notes")
+        || lower.contains("notes below")
+        || lower.contains("note completion")
+}
+
+fn is_dynamic_sentence_ending_matching_text(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    (lower.contains("complete each sentence") || lower.contains("complete the sentences"))
+        && (lower.contains("correct ending") || lower.contains("list of endings"))
+}
+
+fn dynamic_layout_hint_for_group(kind: &str, text: &str) -> &'static str {
+    if kind == "table_completion" {
+        "table"
+    } else if is_dynamic_notes_completion_text(text)
+        || kind == "diagram_completion"
+        || kind == "sentence_completion"
+        || kind == "summary_completion"
+        || has_dynamic_numbered_inline_blanks(text)
+    {
+        "inline_completion"
+    } else {
+        "list"
+    }
+}
+
+fn is_dynamic_blank_marker_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '_' | '.'
+            | '\u{2026}'
+            | '\u{22ef}'
+            | '\u{00b7}'
+            | '-'
+            | '\u{2010}'
+            | '\u{2011}'
+            | '\u{2012}'
+            | '\u{2013}'
+            | '\u{2014}'
+            | '\u{fe4d}'
+            | '\u{fe4e}'
+            | '\u{fe4f}'
+            | '\u{ff3f}'
+    )
+}
+
+fn dynamic_blank_marker_width(ch: char) -> usize {
+    if matches!(ch, '\u{2026}' | '\u{22ef}') {
+        3
+    } else {
+        1
+    }
+}
+
+fn is_dynamic_number_boundary_before(text: &str, start: usize) -> bool {
+    text[..start]
+        .chars()
+        .next_back()
+        .map(|ch| ch.is_whitespace() || matches!(ch, '(' | '[' | '<' | '>'))
+        .unwrap_or(true)
+}
+
+fn dynamic_next_non_space(text: &str, from: usize) -> Option<(usize, char)> {
+    let mut cursor = from.min(text.len());
+    while let Some(next) = text[cursor..].chars().next() {
+        if next.is_whitespace() {
+            cursor += next.len_utf8();
+        } else {
+            return Some((cursor, next));
+        }
+    }
+    None
+}
+
+fn is_dynamic_range_dash_after_number(text: &str, after_digits: usize) -> bool {
+    let Some((dash_index, dash)) = dynamic_next_non_space(text, after_digits) else {
+        return false;
+    };
+    if !matches!(dash, '-' | '\u{2013}' | '\u{2014}') {
+        return false;
+    }
+    dynamic_next_non_space(text, dash_index + dash.len_utf8())
+        .map(|(_, next)| next.is_ascii_digit())
+        .unwrap_or(false)
+}
+
+fn find_dynamic_numbered_blank_marker(
+    text: &str,
+    number: u32,
+    from: usize,
+) -> Option<(usize, usize)> {
+    let needle = number.to_string();
+    let mut search = from.min(text.len());
+    while let Some(relative) = text[search..].find(&needle) {
+        let start = search + relative;
+        let after_digits = start + needle.len();
+        if !is_dynamic_number_boundary_before(text, start) {
+            search = after_digits;
+            continue;
+        }
+        if is_dynamic_range_dash_after_number(text, after_digits) {
+            search = after_digits;
+            continue;
+        }
+        let mut cursor = after_digits;
+        if let Some(next) = text[cursor..].chars().next() {
+            if matches!(next, '.' | ')' | ':' | '、') {
+                cursor += next.len_utf8();
+            }
+        }
+        while let Some(next) = text[cursor..].chars().next() {
+            if next.is_whitespace() {
+                cursor += next.len_utf8();
+            } else {
+                break;
+            }
+        }
+        let mut blank_end = cursor;
+        let mut width = 0usize;
+        while let Some(next) = text[blank_end..].chars().next() {
+            if is_dynamic_blank_marker_char(next) {
+                width += dynamic_blank_marker_width(next);
+                blank_end += next.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if width >= 3 {
+            return Some((start, blank_end));
+        }
+        search = after_digits;
+    }
+    None
+}
+
+fn has_dynamic_numbered_inline_blanks(text: &str) -> bool {
+    let normalized = collapse_whitespace(text);
+    let Some((start, end)) = detect_dynamic_question_range(&normalized) else {
+        return false;
+    };
+    let mut cursor = 0usize;
+    let mut markers = 0usize;
+    for number in start..=end {
+        if let Some((_, marker_end)) =
+            find_dynamic_numbered_blank_marker(&normalized, number, cursor)
+        {
+            markers += 1;
+            cursor = marker_end;
+        }
+    }
+    markers >= 2 || (end > start && markers as u32 >= (end - start + 1).min(3))
+}
+
 fn dynamic_letter_options_for_text(text: &str) -> Vec<String> {
     let lower = text.to_lowercase();
-    if lower.contains(" a-g") || lower.contains("a-g") || lower.contains("list of headings") {
+    let normalized = lower
+        .replace(
+            ['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}'],
+            "-",
+        )
+        .replace('–', "-");
+    if normalized.contains("a-i") {
+        ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect()
+    } else if normalized.contains("a-h") {
+        ["A", "B", "C", "D", "E", "F", "G", "H"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect()
+    } else if normalized.contains(" a-g")
+        || normalized.contains("a-g")
+        || lower.contains("list of headings")
+    {
         ["A", "B", "C", "D", "E", "F", "G"]
             .iter()
             .map(|value| value.to_string())
             .collect()
-    } else if lower.contains(" a-f") || lower.contains("a-f") {
+    } else if normalized.contains(" a-f") || normalized.contains("a-f") {
         ["A", "B", "C", "D", "E", "F"]
             .iter()
             .map(|value| value.to_string())
             .collect()
-    } else if lower.contains(" a-e") || lower.contains("a-e") {
+    } else if normalized.contains(" a-e") || normalized.contains("a-e") {
         ["A", "B", "C", "D", "E"]
             .iter()
             .map(|value| value.to_string())
@@ -1040,6 +1365,27 @@ fn dynamic_question_heading(start: u32, end: u32) -> String {
     }
 }
 
+fn normalize_dynamic_group_ranges(groups: &mut Vec<SplitGroupCandidateV1>) {
+    groups.sort_by_key(|candidate| candidate.question_range[0]);
+    let mut previous_end = 0u32;
+    groups.retain_mut(|candidate| {
+        let [start, end] = candidate.question_range;
+        if end <= previous_end {
+            return false;
+        }
+        if start <= previous_end && end > previous_end {
+            let adjusted_start = previous_end + 1;
+            candidate.question_range = [adjusted_start, end];
+            candidate.heading = dynamic_question_heading(adjusted_start, end);
+        }
+        previous_end = previous_end.max(candidate.question_range[1]);
+        true
+    });
+    for (index, candidate) in groups.iter_mut().enumerate() {
+        candidate.group_id = format!("group-{}", index + 1);
+    }
+}
+
 fn normalized_answer_value(raw: &str) -> Value {
     let upper = raw.trim().to_uppercase();
     if matches!(
@@ -1080,7 +1426,12 @@ pub(crate) fn parse_dynamic_answer_text(text: &str) -> serde_json::Map<String, V
         if let Ok(number) = tokens[index].parse::<u32>() {
             index += 1;
             let mut value_tokens = Vec::new();
-            while index < tokens.len() && tokens[index].parse::<u32>().is_err() {
+            while index < tokens.len() {
+                if let Ok(next_number) = tokens[index].parse::<u32>() {
+                    if next_number == number + 1 {
+                        break;
+                    }
+                }
                 value_tokens.push(tokens[index].clone());
                 index += 1;
             }
@@ -1223,7 +1574,7 @@ pub(crate) fn make_dynamic_split_candidates(
         if is_known_dynamic_umbrella_block(block, &all_umbrella_blocks) {
             continue;
         }
-        let Some((start, end)) = detect_dynamic_question_heading_range(&text) else {
+        let Some((start, heading_end)) = detect_dynamic_question_heading_range(&text) else {
             continue;
         };
         let next_heading = question_blocks
@@ -1244,6 +1595,22 @@ pub(crate) fn make_dynamic_split_candidates(
             .join(" ");
         let block_ids = included.iter().map(dynamic_block_id).collect::<Vec<_>>();
         let classification = classify_dynamic_group(&combined, &block_ids);
+        let allow_blank_extension = matches!(
+            classification.kind.as_str(),
+            "summary_completion" | "sentence_completion" | "diagram_completion"
+        );
+        let allow_list_extension = matches!(
+            classification.kind.as_str(),
+            "true_false_not_given" | "yes_no_not_given"
+        );
+        let end = infer_dynamic_group_range_end(
+            &combined,
+            start,
+            heading_end,
+            allow_blank_extension,
+            allow_list_extension,
+        );
+        let layout_hint = dynamic_layout_hint_for_group(&classification.kind, &combined);
         let section_evidence = split_section_evidence_for_blocks(included);
         let continuation_edges = split_continuation_edges_for_blocks(included);
         group_candidates.push(SplitGroupCandidateV1 {
@@ -1253,6 +1620,7 @@ pub(crate) fn make_dynamic_split_candidates(
             instruction_text: text,
             block_ids,
             kind_hint: classification.kind.clone(),
+            layout_hint: Some(layout_hint.to_string()),
             confidence: classification.confidence,
             classification: Some(classification),
             section_evidence,
@@ -1276,6 +1644,7 @@ pub(crate) fn make_dynamic_split_candidates(
                     vec![umbrella.block_id.clone()]
                 },
                 kind_hint: "short_answer".to_string(),
+                layout_hint: Some("list".to_string()),
                 confidence: 0.35,
                 classification: Some(classify_dynamic_group(
                     &umbrella.text,
@@ -1300,6 +1669,7 @@ pub(crate) fn make_dynamic_split_candidates(
             .map(dynamic_block_id)
             .collect::<Vec<_>>();
         let classification = classify_dynamic_group(&combined, &block_ids);
+        let layout_hint = dynamic_layout_hint_for_group(&classification.kind, &combined);
         group_candidates.push(SplitGroupCandidateV1 {
             group_id: "group-1".to_string(),
             heading: dynamic_question_heading(start, end),
@@ -1307,6 +1677,7 @@ pub(crate) fn make_dynamic_split_candidates(
             instruction_text: combined,
             block_ids,
             kind_hint: classification.kind.clone(),
+            layout_hint: Some(layout_hint.to_string()),
             confidence: classification.confidence.min(0.58),
             classification: Some(classification),
             section_evidence: split_section_evidence_for_blocks(&question_blocks),
@@ -1315,6 +1686,7 @@ pub(crate) fn make_dynamic_split_candidates(
             requires_manual_question_import: None,
         });
     }
+    normalize_dynamic_group_ranges(&mut group_candidates);
 
     let fallback_passage_range = if let Some(first_question) = first_question_index {
         blocks[..first_question]
@@ -1410,6 +1782,7 @@ pub(crate) fn dynamic_template_for_kind(kind: &str) -> &'static str {
         "matching_information" => "matching_information",
         "classification" => "classification",
         "table_completion" => "table_completion",
+        "diagram_completion" => "inline_text_completion",
         "summary_completion" => "summary_text_completion",
         "sentence_completion" => "inline_text_completion",
         _ => "short_answer_list",
@@ -1438,12 +1811,15 @@ fn find_dynamic_number_marker(text: &str, number: u32, from: usize) -> Option<(u
             search = after_digits;
             continue;
         }
+        if is_dynamic_range_dash_after_number(text, after_digits) {
+            search = after_digits;
+            continue;
+        }
         if let Some(next) = text[after_digits..].chars().next() {
-            if matches!(next, '-' | '\u{2013}' | '\u{2014}') {
-                search = after_digits;
-                continue;
-            }
-            if !(next.is_whitespace() || matches!(next, '.' | ')' | ':' | '、')) {
+            if !(next.is_whitespace()
+                || matches!(next, '.' | ')' | ':' | '、')
+                || is_dynamic_blank_marker_char(next))
+            {
                 search = after_digits;
                 continue;
             }
@@ -1459,6 +1835,24 @@ fn find_dynamic_number_marker(text: &str, number: u32, from: usize) -> Option<(u
                 content_start += next.len_utf8();
             } else {
                 break;
+            }
+        }
+        let mut blank_width = 0usize;
+        while let Some(next) = text[content_start..].chars().next() {
+            if is_dynamic_blank_marker_char(next) {
+                blank_width += dynamic_blank_marker_width(next);
+                content_start += next.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if blank_width >= 3 {
+            while let Some(next) = text[content_start..].chars().next() {
+                if next.is_whitespace() {
+                    content_start += next.len_utf8();
+                } else {
+                    break;
+                }
             }
         }
         return Some((start, content_start));
@@ -1498,7 +1892,7 @@ fn dynamic_prompt_for_question(
             return prompt.to_string();
         }
     }
-    format!("{} item {}", fallback_heading, number)
+    format!("{} 第 {} 题", fallback_heading, number)
 }
 
 fn dynamic_block_html(block: &Value) -> String {
@@ -1734,10 +2128,16 @@ pub(crate) fn make_dynamic_authoring_ir(
                     }
                 })
                 .collect::<Vec<_>>();
+            let layout_hint = candidate
+                .get("layoutHint")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| dynamic_layout_hint_for_group(kind, &group_text));
             let layout = if kind == "table_completion" {
-                json!({"template": dynamic_template_for_kind(kind), "tableHeaders": ["Question", "Prompt", "Answer"]})
+                json!({"template": dynamic_template_for_kind(kind), "layoutHint": layout_hint, "tableHeaders": ["Question", "Prompt", "Answer"]})
+            } else if layout_hint == "inline_completion" {
+                json!({"template": dynamic_template_for_kind(kind), "layoutHint": layout_hint, "notes": group_text})
             } else {
-                json!({"template": dynamic_template_for_kind(kind)})
+                json!({"template": dynamic_template_for_kind(kind), "layoutHint": layout_hint})
             };
             let allow_option_reuse = candidate
                 .pointer("/classification/interaction/allowOptionReuse")

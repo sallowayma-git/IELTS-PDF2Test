@@ -42,6 +42,12 @@ function renderCheckboxQuestion(question: QuestionDraft): string {
     </li>`;
 }
 
+function renderOptionQuestion(question: QuestionDraft): string {
+  const options = question.interaction.options ?? [];
+  if (!options.length) return renderTextQuestion(question);
+  return renderRadioQuestion(question);
+}
+
 function renderTextQuestion(question: QuestionDraft): string {
   return `
     <li class="author-question inline-input" data-question-id="${question.id}">
@@ -71,16 +77,91 @@ function renderTableCompletion(group: QuestionGroupDraft): string {
   </table>`;
 }
 
+function findInlineMarker(text: string, displayNumber: string, from: number): [number, number] | undefined {
+  let search = Math.min(from, text.length);
+  while (search < text.length) {
+    const start = text.indexOf(displayNumber, search);
+    if (start < 0) return undefined;
+    let cursor = start + displayNumber.length;
+    const before = start > 0 ? text[start - 1] : "";
+    if (before && !/[\s([<>]/.test(before)) {
+      search = cursor;
+      continue;
+    }
+    if (isRangeDashAfterNumber(text, cursor)) {
+      search = cursor;
+      continue;
+    }
+    if (/[.):、]/.test(text[cursor] ?? "")) cursor += 1;
+    while (/\s/.test(text[cursor] ?? "")) cursor += 1;
+    let blankEnd = cursor;
+    let blankWidth = 0;
+    while (isInlineBlankMarkerChar(text[blankEnd] ?? "")) {
+      blankWidth += inlineBlankMarkerWidth(text[blankEnd]);
+      blankEnd += 1;
+    }
+    if (blankWidth >= 3) return [start, blankEnd];
+    search = Math.max(cursor, start + displayNumber.length);
+  }
+  return undefined;
+}
+
+function isInlineBlankMarkerChar(ch: string): boolean {
+  return /[_\.\u2026\u22ef\u00b7\-\u2010\u2011\u2012\u2013\u2014\ufe4d\ufe4e\ufe4f\uff3f]/.test(ch);
+}
+
+function inlineBlankMarkerWidth(ch: string): number {
+  return ch === "\u2026" || ch === "\u22ef" ? 3 : 1;
+}
+
+function nextNonSpace(text: string, from: number): [number, string] | undefined {
+  let cursor = Math.min(from, text.length);
+  while (cursor < text.length) {
+    const ch = text[cursor] ?? "";
+    if (!/\s/.test(ch)) return [cursor, ch];
+    cursor += 1;
+  }
+  return undefined;
+}
+
+function isRangeDashAfterNumber(text: string, afterDigits: number): boolean {
+  const dash = nextNonSpace(text, afterDigits);
+  if (!dash || !/[-\u2013\u2014]/.test(dash[1])) return false;
+  const next = nextNonSpace(text, dash[0] + 1);
+  return Boolean(next && /\d/.test(next[1]));
+}
+
+function renderInlineCompletion(group: QuestionGroupDraft): string | undefined {
+  const notes = group.layout.notes?.trim();
+  if (!notes) return undefined;
+  let cursor = 0;
+  let body = "";
+  for (const question of group.questions) {
+    const marker = findInlineMarker(notes, question.displayNumber, cursor);
+    if (!marker) continue;
+    const [start, end] = marker;
+    body += escapeHtml(notes.slice(cursor, start));
+    body += `<span class="inline-completion" data-question-id="${escapeHtml(question.id)}"><strong>${escapeHtml(question.displayNumber)}</strong> <input type="text" id="${escapeHtml(question.id)}_input" name="${escapeHtml(question.id)}" placeholder="answer"></span>`;
+    cursor = end;
+  }
+  body += escapeHtml(notes.slice(cursor));
+  return body.includes("inline-completion") ? `<div class="notes-completion">${body}</div>` : undefined;
+}
+
 export function renderGroupBodyHtml(group: QuestionGroupDraft): string {
   const lead = group.instruction.map((item) => `<p>${escapeHtml(item)}</p>`).join("");
   let body = "";
 
-  if (group.kind === "table_completion") {
+  if (group.layout.layoutHint === "inline_completion" || group.layout.template === "inline_text_completion") {
+    body = renderInlineCompletion(group) ?? `<ol>${group.questions.map(renderTextQuestion).join("")}</ol>`;
+  } else if (group.kind === "table_completion") {
     body = renderTableCompletion(group);
   } else if (group.kind === "multi_choice") {
     body = `<ol>${group.questions.map(renderCheckboxQuestion).join("")}</ol>`;
   } else if (group.kind === "true_false_not_given" || group.kind === "yes_no_not_given" || group.kind === "single_choice") {
     body = `<ol>${group.questions.map(renderRadioQuestion).join("")}</ol>`;
+  } else if (group.kind === "matching" || group.kind === "heading_matching" || group.kind === "matching_information" || group.kind === "classification") {
+    body = `<ol>${group.questions.map(renderOptionQuestion).join("")}</ol>`;
   } else {
     body = `<ol>${group.questions.map(renderTextQuestion).join("")}</ol>`;
   }

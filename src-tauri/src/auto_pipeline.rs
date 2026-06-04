@@ -287,10 +287,17 @@ where
     let options = input.unwrap_or_default();
     let parse_mode = options.parse_mode.as_deref().unwrap_or("auto");
     let confidence_threshold = options.confidence_threshold.unwrap_or(0.85).clamp(0.0, 1.0);
+    let target = options.target.as_deref().unwrap_or("editableDraft");
+    let allow_overwrite = options.allow_overwrite.unwrap_or(false);
 
     let mut job = load_job(root, &job_id)?;
     let dir = job_dir(root, &job_id);
     ensure_job_dirs(&dir)?;
+    if dir.join("authoring-ir.json").exists() && !allow_overwrite {
+        return Err(
+            "editable_draft_exists; pass allowOverwrite=true before regenerating draft".to_string(),
+        );
+    }
 
     let has_doc = dir.join("document-ir.json").exists();
     if !has_doc {
@@ -619,12 +626,14 @@ where
     let requires_parser_review = !source_review_issues(&source_review).is_empty();
     let requires_authoring_review = remaining_authoring_review > 0;
 
-    let next_status = if !low_confidence_groups.is_empty()
+    let has_review_blocks = !low_confidence_groups.is_empty()
         || !blocked_auto_apply_groups.is_empty()
         || requires_parser_review
-        || requires_authoring_review
-    {
+        || requires_authoring_review;
+    let next_status = if has_review_blocks {
         JobStatus::NeedsReview
+    } else if target == "editableDraft" {
+        JobStatus::DraftSaved
     } else if static_runtime_passed {
         JobStatus::ExportReady
     } else if report_passed {
@@ -634,14 +643,33 @@ where
     };
     let next_step = if requires_parser_review {
         WorkflowStep::DocumentReview
+    } else if target == "editableDraft" || requires_authoring_review {
+        WorkflowStep::Authoring
     } else if !low_confidence_groups.is_empty() || !blocked_auto_apply_groups.is_empty() {
-        WorkflowStep::LlmReview
-    } else if requires_authoring_review {
         WorkflowStep::Authoring
     } else if static_runtime_passed {
         WorkflowStep::Export
     } else {
         WorkflowStep::Preview
+    };
+    let next_route = if requires_parser_review {
+        "document"
+    } else {
+        "groups"
+    };
+    let user_status = if has_review_blocks {
+        "needsConfirmation"
+    } else {
+        "draftReady"
+    };
+    let user_message = if requires_parser_review {
+        "题稿已生成，但源文件识别结果需要你确认后再继续。"
+    } else if !low_confidence_groups.is_empty() || !blocked_auto_apply_groups.is_empty() {
+        "题稿已生成，请在题稿编辑页确认部分识别结果。"
+    } else if requires_authoring_review {
+        "题稿已生成，还有题干、答案或题型需要你确认。"
+    } else {
+        "题稿已生成，可以开始检查和编辑。"
     };
 
     update_job(root, &job_id, |item| {
@@ -691,6 +719,9 @@ where
         },
         "status": format!("{:?}", next_status),
         "currentStep": format!("{:?}", next_step),
+        "userStatus": user_status,
+        "userMessage": user_message,
+        "nextRoute": next_route,
         "generatedAt": Utc::now().to_rfc3339(),
         "validationReport": report
     });

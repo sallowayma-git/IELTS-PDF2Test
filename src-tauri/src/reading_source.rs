@@ -95,6 +95,174 @@ fn string_at<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
+fn group_layout_hint(group: &Value) -> &str {
+    group
+        .pointer("/layout/layoutHint")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+fn group_layout_template(group: &Value) -> &str {
+    group
+        .pointer("/layout/template")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+fn group_layout_notes(group: &Value) -> &str {
+    group
+        .pointer("/layout/notes")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+}
+
+fn question_display_and_id(question: &Value) -> Option<(String, String)> {
+    let display = string_at(question, "displayNumber").trim();
+    let qid = string_at(question, "id").trim();
+    if display.is_empty() || qid.is_empty() {
+        None
+    } else {
+        Some((display.to_string(), qid.to_string()))
+    }
+}
+
+fn is_inline_blank_marker_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '_' | '.'
+            | '\u{2026}'
+            | '\u{22ef}'
+            | '\u{00b7}'
+            | '-'
+            | '\u{2010}'
+            | '\u{2011}'
+            | '\u{2012}'
+            | '\u{2013}'
+            | '\u{2014}'
+            | '\u{fe4d}'
+            | '\u{fe4e}'
+            | '\u{fe4f}'
+            | '\u{ff3f}'
+    )
+}
+
+fn inline_blank_marker_width(ch: char) -> usize {
+    if matches!(ch, '\u{2026}' | '\u{22ef}') {
+        3
+    } else {
+        1
+    }
+}
+
+fn next_non_space(text: &str, from: usize) -> Option<(usize, char)> {
+    let mut cursor = from.min(text.len());
+    while let Some(next) = text[cursor..].chars().next() {
+        if next.is_whitespace() {
+            cursor += next.len_utf8();
+        } else {
+            return Some((cursor, next));
+        }
+    }
+    None
+}
+
+fn is_range_dash_after_number(text: &str, after_digits: usize) -> bool {
+    let Some((dash_index, dash)) = next_non_space(text, after_digits) else {
+        return false;
+    };
+    if !matches!(dash, '-' | '\u{2013}' | '\u{2014}') {
+        return false;
+    }
+    next_non_space(text, dash_index + dash.len_utf8())
+        .map(|(_, next)| next.is_ascii_digit())
+        .unwrap_or(false)
+}
+
+fn find_inline_marker(text: &str, display: &str, from: usize) -> Option<(usize, usize)> {
+    let mut search = from.min(text.len());
+    while let Some(relative) = text[search..].find(display) {
+        let start = search + relative;
+        let mut after = start + display.len();
+        let before_ok = text[..start]
+            .chars()
+            .next_back()
+            .map(|ch| ch.is_whitespace() || matches!(ch, '(' | '[' | '<' | '>'))
+            .unwrap_or(true);
+        if !before_ok {
+            search = after;
+            continue;
+        }
+        if is_range_dash_after_number(text, after) {
+            search = after;
+            continue;
+        }
+        let mut cursor = after;
+        if let Some(next) = text[cursor..].chars().next() {
+            if matches!(next, '.' | ')' | ':' | '、') {
+                cursor += next.len_utf8();
+            }
+        }
+        let whitespace_start = cursor;
+        while let Some(next) = text[cursor..].chars().next() {
+            if next.is_whitespace() {
+                cursor += next.len_utf8();
+            } else {
+                break;
+            }
+        }
+        let mut blank_end = cursor;
+        let mut blank_width = 0usize;
+        while let Some(next) = text[blank_end..].chars().next() {
+            if is_inline_blank_marker_char(next) {
+                blank_width += inline_blank_marker_width(next);
+                blank_end += next.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if blank_width >= 3 {
+            return Some((start, blank_end));
+        }
+        if cursor > whitespace_start {
+            after = cursor;
+        }
+        search = after;
+    }
+    None
+}
+
+fn render_inline_completion_from_notes(group: &Value, questions: &[Value]) -> Option<String> {
+    let notes = group_layout_notes(group).trim();
+    if notes.is_empty() {
+        return None;
+    }
+    let mut output = String::new();
+    let mut cursor = 0usize;
+    for question in questions {
+        let Some((display, qid)) = question_display_and_id(question) else {
+            continue;
+        };
+        let Some((start, end)) = find_inline_marker(notes, &display, cursor) else {
+            continue;
+        };
+        output.push_str(&html_escape(&notes[cursor..start]));
+        output.push_str(&format!(
+            "<span class=\"inline-completion\" data-question-id=\"{}\"><strong>{}</strong> <input type=\"text\" id=\"{}_input\" name=\"{}\" placeholder=\"answer\"></span>",
+            html_escape(&qid),
+            html_escape(&display),
+            html_escape(&qid),
+            html_escape(&qid)
+        ));
+        cursor = end;
+    }
+    output.push_str(&html_escape(&notes[cursor..]));
+    if output.contains("inline-completion") {
+        Some(format!("<div class=\"notes-completion\">{}</div>", output))
+    } else {
+        None
+    }
+}
+
 pub(crate) fn render_group_body_html(group: &Value) -> String {
     let group_id = string_at(group, "groupId");
     let kind = string_at(group, "kind");
@@ -114,7 +282,26 @@ pub(crate) fn render_group_body_html(group: &Value) -> String {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let body = if kind == "table_completion" {
+    let layout_hint = group_layout_hint(group);
+    let template = group_layout_template(group);
+    let body = if layout_hint == "inline_completion" || template == "inline_text_completion" {
+        render_inline_completion_from_notes(group, &questions).unwrap_or_else(|| {
+            let rows = questions
+                .iter()
+                .map(|q| {
+                    let qid = string_at(q, "id");
+                    format!(
+                        "<li><label><strong>{}</strong> {} <input type=\"text\" id=\"{}_input\" name=\"{}\"></label></li>",
+                        html_escape(string_at(q, "displayNumber")),
+                        html_escape(string_at(q, "prompt")),
+                        html_escape(qid),
+                        html_escape(qid)
+                    )
+                })
+                .collect::<String>();
+            format!("<ol>{}</ol>", rows)
+        })
+    } else if kind == "table_completion" {
         let rows = questions
             .iter()
             .map(|q| {

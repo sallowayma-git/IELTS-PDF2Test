@@ -73,8 +73,8 @@ export function LlmReview({ jobId, refresh }: { jobId: string; refresh: () => vo
   return (
     <section className="page-enter">
       <div className="section-heading spread">
-        <div><p className="eyebrow">模型建议审阅</p><h2>模型建议审阅</h2></div>
-        <div className="button-row"><button className="ghost" onClick={run}>调用分类/抽取</button><button className="primary" disabled={!suggestion || suggestion.confidence < 0.85} onClick={apply}>应用建议</button></div>
+        <div><p className="eyebrow">需要确认的识别结果</p><h2>需要确认的识别结果</h2></div>
+        <div className="button-row"><button className="ghost" onClick={run}>重新识别当前题组</button><button className="primary" disabled={!suggestion || suggestion.confidence < 0.85} onClick={apply}>应用结果</button></div>
       </div>
       <div className="llm-grid">
         <section className="form-section">
@@ -99,10 +99,10 @@ export function LlmReview({ jobId, refresh }: { jobId: string; refresh: () => vo
           <h3>建议内容</h3>
           {suggestion ? (
             <>
-              <p className="eyebrow">题组建议</p>
+              <p className="eyebrow">题组识别结果</p>
               <div className="score-ring">{Math.round(suggestion.confidence * 100)}%</div>
-              {suggestion.confidence < 0.85 ? <p className="empty">低置信度建议只能人工参考，不能自动应用。</p> : null}
-              {pipelineReport?.llm?.blockedAutoApplyGroups?.includes(suggestion.groupId) ? <p className="empty">该建议虽然达到置信度阈值，但缺少可追溯来源，或格式不符合要求，已被自动应用门禁拦截。</p> : null}
+              {suggestion.confidence < 0.85 ? <p className="empty">该结果不够确定，需要你确认后再继续。</p> : null}
+              {pipelineReport?.llm?.blockedAutoApplyGroups?.includes(suggestion.groupId) ? <p className="empty">该结果虽然看起来可信，但缺少可追溯来源，或格式不符合要求，因此需要你确认。</p> : null}
               <h4>拟修改内容</h4>
               <pre>{JSON.stringify(suggestion.patch, null, 2)}</pre>
               <h4>题目建议</h4>
@@ -115,13 +115,13 @@ export function LlmReview({ jobId, refresh }: { jobId: string; refresh: () => vo
                 </dl>
               ) : <p className="empty">该建议未提供可展示的来源依据。</p>}
             </>
-          ) : <p className="empty">当前题组没有建议。自动流水线的低置信建议会在这里按题组显示；也可以手动调用一次分类/抽取。</p>}
+          ) : <p className="empty">当前题组没有需要确认的识别结果。也可以手动重新识别当前题组。</p>}
         </section>
         <aside className="inspector">
-          <p className="eyebrow">模型调用信息</p>
+          <p className="eyebrow">高级诊断</p>
           <h3>{profiles[0]?.name ?? "No profile"}</h3>
-          <dl><dt>模型</dt><dd>{profiles[0]?.model}</dd><dt>强制结构化输出</dt><dd>{profiles[0]?.forceJson ? "是" : "否"}</dd><dt>密钥状态</dt><dd>{profiles[0]?.hasApiKey ? "已配置" : "本地兜底"}</dd><dt>自动应用规则</dt><dd>必须同时满足高置信、格式合法，并能追溯到当前题组来源段落；模型不会直接生成最终 JS。</dd></dl>
-          <h4>历史建议</h4>
+          <dl><dt>识别模型</dt><dd>{profiles[0]?.model}</dd><dt>结构化输出</dt><dd>{profiles[0]?.forceJson ? "是" : "否"}</dd><dt>密钥状态</dt><dd>{profiles[0]?.hasApiKey ? "已配置" : "本地兜底"}</dd><dt>自动采用规则</dt><dd>必须同时满足高可信、格式合法，并能追溯到当前题组来源段落；不会直接生成最终 JS。</dd></dl>
+          <h4>历史结果</h4>
           <div className="layer-list">{suggestions.map((item) => <button className="ghost small" key={item.suggestionId} onClick={() => { setGroupId(item.groupId); setSuggestion(item); }}>题组 {Math.round(item.confidence * 100)}%</button>)}</div>
           {suggestion?.warnings?.length ? <><h4>提醒</h4><pre>{JSON.stringify(suggestion.warnings, null, 2)}</pre></> : null}
           {pipelineReport ? <><h4>自动处理报告</h4><dl><dt>任务状态</dt><dd>{jobStatusLabel((pipelineReport as { status?: string }).status)}</dd><dt>当前步骤</dt><dd>{workflowStepLabel((pipelineReport as { currentStep?: string }).currentStep)}</dd></dl></> : null}

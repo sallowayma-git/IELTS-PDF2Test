@@ -14,11 +14,12 @@ use preview_commands::{
     generate_preview_assets_core, run_preview_e2e_core, validate_authoring_ir_core,
 };
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use serde_json::json;
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{env, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 use util::ensure_app_dirs;
 mod authoring_commands;
 mod authoring_pipeline;
@@ -184,6 +185,15 @@ pub struct AutoPipelineInput {
     pub confidence_threshold: Option<f64>,
     #[serde(rename = "parseMode")]
     pub parse_mode: Option<String>,
+    pub target: Option<String>,
+    #[serde(rename = "allowOverwrite")]
+    pub allow_overwrite: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct RegenerateDraftInput {
+    #[serde(rename = "allowOverwrite")]
+    pub allow_overwrite: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -281,6 +291,132 @@ pub(crate) fn html_escape(input: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#039;")
+}
+
+fn inferred_category_from_name(name: &str) -> String {
+    let lower = name.to_lowercase();
+    if lower.contains("p3") {
+        "P3".to_string()
+    } else if lower.contains("p2") {
+        "P2".to_string()
+    } else {
+        "P1".to_string()
+    }
+}
+
+fn title_from_source_path(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Untitled Reading");
+    let without_prefix = stem
+        .split_once(" - ")
+        .map(|(_, rest)| rest)
+        .unwrap_or(stem)
+        .trim();
+    without_prefix
+        .replace(['_', '-'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn generate_reading_source_from_path(path: &Path) -> CommandResult<Value> {
+    if !path.exists() || !path.is_file() {
+        return Err(format!("source_file_not_readable:{}", path.display()));
+    }
+    let original_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("source.pdf")
+        .to_string();
+    let (sha256, size_bytes, _) = util::hash_file_or_path(path)?;
+    let source = SourceFile {
+        file_id: "file-cli-main".to_string(),
+        original_name: original_name.clone(),
+        stored_name: original_name.clone(),
+        file_type: util::file_type_from_name(&original_name).to_string(),
+        sha256,
+        size_bytes,
+        role: "MainQuestion".to_string(),
+        imported_at: Utc::now(),
+    };
+    let mut job = job_store::make_job(CreateJobInput {
+        title: Some(title_from_source_path(path)),
+        category: Some(inferred_category_from_name(&original_name)),
+        frequency: Some("medium".to_string()),
+        tags: Some(vec!["regression-cli".to_string()]),
+        llm_profile_id: None,
+    });
+    job.source_files = vec![source.clone()];
+
+    let scratch = env::temp_dir().join(format!(
+        "ielts-author-studio-cli-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
+    let parser_output = scratch.join("document-ir.json");
+    let document_ir = parser::parse_source_document(&job, &source, path, &parser_output, "auto")?;
+    let split_candidates =
+        authoring_pipeline::make_dynamic_split_candidates(&job.job_id, &job, Some(&document_ir));
+    let authoring_ir =
+        authoring_pipeline::make_dynamic_authoring_ir(&job, &split_candidates, Some(&document_ir));
+    let reading_source = reading_source::reading_source(&authoring_ir);
+    let _ = fs::remove_dir_all(&scratch);
+
+    Ok(json!({
+        "schemaVersion": "ReadingSourceGenerationFixtureV1",
+        "sourcePath": path.to_string_lossy(),
+        "documentIr": document_ir,
+        "splitCandidates": split_candidates,
+        "authoringIr": authoring_ir,
+        "readingSource": reading_source
+    }))
+}
+
+fn run_cli(args: &[String]) -> CommandResult<bool> {
+    if args.first().map(String::as_str) != Some("--generate-reading-source") {
+        return Ok(false);
+    }
+    let source = args
+        .get(1)
+        .ok_or_else(|| "missing_source_path".to_string())?;
+    let mut out_path: Option<PathBuf> = None;
+    let mut index = 2usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--out" => {
+                out_path = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            other => return Err(format!("unknown_cli_arg:{}", other)),
+        }
+    }
+    let result = generate_reading_source_from_path(&PathBuf::from(source))?;
+    if let Some(path) = out_path {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        util::write_json(&path, &result)?;
+    } else {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?
+        );
+    }
+    Ok(true)
+}
+
+pub fn run_cli_or_app() {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    match run_cli(&args) {
+        Ok(true) => {}
+        Ok(false) => run(),
+        Err(error) => {
+            eprintln!("{}", error);
+            std::process::exit(1);
+        }
+    }
 }
 
 #[tauri::command]
@@ -389,9 +525,13 @@ async fn resolve_source_review(
 }
 
 #[tauri::command]
-async fn run_rule_split(job_id: String, app: AppHandle) -> CommandResult<Value> {
+async fn run_rule_split(
+    job_id: String,
+    input: Option<RegenerateDraftInput>,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    run_rule_split_core(&root, &job_id)
+    run_rule_split_core(&root, &job_id, input)
 }
 
 #[tauri::command]
@@ -405,9 +545,13 @@ async fn save_split_adjustments(
 }
 
 #[tauri::command]
-async fn build_authoring_ir(job_id: String, app: AppHandle) -> CommandResult<Value> {
+async fn build_authoring_ir(
+    job_id: String,
+    input: Option<RegenerateDraftInput>,
+    app: AppHandle,
+) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    build_authoring_ir_core(&root, &job_id)
+    build_authoring_ir_core(&root, &job_id, input)
 }
 
 #[tauri::command]
@@ -3085,11 +3229,11 @@ Answers
         );
         assert_eq!(
             report.get("currentStep").and_then(Value::as_str),
-            Some("LlmReview")
+            Some("Authoring")
         );
         let saved = load_job(&root, &job.job_id).unwrap();
         assert_eq!(saved.status, JobStatus::NeedsReview);
-        assert_eq!(saved.current_step, WorkflowStep::LlmReview);
+        assert_eq!(saved.current_step, WorkflowStep::Authoring);
         assert!(saved.issue_counts.needs_review > 0);
         assert!(!job_dir(&root, &job.job_id)
             .join("document-ir.json")
@@ -3128,7 +3272,7 @@ Answers
         let report = run_auto_pipeline_core(&root, &job.job_id, None).unwrap();
         assert_eq!(
             report.get("currentStep").and_then(Value::as_str),
-            Some("LlmReview")
+            Some("Authoring")
         );
         let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
         let groups = ir.get("groups").and_then(Value::as_array).unwrap();
@@ -3208,6 +3352,8 @@ Answers
                 parse_mode: None,
                 confidence_threshold: Some(0.85),
                 profile_id: None,
+                target: None,
+                allow_overwrite: None,
             }),
             |_root, _job_id, command_name, input, _api_key| {
                 gateway_calls += 1;
@@ -3441,6 +3587,8 @@ Answers
                 parse_mode: Some("auto".to_string()),
                 confidence_threshold: Some(0.85),
                 profile_id: Some("profile-local-placeholder".to_string()),
+                target: None,
+                allow_overwrite: None,
             }),
             |_root, _job_id, command_name, _input, _api_key| {
                 if command_name == "extract_group" {
@@ -3586,7 +3734,7 @@ Answers
         );
         assert_eq!(
             report.get("currentStep").and_then(Value::as_str),
-            Some("LlmReview")
+            Some("Authoring")
         );
         let job_path = job_dir(&root, &job.job_id);
         assert!(job_path.join("authoring-ir.json").exists());
@@ -4044,6 +4192,320 @@ Answers
     }
 
     #[test]
+    fn lucy_notes_completion_keeps_questions_6_to_13_in_one_inline_group() {
+        let mut job = make_job(CreateJobInput {
+            title: Some("What Lucy Taught Us".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["lucy-regression".to_string()]),
+            llm_profile_id: None,
+        });
+        job.source_files = vec![test_source("pdf")];
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"passage-title","blockType":"header","text":"READING PASSAGE 1 What Lucy Taught Us","html":"<h2>What Lucy Taught Us</h2>","bbox":[72,60,520,100],"confidence":0.99,"roleHint":"passage"},
+                    {"blockId":"passage-body","blockType":"paragraph","text":"The discovery of Lucy helped scientists understand how early humans moved, ate and survived in woodland environments.","html":"<p>The discovery of Lucy helped scientists understand early humans.</p>","bbox":[72,110,520,260],"confidence":0.97,"roleHint":"passage"},
+                    {"blockId":"q1-5","blockType":"paragraph","text":"Questions 1-5 Do the following statements agree with the information given in Reading Passage 1? TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this","html":"<p>Questions 1-5 Do the following statements agree with the information?</p>","bbox":[72,280,520,340],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"q1-5-items","blockType":"paragraph","text":"1 Lucy was found in Africa. 2 Lucy's skeleton was complete. 3 Scientists disagreed about Lucy's age. 4 Lucy could walk upright. 5 Lucy lived in trees only.","html":"<p>1 Lucy was found in Africa. 2 Lucy's skeleton was complete.</p>","bbox":[72,345,520,430],"confidence":0.94,"roleHint":"question"},
+                    {"blockId":"q6-13","blockType":"paragraph","text":"Questions 6-13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. What Lucy taught us Lucy's environment included 6 _______ of trees. Scientists studied her 7 _______ and teeth. The shape of her 8 _______ showed she could walk upright. Her arms suggest she still climbed 9 _______. The discovery changed ideas about the evolution of 10 _______. It showed that walking came before larger 11 _______. Researchers compared Lucy with modern 12 _______. The fossil remains important evidence for human 13 _______.","html":"<p>Questions 6-13 Complete the notes below.</p>","bbox":[72,450,520,620],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 TRUE 5 FALSE 6 branches 7 bones 8 pelvis 9 trees 10 humans 11 brains 12 apes 13 evolution","html":"<p>Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 TRUE 5 FALSE 6 branches 7 bones 8 pelvis 9 trees 10 humans 11 brains 12 apes 13 evolution</p>","bbox":[72,700,520,760],"confidence":0.92,"roleHint":"answer"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let groups = split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let ranges = groups
+            .iter()
+            .map(|group| {
+                let range = group
+                    .get("questionRange")
+                    .and_then(Value::as_array)
+                    .unwrap();
+                (
+                    range.first().and_then(Value::as_u64).unwrap(),
+                    range.get(1).and_then(Value::as_u64).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ranges, vec![(1, 5), (6, 13)]);
+        assert_eq!(
+            groups[1].get("kindHint").and_then(Value::as_str),
+            Some("sentence_completion")
+        );
+        assert_eq!(
+            groups[1].get("layoutHint").and_then(Value::as_str),
+            Some("inline_completion")
+        );
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/1/questionRange")
+                .and_then(Value::as_array)
+                .map(|range| (
+                    range.first().and_then(Value::as_u64).unwrap(),
+                    range.get(1).and_then(Value::as_u64).unwrap()
+                )),
+            Some((6, 13))
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/layout/layoutHint")
+                .and_then(Value::as_str),
+            Some("inline_completion")
+        );
+        assert!(ir
+            .pointer("/groups/1/layout/notes")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("6 _______ of trees"));
+        assert_eq!(
+            ir.pointer("/groups/1/questions")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(|question| question.get("id").and_then(Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["q6", "q7", "q8", "q9", "q10", "q11", "q12", "q13"]
+        );
+        assert_eq!(
+            ir.pointer("/answerKey/q6").and_then(Value::as_str),
+            Some("branches")
+        );
+        assert_eq!(
+            ir.pointer("/answerKey/q13").and_then(Value::as_str),
+            Some("evolution")
+        );
+
+        let source = reading_source(&ir);
+        let body_html = source
+            .pointer("/questionGroups/1/bodyHtml")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(body_html.contains("notes-completion"));
+        assert!(body_html.contains("name=\"q6\""));
+        assert!(body_html.contains("name=\"q13\""));
+        assert_eq!(
+            source
+                .pointer("/questionGroups/1/questionIds")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec!["q6", "q7", "q8", "q9", "q10", "q11", "q12", "q13"]
+        );
+    }
+
+    #[test]
+    fn numbered_ellipsis_blanks_render_as_one_inline_completion_group() {
+        let mut job = make_job(CreateJobInput {
+            title: Some("Artwork Notes Regression".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["inline-ellipsis-regression".to_string()]),
+            llm_profile_id: None,
+        });
+        job.source_files = vec![test_source("pdf")];
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"passage","blockType":"paragraph","text":"The artist combined several techniques across a long career.","html":"<p>The artist combined several techniques.</p>","bbox":[72,80,520,180],"confidence":0.98,"roleHint":"passage"},
+                    {"blockId":"q8-13","blockType":"paragraph","text":"Questions 8-13 Write ONE WORD ONLY from the passage for each answer. Early work: 8……… first appeared in local shows. 9……… she gave her artworks 1953 exhibition: a very old method called 10……… was used for some prints was inspired by 11……… about Chinese art that she had started collecting in 1915 Old age: still interested in art and 12………. worked for nearly six decades, making more than 13………. artworks","html":"<p>Questions 8-13 Write ONE WORD ONLY.</p>","bbox":[72,220,520,430],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 8 patterns 9 galleries 10 woodcut 11 books 12 travel 13 2000","html":"<p>Answers 8 patterns 9 galleries 10 woodcut 11 books 12 travel 13 2000</p>","bbox":[72,700,520,760],"confidence":0.92,"roleHint":"answer"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let groups = split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0]
+                .get("questionRange")
+                .and_then(Value::as_array)
+                .map(|range| (
+                    range.first().and_then(Value::as_u64).unwrap(),
+                    range.get(1).and_then(Value::as_u64).unwrap()
+                )),
+            Some((8, 13))
+        );
+        assert_eq!(
+            groups[0].get("kindHint").and_then(Value::as_str),
+            Some("sentence_completion")
+        );
+        assert_eq!(
+            groups[0].get("layoutHint").and_then(Value::as_str),
+            Some("inline_completion")
+        );
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/0/questions")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(|question| question.get("id").and_then(Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["q8", "q9", "q10", "q11", "q12", "q13"]
+        );
+        assert_eq!(
+            ir.pointer("/answerKey/q8").and_then(Value::as_str),
+            Some("patterns")
+        );
+        assert_eq!(
+            ir.pointer("/answerKey/q13").and_then(Value::as_str),
+            Some("2000")
+        );
+
+        let source = reading_source(&ir);
+        let body_html = source
+            .pointer("/questionGroups/0/bodyHtml")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(body_html.contains("notes-completion"));
+        for qid in ["q8", "q9", "q10", "q11", "q12", "q13"] {
+            assert!(
+                body_html.contains(&format!("name=\"{}\"", qid)),
+                "missing {}",
+                qid
+            );
+        }
+        assert!(
+            !body_html.contains("Questions 8-13 item 11")
+                && !body_html.contains("Questions 8-13 第 11 题")
+        );
+    }
+
+    #[test]
+    fn split_and_authoring_regeneration_refuse_to_overwrite_existing_draft_by_default() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut job = test_job();
+        job.source_files = vec![test_source("txt")];
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+
+        let doc = sample_document_ir(&job, "auto");
+        write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), &doc).unwrap();
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        write_json(
+            &job_dir(&root, &job.job_id).join("split-candidates.json"),
+            &split,
+        )
+        .unwrap();
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+
+        let split_error = run_rule_split_core(&root, &job.job_id, None).unwrap_err();
+        assert!(
+            split_error.contains("editable_draft_exists"),
+            "unexpected split error: {}",
+            split_error
+        );
+        let build_error = build_authoring_ir_core(&root, &job.job_id, None).unwrap_err();
+        assert!(
+            build_error.contains("editable_draft_exists"),
+            "unexpected build error: {}",
+            build_error
+        );
+
+        run_rule_split_core(
+            &root,
+            &job.job_id,
+            Some(RegenerateDraftInput {
+                allow_overwrite: Some(true),
+            }),
+        )
+        .unwrap();
+        build_authoring_ir_core(
+            &root,
+            &job.job_id,
+            Some(RegenerateDraftInput {
+                allow_overwrite: Some(true),
+            }),
+        )
+        .unwrap();
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manual_transcription_replaces_source_and_archives_previous_draft_revision() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut job = test_job();
+        job.source_files = vec![test_source("txt")];
+        save_job(&root, &job).unwrap();
+        let job_path = job_dir(&root, &job.job_id);
+        ensure_job_dirs(&job_path).unwrap();
+
+        let doc = sample_document_ir(&job, "auto");
+        write_json(&job_path.join("document-ir.json"), &doc).unwrap();
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        write_json(&job_path.join("split-candidates.json"), &split).unwrap();
+        let old_ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        write_json(&job_path.join("authoring-ir.json"), &old_ir).unwrap();
+
+        apply_manual_transcription_core(
+            &root,
+            &job.job_id,
+            ManualTranscriptionInput {
+                text: "READING PASSAGE 1\nReplacement passage.\n\nQuestions 1-1\n1 Replacement text is present.\n\nAnswers\n1 TRUE".to_string(),
+                note: Some("operator replacement".to_string()),
+            },
+        )
+        .unwrap();
+
+        assert!(
+            !job_path.join("authoring-ir.json").exists(),
+            "current authoring draft should be archived when the source text is replaced"
+        );
+        assert!(
+            job_path
+                .join("revisions")
+                .read_dir()
+                .unwrap()
+                .any(|entry| entry.unwrap().path().join("authoring-ir.json").exists()),
+            "previous draft should be retained as a revision"
+        );
+
+        run_rule_split_core(&root, &job.job_id, None).unwrap();
+        build_authoring_ir_core(&root, &job.job_id, None).unwrap();
+        let new_ir: Value = read_json(&job_path.join("authoring-ir.json")).unwrap();
+        assert_eq!(
+            new_ir
+                .pointer("/groups/0/questions/0/answer")
+                .and_then(Value::as_str),
+            Some("TRUE")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn enhanced_classifier_distinguishes_matching_table_and_completion_types() {
         let job = make_job(CreateJobInput {
             title: Some("Enhanced Classifier Fixture".to_string()),
@@ -4108,6 +4570,187 @@ Answers
                 .unwrap_or_default()
                 .contains("Question-group classification warning")
         }));
+    }
+
+    #[test]
+    fn classifier_keeps_single_choice_multi_choice_and_and_ranges_distinct() {
+        let job = make_job(CreateJobInput {
+            title: Some("Classifier Range Regression".to_string()),
+            category: Some("P3".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["classifier-regression".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"passage","blockType":"paragraph","text":"The passage describes several research findings.","html":"<p>The passage describes several research findings.</p>","bbox":[72,80,520,170],"confidence":0.98,"roleHint":"passage"},
+                    {"blockId":"q27-30","blockType":"paragraph","text":"Questions 27-30 Choose the correct letter, A, B, C or D. 27 According to the writer, what is unclear about the findings? A cause B effect C cost D timing. 28 Which of the following is mentioned by the writer? A archive B practice C climate D funding. 29 What is the writer's main purpose? A explain B compare C reject D predict. 30 Which title is most suitable? A Growth B Decline C Evidence D Debate","html":"<p>Questions 27-30 Choose the correct letter.</p>","bbox":[72,190,520,300],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"q31-32","blockType":"paragraph","text":"Questions 31 and 32 Choose TWO letters, A-E. Which TWO points are made about the study? A It was repeated. B It used children. C It was expensive. D It was short. E It changed policy.","html":"<p>Questions 31 and 32 Choose TWO letters.</p>","bbox":[72,320,520,390],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"q33-36","blockType":"paragraph","text":"Questions 33-36 Look at the following opinions and the list of companies below. Match each opinion with the correct company, A, B or C. 33 Disposable waste 34 Buying policies 35 Training 36 Public information List of Companies A Alpha B Beta C Gamma","html":"<p>Questions 33-36 Match each opinion.</p>","bbox":[72,410,520,500],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 27 A 28 B 29 C 30 D 31 A 32 E 33 A 34 B 35 C 36 A","html":"<p>Answers</p>","bbox":[72,700,520,760],"confidence":0.92,"roleHint":"answer"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let groups = split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .unwrap();
+        let observed = groups
+            .iter()
+            .map(|group| {
+                let range = group
+                    .get("questionRange")
+                    .and_then(Value::as_array)
+                    .unwrap();
+                (
+                    range.first().and_then(Value::as_u64).unwrap(),
+                    range.get(1).and_then(Value::as_u64).unwrap(),
+                    group.get("kindHint").and_then(Value::as_str).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            observed,
+            vec![
+                (27, 30, "single_choice"),
+                (31, 32, "multi_choice"),
+                (33, 36, "matching"),
+            ]
+        );
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/1/questions")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(|question| question.get("id").and_then(Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["q31", "q32"]
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/interaction/type")
+                .and_then(Value::as_str),
+            Some("radio")
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/questions/0/interaction/type")
+                .and_then(Value::as_str),
+            Some("checkbox")
+        );
+    }
+
+    #[test]
+    fn classifier_keeps_sentence_endings_matching_before_single_choice() {
+        let job = make_job(CreateJobInput {
+            title: Some("Sentence Ending Regression".to_string()),
+            category: Some("P3".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["classifier-regression".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"passage","blockType":"paragraph","text":"The passage discusses literary prizes.","html":"<p>The passage discusses literary prizes.</p>","bbox":[72,80,520,170],"confidence":0.98,"roleHint":"passage"},
+                    {"blockId":"q36-40-head","blockType":"paragraph","text":"Questions 36-40","html":"<p>Questions 36-40</p>","bbox":[72,190,520,210],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"q36-40-instruction","blockType":"paragraph","text":"Complete each sentence with the correct ending, A-G, below. Write the correct letter, A-G, in boxes 36-40 on your answer sheet.","html":"<p>Complete each sentence with the correct ending, A-G, below.</p>","bbox":[72,215,520,260],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"q36-40-items","blockType":"paragraph","text":"36 In ancient Greece, prizes 37 In the post-classical period, literary prizes 38 In medieval Europe, talented writers 39 The first results issued by the Nobel foundation 40 After the establishment of the Nobel prizes, other awards","html":"<p>36 In ancient Greece, prizes</p>","bbox":[72,265,520,350],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"q36-40-options","blockType":"paragraph","text":"A were supported by wealthy people. B were covered by the international press. C were intended to boost education. D were considered less significant. E were out of touch with their time. F were for different categories. G were for oral performance.","html":"<p>A were supported by wealthy people.</p>","bbox":[72,355,520,470],"confidence":0.95,"roleHint":"question"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let group = split.pointer("/questionGroupCandidates/0").unwrap();
+        assert_eq!(
+            group.get("kindHint").and_then(Value::as_str),
+            Some("matching")
+        );
+        assert_eq!(
+            group
+                .pointer("/classification/interaction/type")
+                .and_then(Value::as_str),
+            Some("matching")
+        );
+    }
+
+    #[test]
+    fn split_normalizes_overlapping_question_ranges() {
+        let job = make_job(CreateJobInput {
+            title: Some("Overlapping Range Regression".to_string()),
+            category: Some("P3".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["range-regression".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"passage","blockType":"paragraph","text":"The passage describes salinity research.","html":"<p>The passage describes salinity research.</p>","bbox":[72,80,520,170],"confidence":0.98,"roleHint":"passage"},
+                    {"blockId":"q34-36-head","blockType":"paragraph","text":"Questions 34-36","html":"<p>Questions 34-36</p>","bbox":[72,190,520,210],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"q34-36-instruction","blockType":"paragraph","text":"Look at the list of techniques and the list of uses which follows it. Match each technique with the correct use, A, B, C or D.","html":"<p>Match each technique with the correct use.</p>","bbox":[72,215,520,260],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"q34-36-items","blockType":"paragraph","text":"34 Electromagnetic surveys 35 Radiometric analysis 36 Airborne electromagnetics List of uses A can help farmers choose the best location for plants. B can show the composition of the top layer of the ground. C can detect how far below ground the salt is. D can determine how old the salt is.","html":"<p>34 Electromagnetic surveys</p>","bbox":[72,265,520,350],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"q36-40-head","blockType":"paragraph","text":"Questions 36-40","html":"<p>Questions 36-40</p>","bbox":[72,360,520,380],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"q36-40-instruction","blockType":"paragraph","text":"Choose the correct letter, A, B, C or D. Write the correct letter in boxes 36-40 on your answer sheet.","html":"<p>Choose the correct letter.</p>","bbox":[72,385,520,430],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"q37-40-items","blockType":"paragraph","text":"37 What link does the writer make between salt and gold? A same locations B same impact C same techniques D neither is present 38 What is the process referred to? A vegetation B salt travel C trees D tracing minerals 39 According to the writer, one problem is that A concern B ignored C income D support 40 Which view is best? A hidden enemy B contained C success D groups","html":"<p>37 What link does the writer make between salt and gold?</p>","bbox":[72,435,520,560],"confidence":0.95,"roleHint":"question"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let ranges = split
+            .get("questionGroupCandidates")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .map(|group| {
+                let range = group
+                    .get("questionRange")
+                    .and_then(Value::as_array)
+                    .unwrap();
+                (
+                    range.first().and_then(Value::as_u64).unwrap(),
+                    range.get(1).and_then(Value::as_u64).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ranges, vec![(34, 36), (37, 40)]);
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/1/questions")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(|question| question.get("id").and_then(Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["q37", "q38", "q39", "q40"]
+        );
     }
 
     #[test]
@@ -5841,10 +6484,10 @@ Answers
             } else {
                 authoring_or_llm_routed += 1;
                 assert_eq!(saved.status, JobStatus::NeedsReview);
-                assert_eq!(saved.current_step, WorkflowStep::LlmReview);
+                assert_eq!(saved.current_step, WorkflowStep::Authoring);
                 assert_eq!(
                     report.get("currentStep").and_then(Value::as_str),
-                    Some("LlmReview")
+                    Some("Authoring")
                 );
                 assert!(report
                     .pointer("/llm/failures")

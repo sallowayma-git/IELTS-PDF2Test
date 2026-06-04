@@ -12,10 +12,10 @@ const nav = [
 ];
 
 const steps = [
-  ["document", "文档解析"],
-  ["split", "粗切答案"],
-  ["groups", "结构编辑"],
-  ["llm-review", "LLM 审阅"],
+  ["document", "源文档确认"],
+  ["split", "识别题组"],
+  ["groups", "题稿编辑"],
+  ["llm-review", "确认识别结果"],
   ["preview", "统一预览"],
   ["export", "导出发布"]
 ] as const;

@@ -36,6 +36,7 @@ function textToAnswer(value: string): AnswerValue {
 export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: () => void }) {
   const [split, setSplit] = useState<SplitCandidates | undefined>();
   const [saveMessage, setSaveMessage] = useState<string | undefined>();
+  const [error, setError] = useState<string | undefined>();
 
   async function load() {
     const detail = await getJob(jobId);
@@ -46,11 +47,24 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
     load().catch(console.error);
   }, [jobId]);
 
-  async function run() {
-    const result = await runRuleSplit(jobId);
-    setSplit(result);
-    setSaveMessage(undefined);
-    refresh();
+  function friendlyError(caught: unknown): string {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    if (message.includes("editable_draft_exists")) {
+      return "当前任务已有题稿。为了避免覆盖正在编辑的内容，默认不会重新识别题组；如确需重建，请在高级操作中选择覆盖。";
+    }
+    return message;
+  }
+
+  async function run(allowOverwrite = false) {
+    try {
+      const result = await runRuleSplit(jobId, allowOverwrite ? { allowOverwrite: true } : undefined);
+      setSplit(result);
+      setSaveMessage(undefined);
+      setError(undefined);
+      refresh();
+    } catch (caught) {
+      setError(friendlyError(caught));
+    }
   }
 
   async function save(nextSplit = split) {
@@ -58,14 +72,20 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
     const saved = await saveSplitAdjustments(jobId, nextSplit);
     setSplit(saved);
     setSaveMessage("已保存人工修订，后续结构编辑会使用当前切分与答案。");
+    setError(undefined);
     refresh();
   }
 
-  async function build() {
-    if (split) await save(split);
-    await buildAuthoringIr(jobId);
-    refresh();
-    go(`/jobs/${jobId}/groups`);
+  async function build(allowOverwrite = false) {
+    try {
+      if (split) await save(split);
+      await buildAuthoringIr(jobId, allowOverwrite ? { allowOverwrite: true } : undefined);
+      setError(undefined);
+      refresh();
+      go(`/jobs/${jobId}/groups`);
+    } catch (caught) {
+      setError(friendlyError(caught));
+    }
   }
 
   const answers = split?.answerKeyCandidates[0]?.answers ?? {};
@@ -100,9 +120,10 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
   return (
     <section className="page-enter">
       <div className="section-heading spread">
-        <div><p className="eyebrow">题组切分</p><h2>粗切与答案对齐</h2></div>
-        <div className="button-row"><button className="ghost" data-testid="run-rule-split" onClick={run}>运行规则粗切</button><button className="ghost" data-testid="save-split-adjustments" disabled={!split} onClick={() => save()}>保存人工修订</button><button className="primary" data-testid="build-authoring-ir" disabled={!split} onClick={build}>生成可编辑题稿</button></div>
+        <div><p className="eyebrow">识别题组</p><h2>题组与答案确认</h2></div>
+        <div className="button-row"><button className="ghost" data-testid="run-rule-split" onClick={() => run()}>识别题组</button><button className="ghost" data-testid="save-split-adjustments" disabled={!split} onClick={() => save()}>保存修订</button><button className="primary" data-testid="build-authoring-ir" disabled={!split} onClick={() => build()}>进入题稿编辑</button></div>
       </div>
+      {error ? <p className="error-text" data-testid="split-error">{error}</p> : null}
       {saveMessage ? <p className="success-text">{saveMessage}</p> : null}
       {split?.issues.length ? <div className="warning-box"><strong>需要复核</strong>{split.issues.map((issue) => <p key={issue}>{issue}</p>)}</div> : null}
       <div className="split-grid">
@@ -135,7 +156,15 @@ export function SplitAndAnswers({ jobId, refresh }: { jobId: string; refresh: ()
               <label>来源段落<input value={group.blockIds.join(", ")} onChange={(event) => setGroup(index, (item) => ({ ...item, blockIds: event.target.value.split(",").map((id) => id.trim()).filter(Boolean) }))} /></label>
               <label>说明<textarea value={group.instructionText} onChange={(event) => setGroup(index, (item) => ({ ...item, instructionText: event.target.value }))} /></label>
             </div>
-          )) ?? <p className="empty">尚未生成 question groups。</p>}
+          )) ?? <p className="empty">尚未识别到题组。</p>}
+          <details>
+            <summary>高级操作</summary>
+            <p className="empty">重新识别并覆盖当前题稿会丢弃已生成题稿中的编辑内容，只在确认需要重建时使用。</p>
+            <div className="button-row">
+              <button className="ghost small" onClick={() => run(true)}>覆盖并重新识别题组</button>
+              <button className="ghost small" disabled={!split} onClick={() => build(true)}>覆盖并重新生成题稿</button>
+            </div>
+          </details>
         </section>
         <section className="form-section contrast">
           <div className="section-heading spread"><h3>答案区</h3><button className="ghost small" disabled={!split} onClick={addAnswer}>新增答案</button></div>

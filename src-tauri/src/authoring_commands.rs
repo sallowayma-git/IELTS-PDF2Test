@@ -20,11 +20,56 @@ use crate::{
     },
     util::{ensure_job_dirs, job_dir, read_json, read_json_opt, write_json, write_text},
     CommandResult, IssueCounts, JobStatus, ManualTranscriptionInput, ParseOptions,
-    VisionTranscriptionInput, WorkflowStep,
+    RegenerateDraftInput, VisionTranscriptionInput, WorkflowStep,
 };
 use chrono::Utc;
 use serde_json::{json, Value};
-use std::path::Path;
+use std::{fs, path::Path};
+
+fn archive_current_draft_for_source_replacement(dir: &Path, reason: &str) -> CommandResult<()> {
+    if !dir.join("authoring-ir.json").exists() && !dir.join("split-candidates.json").exists() {
+        return Ok(());
+    }
+    let revisions_dir = dir.join("revisions");
+    fs::create_dir_all(&revisions_dir).map_err(|error| error.to_string())?;
+    let stamp = Utc::now().to_rfc3339().replace([':', '.', 'Z'], "-");
+    let mut revision_dir = revisions_dir.join(format!("{}-source-replaced", stamp));
+    let mut suffix = 1u32;
+    while revision_dir.exists() {
+        revision_dir = revisions_dir.join(format!("{}-source-replaced-{}", stamp, suffix));
+        suffix += 1;
+    }
+    fs::create_dir_all(&revision_dir).map_err(|error| error.to_string())?;
+    for file_name in [
+        "authoring-ir.json",
+        "split-candidates.json",
+        "pipeline-report.json",
+        "validation-report.json",
+        "publish-readiness-report.json",
+        "source-review.json",
+    ] {
+        let source = dir.join(file_name);
+        if source.exists() {
+            fs::rename(&source, revision_dir.join(file_name)).map_err(|error| {
+                format!(
+                    "archive_current_draft:{}->{}:{}",
+                    source.display(),
+                    revision_dir.join(file_name).display(),
+                    error
+                )
+            })?;
+        }
+    }
+    write_json(
+        &revision_dir.join("revision-meta.json"),
+        &json!({
+            "archivedAt": Utc::now().to_rfc3339(),
+            "reason": reason,
+            "message": "Source document was replaced; previous editable draft was archived before regenerating."
+        }),
+    )?;
+    Ok(())
+}
 
 pub(crate) fn parse_document_core(
     root: &Path,
@@ -32,11 +77,10 @@ pub(crate) fn parse_document_core(
     options: ParseOptions,
 ) -> CommandResult<Value> {
     let job = load_job(root, job_id)?;
+    let dir = job_dir(root, job_id);
     let mode = options.mode.as_deref().unwrap_or("auto");
     let ir = if let Some(source) = main_source_file(&job) {
-        let upload_path = job_dir(root, job_id)
-            .join("uploads")
-            .join(&source.stored_name);
+        let upload_path = dir.join("uploads").join(&source.stored_name);
         if matches!(source.file_type.as_str(), "txt" | "md" | "pdf" | "docx")
             && upload_path.exists()
         {
@@ -59,7 +103,8 @@ pub(crate) fn parse_document_core(
     } else {
         missing_source_document_ir(&job, mode, "no MainQuestion source file")
     };
-    write_json(&job_dir(root, job_id).join("document-ir.json"), &ir)?;
+    archive_current_draft_for_source_replacement(&dir, "parse_document")?;
+    write_json(&dir.join("document-ir.json"), &ir)?;
     let _ = write_source_review_status(root, job_id, Some(&ir), false, None)?;
     update_job(root, job_id, |job| {
         let review = source_review_status(root, job_id, Some(&ir))
@@ -91,6 +136,7 @@ pub(crate) fn apply_manual_transcription_core(
     }
     let dir = job_dir(root, job_id);
     ensure_job_dirs(&dir)?;
+    archive_current_draft_for_source_replacement(&dir, "manual_transcription")?;
     write_text(&dir.join("manual-transcription.txt"), text)?;
     let ir = manual_transcription_document_ir(&job, text, input.note.as_deref());
     write_json(&dir.join("document-ir.json"), &ir)?;
@@ -122,6 +168,7 @@ pub(crate) fn apply_vision_transcription_core(
         .ok_or_else(|| "no_enabled_llm_profile_available_for_vision_transcription".to_string())?;
     let dir = job_dir(root, job_id);
     ensure_job_dirs(&dir)?;
+    archive_current_draft_for_source_replacement(&dir, "vision_transcription")?;
     let (ir, output) =
         vision_transcription_for_job(root, &job, &profile_id, options.note.as_deref())?;
     write_text(
@@ -172,13 +219,38 @@ pub(crate) fn resolve_source_review_core(
     Ok(review)
 }
 
-pub(crate) fn run_rule_split_core(root: &Path, job_id: &str) -> CommandResult<Value> {
+fn allow_regenerate(input: Option<&RegenerateDraftInput>) -> bool {
+    input
+        .and_then(|value| value.allow_overwrite)
+        .unwrap_or(false)
+}
+
+fn protect_existing_authoring(
+    dir: &Path,
+    input: Option<&RegenerateDraftInput>,
+) -> CommandResult<()> {
+    if dir.join("authoring-ir.json").exists() && !allow_regenerate(input) {
+        return Err(
+            "editable_draft_exists; pass allowOverwrite=true before regenerating split or draft"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn run_rule_split_core(
+    root: &Path,
+    job_id: &str,
+    input: Option<RegenerateDraftInput>,
+) -> CommandResult<Value> {
     let job = load_job(root, job_id)?;
-    let doc = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
+    let dir = job_dir(root, job_id);
+    protect_existing_authoring(&dir, input.as_ref())?;
+    let doc = read_json_opt(&dir.join("document-ir.json"))?;
     let mut split = make_dynamic_split_candidates(job_id, &job, doc.as_ref());
     let answer_candidates = parse_answer_source_candidates(root, &job, "auto")?;
     merge_answer_source_candidates(&mut split, answer_candidates);
-    write_json(&job_dir(root, job_id).join("split-candidates.json"), &split)?;
+    write_json(&dir.join("split-candidates.json"), &split)?;
     update_job(root, job_id, |job| {
         job.status = JobStatus::Working;
         job.current_step = WorkflowStep::Split;
@@ -195,9 +267,14 @@ pub(crate) fn save_split_adjustments_core(
     Ok(patch)
 }
 
-pub(crate) fn build_authoring_ir_core(root: &Path, job_id: &str) -> CommandResult<Value> {
+pub(crate) fn build_authoring_ir_core(
+    root: &Path,
+    job_id: &str,
+    input: Option<RegenerateDraftInput>,
+) -> CommandResult<Value> {
     let job = load_job(root, job_id)?;
     let dir = job_dir(root, job_id);
+    protect_existing_authoring(&dir, input.as_ref())?;
     let doc = read_json_opt(&dir.join("document-ir.json"))?;
     let split = match read_json_opt(&dir.join("split-candidates.json"))? {
         Some(value) => value,

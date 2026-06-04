@@ -106,9 +106,9 @@ export function Settings({ refresh }: { refresh: () => void }) {
           <button className="primary wide" onClick={save}>保存模型配置</button>
         </section>
         <aside className="inspector">
-          <p className="eyebrow">Developer / Diagnostics</p>
+          <p className="eyebrow">高级诊断</p>
           <h3>过程文件保留</h3>
-          <p>默认关闭。导出成功后会自动清理 uploads/cache/preview/LLM raw log 等过程文件，只保留可编辑题目稿和摘要。</p>
+          <p>默认关闭。导出成功后会自动清理上传缓存、预览文件和识别日志，只保留题稿和摘要。</p>
           <label className="inline-check"><input type="checkbox" checked={diagnostics.keepFullProcessArtifacts} onChange={(event) => void toggleArtifactRetention(event.target.checked)} /> 保留完整过程文件</label>
           {diagnostics.keepFullProcessArtifacts ? <p className="warning-box">已开启调试保留：导出后不会自动删除完整过程文件。仅用于排查解析或模型问题。</p> : <p className="success-text">普通模式：导出后自动清理中间文件。</p>}
         </aside>

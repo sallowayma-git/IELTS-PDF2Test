@@ -46,9 +46,9 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       <div className="warning-box">
         <strong>可视化窗口是隔离的本地模板预览。</strong>
         <p>
-          导出/Pack 默认以 Rust 静态合同校验和人工审核门禁为准；右侧 E2E 是开发/诊断用真实运行时检查。当前运行时模式：
+          导出和组卷默认以基础数据检查和人工确认结果为准；右侧检查属于高级诊断，不影响普通生成流程。当前检查结果：
           <code data-testid="runtime-mode">{runtimeModeLabel(runtimeMode)}</code>
-          {runtimeMode === "real" ? "，真实统一阅读页已通过自动填答验证。" : "，未运行真实运行时诊断不阻断生产导出。"}
+          {runtimeMode === "real" ? "，阅读页已通过自动填答检查。" : "，未运行高级诊断不阻断生产导出。"}
         </p>
       </div>
       <div className="preview-grid">
@@ -65,9 +65,9 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
             })}
           </div>
           {report?.issues.length ? <details open><summary>问题详情</summary><pre>{JSON.stringify(report.issues.map((issue) => ({ 层级: validationLayerLabel(issue.layer), 位置: issue.path, 问题: issue.message, 建议: issue.fixHint })), null, 2)}</pre></details> : null}
-          <details open><summary>已收集答案</summary><pre>{JSON.stringify(report?.runtime?.collectedAnswers ?? {}, null, 2)}</pre></details>
-          <details><summary>评分信息</summary><pre>{JSON.stringify({ scoreInfo: report?.runtime?.scoreInfo, wrongScoreInfo: report?.runtime?.wrongScoreInfo, navButtonCount: report?.runtime?.navButtonCount, questionCount: report?.runtime?.questionCount }, null, 2)}</pre></details>
-          <details><summary>运行错误</summary><pre>{JSON.stringify(report?.runtime?.consoleErrors ?? [], null, 2)}</pre></details>
+          <details><summary>高级诊断：已收集答案</summary><pre>{JSON.stringify(report?.runtime?.collectedAnswers ?? {}, null, 2)}</pre></details>
+          <details><summary>高级诊断：评分信息</summary><pre>{JSON.stringify({ scoreInfo: report?.runtime?.scoreInfo, wrongScoreInfo: report?.runtime?.wrongScoreInfo, navButtonCount: report?.runtime?.navButtonCount, questionCount: report?.runtime?.questionCount }, null, 2)}</pre></details>
+          <details><summary>高级诊断：运行错误</summary><pre>{JSON.stringify(report?.runtime?.consoleErrors ?? [], null, 2)}</pre></details>
           <details open><summary>答案</summary><pre>{JSON.stringify(assets?.source.answerKey ?? {}, null, 2)}</pre></details>
         </aside>
       </div>

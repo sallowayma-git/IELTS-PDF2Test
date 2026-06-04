@@ -8,6 +8,8 @@ import path from "node:path";
 
 const root = path.resolve(new URL("../..", import.meta.url).pathname);
 const DEFAULT_BASE_URL = "http://127.0.0.1:1420";
+const CLEAR_TEXT_PDF = path.join(root, "fixtures", "parser", "complex-reading.pdf");
+const SCANNED_PDF = path.join(root, "fixtures", "parser", "no-text.pdf");
 const SCANNED_MANUAL_TRANSCRIPTION = `READING PASSAGE 1
 Manual transcription passage for a scanned PDF. The author has checked the visual output against the source file.
 
@@ -411,7 +413,7 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
 }
 
 async function runClearTextFlow(cdp, baseUrl) {
-  const url = `${baseUrl}/?epic8DevPickedPath=e2e-clear-text.pdf#/jobs/new`;
+  const url = `${baseUrl}/?epic8DevPickedPath=${encodeURIComponent(CLEAR_TEXT_PDF)}#/jobs/new`;
   await navigate(cdp, url);
   await resetDevStore(cdp);
   await navigate(cdp, url);
@@ -420,20 +422,19 @@ async function runClearTextFlow(cdp, baseUrl) {
   await click(cdp, "[data-testid='create-and-auto-process']");
   await waitFor("clear text route", async () => {
     const hash = await currentHash(cdp);
-    return hash.includes("/llm-review") || hash.includes("/groups") || hash.includes("/preview") || hash.includes("/export");
+    return hash.includes("/groups");
   }, { timeoutMs: 20000 });
 
   const summary = await getStoreSummary(cdp);
   assert(summary?.job, "clear text flow did not create a job");
   assert(summary.sourceReview?.required === false, "clear text flow should not require source review", summary.sourceReview);
-  assert(summary.job.currentStep === "LlmReview", "clear text flow should route to LLM review first", summary.job);
+  assert(summary.job.currentStep === "Authoring", "clear text flow should route directly to editable draft", summary.job);
   assert(summary.authoringIr?.groups?.length >= 2, "clear text flow should produce editable question groups", summary.authoringIr);
   assert(!summary.documentIr, "clear text minimized state should not persist DocumentIR after AuthoringIR convergence", summary.documentIr);
   assert(!summary.split, "clear text minimized state should not persist split candidates after AuthoringIR convergence", summary.split);
   assert(!summary.validationReport, "clear text minimized state should not persist validation report before preview regeneration", summary.validationReport);
   assert(!summary.pipelineReport, "clear text minimized state should not persist pipeline report", summary.pipelineReport);
-  assert(summary.authoringIr?.groups?.some((group) => group.llmReview?.required), "clear text flow should persist review items in AuthoringIR", summary.authoringIr);
-  await waitSelector(cdp, ".llm-grid");
+  await waitSelector(cdp, "[data-testid='group-editor']");
   const completion = await completeReviewPreviewExportPack(cdp, baseUrl, summary.job.jobId);
   return {
     name: "clear-text-review-preview-export-pack",
@@ -449,7 +450,7 @@ async function runClearTextFlow(cdp, baseUrl) {
 }
 
 async function runOcrSourceReviewFlow(cdp, baseUrl) {
-  const url = `${baseUrl}/?epic8DevPickedPath=e2e-scanned.pdf#/jobs/new`;
+  const url = `${baseUrl}/?epic8DevPickedPath=${encodeURIComponent(SCANNED_PDF)}#/jobs/new`;
   await navigate(cdp, url);
   await resetDevStore(cdp);
   await navigate(cdp, url);

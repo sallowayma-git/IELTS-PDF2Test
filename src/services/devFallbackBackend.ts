@@ -41,6 +41,7 @@ type Store = {
   profiles: LlmProfilePublic[];
   suggestions: Record<string, LlmSuggestion[]>;
   pipelineReports: Record<string, AutoPipelineReport>;
+  revisions: Record<string, Array<Record<string, unknown>>>;
   packs: PackBuildResult[];
   diagnostics: DiagnosticsSettings;
 };
@@ -94,6 +95,7 @@ function initialStore(): Store {
     ],
     suggestions: {},
     pipelineReports: {},
+    revisions: {},
     packs: [],
     diagnostics: { keepFullProcessArtifacts: false }
   };
@@ -126,6 +128,42 @@ function requireJob(store: Store, jobId: string): ImportJob {
   return job;
 }
 
+function allowOverwrite(args: Record<string, unknown>): boolean {
+  const input = (args.input ?? {}) as { allowOverwrite?: boolean };
+  return input.allowOverwrite === true;
+}
+
+function protectExistingAuthoring(store: Store, jobId: string, args: Record<string, unknown>): void {
+  if (store.authoring[jobId] && !allowOverwrite(args)) {
+    throw new Error("editable_draft_exists; pass allowOverwrite=true before regenerating split or draft");
+  }
+}
+
+function archiveCurrentDraftForSourceReplacement(store: Store, jobId: string, reason: string): void {
+  const snapshot = {
+    revisionId: id("revision"),
+    archivedAt: now(),
+    reason,
+    authoringIr: store.authoring[jobId],
+    splitCandidates: store.splits[jobId],
+    validationReport: store.validation[jobId],
+    previewAssets: store.previews[jobId],
+    pipelineReport: store.pipelineReports[jobId],
+    sourceReview: store.sourceReviews[jobId],
+    llmSuggestions: store.suggestions[jobId]
+  };
+  if (snapshot.authoringIr || snapshot.splitCandidates || snapshot.pipelineReport || snapshot.sourceReview) {
+    store.revisions[jobId] = [snapshot, ...(store.revisions[jobId] ?? [])];
+  }
+  delete store.authoring[jobId];
+  delete store.splits[jobId];
+  delete store.validation[jobId];
+  delete store.previews[jobId];
+  delete store.pipelineReports[jobId];
+  delete store.sourceReviews[jobId];
+  delete store.suggestions[jobId];
+}
+
 function detectFileType(name: string): SourceFile["fileType"] {
   const ext = name.toLowerCase().split(".").pop();
   if (ext === "pdf") return "pdf";
@@ -143,7 +181,30 @@ function mainSourceFile(job: ImportJob): SourceFile | undefined {
 function devFallbackUnsupportedSourceMessage(source?: SourceFile): string {
   const name = source?.originalName ?? "未选择文件";
   const type = source?.fileType ?? "unknown";
-  return `浏览器开发预览无法解析 ${type.toUpperCase()} 文件“${name}”。请使用 Tauri 桌面应用运行真实解析，或上传 TXT/MD 文本文件/在文档审核页粘贴人工转录；系统不会再生成演示内容作为替代。`;
+  return `浏览器开发预览没有拿到 ${type.toUpperCase()} 文件“${name}”的真实解析结果。请重新选择文件，或在文档审核页粘贴人工转录；系统不会用演示内容替代真实解析。`;
+}
+
+async function parseUploadedDocumentInDev(input: {
+  jobId: string;
+  name: string;
+  contentBase64?: string;
+  sourcePath?: string;
+  mode?: ParseOptions["mode"];
+}): Promise<DocumentIr> {
+  const response = await fetch("/__dev_parse_source", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input)
+  });
+  const payload = await response.json().catch(() => undefined) as DocumentIr | { error?: string } | undefined;
+  if (!response.ok) {
+    const message = payload && "error" in payload ? payload.error : response.statusText;
+    throw new Error(`dev_parser_failed:${message ?? "unknown"}`);
+  }
+  if (!payload || !("schemaVersion" in payload) || payload.schemaVersion !== "DocumentIRV1") {
+    throw new Error("dev_parser_failed:invalid_document_ir");
+  }
+  return payload;
 }
 
 function makeDocumentIr(job: ImportJob, options: ParseOptions, sourceTexts: Record<string, string> = {}): DocumentIr {
@@ -310,6 +371,8 @@ function blockText(block: DocumentBlock): string {
 function detectQuestionRange(text: string): [number, number] | undefined {
   const range = text.match(/Questions?\s+(\d{1,3})\s*[-–—]\s*(\d{1,3})/i);
   if (range) return [Number(range[1]), Number(range[2])];
+  const paired = text.match(/Questions?\s+(\d{1,3})\s+and\s+(\d{1,3})/i);
+  if (paired) return [Number(paired[1]), Number(paired[2])];
   const single = text.match(/Questions?\s+(\d{1,3})\b/i);
   if (single) return [Number(single[1]), Number(single[1])];
   return undefined;
@@ -430,28 +493,253 @@ function questionHeading(start: number, end: number): string {
   return start === end ? `Questions ${start}` : `Questions ${start}-${end}`;
 }
 
+function normalizeGroupRanges(candidates: SplitCandidates["questionGroupCandidates"]): void {
+  candidates.sort((left, right) => left.questionRange[0] - right.questionRange[0]);
+  let previousEnd = 0;
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    if (candidate.questionRange[1] <= previousEnd) {
+      candidates.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+    const [start, end] = candidate.questionRange;
+    if (start <= previousEnd && end > previousEnd) {
+      const adjustedStart = previousEnd + 1;
+      candidate.questionRange = [adjustedStart, end];
+      candidate.heading = questionHeading(adjustedStart, end);
+    }
+    previousEnd = Math.max(previousEnd, candidate.questionRange[1]);
+  }
+  candidates.forEach((candidate, index) => {
+    candidate.groupId = `group-${index + 1}`;
+  });
+}
+
 function detectGroupKind(text: string): GroupKind {
   const lower = text.toLowerCase();
   if (lower.includes("true") && lower.includes("false") && lower.includes("not given")) return "true_false_not_given";
   if (lower.includes("yes") && lower.includes("no") && lower.includes("not given")) return "yes_no_not_given";
-  if (lower.includes("choose") && lower.includes("letter") && (lower.includes("two") || lower.includes("three"))) return "multi_choice";
+  if (isMultiChoiceText(text)) return "multi_choice";
   if (lower.includes("complete the table") || lower.includes("table below") || lower.includes("|") && lower.includes("complete")) return "table_completion";
+  if (lower.includes("complete the flow chart") || lower.includes("complete the flow-chart") || lower.includes("flow chart below") || lower.includes("flow-chart below") || lower.includes("label the diagram")) return "diagram_completion";
   if (lower.includes("list of headings") || lower.includes("matching headings")) return "heading_matching";
-  if (lower.includes("which paragraph contains") || lower.includes("matching information") || lower.includes("match each statement")) return "matching_information";
-  if (lower.includes("classify") || lower.includes("classification") || lower.includes("according to")) return "classification";
+  if (lower.includes("classify") || lower.includes("classification") || lower.includes("according to which")) return "classification";
+  if (lower.includes("which paragraph contains") || lower.includes("which section contains") || lower.includes("matching information")) return "matching_information";
+  if (isSentenceEndingMatchingText(text)) return "matching";
+  if (isMatchingPromptText(normalizedInstructionText(text))) return "matching";
   if (lower.includes("match") && lower.includes("letter")) return "matching";
-  if (lower.includes("choose") && lower.includes("letter") && /\b[A-D]\b/.test(text)) return "single_choice";
   if (lower.includes("complete the summary")) return "summary_completion";
+  if (isNotesCompletionText(text)) return "sentence_completion";
   if (lower.includes("complete the sentence") || lower.includes("complete the sentences")) return "sentence_completion";
+  if (hasNumberedInlineBlanks(text)) return "sentence_completion";
+  if (isSingleChoiceText(text)) return "single_choice";
   if (lower.includes("short answer")) return "short_answer";
   return "short_answer";
 }
 
+function normalizedInstructionText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase().replace(/[‐‑‒–—]/g, "-");
+}
+
+function isMultiChoiceText(text: string): boolean {
+  const normalized = normalizedInstructionText(text);
+  return normalized.includes("choose two letters")
+    || normalized.includes("choose three letters")
+    || normalized.includes("choose two correct letters")
+    || normalized.includes("choose three correct letters");
+}
+
+function hasSingleChoiceOptionRun(normalized: string): boolean {
+  return ["a, b, c or d", "a, b, c, or d", "a, b or c", "a, b, c", "a-d", "a-c"]
+    .some((marker) => normalized.includes(marker));
+}
+
+function isMatchingPromptText(normalized: string): boolean {
+  return normalized.includes("which paragraph contains")
+    || normalized.includes("which section contains")
+    || normalized.includes("match each statement")
+    || normalized.includes("match each person")
+    || normalized.includes("match each opinion")
+    || normalized.includes("match each sentence")
+    || normalized.includes("match each with")
+    || normalized.includes("look at the following")
+    || normalized.includes("list of headings")
+    || normalized.includes("correct heading for each");
+}
+
+function isSingleChoiceText(text: string): boolean {
+  const normalized = normalizedInstructionText(text);
+  if (isMatchingPromptText(normalized)) return false;
+  if (normalized.includes("choose the correct letter") && hasSingleChoiceOptionRun(normalized)) return true;
+  if (normalized.includes("which of the following") && hasSingleChoiceOptionRun(normalized)) return true;
+  const optionHits = [" a ", " b ", " c ", " d "].filter((marker) => normalized.includes(marker)).length;
+  return optionHits >= 4
+    && ["what ", "why ", "which ", "according to ", "writer", "article", "purpose", "title"]
+      .some((marker) => normalized.includes(marker));
+}
+
+function isNotesCompletionText(text: string): boolean {
+  const lower = text.toLowerCase();
+  return lower.includes("complete the notes") || lower.includes("notes below") || lower.includes("note completion");
+}
+
+function isSentenceEndingMatchingText(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (lower.includes("complete each sentence") || lower.includes("complete the sentences"))
+    && (lower.includes("correct ending") || lower.includes("list of endings"));
+}
+
+function layoutHintForGroup(kind: GroupKind, text: string): NonNullable<SplitCandidates["questionGroupCandidates"][number]["layoutHint"]> {
+  if (kind === "table_completion") return "table";
+  if (isNotesCompletionText(text) || kind === "diagram_completion" || kind === "sentence_completion" || kind === "summary_completion" || hasNumberedInlineBlanks(text)) return "inline_completion";
+  return "list";
+}
+
+function isInlineBlankMarkerChar(ch: string): boolean {
+  return /[_\.\u2026\u22ef\u00b7\-\u2010\u2011\u2012\u2013\u2014\ufe4d\ufe4e\ufe4f\uff3f]/.test(ch);
+}
+
+function inlineBlankMarkerWidth(ch: string): number {
+  return ch === "\u2026" || ch === "\u22ef" ? 3 : 1;
+}
+
+function nextNonSpace(text: string, from: number): [number, string] | undefined {
+  let cursor = Math.min(from, text.length);
+  while (cursor < text.length) {
+    const ch = text[cursor] ?? "";
+    if (!/\s/.test(ch)) return [cursor, ch];
+    cursor += 1;
+  }
+  return undefined;
+}
+
+function isRangeDashAfterNumber(text: string, afterDigits: number): boolean {
+  const dash = nextNonSpace(text, afterDigits);
+  if (!dash || !/[-\u2013\u2014]/.test(dash[1])) return false;
+  const next = nextNonSpace(text, dash[0] + 1);
+  return Boolean(next && /\d/.test(next[1]));
+}
+
+function findNumberedBlankMarker(text: string, number: number, from: number): [number, number] | undefined {
+  const needle = String(number);
+  let search = Math.min(from, text.length);
+  while (search < text.length) {
+    const start = text.indexOf(needle, search);
+    if (start < 0) return undefined;
+    const afterDigits = start + needle.length;
+    const before = start > 0 ? text[start - 1] : "";
+    if (before && !/[\s([<>]/.test(before)) {
+      search = afterDigits;
+      continue;
+    }
+    if (isRangeDashAfterNumber(text, afterDigits)) {
+      search = afterDigits;
+      continue;
+    }
+    let cursor = afterDigits;
+    if (/[.):、]/.test(text[cursor] ?? "")) cursor += 1;
+    while (/\s/.test(text[cursor] ?? "")) cursor += 1;
+    let blankEnd = cursor;
+    let blankWidth = 0;
+    while (isInlineBlankMarkerChar(text[blankEnd] ?? "")) {
+      blankWidth += inlineBlankMarkerWidth(text[blankEnd]);
+      blankEnd += 1;
+    }
+    if (blankWidth >= 3) return [start, blankEnd];
+    search = afterDigits;
+  }
+  return undefined;
+}
+
+function findNumberMarker(text: string, number: number, from: number): [number, number] | undefined {
+  const needle = String(number);
+  let search = Math.min(from, text.length);
+  while (search < text.length) {
+    const start = text.indexOf(needle, search);
+    if (start < 0) return undefined;
+    const afterDigits = start + needle.length;
+    const before = start > 0 ? text[start - 1] : "";
+    if (before && !/[\s([<>]/.test(before)) {
+      search = afterDigits;
+      continue;
+    }
+    if (isRangeDashAfterNumber(text, afterDigits)) {
+      search = afterDigits;
+      continue;
+    }
+    const after = text[afterDigits] ?? "";
+    if (after && !/[\s.):、_\.\u2026\u22ef\u00b7\-\u2010\u2011\u2012\u2013\u2014\ufe4d\ufe4e\ufe4f\uff3f]/.test(after)) {
+      search = afterDigits;
+      continue;
+    }
+    return [start, afterDigits];
+  }
+  return undefined;
+}
+
+function hasNumberedInlineBlanks(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const range = detectQuestionRange(normalized);
+  if (!range) return false;
+  let cursor = 0;
+  let markers = 0;
+  const [start, end] = range;
+  for (let number = start; number <= end; number += 1) {
+    const marker = findNumberedBlankMarker(normalized, number, cursor);
+    if (marker) {
+      markers += 1;
+      cursor = marker[1];
+    }
+  }
+  return markers >= 2 || (end > start && markers >= Math.min(3, end - start + 1));
+}
+
+function inferGroupRangeEnd(text: string, start: number, headingEnd: number, allowBlankExtension: boolean, allowListExtension: boolean): number {
+  if (!allowBlankExtension && !allowListExtension) return Math.max(start, headingEnd);
+  const normalized = text.replace(/\s+/g, " ").trim();
+  let inferredEnd = Math.max(start, headingEnd);
+  const maxLookahead = start + 20;
+  let cursor = 0;
+  for (let number = start; number <= inferredEnd; number += 1) {
+    const blankMarker = findNumberedBlankMarker(normalized, number, cursor);
+    if (blankMarker) cursor = blankMarker[1];
+    else if (allowListExtension) {
+      const numberMarker = findNumberMarker(normalized, number, cursor);
+      if (numberMarker) cursor = numberMarker[1];
+    }
+  }
+  while (inferredEnd < maxLookahead) {
+    const next = inferredEnd + 1;
+    if (allowBlankExtension) {
+      const marker = findNumberedBlankMarker(normalized, next, cursor);
+      if (marker) {
+        inferredEnd = next;
+        cursor = marker[1];
+        continue;
+      }
+    }
+    if (allowListExtension) {
+      const marker = findNumberMarker(normalized, next, cursor);
+      if (marker) {
+        inferredEnd = next;
+        cursor = marker[1];
+        continue;
+      }
+    }
+    break;
+  }
+  return inferredEnd;
+}
+
 function letterOptionsForText(text: string): string[] {
   const lower = text.toLowerCase();
-  if (lower.includes("a-g") || lower.includes("list of headings")) return ["A", "B", "C", "D", "E", "F", "G"];
-  if (lower.includes("a-f")) return ["A", "B", "C", "D", "E", "F"];
-  if (lower.includes("a-e")) return ["A", "B", "C", "D", "E"];
+  const normalized = lower.replace(/[‐‑‒–—]/g, "-");
+  if (normalized.includes("a-i")) return ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
+  if (normalized.includes("a-h")) return ["A", "B", "C", "D", "E", "F", "G", "H"];
+  if (normalized.includes("a-g") || lower.includes("list of headings")) return ["A", "B", "C", "D", "E", "F", "G"];
+  if (normalized.includes("a-f")) return ["A", "B", "C", "D", "E", "F"];
+  if (normalized.includes("a-e")) return ["A", "B", "C", "D", "E"];
   return ["A", "B", "C", "D"];
 }
 
@@ -578,11 +866,27 @@ function continuationEdgesForBlocks(blocks: DocumentBlock[]): NonNullable<SplitC
 function parseAnswerText(text: string): Record<string, AnswerValue> {
   const answers: Record<string, AnswerValue> = {};
   const normalized = text.replace(/[;,\n]+/g, " ").replace(/\s+/g, " ").trim();
-  const pattern = /(?:^|\s)(\d{1,3})\s*[).:-]?\s+((?:NOT\s+GIVEN)|TRUE|FALSE|YES|NO|[A-D]|[A-Za-z][A-Za-z-]*)(?=\s+\d{1,3}\s*[).:-]?\s+|$)/gi;
-  for (const match of normalized.matchAll(pattern)) {
-    const raw = match[2].trim();
-    const upper = raw.toUpperCase();
-    answers[match[1]] = ["TRUE", "FALSE", "YES", "NO", "NOT GIVEN", "A", "B", "C", "D"].includes(upper) ? upper : raw;
+  const tokens = normalized.split(/\s+/).map((token) => token.replace(/^[().:;,]+|[().:;,]+$/g, "")).filter(Boolean);
+  let index = 0;
+  while (index < tokens.length) {
+    const number = Number(tokens[index]);
+    if (!Number.isInteger(number)) {
+      index += 1;
+      continue;
+    }
+    index += 1;
+    const valueTokens: string[] = [];
+    while (index < tokens.length) {
+      const nextNumber = Number(tokens[index]);
+      if (Number.isInteger(nextNumber) && nextNumber === number + 1) break;
+      valueTokens.push(tokens[index]);
+      index += 1;
+    }
+    if (valueTokens.length) {
+      const raw = valueTokens.join(" ").trim();
+      const upper = raw.toUpperCase();
+      answers[String(number)] = ["TRUE", "FALSE", "YES", "NO", "NOT GIVEN", "A", "B", "C", "D"].includes(upper) ? upper : raw;
+    }
   }
   return answers;
 }
@@ -673,14 +977,19 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
       });
       const included = nextHeadingIndex > -1 ? questionBlocks.slice(index, nextHeadingIndex) : questionBlocks.slice(index);
       const blockIds = included.map((item) => item.blockId);
-      const classification = classifyGroup(included.map(blockText).join(" "), blockIds);
+      const combined = included.map(blockText).join(" ");
+      const classification = classifyGroup(combined, blockIds);
+      const allowBlankExtension = ["summary_completion", "sentence_completion", "diagram_completion"].includes(classification.kind);
+      const allowListExtension = ["true_false_not_given", "yes_no_not_given"].includes(classification.kind);
+      const end = inferGroupRangeEnd(combined, range[0], range[1], allowBlankExtension, allowListExtension);
       return {
         groupId: `group-${index + 1}`,
-        heading: text.match(/Questions?\s+\d{1,3}(?:\s*[-–—]\s*\d{1,3})?/i)?.[0] ?? questionHeading(range[0], range[1]),
-        questionRange: range,
+        heading: text.match(/Questions?\s+\d{1,3}(?:\s*(?:[-–—]|and)\s*\d{1,3})?/i)?.[0] ?? questionHeading(range[0], range[1]),
+        questionRange: [range[0], end],
         instructionText: text,
         blockIds,
         kindHint: classification.kind,
+        layoutHint: layoutHintForGroup(classification.kind, combined),
         confidence: classification.confidence,
         classification,
         sectionEvidence: sectionEvidenceForBlocks(included),
@@ -688,10 +997,6 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
       };
     })
     .filter(Boolean) as SplitCandidates["questionGroupCandidates"];
-  questionGroupCandidates.forEach((candidate, index) => {
-    candidate.groupId = `group-${index + 1}`;
-  });
-
   if (!questionGroupCandidates.length && umbrellaQuestionRanges.length) {
     for (const umbrella of umbrellaQuestionRanges) {
       questionGroupCandidates.push({
@@ -701,6 +1006,7 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
         instructionText: umbrella.text,
         blockIds: umbrella.blockId ? [umbrella.blockId] : [],
         kindHint: "short_answer",
+        layoutHint: "list",
         confidence: 0.35,
         isUmbrellaRange: true,
         requiresManualQuestionImport: true
@@ -709,19 +1015,23 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
   } else if (!questionGroupCandidates.length && questionBlocks.length) {
     const start = answerNumbers[0] ?? 1;
     const end = answerNumbers.at(-1) ?? start;
+    const combined = questionBlocks.map(blockText).join(" ");
+    const classification = classifyGroup(combined, questionBlocks.map((block) => block.blockId));
     questionGroupCandidates.push({
       groupId: "group-1",
       heading: questionHeading(start, end),
       questionRange: [start, end],
       instructionText: questionBlocks.map(blockText).join("\n"),
       blockIds: questionBlocks.map((block) => block.blockId),
-      kindHint: classifyGroup(questionBlocks.map(blockText).join(" "), questionBlocks.map((block) => block.blockId)).kind,
+      kindHint: classification.kind,
+      layoutHint: layoutHintForGroup(classification.kind, combined),
       confidence: 0.58,
-      classification: classifyGroup(questionBlocks.map(blockText).join(" "), questionBlocks.map((block) => block.blockId)),
+      classification,
       sectionEvidence: sectionEvidenceForBlocks(questionBlocks),
       continuationEdges: continuationEdgesForBlocks(questionBlocks)
     });
   }
+  normalizeGroupRanges(questionGroupCandidates);
 
   const fallbackPassageRange = firstQuestionIndex > 0 ? blocks.slice(0, firstQuestionIndex).map((block) => block.blockId) : blocks.slice(0, Math.max(1, Math.min(3, blocks.length))).map((block) => block.blockId);
   const passageRange = passageBlocks.length ? passageBlocks.map((block) => block.blockId) : fallbackPassageRange;
@@ -765,6 +1075,7 @@ function templateForKind(kind: GroupKind): string {
     matching_information: "matching_information",
     classification: "classification",
     table_completion: "table_completion",
+    diagram_completion: "inline_text_completion",
     summary_completion: "summary_text_completion",
     sentence_completion: "inline_text_completion",
     short_answer: "short_answer_list"
@@ -774,12 +1085,28 @@ function templateForKind(kind: GroupKind): string {
 
 function promptForQuestion(groupText: string, number: number, fallbackHeading: string, rangeEnd: number): string {
   const normalized = groupText.replace(/\s+/g, " ").trim();
+  const blankMarker = findNumberedBlankMarker(normalized, number, 0);
+  if (blankMarker) {
+    const nextBlankMarker = number < rangeEnd ? findNumberedBlankMarker(normalized, number + 1, blankMarker[1]) : undefined;
+    const boundary = nextBlankMarker?.[0] ?? findFinalPromptBoundary(normalized, blankMarker[1]);
+    const prompt = normalized.slice(blankMarker[1], boundary).replace(/^Questions?\s+\d+(?:\s*[-–—]\s*\d+)?\s*/i, "").trim();
+    return prompt || `原文第 ${number} 空`;
+  }
   const escaped = String(number).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const next = String(number + 1).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const nextBoundary = number < rangeEnd ? `\\s+${next}[).]?\\s+` : "\\s+(?:Questions?\\s+\\d|Answers?|Answer\\s+Key)\\b|$";
   const match = normalized.match(new RegExp(`(?:^|\\s)${escaped}[).]?\\s+(.+?)(?=${nextBoundary})`, "i"));
   if (match?.[1]) return match[1].replace(/^Questions?\s+\d+(?:\s*[-–—]\s*\d+)?\s*/i, "").trim();
-  return `${fallbackHeading} item ${number}`;
+  return `${fallbackHeading} 第 ${number} 题`;
+}
+
+function findFinalPromptBoundary(text: string, from: number): number {
+  const lower = text.toLowerCase();
+  return [" questions ", " answers", " answer key"]
+    .map((marker) => lower.slice(from).indexOf(marker))
+    .filter((index) => index >= 0)
+    .map((index) => from + index)
+    .sort((a, b) => a - b)[0] ?? text.length;
 }
 
 function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr): ReadingAuthoringIr {
@@ -794,6 +1121,7 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
     const groupBlocks = candidate.blockIds.map((blockId) => blocksById.get(blockId)).filter(Boolean) as DocumentBlock[];
     const groupText = groupBlocks.map(blockText).join(" ") || candidate.instructionText;
     const [start, end] = candidate.questionRange;
+    const layoutHint = candidate.layoutHint ?? layoutHintForGroup(kind, groupText);
     const questions = Array.from({ length: Math.max(0, end - start + 1) }, (_, offset) => start + offset).map((number) => {
       const displayNumber = String(number);
       const idValue = `q${displayNumber}`;
@@ -815,7 +1143,12 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       questionRange: candidate.questionRange,
       instruction: [candidate.instructionText],
       questions,
-      layout: { template: templateForKind(kind), ...(kind === "table_completion" ? { tableHeaders: ["Question", "Prompt", "Answer"] } : {}) },
+      layout: {
+        template: templateForKind(kind),
+        layoutHint,
+        ...(kind === "table_completion" ? { tableHeaders: ["Question", "Prompt", "Answer"] } : {}),
+        ...(layoutHint === "inline_completion" ? { notes: groupText } : {})
+      },
       reviewWarnings: candidate.classification?.warnings ?? [],
       classificationEvidence: candidate.classification?.evidence ?? candidate.blockIds,
       sectionEvidence: candidate.sectionEvidence ?? [],
@@ -1381,6 +1714,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "import_source_file": {
       const jobId = args.jobId as string;
       const filePath = (args.filePath as string) || "source.pdf";
+      const role = (args.role as SourceFileRole) ?? "MainQuestion";
       const source: SourceFile = {
         fileId: id("file"),
         originalName: filePath.split(/[\\/]/).pop() || filePath,
@@ -1388,7 +1722,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         fileType: detectFileType(filePath),
         sha256: Math.random().toString(16).slice(2).padEnd(64, "0"),
         sizeBytes: Number(args.sizeBytes ?? 0),
-        role: (args.role as SourceFileRole) ?? "MainQuestion",
+        role,
         importedAt: now()
       };
       const job = requireJob(store, jobId);
@@ -1396,6 +1730,17 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const textContent = typeof args.textContent === "string" ? args.textContent.trim() : "";
       if (textContent) {
         store.sourceTexts[jobId] = { ...(store.sourceTexts[jobId] ?? {}), [source.fileId]: textContent };
+      }
+      const binaryContentBase64 = typeof args.binaryContentBase64 === "string" ? args.binaryContentBase64 : "";
+      const canUseLocalPath = filePath.startsWith("/") && (source.fileType === "pdf" || source.fileType === "docx");
+      if (role === "MainQuestion" && (binaryContentBase64 || canUseLocalPath) && (source.fileType === "pdf" || source.fileType === "docx")) {
+        store.documents[jobId] = await parseUploadedDocumentInDev({
+          jobId,
+          name: source.originalName,
+          contentBase64: binaryContentBase64 || undefined,
+          sourcePath: binaryContentBase64 ? undefined : filePath,
+          mode: "auto"
+        });
       }
       save(store);
       return source as T;
@@ -1405,8 +1750,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const jobId = args.jobId as string;
       const job = requireJob(store, jobId);
       const ir = makeDocumentIr(job, (args.options ?? { mode: "auto" }) as ParseOptions, store.sourceTexts[jobId]);
+      archiveCurrentDraftForSourceReplacement(store, jobId, "parse_document");
       store.documents[jobId] = ir;
-      delete store.sourceReviews[jobId];
       const review = sourceReviewStatus(store, jobId);
       updateJob(store, jobId, {
         status: review.required ? "NeedsReview" : "Working",
@@ -1421,8 +1766,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 	      const jobId = args.jobId as string;
 	      const job = requireJob(store, jobId);
 	      const ir = makeDocumentIr(job, { mode: "ocr" }, store.sourceTexts[jobId]);
+	      archiveCurrentDraftForSourceReplacement(store, jobId, "rerun_ocr");
 	      store.documents[jobId] = ir;
-	      delete store.sourceReviews[jobId];
 	      save(store);
 	      return ir as T;
 	    }
@@ -1434,6 +1779,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const text = input?.text?.trim() ?? "";
       if (!text) throw new Error("manual_transcription_text_required");
       const ir = makeManualDocumentIr(job, text);
+      archiveCurrentDraftForSourceReplacement(store, jobId, "manual_transcription");
       store.documents[jobId] = ir;
       const review = sourceReviewStatus(store, jobId);
       store.sourceReviews[jobId] = { ...review, resolved: true, stale: false, resolvedAt: now(), note: input.note ?? "manual transcription applied" };
@@ -1450,6 +1796,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const jobId = args.jobId as string;
       const job = requireJob(store, jobId);
       const ir = makeVisionDocumentIr(job);
+      archiveCurrentDraftForSourceReplacement(store, jobId, "vision_transcription");
       store.documents[jobId] = ir;
       const review = sourceReviewStatus(store, jobId);
       store.sourceReviews[jobId] = { ...review, resolved: false, stale: false, resolvedAt: null, note: null };
@@ -1480,6 +1827,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "run_rule_split": {
       const jobId = args.jobId as string;
       requireJob(store, jobId);
+      protectExistingAuthoring(store, jobId, args);
       const split = makeSplit(jobId, store.documents[jobId], requireJob(store, jobId));
       store.splits[jobId] = split;
       updateJob(store, jobId, { status: "Working", currentStep: "Split" });
@@ -1498,6 +1846,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "build_authoring_ir": {
       const jobId = args.jobId as string;
       const job = requireJob(store, jobId);
+      protectExistingAuthoring(store, jobId, args);
       const split = store.splits[jobId] ?? makeSplit(jobId, store.documents[jobId], job);
       const ir = makeAuthoring(job, split, store.documents[jobId]);
       store.splits[jobId] = split;
@@ -1516,8 +1865,10 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 
     case "run_auto_pipeline": {
       const jobId = args.jobId as string;
-      const input = (args.input ?? {}) as { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"] };
+      const input = (args.input ?? {}) as { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"]; target?: "editableDraft"; allowOverwrite?: boolean };
       const threshold = Math.min(1, Math.max(0, input.confidenceThreshold ?? 0.85));
+      const target = input.target ?? "editableDraft";
+      protectExistingAuthoring(store, jobId, args);
       let job = requireJob(store, jobId);
 
       let documentIr = store.documents[jobId] ?? makeDocumentIr(job, { mode: input.parseMode ?? "auto" }, store.sourceTexts[jobId]);
@@ -1552,41 +1903,43 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       let appliedCount = 0;
       const profileId = input.profileId ?? store.profiles.find((profile) => profile.enabled)?.profileId ?? "profile-local-placeholder";
 
-      for (const group of ir.groups) {
-        const suggestion: LlmSuggestion = {
-          suggestionId: id("suggestion"),
-          jobId,
-          groupId: group.groupId,
-          kind: group.kind,
-          confidence: 0.64,
-          patch: [
-            { op: "replace", path: "/kind", value: group.kind },
-            { op: "replace", path: "/layout/template", value: group.layout.template }
-          ],
-          questions: group.questions.map((question) => ({ id: question.id, prompt: question.prompt, interaction: question.interaction })),
-          evidence: { source: "dev-fallback-auto-pipeline", directJsGeneration: false, fallback: true },
-          warnings: ["deterministic-local-fallback", "low-confidence-review-required", "fallback-output-never-auto-applies"],
-          createdAt: now()
-        };
-        suggestionCount += 1;
-        store.suggestions[jobId] = [suggestion, ...(store.suggestions[jobId] ?? [])];
+      if (input.profileId) {
+        for (const group of ir.groups) {
+          const suggestion: LlmSuggestion = {
+            suggestionId: id("suggestion"),
+            jobId,
+            groupId: group.groupId,
+            kind: group.kind,
+            confidence: 0.64,
+            patch: [
+              { op: "replace", path: "/kind", value: group.kind },
+              { op: "replace", path: "/layout/template", value: group.layout.template }
+            ],
+            questions: group.questions.map((question) => ({ id: question.id, prompt: question.prompt, interaction: question.interaction })),
+            evidence: { source: "dev-fallback-auto-pipeline", directJsGeneration: false, fallback: true },
+            warnings: ["deterministic-local-fallback", "low-confidence-review-required", "fallback-output-never-auto-applies"],
+            createdAt: now()
+          };
+          suggestionCount += 1;
+          store.suggestions[jobId] = [suggestion, ...(store.suggestions[jobId] ?? [])];
 
-        if (suggestion.confidence >= threshold) {
-          const autoApplyIssues = suggestionAutoApplyIssues(ir, suggestion, ["kind", "layout", "questions"]);
-          if (autoApplyIssues.length) {
-            blockedAutoApplyGroups.push(group.groupId);
-            const warning = `LLM suggestion reached confidence threshold but was not safe to auto-apply: ${autoApplyIssues.join(",")}`;
-            ir = recordGroupLlmReview(ir, group.groupId, "auto_apply_blocked", suggestion.confidence, warning, suggestion);
-            failures.push(`${group.groupId}:auto_apply_blocked:${autoApplyIssues.join(",")}`);
-            continue;
+          if (suggestion.confidence >= threshold) {
+            const autoApplyIssues = suggestionAutoApplyIssues(ir, suggestion, ["kind", "layout", "questions"]);
+            if (autoApplyIssues.length) {
+              blockedAutoApplyGroups.push(group.groupId);
+              const warning = `LLM suggestion reached confidence threshold but was not safe to auto-apply: ${autoApplyIssues.join(",")}`;
+              ir = recordGroupLlmReview(ir, group.groupId, "auto_apply_blocked", suggestion.confidence, warning, suggestion);
+              failures.push(`${group.groupId}:auto_apply_blocked:${autoApplyIssues.join(",")}`);
+              continue;
+            }
+            ir = refreshAuthoringDerivedFields(applySuggestionPatch(ir, suggestion, ["kind", "layout", "questions"]));
+            appliedCount += 1;
+            highConfidenceAppliedGroups.push(group.groupId);
+          } else {
+            const warning = `LLM suggestion confidence ${suggestion.confidence.toFixed(2)} is below auto-apply threshold ${threshold.toFixed(2)}; manual review is required.`;
+            ir = recordGroupLlmReview(ir, group.groupId, "low_confidence", suggestion.confidence, warning, suggestion);
+            lowConfidenceGroups.push(group.groupId);
           }
-          ir = refreshAuthoringDerivedFields(applySuggestionPatch(ir, suggestion, ["kind", "layout", "questions"]));
-          appliedCount += 1;
-          highConfidenceAppliedGroups.push(group.groupId);
-        } else {
-          const warning = `LLM suggestion confidence ${suggestion.confidence.toFixed(2)} is below auto-apply threshold ${threshold.toFixed(2)}; manual review is required.`;
-          ir = recordGroupLlmReview(ir, group.groupId, "low_confidence", suggestion.confidence, warning, suggestion);
-          lowConfidenceGroups.push(group.groupId);
         }
       }
 
@@ -1621,8 +1974,18 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const requiresParserReview = sourceReviewIssueCount > 0;
       const requiresAuthoringReview = authoringReview.needsReview > 0;
       const staticRuntimePassed = validationReport.passed && validationReport.runtime?.mode === "static-rust";
-      const status = lowConfidenceGroups.length || blockedAutoApplyGroups.length || requiresParserReview || requiresAuthoringReview ? "NeedsReview" : staticRuntimePassed ? "ExportReady" : validationReport.passed ? "DraftSaved" : "NeedsReview";
-      const currentStep = requiresParserReview ? "DocumentReview" : lowConfidenceGroups.length || blockedAutoApplyGroups.length ? "LlmReview" : requiresAuthoringReview ? "Authoring" : staticRuntimePassed ? "Export" : "Preview";
+      const hasReviewBlocks = lowConfidenceGroups.length > 0 || blockedAutoApplyGroups.length > 0 || requiresParserReview || requiresAuthoringReview;
+      const status = hasReviewBlocks ? "NeedsReview" : target === "editableDraft" ? "DraftSaved" : staticRuntimePassed ? "ExportReady" : validationReport.passed ? "DraftSaved" : "NeedsReview";
+      const currentStep = requiresParserReview ? "DocumentReview" : target === "editableDraft" || requiresAuthoringReview || lowConfidenceGroups.length || blockedAutoApplyGroups.length ? "Authoring" : staticRuntimePassed ? "Export" : "Preview";
+      const nextRoute = requiresParserReview ? "document" : "groups";
+      const userStatus = hasReviewBlocks ? "needsConfirmation" : "draftReady";
+      const userMessage = requiresParserReview
+        ? "题稿已生成，但源文件识别结果需要你确认后再继续。"
+        : lowConfidenceGroups.length || blockedAutoApplyGroups.length
+          ? "题稿已生成，请在题稿编辑页确认部分识别结果。"
+          : requiresAuthoringReview
+            ? "题稿已生成，还有题干、答案或题型需要你确认。"
+            : "题稿已生成，可以开始检查和编辑。";
       updateJob(store, jobId, {
         status,
         currentStep,
@@ -1655,6 +2018,9 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         },
         status,
         currentStep,
+        userStatus,
+        userMessage,
+        nextRoute,
         generatedAt: now(),
         validationReport
       };

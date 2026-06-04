@@ -102,6 +102,9 @@ export interface AutoPipelineReport {
   };
   status: string;
   currentStep: string;
+  userStatus?: "draftReady" | "needsConfirmation" | "failed";
+  userMessage?: string;
+  nextRoute?: "groups" | "document" | "review";
   generatedAt: string;
   validationReport?: unknown;
 }

@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "check": "tsc --noEmit",
     "e2e:ui-flow": "node sidecars/ui-flow-e2e/ui-flow-e2e.mjs",
+    "test:pdf-regression": "node scripts/pdf-regression-sample.mjs --sample 30",
     "audit:package": "node scripts/package-audit.mjs",
     "verify:release": "npm run tauri build && npm run audit:package"
   },

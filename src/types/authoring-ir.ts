@@ -52,6 +52,7 @@ export interface InteractionSpec {
 
 export interface LayoutSpec {
   template: string;
+  layoutHint?: "inline_completion" | "table" | "list";
   tableHeaders?: string[];
   notes?: string;
 }
@@ -124,6 +125,7 @@ export interface SplitGroupCandidate {
   instructionText: string;
   blockIds: string[];
   kindHint?: GroupKind;
+  layoutHint?: "inline_completion" | "table" | "list";
   confidence: number;
   classification?: {
     kind: GroupKind;
