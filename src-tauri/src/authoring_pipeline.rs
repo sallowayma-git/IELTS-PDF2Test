@@ -1653,6 +1653,10 @@ fn is_dynamic_non_content_placeholder_text(text: &str) -> bool {
     lower.starts_with("no extractable text on page")
 }
 
+fn is_dynamic_non_content_placeholder_block(block: &Value) -> bool {
+    is_dynamic_non_content_placeholder_text(&dynamic_block_text(block))
+}
+
 fn dynamic_lettered_paragraph_label(text: &str) -> Option<char> {
     let normalized = collapse_whitespace(text);
     let first = normalized
@@ -1861,6 +1865,7 @@ pub(crate) fn make_dynamic_split_candidates(
             .enumerate()
             .filter(|(index, block)| {
                 *index < first_concrete_question
+                    && !is_dynamic_non_content_placeholder_block(block)
                     && !is_dynamic_question_block(block)
                     && !is_dynamic_answer_block(block)
                     && dynamic_block_role(block) != "ignore"
@@ -1870,7 +1875,8 @@ pub(crate) fn make_dynamic_split_candidates(
         None => blocks
             .iter()
             .filter(|block| {
-                !is_dynamic_question_block(block)
+                !is_dynamic_non_content_placeholder_block(block)
+                    && !is_dynamic_question_block(block)
                     && !is_dynamic_answer_block(block)
                     && dynamic_block_role(block) != "ignore"
             })
@@ -1889,7 +1895,9 @@ pub(crate) fn make_dynamic_split_candidates(
         blocks[first_question..]
             .iter()
             .filter(|block| {
-                dynamic_block_role(block) != "answer" && dynamic_block_role(block) != "ignore"
+                !is_dynamic_non_content_placeholder_block(block)
+                    && dynamic_block_role(block) != "answer"
+                    && dynamic_block_role(block) != "ignore"
             })
             .cloned()
             .collect::<Vec<_>>()
@@ -1899,20 +1907,26 @@ pub(crate) fn make_dynamic_split_candidates(
         blocks[first_question..]
             .iter()
             .filter(|block| {
-                dynamic_block_role(block) != "answer" && dynamic_block_role(block) != "ignore"
+                !is_dynamic_non_content_placeholder_block(block)
+                    && dynamic_block_role(block) != "answer"
+                    && dynamic_block_role(block) != "ignore"
             })
             .cloned()
             .collect::<Vec<_>>()
     } else {
         blocks
             .iter()
-            .filter(|block| is_dynamic_question_block(block))
+            .filter(|block| {
+                !is_dynamic_non_content_placeholder_block(block) && is_dynamic_question_block(block)
+            })
             .cloned()
             .collect::<Vec<_>>()
     };
     let answer_blocks = blocks
         .iter()
-        .filter(|block| is_dynamic_answer_block(block))
+        .filter(|block| {
+            !is_dynamic_non_content_placeholder_block(block) && is_dynamic_answer_block(block)
+        })
         .cloned()
         .collect::<Vec<_>>();
 

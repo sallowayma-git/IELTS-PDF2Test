@@ -4562,6 +4562,73 @@ Answers
     }
 
     #[test]
+    fn no_text_placeholder_blocks_are_excluded_from_question_groups() {
+        let job = make_job(CreateJobInput {
+            title: Some("On art and artists".to_string()),
+            category: Some("P3".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["split-regression".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"b001","blockType":"paragraph","text":"READING PASSAGE 3","html":"<p>READING PASSAGE 3</p>","bbox":[72,60,520,90],"confidence":0.99},
+                    {"blockId":"b002","blockType":"paragraph","text":"Art and the people who make it have long shaped public taste and social debate in different historical periods.","html":"<p>Art and the people who make it have long shaped public taste and social debate in different historical periods.</p>","bbox":[72,100,520,170],"confidence":0.96},
+                    {"blockId":"b003","blockType":"header","text":"Questions 37-40","html":"<h3>Questions 37-40</h3>","bbox":[72,180,520,210],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"b004","blockType":"paragraph","text":"Complete the summary below. Choose ONE WORD ONLY from the passage for each answer.","html":"<p>Complete the summary below. Choose ONE WORD ONLY from the passage for each answer.</p>","bbox":[72,220,520,260],"confidence":0.95},
+                    {"blockId":"b005","blockType":"paragraph","text":"The writer argues that art depends on 37 ______ and public institutions, while artists also need 38 ______ from critics. Museums can provide 39 ______, but markets often reward 40 ______.","html":"<p>The writer argues that art depends on 37 ______ and public institutions, while artists also need 38 ______ from critics. Museums can provide 39 ______, but markets often reward 40 ______.</p>","bbox":[72,270,520,340],"confidence":0.94}
+                ]
+            }, {
+                "pageIndex": 2,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"b006","blockType":"paragraph","text":"[No extractable text on page 2]","html":"<p>[No extractable text on page 2]</p>","bbox":[72,60,520,90],"confidence":0.2}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let first_group_ids = split
+            .pointer("/questionGroupCandidates/0/blockIds")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| item.as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        assert!(first_group_ids.contains(&"b005".to_string()));
+        assert!(!first_group_ids.contains(&"b006".to_string()));
+
+        let passage_range = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| item.as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        assert!(!passage_range.contains(&"b006".to_string()));
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let group_body = ir
+            .pointer("/groups/0/questions/0/prompt")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let ir_text = serde_json::to_string(&ir).unwrap();
+        assert!(!group_body.contains("No extractable text"));
+        assert!(!ir_text.contains("No extractable text"));
+    }
+
+    #[test]
     fn rotated_page_bbox_is_normalized_before_split_ordering() {
         let job = make_job(CreateJobInput {
             title: Some("Rotated PDF Reading Order".to_string()),
