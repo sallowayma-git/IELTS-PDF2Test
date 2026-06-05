@@ -2104,6 +2104,8 @@ pub(crate) fn make_dynamic_split_candidates(
             passage_blocks.push(block);
         }
     }
+    passage_blocks
+        .retain(|block| !is_dynamic_non_content_placeholder_text(&dynamic_block_text(block)));
 
     let fallback_passage_range = if let Some(first_question) = first_question_index {
         blocks[..first_question]
@@ -2339,8 +2341,7 @@ fn find_dynamic_matching_option_run_boundary(text: &str, from: usize) -> Option<
             break;
         };
         let candidate = search + relative;
-        let preview_end = (candidate + 240).min(text.len());
-        let preview = &text[candidate..preview_end];
+        let preview = text[candidate..].chars().take(240).collect::<String>();
         if preview.starts_with("A ") && preview.contains(" B ") && preview.contains(" C ") {
             return Some(candidate);
         }
