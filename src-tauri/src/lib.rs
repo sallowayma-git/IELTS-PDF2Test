@@ -6,7 +6,9 @@ use authoring_commands::{
 use auto_pipeline::run_auto_pipeline_core;
 use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
-use export_nas_library::export_nas_library_core;
+use export_nas_library::{
+    export_nas_library_core, publish_nas_library_from_source_tree, write_source_payload_file,
+};
 use export_pack::{build_pack_core, export_reading_assets_core, export_reading_js_core};
 use llm_commands::{
     apply_llm_suggestion_core, llm_run_group_core, save_llm_profile_core, test_llm_profile_core,
@@ -494,11 +496,45 @@ fn run_auto_pipeline_from_path(path: &Path, args: &[String]) -> CommandResult<Va
     }))
 }
 
+fn export_nas_library_from_pdf_path(path: &Path, args: &[String]) -> CommandResult<Value> {
+    if !path.exists() || !path.is_file() {
+        return Err(format!("source_file_not_readable:{}", path.display()));
+    }
+    let export_dir =
+        cli_option_value(args, "--export-dir").ok_or_else(|| "missing_export_dir".to_string())?;
+    let version = cli_option_value(args, "--version");
+    let library_root = PathBuf::from(export_dir);
+    fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
+    let source_dir = library_root.join("source");
+    fs::create_dir_all(&source_dir).map_err(|error| error.to_string())?;
+
+    let generation = generate_reading_source_from_path(path)?;
+    let mut source = generation
+        .get("readingSource")
+        .cloned()
+        .ok_or_else(|| "generated_reading_source_missing".to_string())?;
+    let write_result = write_source_payload_file(&source_dir, &mut source, Some(path))?;
+    let publish_result = publish_nas_library_from_source_tree(&library_root, version.as_deref())?;
+
+    Ok(json!({
+        "schemaVersion": "NasLibraryCliExportResultV1",
+        "mode": "nas-library-cli",
+        "sourcePath": path.to_string_lossy(),
+        "libraryRoot": library_root.to_string_lossy(),
+        "sourceDir": source_dir.to_string_lossy(),
+        "examId": write_result.exam_id,
+        "copiedPdf": write_result.copied_pdf_relative,
+        "readingSource": source,
+        "publishResult": publish_result,
+        "generatedAt": Utc::now().to_rfc3339()
+    }))
+}
+
 fn run_cli(args: &[String]) -> CommandResult<bool> {
     let command = args.first().map(String::as_str);
     if !matches!(
         command,
-        Some("--generate-reading-source" | "--run-auto-pipeline")
+        Some("--generate-reading-source" | "--run-auto-pipeline" | "--export-nas-library")
     ) {
         return Ok(false);
     }
@@ -513,6 +549,12 @@ fn run_cli(args: &[String]) -> CommandResult<bool> {
                 out_path = args.get(index + 1).map(PathBuf::from);
                 index += 2;
             }
+            "--export-dir" | "--version" => {
+                if args.get(index + 1).is_none() {
+                    return Err(format!("missing_value_for_cli_arg:{}", args[index]));
+                }
+                index += 2;
+            }
             "--app-root" | "--llm-base-url" | "--llm-model" | "--llm-api-key"
             | "--llm-profile-id" => {
                 if args.get(index + 1).is_none() {
@@ -525,6 +567,8 @@ fn run_cli(args: &[String]) -> CommandResult<bool> {
     }
     let result = if command == Some("--generate-reading-source") {
         generate_reading_source_from_path(&PathBuf::from(source))?
+    } else if command == Some("--export-nas-library") {
+        export_nas_library_from_pdf_path(&PathBuf::from(source), args)?
     } else {
         run_auto_pipeline_from_path(&PathBuf::from(source), args)?
     };
@@ -4331,6 +4375,193 @@ Answers
     }
 
     #[test]
+    fn heading_matching_passage_after_heading_list_returns_to_passage_range() {
+        let job = make_job(CreateJobInput {
+            title: Some("Paternity Leave".to_string()),
+            category: Some("P2".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["split-regression".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"b001","blockType":"paragraph","text":"READING PASSAGE 2","html":"<p>READING PASSAGE 2</p>","bbox":[72,60,520,90],"confidence":0.99},
+                    {"blockId":"b002","blockType":"paragraph","text":"You should spend about 20 minutes on Questions 14-26, which are based on Reading Passage 2 on the following pages.","html":"<p>You should spend about 20 minutes on Questions 14-26, which are based on Reading Passage 2 on the following pages.</p>","bbox":[72,100,520,140],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"b003","blockType":"header","text":"Questions 14-19","html":"<h3>Questions 14-19</h3>","bbox":[72,150,520,180],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"b004","blockType":"paragraph","text":"Reading Passage 2 has six sections, A-F.","html":"<p>Reading Passage 2 has six sections, A-F.</p>","bbox":[72,185,520,210],"confidence":0.95},
+                    {"blockId":"b005","blockType":"paragraph","text":"Choose the correct heading for each section from the list of headings below.","html":"<p>Choose the correct heading for each section from the list of headings below.</p>","bbox":[72,215,520,245],"confidence":0.95},
+                    {"blockId":"b006","blockType":"paragraph","text":"14 Section A 15 Section B 16 Section C 17 Section D 18 Section E 19 Section F","html":"<p>14 Section A 15 Section B 16 Section C 17 Section D 18 Section E 19 Section F</p>","bbox":[72,250,520,330],"confidence":0.94},
+                    {"blockId":"b007","blockType":"paragraph","text":"List of Headings","html":"<p>List of Headings</p>","bbox":[72,340,520,360],"confidence":0.95},
+                    {"blockId":"b008","blockType":"paragraph","text":"i Opposition by employers to parental leave","html":"<p>i Opposition by employers to parental leave</p>","bbox":[72,365,520,385],"confidence":0.94},
+                    {"blockId":"b009","blockType":"paragraph","text":"ii An illustration of a trend in one country","html":"<p>ii An illustration of a trend in one country</p>","bbox":[72,390,520,410],"confidence":0.94}
+                ]
+            }, {
+                "pageIndex": 2,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"b010","blockType":"paragraph","text":"Paternity Leave","html":"<h2>Paternity Leave</h2>","bbox":[72,60,520,90],"confidence":0.97},
+                    {"blockId":"b011","blockType":"paragraph","text":"A At a course for fathers-to-be in New York, participants are introduced to baby maintenance for beginners and practical childcare routines.","html":"<p>A At a course for fathers-to-be in New York, participants are introduced to baby maintenance for beginners and practical childcare routines.</p>","bbox":[72,100,520,170],"confidence":0.96},
+                    {"blockId":"b012","blockType":"paragraph","text":"B In general, legal and financial support for new parents is better than it has ever been in many developed countries.","html":"<p>B In general, legal and financial support for new parents is better than it has ever been in many developed countries.</p>","bbox":[72,180,520,250],"confidence":0.95}
+                ]
+            }, {
+                "pageIndex": 3,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"b013","blockType":"header","text":"Questions 20 and 21","html":"<h3>Questions 20 and 21</h3>","bbox":[72,60,520,90],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"b014","blockType":"paragraph","text":"Choose TWO letters, A-E. Which TWO problems may be caused by maternity leave?","html":"<p>Choose TWO letters, A-E. Which TWO problems may be caused by maternity leave?</p>","bbox":[72,100,520,140],"confidence":0.94}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let passage_range = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| item.as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        assert!(passage_range.contains(&"b010".to_string()));
+        assert!(passage_range.contains(&"b011".to_string()));
+        assert!(passage_range.contains(&"b012".to_string()));
+        assert!(!passage_range.contains(&"b006".to_string()));
+        assert!(!passage_range.contains(&"b007".to_string()));
+
+        let first_group_ids = split
+            .pointer("/questionGroupCandidates/0/blockIds")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| item.as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        assert!(first_group_ids.contains(&"b006".to_string()));
+        assert!(first_group_ids.contains(&"b007".to_string()));
+        assert!(first_group_ids.contains(&"b008".to_string()));
+        assert!(!first_group_ids.contains(&"b010".to_string()));
+        assert!(!first_group_ids.contains(&"b011".to_string()));
+        assert!(!first_group_ids.contains(&"b012".to_string()));
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let passage_html = ir
+            .pointer("/passage/htmlBlocks/0/html")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(passage_html.contains("Paternity Leave"));
+        assert!(passage_html.contains("fathers-to-be"));
+        assert!(!ir
+            .pointer("/groups/0/sourceBlockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|item| item.as_str() == Some("b011")));
+    }
+
+    #[test]
+    fn passage_after_front_loaded_questions_returns_to_passage_range() {
+        let job = make_job(CreateJobInput {
+            title: Some("The fashion industry".to_string()),
+            category: Some("P2".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["split-regression".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"b001","blockType":"paragraph","text":"READING PASSAGE 2","html":"<p>READING PASSAGE 2</p>","bbox":[72,60,520,90],"confidence":0.99},
+                    {"blockId":"b002","blockType":"paragraph","text":"You should spend about 20 minutes on Questions 14-26, which are based on Reading Passage 2 on the following pages.","html":"<p>You should spend about 20 minutes on Questions 14-26, which are based on Reading Passage 2 on the following pages.</p>","bbox":[72,100,520,140],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"b003","blockType":"header","text":"Questions 14-20","html":"<h3>Questions 14-20</h3>","bbox":[72,150,520,180],"confidence":0.96,"roleHint":"question"},
+                    {"blockId":"b004","blockType":"paragraph","text":"Choose the correct heading for each section from the list of headings below.","html":"<p>Choose the correct heading for each section from the list of headings below.</p>","bbox":[72,185,520,215],"confidence":0.95},
+                    {"blockId":"b005","blockType":"paragraph","text":"14 Section A 15 Section B 16 Section C 17 Section D 18 Section E 19 Section F 20 Section G","html":"<p>14 Section A 15 Section B 16 Section C 17 Section D 18 Section E 19 Section F 20 Section G</p>","bbox":[72,220,520,280],"confidence":0.94},
+                    {"blockId":"b006","blockType":"paragraph","text":"List of Headings","html":"<p>List of Headings</p>","bbox":[72,285,520,310],"confidence":0.95},
+                    {"blockId":"b007","blockType":"paragraph","text":"i How new clothing styles are created","html":"<p>i How new clothing styles are created</p>","bbox":[72,315,520,335],"confidence":0.94}
+                ]
+            }, {
+                "pageIndex": 2,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"b008","blockType":"header","text":"Questions 21-24","html":"<h3>Questions 21-24</h3>","bbox":[72,60,520,90],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"b009","blockType":"paragraph","text":"Complete the summary below.","html":"<p>Complete the summary below.</p>","bbox":[72,100,520,130],"confidence":0.94},
+                    {"blockId":"b010","blockType":"paragraph","text":"Choose NO MORE THAN TWO WORDS from the passage for each answer.","html":"<p>Choose NO MORE THAN TWO WORDS from the passage for each answer.</p>","bbox":[72,140,520,170],"confidence":0.94},
+                    {"blockId":"b011","blockType":"header","text":"Questions 25 and 26","html":"<h3>Questions 25 and 26</h3>","bbox":[72,180,520,210],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"b012","blockType":"paragraph","text":"Choose TWO letters, A-E.","html":"<p>Choose TWO letters, A-E.</p>","bbox":[72,220,520,250],"confidence":0.94},
+                    {"blockId":"b013","blockType":"paragraph","text":"Which TWO of the following statements does the writer make about garment assembly?","html":"<p>Which TWO of the following statements does the writer make about garment assembly?</p>","bbox":[72,260,520,290],"confidence":0.94},
+                    {"blockId":"b014","blockType":"paragraph","text":"A The majority of sewing is done by computer-operated machines. B Highly skilled workers are the most important requirement. C Most businesses use other companies to manufacture their products. D Fasteners and labels are attached after the clothes have been made up. E Manufacturers usually produce one range of women’s clothing annually.","html":"<p>A The majority of sewing is done by computer-operated machines. B Highly skilled workers are the most important requirement. C Most businesses use other companies to manufacture their products. D Fasteners and labels are attached after the clothes have been made up. E Manufacturers usually produce one range of women’s clothing annually.</p>","bbox":[72,300,520,360],"confidence":0.94}
+                ]
+            }, {
+                "pageIndex": 3,
+                "width": 600,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"b015","blockType":"paragraph","text":"The fashion industry","html":"<h2>The fashion industry</h2>","bbox":[72,60,520,90],"confidence":0.97},
+                    {"blockId":"b016","blockType":"paragraph","text":"A The fashion industry is a multibillion-dollar global enterprise devoted to the business of making and selling clothes. It encompasses all types of garments, from designer fashions to ordinary everyday clothing, and accounts for a significant share of world economic output.","html":"<p>A The fashion industry is a multibillion-dollar global enterprise devoted to the business of making and selling clothes. It encompasses all types of garments, from designer fashions to ordinary everyday clothing, and accounts for a significant share of world economic output.</p>","bbox":[72,100,520,180],"confidence":0.96},
+                    {"blockId":"b017","blockType":"paragraph","text":"B The fashion industry is a product of the modern age. Prior to the mid-19th century, virtually all clothing was handmade for individuals, but by the beginning of the 20th century clothing had increasingly come to be mass-produced in standard sizes.","html":"<p>B The fashion industry is a product of the modern age. Prior to the mid-19th century, virtually all clothing was handmade for individuals, but by the beginning of the 20th century clothing had increasingly come to be mass-produced in standard sizes.</p>","bbox":[72,190,520,270],"confidence":0.95}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let passage_range = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| item.as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        assert!(passage_range.contains(&"b015".to_string()));
+        assert!(passage_range.contains(&"b016".to_string()));
+        assert!(passage_range.contains(&"b017".to_string()));
+        assert!(!passage_range.contains(&"b014".to_string()));
+
+        let last_group_ids = split
+            .pointer("/questionGroupCandidates/2/blockIds")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| item.as_str().map(ToString::to_string))
+            .collect::<Vec<_>>();
+        assert!(last_group_ids.contains(&"b014".to_string()));
+        assert!(!last_group_ids.contains(&"b015".to_string()));
+        assert!(!last_group_ids.contains(&"b016".to_string()));
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let passage_html = ir
+            .pointer("/passage/htmlBlocks/0/html")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(passage_html.contains("The fashion industry"));
+        assert!(passage_html.contains("multibillion-dollar global enterprise"));
+        assert!(!ir
+            .pointer("/groups/2/sourceBlockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|item| item.as_str() == Some("b016")));
+    }
+
+    #[test]
     fn rotated_page_bbox_is_normalized_before_split_ordering() {
         let job = make_job(CreateJobInput {
             title: Some("Rotated PDF Reading Order".to_string()),
@@ -4385,6 +4616,123 @@ Answers
             .and_then(Value::as_array)
             .map(|bbox| bbox.len() == 4)
             .unwrap_or(false));
+    }
+
+    #[test]
+    fn same_column_blocks_keep_original_order_when_bbox_y_wraps() {
+        let job = make_job(CreateJobInput {
+            title: Some("Wrapped Y Reading Order".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["reading-order".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"q1-5-heading","blockType":"paragraph","text":"Questions 1-5","html":"<p>Questions 1-5</p>","bbox":[72,72,520,108],"confidence":0.98,"roleHint":"question"},
+                    {"blockId":"q1-5-instruction","blockType":"paragraph","text":"Which paragraph contains the following information?","html":"<p>Which paragraph contains the following information?</p>","bbox":[72,110,520,150],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q1","blockType":"paragraph","text":"1 Humans imagine yawning.","html":"<p>1 Humans imagine yawning.</p>","bbox":[72,160,520,200],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q2","blockType":"paragraph","text":"2 Occupations are linked to yawning.","html":"<p>2 Occupations are linked to yawning.</p>","bbox":[72,202,520,242],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q3","blockType":"paragraph","text":"3 A research overview on yawning.","html":"<p>3 A research overview on yawning.</p>","bbox":[72,244,520,284],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q4","blockType":"paragraph","text":"4 Brain temperature is regulated.","html":"<p>4 Brain temperature is regulated.</p>","bbox":[72,286,520,326],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q5","blockType":"paragraph","text":"5 Earlier theories were disproved.","html":"<p>5 Earlier theories were disproved.</p>","bbox":[72,328,520,368],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q6-9-heading","blockType":"paragraph","text":"Questions 6-9","html":"<p>Questions 6-9</p>","bbox":[72,370,520,410],"confidence":0.98,"roleHint":"question"},
+                    {"blockId":"q6-9-instruction","blockType":"paragraph","text":"Match each with the correct university. Write the correct letter, A, B or C.","html":"<p>Match each with the correct university.</p>","bbox":[72,412,520,452],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q6","blockType":"paragraph","text":"6 There is no gender difference.","html":"<p>6 There is no gender difference.</p>","bbox":[72,454,520,494],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q7","blockType":"paragraph","text":"7 Certain disorders reduce contagious yawning.","html":"<p>7 Certain disorders reduce contagious yawning.</p>","bbox":[72,72,520,108],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q8","blockType":"paragraph","text":"8 Yawning is linked to breathing.","html":"<p>8 Yawning is linked to breathing.</p>","bbox":[72,110,520,150],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"q9","blockType":"paragraph","text":"9 Empathy training increases yawning.","html":"<p>9 Empathy training increases yawning.</p>","bbox":[72,152,520,192],"confidence":0.97,"roleHint":"question"},
+                    {"blockId":"list","blockType":"paragraph","text":"A University at Albany B University of Leeds C University of London","html":"<p>A University at Albany B University of Leeds C University of London</p>","bbox":[72,194,520,234],"confidence":0.96,"roleHint":"question"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let blocks = dynamic_document_blocks(Some(&doc));
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|block| block.get("blockId").and_then(Value::as_str).unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "q1-5-heading",
+                "q1-5-instruction",
+                "q1",
+                "q2",
+                "q3",
+                "q4",
+                "q5",
+                "q6-9-heading",
+                "q6-9-instruction",
+                "q6",
+                "q7",
+                "q8",
+                "q9",
+                "list"
+            ]
+        );
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/blockIds")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "q1-5-heading",
+                "q1-5-instruction",
+                "q1",
+                "q2",
+                "q3",
+                "q4",
+                "q5"
+            ]
+        );
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/1/blockIds")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "q6-9-heading",
+                "q6-9-instruction",
+                "q6",
+                "q7",
+                "q8",
+                "q9",
+                "list"
+            ]
+        );
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/prompt")
+                .and_then(Value::as_str),
+            Some("Humans imagine yawning.")
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/4/prompt")
+                .and_then(Value::as_str),
+            Some("Earlier theories were disproved.")
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/questions/3/prompt")
+                .and_then(Value::as_str),
+            Some("Empathy training increases yawning.")
+        );
     }
 
     #[test]
@@ -6048,6 +6396,51 @@ Answers
         assert!(report_has_error_code(&report, "missing_resource_reference"));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_nas_library_cli_generates_publishable_library_from_pdf() {
+        let library_root = temp_test_root().join("nas-cli-library");
+        let fixture = parser_fixture("complex-reading.pdf");
+        let args = vec![
+            "--export-nas-library".to_string(),
+            fixture.to_string_lossy().to_string(),
+            "--export-dir".to_string(),
+            library_root.to_string_lossy().to_string(),
+            "--version".to_string(),
+            "2026.06.05-cli-test".to_string(),
+        ];
+
+        let handled = run_cli(&args).unwrap();
+
+        assert!(handled);
+        assert!(library_root.join("source").exists());
+        assert!(library_root.join("publish").join("library.db").exists());
+        assert!(library_root
+            .join("publish")
+            .join("library.version.json")
+            .exists());
+        assert!(library_root
+            .join("publish")
+            .join("library.db.sha256")
+            .exists());
+        let report: Value = read_json(&library_root.join("publish").join("report.json")).unwrap();
+        assert_eq!(report.get("status").and_then(Value::as_str), Some("ok"));
+        assert_eq!(
+            report
+                .pointer("/summary/assetCountAfter")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        let source_files = fs::read_dir(library_root.join("source"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("js"))
+            .collect::<Vec<_>>();
+        assert_eq!(source_files.len(), 1);
+
+        let _ = fs::remove_dir_all(library_root.parent().unwrap_or_else(|| Path::new("/tmp")));
     }
 
     #[test]

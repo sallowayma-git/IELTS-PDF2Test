@@ -558,6 +558,13 @@ fn dynamic_block_order_role_rank(block: &Value) -> u8 {
     }
 }
 
+fn dynamic_block_original_order(block: &Value) -> u64 {
+    block
+        .get("_epic8OriginalOrder")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+}
+
 fn dynamic_reading_order_cmp(left: &Value, right: &Value) -> std::cmp::Ordering {
     use std::cmp::Ordering;
 
@@ -568,6 +575,13 @@ fn dynamic_reading_order_cmp(left: &Value, right: &Value) -> std::cmp::Ordering 
         })
         .then_with(|| dynamic_block_column(left).cmp(&dynamic_block_column(right)))
         .then_with(|| {
+            if dynamic_block_page_rotation(left) == 0 && dynamic_block_page_rotation(right) == 0 {
+                dynamic_block_original_order(left).cmp(&dynamic_block_original_order(right))
+            } else {
+                Ordering::Equal
+            }
+        })
+        .then_with(|| {
             let left_y = dynamic_block_normalized_bbox(left).map(|bbox| bbox[1]);
             let right_y = dynamic_block_normalized_bbox(right).map(|bbox| bbox[1]);
             left_y.partial_cmp(&right_y).unwrap_or(Ordering::Equal)
@@ -577,17 +591,7 @@ fn dynamic_reading_order_cmp(left: &Value, right: &Value) -> std::cmp::Ordering 
             let right_x = dynamic_block_normalized_bbox(right).map(|bbox| bbox[0]);
             left_x.partial_cmp(&right_x).unwrap_or(Ordering::Equal)
         })
-        .then_with(|| {
-            left.get("_epic8OriginalOrder")
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-                .cmp(
-                    &right
-                        .get("_epic8OriginalOrder")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0),
-                )
-        })
+        .then_with(|| dynamic_block_original_order(left).cmp(&dynamic_block_original_order(right)))
 }
 
 fn find_question_word(text: &str) -> Option<(usize, usize)> {
@@ -1572,6 +1576,263 @@ fn infer_dynamic_passage_title(job: &ImportJob, passage_blocks: &[Value]) -> Str
         .unwrap_or_else(|| job.title.clone())
 }
 
+fn is_dynamic_heading_option_line(text: &str) -> bool {
+    let normalized = collapse_whitespace(text);
+    let lower = normalized.to_lowercase();
+    if lower.contains("list of headings") {
+        return true;
+    }
+    let first = lower
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|ch: char| matches!(ch, '.' | ')' | ':' | ';'));
+    matches!(
+        first,
+        "i" | "ii" | "iii" | "iv" | "v" | "vi" | "vii" | "viii" | "ix" | "x" | "xi" | "xii"
+    )
+}
+
+fn is_dynamic_heading_matching_instruction_line(text: &str) -> bool {
+    let lower = collapse_whitespace(text).to_lowercase();
+    lower.contains("choose the correct heading")
+        || lower.contains("list of headings")
+        || lower.contains("write the correct number")
+        || lower.contains("write the correct letter")
+        || lower.contains("in boxes")
+        || lower.contains("on your answer sheet")
+        || lower.contains("has six sections")
+        || lower.contains("has seven sections")
+        || lower.contains("has eight sections")
+}
+
+fn is_dynamic_heading_matching_assignment_line(text: &str) -> bool {
+    let normalized = collapse_whitespace(text);
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut assignments = 0;
+    while index + 2 < tokens.len() {
+        let number = tokens[index].trim_matches(|ch: char| matches!(ch, '.' | ')' | '('));
+        let label = tokens[index + 1]
+            .trim_matches(|ch: char| matches!(ch, '.' | ')' | '(' | ':' | ';' | ','))
+            .to_ascii_lowercase();
+        let section = tokens[index + 2]
+            .trim_matches(|ch: char| matches!(ch, '.' | ')' | '(' | ':' | ';' | ','));
+        if number.parse::<u32>().is_ok()
+            && matches!(label.as_str(), "paragraph" | "section" | "part")
+            && section.len() == 1
+            && section.chars().all(|ch| ch.is_ascii_alphabetic())
+        {
+            assignments += 1;
+            index += 3;
+            continue;
+        }
+        index += 1;
+    }
+    assignments > 0
+}
+
+fn is_dynamic_question_or_instruction_like_text(text: &str) -> bool {
+    let lower = collapse_whitespace(text).to_lowercase();
+    lower.contains("questions ")
+        || lower.contains("question ")
+        || lower.contains("choose ")
+        || lower.contains("write ")
+        || lower.contains("complete ")
+        || lower.contains("which two")
+        || lower.contains("which three")
+        || lower.contains("answer sheet")
+        || lower.contains("______")
+        || lower.contains("_____")
+}
+
+fn is_dynamic_non_content_placeholder_text(text: &str) -> bool {
+    let lower = collapse_whitespace(text)
+        .trim_matches(|ch: char| matches!(ch, '[' | ']'))
+        .to_lowercase();
+    lower.starts_with("no extractable text on page")
+}
+
+fn dynamic_lettered_paragraph_label(text: &str) -> Option<char> {
+    let normalized = collapse_whitespace(text);
+    let first = normalized
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|ch: char| matches!(ch, '.' | ')' | '(' | ':' | ';' | ','));
+    if first.len() == 1 {
+        let ch = first.chars().next().unwrap_or_default();
+        if ch.is_ascii_uppercase() {
+            return Some(ch);
+        }
+    }
+    None
+}
+
+fn dynamic_standalone_letter_marker_count(text: &str) -> usize {
+    collapse_whitespace(text)
+        .split_whitespace()
+        .filter(|token| {
+            let marker =
+                token.trim_matches(|ch: char| matches!(ch, '.' | ')' | '(' | ':' | ';' | ','));
+            marker.len() == 1
+                && marker
+                    .chars()
+                    .all(|ch| matches!(ch, 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G'))
+        })
+        .count()
+}
+
+fn is_substantive_dynamic_lettered_article_block(block: &Value, expected_label: char) -> bool {
+    let text = dynamic_block_text(block);
+    dynamic_lettered_paragraph_label(&text) == Some(expected_label)
+        && dynamic_standalone_letter_marker_count(&text) <= 2
+        && is_substantive_dynamic_passage_block(block)
+}
+
+fn find_dynamic_lettered_article_block(
+    blocks: &[Value],
+    start: usize,
+    expected_label: char,
+    max_lookahead: usize,
+) -> Option<usize> {
+    blocks
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(max_lookahead)
+        .find_map(|(index, block)| {
+            if is_substantive_dynamic_lettered_article_block(block, expected_label) {
+                Some(index)
+            } else {
+                None
+            }
+        })
+}
+
+fn has_dynamic_lettered_article_sequence(blocks: &[Value], first_index: usize) -> bool {
+    let Some(first_label) = blocks
+        .get(first_index)
+        .and_then(|block| dynamic_lettered_paragraph_label(&dynamic_block_text(block)))
+    else {
+        return false;
+    };
+    if first_label != 'A'
+        || !blocks
+            .get(first_index)
+            .map(|block| is_substantive_dynamic_lettered_article_block(block, 'A'))
+            .unwrap_or(false)
+    {
+        return false;
+    }
+    find_dynamic_lettered_article_block(blocks, first_index + 1, 'B', 4).is_some()
+}
+
+fn is_dynamic_late_passage_tail_start(blocks: &[Value], index: usize) -> bool {
+    let Some(block) = blocks.get(index) else {
+        return false;
+    };
+    let text = collapse_whitespace(&dynamic_block_text(block));
+    if text.is_empty()
+        || is_dynamic_question_block(block)
+        || is_dynamic_answer_block(block)
+        || is_dynamic_heading_option_line(&text)
+        || is_dynamic_heading_matching_instruction_line(&text)
+        || is_dynamic_heading_matching_assignment_line(&text)
+        || is_dynamic_non_content_placeholder_text(&text)
+    {
+        return false;
+    }
+    if has_dynamic_lettered_article_sequence(blocks, index) {
+        return true;
+    }
+    if text.len() > 120
+        || is_dynamic_question_or_instruction_like_text(&text)
+        || has_dynamic_numbered_inline_blanks(&text)
+    {
+        return false;
+    }
+    let Some(first_article_index) = find_dynamic_lettered_article_block(blocks, index + 1, 'A', 3)
+    else {
+        return false;
+    };
+    if first_article_index > index + 1 {
+        let title_like = text
+            .chars()
+            .find(|ch| !ch.is_whitespace())
+            .map(|ch| ch.is_ascii_uppercase())
+            .unwrap_or(false)
+            && !text.ends_with('.')
+            && !text.ends_with('?')
+            && !text.ends_with('!');
+        if !title_like {
+            return false;
+        }
+    }
+    has_dynamic_lettered_article_sequence(blocks, first_article_index)
+}
+
+fn dynamic_late_passage_question_block_count(blocks: &[Value]) -> usize {
+    for index in 1..blocks.len() {
+        if is_dynamic_late_passage_tail_start(blocks, index) {
+            return index.max(1);
+        }
+    }
+    blocks.len()
+}
+
+fn is_probable_dynamic_passage_tail_start(blocks: &[Value], index: usize) -> bool {
+    let Some(block) = blocks.get(index) else {
+        return false;
+    };
+    let text = collapse_whitespace(&dynamic_block_text(block));
+    if text.is_empty()
+        || is_dynamic_question_block(block)
+        || is_dynamic_answer_block(block)
+        || is_dynamic_heading_option_line(&text)
+        || is_dynamic_heading_matching_instruction_line(&text)
+        || is_dynamic_heading_matching_assignment_line(&text)
+    {
+        return false;
+    }
+    if is_substantive_dynamic_passage_block(block) {
+        return true;
+    }
+    text.len() >= 8
+        && blocks
+            .iter()
+            .skip(index + 1)
+            .take(3)
+            .any(is_substantive_dynamic_passage_block)
+}
+
+fn dynamic_heading_matching_question_block_count(blocks: &[Value]) -> usize {
+    let mut saw_heading_list = false;
+    for (index, block) in blocks.iter().enumerate() {
+        let text = dynamic_block_text(block);
+        let lower = text.to_lowercase();
+        if lower.contains("list of headings") {
+            saw_heading_list = true;
+            continue;
+        }
+        if !saw_heading_list || is_dynamic_heading_option_line(&text) {
+            continue;
+        }
+        if is_probable_dynamic_passage_tail_start(blocks, index) {
+            return index.max(1);
+        }
+    }
+    blocks.len()
+}
+
+fn dynamic_question_block_count_for_group(kind: &str, blocks: &[Value]) -> usize {
+    if kind == "heading_matching" {
+        dynamic_heading_matching_question_block_count(blocks)
+    } else {
+        dynamic_late_passage_question_block_count(blocks)
+    }
+}
+
 pub(crate) fn make_dynamic_split_candidates(
     job_id: &str,
     job: &ImportJob,
@@ -1594,7 +1855,7 @@ pub(crate) fn make_dynamic_split_candidates(
         }
     });
     let first_answer_index = blocks.iter().position(is_dynamic_answer_block);
-    let passage_blocks = match first_concrete_question_index {
+    let mut passage_blocks = match first_concrete_question_index {
         Some(first_concrete_question) => blocks
             .iter()
             .enumerate()
@@ -1616,6 +1877,7 @@ pub(crate) fn make_dynamic_split_candidates(
             .cloned()
             .collect::<Vec<_>>(),
     };
+    let mut deferred_passage_blocks = Vec::new();
     let all_umbrella_blocks = blocks
         .iter()
         .enumerate()
@@ -1703,7 +1965,23 @@ pub(crate) fn make_dynamic_split_candidates(
             })
             .map(|(candidate_index, _)| candidate_index)
             .unwrap_or(question_blocks.len());
-        let included = &question_blocks[index..next_heading];
+        let raw_included = &question_blocks[index..next_heading];
+        let raw_combined = raw_included
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let raw_block_ids = raw_included
+            .iter()
+            .map(dynamic_block_id)
+            .collect::<Vec<_>>();
+        let preliminary_classification = classify_dynamic_group(&raw_combined, &raw_block_ids);
+        let included_count =
+            dynamic_question_block_count_for_group(&preliminary_classification.kind, raw_included);
+        let included = &raw_included[..included_count.min(raw_included.len()).max(1)];
+        if included_count < raw_included.len() {
+            deferred_passage_blocks.extend(raw_included[included_count..].iter().cloned());
+        }
         let combined = included
             .iter()
             .map(dynamic_block_text)
@@ -1809,6 +2087,23 @@ pub(crate) fn make_dynamic_split_candidates(
         });
     }
     normalize_dynamic_group_ranges(&mut group_candidates);
+
+    if !deferred_passage_blocks.is_empty() {
+        let mut seen_passage_ids = passage_blocks
+            .iter()
+            .map(dynamic_block_id)
+            .collect::<std::collections::HashSet<_>>();
+        for block in deferred_passage_blocks {
+            if is_dynamic_non_content_placeholder_text(&dynamic_block_text(&block)) {
+                continue;
+            }
+            let block_id = dynamic_block_id(&block);
+            if !block_id.is_empty() && !seen_passage_ids.insert(block_id) {
+                continue;
+            }
+            passage_blocks.push(block);
+        }
+    }
 
     let fallback_passage_range = if let Some(first_question) = first_question_index {
         blocks[..first_question]
@@ -1918,6 +2213,43 @@ fn dynamic_interaction_from_candidate(candidate: &Value, kind: &str) -> Value {
         .unwrap_or_else(|| dynamic_interaction_for_kind(kind))
 }
 
+fn dynamic_previous_non_space_char(text: &str, start: usize) -> Option<char> {
+    text[..start].chars().rev().find(|ch| !ch.is_whitespace())
+}
+
+fn dynamic_previous_word_lower(text: &str, start: usize) -> String {
+    let mut end = start.min(text.len());
+    while let Some(ch) = text[..end].chars().next_back() {
+        if ch.is_whitespace() {
+            end -= ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    let mut begin = end;
+    while let Some(ch) = text[..begin].chars().next_back() {
+        if ch.is_alphabetic() {
+            begin -= ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    text[begin..end].to_lowercase()
+}
+
+fn is_dynamic_non_question_number_context(text: &str, start: usize) -> bool {
+    if matches!(
+        dynamic_previous_non_space_char(text, start),
+        Some('-' | '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}')
+    ) {
+        return true;
+    }
+    matches!(
+        dynamic_previous_word_lower(text, start).as_str(),
+        "passage" | "box" | "boxes"
+    )
+}
+
 fn find_dynamic_number_marker(text: &str, number: u32, from: usize) -> Option<(usize, usize)> {
     let needle = number.to_string();
     let mut search = from.min(text.len());
@@ -1930,6 +2262,10 @@ fn find_dynamic_number_marker(text: &str, number: u32, from: usize) -> Option<(u
             .map(|ch| ch.is_whitespace() || matches!(ch, '(' | '['))
             .unwrap_or(true);
         if !before_ok {
+            search = after_digits;
+            continue;
+        }
+        if is_dynamic_non_question_number_context(text, start) {
             search = after_digits;
             continue;
         }
@@ -1991,6 +2327,28 @@ fn find_dynamic_final_prompt_boundary(text: &str, from: usize) -> usize {
         .unwrap_or(text.len())
 }
 
+fn find_dynamic_matching_option_run_boundary(text: &str, from: usize) -> Option<usize> {
+    let mut search = from.min(text.len());
+    while search < text.len() {
+        let relative = if text[search..].starts_with("A ") {
+            Some(0usize)
+        } else {
+            text[search..].find(" A ").map(|index| index + 1)
+        };
+        let Some(relative) = relative else {
+            break;
+        };
+        let candidate = search + relative;
+        let preview_end = (candidate + 240).min(text.len());
+        let preview = &text[candidate..preview_end];
+        if preview.starts_with("A ") && preview.contains(" B ") && preview.contains(" C ") {
+            return Some(candidate);
+        }
+        search = candidate + "A".len();
+    }
+    None
+}
+
 fn find_dynamic_prompt_boundary(
     text: &str,
     from: usize,
@@ -2012,9 +2370,17 @@ fn find_dynamic_prompt_boundary(
             " list of researchers",
             " list of names",
             " list of options",
+            " list of universities",
+            " list of companies",
+            " list of sections",
         ] {
             if let Some(relative) = lower[from..].find(marker) {
                 boundary = boundary.min(from + relative);
+            }
+        }
+        if !matches!(group_kind, "heading_matching") {
+            if let Some(option_boundary) = find_dynamic_matching_option_run_boundary(text, from) {
+                boundary = boundary.min(option_boundary);
             }
         }
     }
@@ -2032,6 +2398,16 @@ fn dynamic_prompt_for_question(
     if let Some((_, content_start)) = find_dynamic_number_marker(&normalized, number, 0) {
         let boundary = if number < range_end {
             find_dynamic_prompt_boundary(&normalized, content_start, number + 1, group_kind)
+        } else if matches!(
+            group_kind,
+            "heading_matching" | "matching" | "matching_information" | "classification"
+        ) {
+            find_dynamic_prompt_boundary(
+                &normalized,
+                content_start,
+                range_end.saturating_add(1),
+                group_kind,
+            )
         } else {
             find_dynamic_final_prompt_boundary(&normalized, content_start)
         };

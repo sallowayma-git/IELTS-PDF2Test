@@ -50,6 +50,12 @@ struct WrittenSourceFile {
     wrapper_js: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct NasSourceWriteResult {
+    pub exam_id: String,
+    pub copied_pdf_relative: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 struct SourceCounts {
     html_count: u32,
@@ -535,8 +541,13 @@ fn validate_payload_contract(
             "questionOrder is required",
         );
     }
+    let first_number = question_order
+        .first()
+        .and_then(|qid| qid.strip_prefix('q'))
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(1);
     for (index, qid) in question_order.iter().enumerate() {
-        let expected = format!("q{}", index + 1);
+        let expected = format!("q{}", first_number + index);
         if qid != &expected {
             push_error(
                 errors,
@@ -896,6 +907,68 @@ fn write_selected_source_files(
     Ok(written)
 }
 
+pub(crate) fn copy_pdf_into_source_tree(
+    pdf_path: &Path,
+    source_dir: &Path,
+    source: &mut Value,
+) -> CommandResult<Option<String>> {
+    if !pdf_path.exists() || !pdf_path.is_file() {
+        return Err(format!("source_file_not_readable:{}", pdf_path.display()));
+    }
+    let exam_id = source
+        .get("examId")
+        .and_then(Value::as_str)
+        .unwrap_or("local-authoring-exam");
+    let assets_dir = source_dir.join("assets").join(exam_id);
+    fs::create_dir_all(&assets_dir).map_err(|error| error.to_string())?;
+    let original_name = pdf_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("source.pdf");
+    let safe_name = crate::util::sanitize_filename(original_name);
+    let dest_path = assets_dir.join(&safe_name);
+    let bytes = fs::read(pdf_path).map_err(|error| error.to_string())?;
+    write_bytes(&dest_path, &bytes)?;
+    let relative = normalize_slashes(
+        &dest_path
+            .strip_prefix(source_dir)
+            .ok()
+            .unwrap_or(dest_path.as_path())
+            .to_string_lossy(),
+    );
+
+    if let Some(meta) = source.get_mut("meta").and_then(Value::as_object_mut) {
+        meta.insert("pdfFilename".to_string(), Value::String(relative.clone()));
+    }
+    if let Some(source_refs) = source.get_mut("sourceRefs").and_then(Value::as_object_mut) {
+        source_refs.insert("shuiPdf".to_string(), Value::String(relative.clone()));
+    }
+    Ok(Some(relative))
+}
+
+pub(crate) fn write_source_payload_file(
+    source_dir: &Path,
+    source: &mut Value,
+    pdf_path: Option<&Path>,
+) -> CommandResult<NasSourceWriteResult> {
+    let copied_pdf_relative = if let Some(path) = pdf_path {
+        copy_pdf_into_source_tree(path, source_dir, source)?
+    } else {
+        None
+    };
+    let exam_id = source
+        .get("examId")
+        .and_then(Value::as_str)
+        .unwrap_or("local-authoring-exam")
+        .to_string();
+    let wrapper_js = build_wrapper(source)?;
+    write_text(&source_dir.join(format!("{exam_id}.js")), &wrapper_js)?;
+    Ok(NasSourceWriteResult {
+        exam_id,
+        copied_pdf_relative,
+    })
+}
+
 fn build_library_from_source_tree(
     library_root: &Path,
     source_dir: &Path,
@@ -1038,38 +1111,17 @@ fn build_library_from_source_tree(
     Ok((state, version_meta, diff))
 }
 
-pub(crate) fn export_nas_library_core(
-    root: &Path,
-    input: &Value,
-    require_static_runtime_gate: bool,
+pub(crate) fn publish_nas_library_from_source_tree(
+    library_root: &Path,
+    version: Option<&str>,
 ) -> CommandResult<Value> {
-    let job_ids = input
-        .get("jobIds")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "nas_export_requires_job_ids".to_string())?
-        .iter()
-        .filter_map(Value::as_str)
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    if job_ids.is_empty() {
-        return Err("nas_export_requires_at_least_one_job".to_string());
-    }
-    let export_dir = input
-        .get("exportDir")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "nas_export_requires_library_root".to_string())?;
-    let library_root = if export_dir.starts_with("local://") {
-        root.join("exports").join("nas-library")
-    } else {
-        PathBuf::from(export_dir)
-    };
-    fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
+    fs::create_dir_all(library_root).map_err(|error| error.to_string())?;
     let source_dir = library_root.join("source");
     let publish_dir = library_root.join("publish");
     fs::create_dir_all(&source_dir).map_err(|error| error.to_string())?;
     fs::create_dir_all(&publish_dir).map_err(|error| error.to_string())?;
 
-    let requested_version = input.get("version").and_then(Value::as_str).map(str::trim);
+    let requested_version = version.map(str::trim);
     let version = requested_version
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
@@ -1080,11 +1132,9 @@ pub(crate) fn export_nas_library_core(
     let sha_path = publish_dir.join(LIBRARY_SHA_FILE_NAME);
     let report_path = publish_dir.join(REPORT_FILE_NAME);
 
-    let written_sources =
-        write_selected_source_files(root, &job_ids, &source_dir, require_static_runtime_gate)?;
     let previous = load_existing_snapshot(&library_db_path)?;
     let (state, version_meta, diff) =
-        build_library_from_source_tree(&library_root, &source_dir, &version, &previous)?;
+        build_library_from_source_tree(library_root, &source_dir, &version, &previous)?;
     let source_file_count = list_source_files(&source_dir)?.len();
     let has_errors = !state.errors.is_empty();
 
@@ -1126,6 +1176,72 @@ pub(crate) fn export_nas_library_core(
     let sha = sha256_hex(&db_bytes);
     write_text(&sha_path, &format!("{sha}  {LIBRARY_DB_FILE_NAME}\n"))?;
 
+    Ok(json!({
+        "mode": "nas-library",
+        "assetCount": state.assets.len(),
+        "libraryRoot": library_root.to_string_lossy(),
+        "sourceDir": source_dir.to_string_lossy(),
+        "publishDir": publish_dir.to_string_lossy(),
+        "version": version,
+        "report": report,
+        "files": [
+            json!({"name": "publish/library.db", "content": format!("sqlite:{} bytes", db_bytes.len())}),
+            json!({"name": "publish/library.version.json", "content": serde_json::to_string_pretty(&version_meta).unwrap_or_default()}),
+            json!({"name": "publish/library.db.sha256", "content": format!("{sha}  {LIBRARY_DB_FILE_NAME}\n")}),
+            json!({"name": "publish/report.json", "content": serde_json::to_string_pretty(&report).unwrap_or_default()}),
+        ]
+    }))
+}
+
+pub(crate) fn export_nas_library_core(
+    root: &Path,
+    input: &Value,
+    require_static_runtime_gate: bool,
+) -> CommandResult<Value> {
+    let job_ids = input
+        .get("jobIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "nas_export_requires_job_ids".to_string())?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if job_ids.is_empty() {
+        return Err("nas_export_requires_at_least_one_job".to_string());
+    }
+    let export_dir = input
+        .get("exportDir")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "nas_export_requires_library_root".to_string())?;
+    let library_root = if export_dir.starts_with("local://") {
+        root.join("exports").join("nas-library")
+    } else {
+        PathBuf::from(export_dir)
+    };
+    fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
+    let source_dir = library_root.join("source");
+    let publish_dir = library_root.join("publish");
+    fs::create_dir_all(&source_dir).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&publish_dir).map_err(|error| error.to_string())?;
+
+    let requested_version = input.get("version").and_then(Value::as_str).map(str::trim);
+    let version = requested_version
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| Utc::now().format("%Y.%m.%d-%H%M%S").to_string());
+
+    let written_sources =
+        write_selected_source_files(root, &job_ids, &source_dir, require_static_runtime_gate)?;
+    let publish_result = publish_nas_library_from_source_tree(&library_root, Some(&version))?;
+    let report = publish_result
+        .get("report")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let asset_count = publish_result
+        .get("assetCount")
+        .and_then(Value::as_u64)
+        .unwrap_or_default() as usize;
+
     let mut cleanup = Vec::with_capacity(written_sources.len());
     for written in &written_sources {
         update_job(root, &written.job_id, |job| {
@@ -1148,18 +1264,15 @@ pub(crate) fn export_nas_library_core(
         .iter()
         .map(|written| json!({"name": format!("source/{}.js", written.exam_id), "content": written.wrapper_js}))
         .collect::<Vec<_>>();
-    files.extend([
-        json!({"name": "publish/library.db", "content": format!("sqlite:{} bytes", db_bytes.len())}),
-        json!({"name": "publish/library.version.json", "content": serde_json::to_string_pretty(&version_meta).unwrap_or_default()}),
-        json!({"name": "publish/library.db.sha256", "content": format!("{sha}  {LIBRARY_DB_FILE_NAME}\n")}),
-        json!({"name": "publish/report.json", "content": serde_json::to_string_pretty(&report).unwrap_or_default()}),
-    ]);
+    if let Some(publish_files) = publish_result.get("files").and_then(Value::as_array) {
+        files.extend(publish_files.iter().cloned());
+    }
 
     Ok(json!({
         "mode": "nas-library",
         "jobIds": written_sources.iter().map(|written| written.job_id.clone()).collect::<Vec<_>>(),
         "examIds": written_sources.iter().map(|written| written.exam_id.clone()).collect::<Vec<_>>(),
-        "assetCount": state.assets.len(),
+        "assetCount": asset_count,
         "libraryRoot": library_root.to_string_lossy(),
         "sourceDir": source_dir.to_string_lossy(),
         "publishDir": publish_dir.to_string_lossy(),
@@ -1169,9 +1282,9 @@ pub(crate) fn export_nas_library_core(
         "exportSummary": {
             "type": "nas-library",
             "jobIds": job_ids,
-            "version": version_meta.get("version").cloned().unwrap_or(Value::Null),
+            "version": Value::String(version.clone()),
             "outputDir": library_root.to_string_lossy(),
-            "assetCount": state.assets.len(),
+            "assetCount": asset_count,
             "exportedAt": Utc::now().to_rfc3339()
         },
         "cleanup": cleanup
