@@ -7,6 +7,7 @@ __pycache__/
 *.log
 .env
 .env.*
+tmp/
 
 # Local test PDFs should not be uploaded
 Files/*.pdf

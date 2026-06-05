@@ -916,7 +916,8 @@ fn infer_dynamic_group_range_end_from_markers(
         }
         while inferred_end < start.saturating_add(20) {
             let next = inferred_end + 1;
-            let Some((_, marker_end)) = find_dynamic_number_marker(&normalized, next, cursor) else {
+            let Some((_, marker_end)) = find_dynamic_number_marker(&normalized, next, cursor)
+            else {
                 break;
             };
             let segment_end = find_dynamic_prompt_boundary(&normalized, marker_end, next + 1, kind);
@@ -926,9 +927,15 @@ fn infer_dynamic_group_range_end_from_markers(
                 .to_lowercase()
                 .split_whitespace()
                 .next()
-                .map(|word| word.trim_matches(|ch: char| !ch.is_alphanumeric()).to_string());
+                .map(|word| {
+                    word.trim_matches(|ch: char| !ch.is_alphanumeric())
+                        .to_string()
+                });
             if word_count > 8
-                || !matches!(first_word.as_deref(), Some("section" | "paragraph" | "part"))
+                || !matches!(
+                    first_word.as_deref(),
+                    Some("section" | "paragraph" | "part")
+                )
             {
                 break;
             }
@@ -948,13 +955,17 @@ fn infer_dynamic_group_range_end_from_markers(
     }
     while inferred_end < max_lookahead {
         let next = inferred_end + 1;
-        let Some((marker_start, marker_end)) = find_dynamic_number_marker(&normalized, next, cursor)
+        let Some((marker_start, marker_end)) =
+            find_dynamic_number_marker(&normalized, next, cursor)
         else {
             break;
         };
         let preceding = normalized[cursor.min(normalized.len())..marker_start]
             .to_lowercase()
-            .replace(['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}'], "-");
+            .replace(
+                ['\u{2010}', '\u{2011}', '\u{2012}', '\u{2013}', '\u{2014}'],
+                "-",
+            );
         if preceding.contains("questions ")
             || preceding.contains("answers")
             || preceding.contains("answer key")

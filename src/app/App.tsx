@@ -54,7 +54,7 @@ export function App() {
     if (route.jobId && route.name === "groups") return <GroupEditor jobId={route.jobId} {...common} />;
     if (route.jobId && route.name === "llm-review") return <LlmReview jobId={route.jobId} {...common} />;
     if (route.jobId && route.name === "preview") return <UnifiedPreview jobId={route.jobId} {...common} />;
-    if (route.jobId && route.name === "export") return <ExportPage jobId={route.jobId} {...common} />;
+    if (route.jobId && route.name === "export") return <ExportPage jobId={route.jobId} jobs={jobs} {...common} />;
     if (route.name === "packs") return <PackBuilder jobs={jobs} refresh={refresh} />;
     if (route.name === "settings") return <Settings refresh={refresh} />;
     return <Dashboard jobs={jobs} refresh={refresh} />;

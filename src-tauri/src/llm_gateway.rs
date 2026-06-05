@@ -25,12 +25,8 @@ pub(crate) fn run_llm_gateway(
             run_openai_compatible_group_llm(command_name, input, api_key)
         }
         "transcribe_pdf_images" => run_openai_compatible_vision_llm(input, api_key),
-        "extract_pdf_image_answers" => {
-            run_openai_compatible_vision_answer_llm(input, api_key)
-        }
-        "generate_pdf_reading_outline" => {
-            run_openai_compatible_cloud_outline_llm(input, api_key)
-        }
+        "extract_pdf_image_answers" => run_openai_compatible_vision_answer_llm(input, api_key),
+        "generate_pdf_reading_outline" => run_openai_compatible_cloud_outline_llm(input, api_key),
         _ => Err(format!("unsupported_llm_gateway_command:{}", command_name)),
     }?;
     write_json(&output_path, &output)?;
@@ -378,8 +374,9 @@ fn run_openai_compatible_cloud_outline_llm(
         Ok(payload) => payload,
         Err(pdf_error) => {
             warnings.push(format!("direct_pdf_request_failed:{}", pdf_error));
-            let mut image_content =
-                vec![json!({"type": "text", "text": format!("{}\nThe direct PDF file request failed, so compare using the supplied rendered/extracted page images.", cloud_outline_prompt(input))})];
+            let mut image_content = vec![
+                json!({"type": "text", "text": format!("{}\nThe direct PDF file request failed, so compare using the supplied rendered/extracted page images.", cloud_outline_prompt(input))}),
+            ];
             let image_count = append_pdf_images_to_content(&mut image_content, input)?;
             if image_count == 0 {
                 return Err(format!(
@@ -546,7 +543,12 @@ fn normalize_question_number_key(key: &str) -> Option<String> {
 fn normalize_answer_text(value: &str) -> String {
     let trimmed = value
         .trim()
-        .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | '.' | ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}'))
+        .trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '"' | '\'' | '`' | '.' | ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}'
+            )
+        })
         .trim();
     let upper = trimmed.to_ascii_uppercase();
     let compact = upper.replace([' ', '-', '_'], "");
@@ -685,15 +687,25 @@ fn validate_cloud_outline_output(
             if normalized_kind != kind {
                 group_obj.insert("kind".to_string(), json!(normalized_kind));
                 group_obj.insert("rawKind".to_string(), json!(kind));
-                let warnings = group_obj.entry("warnings".to_string()).or_insert_with(|| json!([]));
+                let warnings = group_obj
+                    .entry("warnings".to_string())
+                    .or_insert_with(|| json!([]));
                 if let Some(items) = warnings.as_array_mut() {
                     items.push(json!(format!("kind normalized from {}", kind)));
                 }
             }
-            if !group_obj.get("layoutHint").map(Value::is_string).unwrap_or(false) {
+            if !group_obj
+                .get("layoutHint")
+                .map(Value::is_string)
+                .unwrap_or(false)
+            {
                 group_obj.insert("layoutHint".to_string(), json!(""));
             }
-            if !group_obj.get("notesText").map(Value::is_string).unwrap_or(false) {
+            if !group_obj
+                .get("notesText")
+                .map(Value::is_string)
+                .unwrap_or(false)
+            {
                 group_obj.insert("notesText".to_string(), json!(""));
             }
             if !group_obj.get("range").map(Value::is_array).unwrap_or(false) {
@@ -706,7 +718,11 @@ fn validate_cloud_outline_output(
             {
                 group_obj.insert("questionIds".to_string(), json!([]));
             }
-            if !group_obj.get("confidence").map(Value::is_number).unwrap_or(false) {
+            if !group_obj
+                .get("confidence")
+                .map(Value::is_number)
+                .unwrap_or(false)
+            {
                 group_obj.insert("confidence".to_string(), json!(0.5));
             }
             let evidence = group_obj
@@ -735,7 +751,10 @@ fn validate_cloud_outline_output(
     }
     if let Some(evidence_obj) = evidence.as_object_mut() {
         evidence_obj.insert("mode".to_string(), json!("generate_pdf_reading_outline"));
-        evidence_obj.insert("source".to_string(), json!("openai-compatible-cloud-outline-rust"));
+        evidence_obj.insert(
+            "source".to_string(),
+            json!("openai-compatible-cloud-outline-rust"),
+        );
         evidence_obj.insert(
             "model".to_string(),
             profile.get("model").cloned().unwrap_or(Value::Null),

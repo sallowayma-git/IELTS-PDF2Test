@@ -307,8 +307,7 @@ fn normalized_compare_text(value: &Value) -> String {
             .trim_matches(|ch: char| {
                 matches!(
                     ch,
-                    '"' | '\'' | '`' | '.' | ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{'
-                        | '}'
+                    '"' | '\'' | '`' | '.' | ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}'
                 )
             })
             .split_whitespace()
@@ -391,10 +390,7 @@ fn cloud_question_ids(group: &Value) -> Vec<String> {
 }
 
 fn text_has_inline_blank_marker(text: &str) -> bool {
-    text.contains("___")
-        || text.contains("……")
-        || text.contains("...")
-        || text.contains("_____")
+    text.contains("___") || text.contains("……") || text.contains("...") || text.contains("_____")
 }
 
 fn text_has_notes_completion_signal(text: &str) -> bool {
@@ -515,7 +511,10 @@ fn cloud_outline_comparison(ir: &Value, output: &Value) -> Value {
                 "message": "云端对照没有提供可见原文证据，结构判断已降权。"
             }));
         }
-        let cloud_kind = cloud_group.get("kind").and_then(Value::as_str).unwrap_or("");
+        let cloud_kind = cloud_group
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let local_kind = local.get("kind").and_then(Value::as_str).unwrap_or("");
         let cloud_family = semantic_group_kind_family(cloud_kind);
         let local_family = semantic_group_kind_family(local_kind);
@@ -619,7 +618,9 @@ fn append_authoring_audit_issue(ir: &mut Value, message: &str) {
     let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) else {
         return;
     };
-    let issues = audit.entry("issues".to_string()).or_insert_with(|| json!([]));
+    let issues = audit
+        .entry("issues".to_string())
+        .or_insert_with(|| json!([]));
     if !issues.is_array() {
         *issues = json!([]);
     }
@@ -671,8 +672,14 @@ where
             return report;
         }
     };
-    let input =
-        make_cloud_paper_generation_input(&profile, job, profile_id, &source, &upload_path, extraction);
+    let input = make_cloud_paper_generation_input(
+        &profile,
+        job,
+        profile_id,
+        &source,
+        &upload_path,
+        extraction,
+    );
     let api_key = load_llm_api_key(root, profile_id);
     match llm_gateway(
         root,
@@ -951,10 +958,7 @@ where
                                 );
                                 obj.insert(
                                     "warnings".to_string(),
-                                    output
-                                        .get("warnings")
-                                        .cloned()
-                                        .unwrap_or_else(|| json!([])),
+                                    output.get("warnings").cloned().unwrap_or_else(|| json!([])),
                                 );
                             }
                         }
@@ -1018,133 +1022,132 @@ where
     let should_run_group_repair = !main_source_is_pdf(&job);
     if should_run_group_repair {
         if let Some(profile_id) = selected_profile_id.clone() {
-        let profile = find_profile(root, &profile_id)?;
-        if let Some(groups) = ir.get("groups").and_then(Value::as_array).cloned() {
-            for group in groups {
-                let group_id = group
-                    .get("groupId")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                if group_id.is_empty() {
-                    continue;
-                }
-                let api_key = load_llm_api_key(root, &profile_id);
-                let llm_input =
-                    make_llm_input(&profile, &job, &group, &profile_id, "extract_group");
-                let output = llm_gateway(
-                    root,
-                    &job_id,
-                    "extract_group",
-                    &llm_input,
-                    api_key.as_deref(),
-                )
-                .unwrap_or_else(|error| {
-                    llm_failures.push(format!("{}:{}", group_id, error));
-                    deterministic_llm_output(
-                        &group,
-                        "extract_group",
-                        format!("llm gateway fallback: {}", error),
-                    )
-                });
-                let confidence = output
-                    .get("confidence")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0);
-                suggestion_count += 1;
-
-                let suggestion = json!({
-                    "suggestionId": format!("suggestion-{}", Uuid::new_v4().simple()),
-                    "jobId": job_id,
-                    "groupId": group_id,
-                    "profileId": profile_id,
-                    "kind": output.get("kind").cloned().unwrap_or_else(|| json!(group.get("kind").and_then(Value::as_str).unwrap_or("short_answer"))),
-                    "confidence": confidence,
-                    "patch": output.get("patch").cloned().unwrap_or_else(|| json!([])),
-                    "questions": output.get("questions").cloned().unwrap_or_else(|| json!([])),
-                    "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
-                    "evidence": output.get("evidence").cloned().unwrap_or_else(|| json!({})),
-                    "createdAt": Utc::now().to_rfc3339()
-                });
-                let _ = save_llm_suggestion(root, &job_id, &suggestion);
-
-                if confidence >= confidence_threshold {
-                    let selected = vec![
-                        "kind".to_string(),
-                        "layout".to_string(),
-                        "questions".to_string(),
-                    ];
-                    let auto_apply_issues =
-                        llm_suggestion_auto_apply_issues(&ir, &suggestion, &selected);
-                    if auto_apply_issues.is_empty()
-                        && apply_suggestion_to_authoring(&mut ir, &suggestion, &selected).is_ok()
-                    {
-                        if let Some(groups) = ir.get_mut("groups").and_then(Value::as_array_mut) {
-                            if let Some(group) = groups.iter_mut().find(|group| {
-                                group.get("groupId").and_then(Value::as_str)
-                                    == Some(group_id.as_str())
-                            }) {
-                                if let Some(obj) = group.as_object_mut() {
-                                    obj.insert("autoApplied".to_string(), json!(true));
-                                    obj.insert(
-                                        "lastAutoAppliedSuggestionId".to_string(),
-                                        suggestion
-                                            .get("suggestionId")
-                                            .cloned()
-                                            .unwrap_or(Value::Null),
-                                    );
-                                }
-                            }
-                        }
-                        applied_count += 1;
-                        high_confidence_applied_groups.push(
-                            suggestion
-                                .get("groupId")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_string(),
-                        );
-                    } else {
-                        blocked_auto_apply_groups.push(group_id.clone());
-                        let warning = format!(
-                            "{}:auto_apply_blocked:{}",
-                            group_id,
-                            auto_apply_issues.join(",")
-                        );
-                        record_group_llm_review(
-                            &mut ir,
-                            &group_id,
-                            "auto_apply_blocked",
-                            confidence,
-                            format!(
-                                "识别结果需要确认：{}",
-                                auto_apply_issues.join(",")
-                            ),
-                            &suggestion,
-                        );
-                        llm_failures.push(warning);
-                    }
-                } else {
-                    let group_id = suggestion
+            let profile = find_profile(root, &profile_id)?;
+            if let Some(groups) = ir.get("groups").and_then(Value::as_array).cloned() {
+                for group in groups {
+                    let group_id = group
                         .get("groupId")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string();
-                    record_group_llm_review(
-                        &mut ir,
-                        &group_id,
-                        "low_confidence",
-                        confidence,
-                        format!(
-                            "识别结果置信度 {:.2} 低于自动采用阈值 {:.2}，请确认该题组。",
-                            confidence, confidence_threshold
-                        ),
-                        &suggestion,
-                    );
-                    low_confidence_groups.push(group_id);
+                    if group_id.is_empty() {
+                        continue;
+                    }
+                    let api_key = load_llm_api_key(root, &profile_id);
+                    let llm_input =
+                        make_llm_input(&profile, &job, &group, &profile_id, "extract_group");
+                    let output = llm_gateway(
+                        root,
+                        &job_id,
+                        "extract_group",
+                        &llm_input,
+                        api_key.as_deref(),
+                    )
+                    .unwrap_or_else(|error| {
+                        llm_failures.push(format!("{}:{}", group_id, error));
+                        deterministic_llm_output(
+                            &group,
+                            "extract_group",
+                            format!("llm gateway fallback: {}", error),
+                        )
+                    });
+                    let confidence = output
+                        .get("confidence")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0);
+                    suggestion_count += 1;
+
+                    let suggestion = json!({
+                        "suggestionId": format!("suggestion-{}", Uuid::new_v4().simple()),
+                        "jobId": job_id,
+                        "groupId": group_id,
+                        "profileId": profile_id,
+                        "kind": output.get("kind").cloned().unwrap_or_else(|| json!(group.get("kind").and_then(Value::as_str).unwrap_or("short_answer"))),
+                        "confidence": confidence,
+                        "patch": output.get("patch").cloned().unwrap_or_else(|| json!([])),
+                        "questions": output.get("questions").cloned().unwrap_or_else(|| json!([])),
+                        "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
+                        "evidence": output.get("evidence").cloned().unwrap_or_else(|| json!({})),
+                        "createdAt": Utc::now().to_rfc3339()
+                    });
+                    let _ = save_llm_suggestion(root, &job_id, &suggestion);
+
+                    if confidence >= confidence_threshold {
+                        let selected = vec![
+                            "kind".to_string(),
+                            "layout".to_string(),
+                            "questions".to_string(),
+                        ];
+                        let auto_apply_issues =
+                            llm_suggestion_auto_apply_issues(&ir, &suggestion, &selected);
+                        if auto_apply_issues.is_empty()
+                            && apply_suggestion_to_authoring(&mut ir, &suggestion, &selected)
+                                .is_ok()
+                        {
+                            if let Some(groups) = ir.get_mut("groups").and_then(Value::as_array_mut)
+                            {
+                                if let Some(group) = groups.iter_mut().find(|group| {
+                                    group.get("groupId").and_then(Value::as_str)
+                                        == Some(group_id.as_str())
+                                }) {
+                                    if let Some(obj) = group.as_object_mut() {
+                                        obj.insert("autoApplied".to_string(), json!(true));
+                                        obj.insert(
+                                            "lastAutoAppliedSuggestionId".to_string(),
+                                            suggestion
+                                                .get("suggestionId")
+                                                .cloned()
+                                                .unwrap_or(Value::Null),
+                                        );
+                                    }
+                                }
+                            }
+                            applied_count += 1;
+                            high_confidence_applied_groups.push(
+                                suggestion
+                                    .get("groupId")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string(),
+                            );
+                        } else {
+                            blocked_auto_apply_groups.push(group_id.clone());
+                            let warning = format!(
+                                "{}:auto_apply_blocked:{}",
+                                group_id,
+                                auto_apply_issues.join(",")
+                            );
+                            record_group_llm_review(
+                                &mut ir,
+                                &group_id,
+                                "auto_apply_blocked",
+                                confidence,
+                                format!("识别结果需要确认：{}", auto_apply_issues.join(",")),
+                                &suggestion,
+                            );
+                            llm_failures.push(warning);
+                        }
+                    } else {
+                        let group_id = suggestion
+                            .get("groupId")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        record_group_llm_review(
+                            &mut ir,
+                            &group_id,
+                            "low_confidence",
+                            confidence,
+                            format!(
+                                "识别结果置信度 {:.2} 低于自动采用阈值 {:.2}，请确认该题组。",
+                                confidence, confidence_threshold
+                            ),
+                            &suggestion,
+                        );
+                        low_confidence_groups.push(group_id);
+                    }
                 }
             }
-        }
         } else {
             llm_failures.push("no_enabled_llm_profile_available".to_string());
         }
@@ -1212,7 +1215,11 @@ where
         .get("warningCount")
         .and_then(Value::as_u64)
         .unwrap_or_else(|| {
-            if cloud_comparison.get("failure").and_then(Value::as_str).is_some() {
+            if cloud_comparison
+                .get("failure")
+                .and_then(Value::as_str)
+                .is_some()
+            {
                 1
             } else {
                 0
@@ -1267,15 +1274,16 @@ where
     } else {
         JobStatus::NeedsReview
     };
-    let next_step = if target == "editableDraft" || requires_parser_review || requires_authoring_review {
-        WorkflowStep::Authoring
-    } else if !low_confidence_groups.is_empty() || !blocked_auto_apply_groups.is_empty() {
-        WorkflowStep::Authoring
-    } else if static_runtime_passed {
-        WorkflowStep::Export
-    } else {
-        WorkflowStep::Preview
-    };
+    let next_step =
+        if target == "editableDraft" || requires_parser_review || requires_authoring_review {
+            WorkflowStep::Authoring
+        } else if !low_confidence_groups.is_empty() || !blocked_auto_apply_groups.is_empty() {
+            WorkflowStep::Authoring
+        } else if static_runtime_passed {
+            WorkflowStep::Export
+        } else {
+            WorkflowStep::Preview
+        };
     let next_route = "groups";
     let user_status = if has_review_blocks {
         "needsConfirmation"

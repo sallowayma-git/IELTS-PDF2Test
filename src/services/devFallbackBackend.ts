@@ -4,9 +4,13 @@ import type {
   BuildPackInput,
   DocumentBlock,
   DocumentIr,
+  ExportNasLibraryInput,
+  ExportReadingJsInput,
   ExportResult,
   GroupKind,
   ImportJob,
+  JsExportResult,
+  NasExportResult,
   JobFilter,
   JobMetaPatch,
   LlmProfilePublic,
@@ -2382,6 +2386,146 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       };
       updateJob(store, jobId, { status: "Exported", currentStep: "Export" });
       result.cleanup = cleanupDevArtifacts(store, jobId, result.exportSummary);
+      save(store);
+      return result as T;
+    }
+
+    case "export_reading_js": {
+      const input = args.input as ExportReadingJsInput;
+      if (!input?.jobIds?.length) throw new Error("js_export_requires_at_least_one_job");
+      const sources = input.jobIds.map((jobId) => {
+        const ir = store.authoring[jobId];
+        if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
+        const source = toReadingExamSource(ir);
+        const assets = store.previews[jobId] ?? {
+          examId: source.examId,
+          manifestPath: `local://${jobId}/preview/manifest.js`,
+          scriptPath: `local://${jobId}/preview/${source.examId}.js`,
+          previewUrl: `local-preview://${source.examId}`,
+          source,
+          wrapperJs: buildWrapper(source),
+          manifestJs: buildManifest([source])
+        };
+        store.previews[jobId] = assets;
+        const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
+        const readiness = publishReadinessReport(store, jobId, ir, report);
+        store.validation[jobId] = readiness;
+        if (!report.passed) throw new Error(`js_export_validation_failed:${jobId}:${report.issues.map((issue) => issue.message).join(";")}`);
+        if (!readiness.passed) throw new Error(`js_export_validation_failed:${jobId}:${readiness.issues.map((issue) => issue.message).join(";")}`);
+        return source;
+      });
+      const files = sources.map((source) => ({ name: `${source.examId}.js`, content: buildWrapper(source) }));
+      const manifest = { name: "manifest.js", content: buildManifest(sources) };
+      const result: JsExportResult = {
+        mode: input.jobIds.length > 1 ? "batch" : "single",
+        examIds: sources.map((source) => source.examId),
+        jobIds: [...input.jobIds],
+        files: [...files, manifest],
+        outputDir: input.exportDir ?? "local://exports",
+        exportSummary: {
+          type: "reading-js",
+          mode: input.jobIds.length > 1 ? "batch" : "single",
+          examIds: sources.map((source) => source.examId),
+          jobIds: [...input.jobIds],
+          exportedAt: now()
+        },
+        cleanup: input.jobIds.map((jobId) => {
+          updateJob(store, jobId, { status: "Exported", currentStep: "Export" });
+          return cleanupDevArtifacts(store, jobId, {
+            type: "reading-js",
+            mode: input.jobIds.length > 1 ? "batch" : "single",
+            exportedAt: now()
+          });
+        })
+      };
+      save(store);
+      return result as T;
+    }
+
+    case "export_nas_library": {
+      const input = args.input as ExportNasLibraryInput;
+      if (!input?.jobIds?.length) throw new Error("nas_export_requires_at_least_one_job");
+      const sources = input.jobIds.map((jobId) => {
+        const ir = store.authoring[jobId];
+        if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
+        const source = toReadingExamSource(ir);
+        const assets = store.previews[jobId] ?? {
+          examId: source.examId,
+          manifestPath: `local://${jobId}/preview/manifest.js`,
+          scriptPath: `local://${jobId}/preview/${source.examId}.js`,
+          previewUrl: `local-preview://${source.examId}`,
+          source,
+          wrapperJs: buildWrapper(source),
+          manifestJs: buildManifest([source])
+        };
+        store.previews[jobId] = assets;
+        const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
+        const readiness = publishReadinessReport(store, jobId, ir, report);
+        store.validation[jobId] = readiness;
+        if (!report.passed) throw new Error(`nas_export_validation_failed:${jobId}:${report.issues.map((issue) => issue.message).join(";")}`);
+        if (!readiness.passed) throw new Error(`nas_export_validation_failed:${jobId}:${readiness.issues.map((issue) => issue.message).join(";")}`);
+        return source;
+      });
+      const version = input.version || now().replace(/[:TZ]/g, "-").slice(0, 19);
+      const libraryRoot = input.exportDir ?? "local://exports/nas-library";
+      const sourceFiles = sources.map((source) => ({
+        name: `source/${source.examId}.js`,
+        content: buildWrapper(source)
+      }));
+      const reportPayload = {
+        status: "ok",
+        version,
+        generatedAt: now(),
+        summary: {
+          sourceFileCount: sourceFiles.length,
+          assetCountBefore: 0,
+          assetCountAfter: sources.length,
+          added: sources.length,
+          modified: 0,
+          removed: 0,
+          unchanged: 0,
+          failed: 0,
+          htmlCount: sources.length,
+          pdfCount: sources.filter((source) => Boolean(source.meta.pdfFilename)).length
+        },
+        errors: []
+      };
+      const result: NasExportResult = {
+        mode: "nas-library",
+        jobIds: [...input.jobIds],
+        examIds: sources.map((source) => source.examId),
+        assetCount: sources.length,
+        libraryRoot,
+        sourceDir: `${libraryRoot}/source`,
+        publishDir: `${libraryRoot}/publish`,
+        version,
+        files: [
+          ...sourceFiles,
+          { name: "publish/library.db", content: `sqlite:${sources.length} assets` },
+          { name: "publish/library.version.json", content: JSON.stringify({ version, libraryVersion: version, buildId: version, generatedAt: now(), assetCount: sources.length, htmlCount: sources.length, pdfCount: sources.filter((source) => Boolean(source.meta.pdfFilename)).length }, null, 2) },
+          { name: "publish/library.db.sha256", content: `dev-fallback-sha256  library.db\n` },
+          { name: "publish/report.json", content: JSON.stringify(reportPayload, null, 2) }
+        ],
+        report: reportPayload,
+        exportSummary: {
+          type: "nas-library",
+          jobIds: [...input.jobIds],
+          examIds: sources.map((source) => source.examId),
+          version,
+          outputDir: libraryRoot,
+          assetCount: sources.length,
+          exportedAt: now()
+        },
+        cleanup: input.jobIds.map((jobId) => {
+          updateJob(store, jobId, { status: "Exported", currentStep: "Export" });
+          return cleanupDevArtifacts(store, jobId, {
+            type: "nas-library",
+            version,
+            outputDir: libraryRoot,
+            exportedAt: now()
+          });
+        })
+      };
       save(store);
       return result as T;
     }

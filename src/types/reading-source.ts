@@ -71,6 +71,52 @@ export interface ExportResult {
   };
 }
 
+export interface JsExportResult {
+  mode: "single" | "batch";
+  examIds: string[];
+  jobIds: string[];
+  files: Array<{ name: string; content: string }>;
+  outputDir?: string;
+  exportSummary?: unknown;
+  cleanup?: Array<{
+    cleaned?: boolean;
+    retainedFullProcessArtifacts?: boolean;
+    message?: string;
+    [key: string]: unknown;
+  }>;
+}
+
+export interface ExportReadingJsInput {
+  jobIds: string[];
+  exportDir?: string;
+}
+
+export interface ExportNasLibraryInput {
+  jobIds: string[];
+  exportDir?: string;
+  version?: string;
+}
+
+export interface NasExportResult {
+  mode: "nas-library";
+  jobIds: string[];
+  examIds: string[];
+  assetCount: number;
+  libraryRoot?: string;
+  sourceDir?: string;
+  publishDir?: string;
+  version?: string;
+  files: Array<{ name: string; content: string }>;
+  report?: unknown;
+  exportSummary?: unknown;
+  cleanup?: Array<{
+    cleaned?: boolean;
+    retainedFullProcessArtifacts?: boolean;
+    message?: string;
+    [key: string]: unknown;
+  }>;
+}
+
 export interface BuildPackInput {
   packId: string;
   version: string;

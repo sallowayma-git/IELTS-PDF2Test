@@ -6,7 +6,8 @@ use authoring_commands::{
 use auto_pipeline::run_auto_pipeline_core;
 use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
-use export_pack::{build_pack_core, export_reading_assets_core};
+use export_nas_library::export_nas_library_core;
+use export_pack::{build_pack_core, export_reading_assets_core, export_reading_js_core};
 use llm_commands::{
     apply_llm_suggestion_core, llm_run_group_core, save_llm_profile_core, test_llm_profile_core,
 };
@@ -30,6 +31,7 @@ mod cleanup;
 mod diagnostics;
 mod environment;
 mod export_artifacts;
+mod export_nas_library;
 mod export_pack;
 mod job_commands;
 mod job_store;
@@ -397,8 +399,8 @@ fn run_auto_pipeline_from_path(path: &Path, args: &[String]) -> CommandResult<Va
     let api_key = cli_option_value(args, "--llm-api-key")
         .or_else(|| env::var("EPIC8_LIVE_LLM_API_KEY").ok())
         .ok_or_else(|| "missing_llm_api_key".to_string())?;
-    let profile_id =
-        cli_option_value(args, "--llm-profile-id").unwrap_or_else(|| "profile-cli-live".to_string());
+    let profile_id = cli_option_value(args, "--llm-profile-id")
+        .unwrap_or_else(|| "profile-cli-live".to_string());
     let root = cli_option_value(args, "--app-root")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -436,7 +438,11 @@ fn run_auto_pipeline_from_path(path: &Path, args: &[String]) -> CommandResult<Va
         .unwrap_or("source.pdf")
         .to_string();
     let (sha256, size_bytes, bytes) = util::hash_file_or_path(path)?;
-    let stored_name = format!("{}-{}", &sha256[..8], util::sanitize_filename(&original_name));
+    let stored_name = format!(
+        "{}-{}",
+        &sha256[..8],
+        util::sanitize_filename(&original_name)
+    );
     let source = SourceFile {
         file_id: "file-cli-main".to_string(),
         original_name: original_name.clone(),
@@ -490,10 +496,15 @@ fn run_auto_pipeline_from_path(path: &Path, args: &[String]) -> CommandResult<Va
 
 fn run_cli(args: &[String]) -> CommandResult<bool> {
     let command = args.first().map(String::as_str);
-    if !matches!(command, Some("--generate-reading-source" | "--run-auto-pipeline")) {
+    if !matches!(
+        command,
+        Some("--generate-reading-source" | "--run-auto-pipeline")
+    ) {
         return Ok(false);
     }
-    let source = args.get(1).ok_or_else(|| "missing_source_path".to_string())?;
+    let source = args
+        .get(1)
+        .ok_or_else(|| "missing_source_path".to_string())?;
     let mut out_path: Option<PathBuf> = None;
     let mut index = 2usize;
     while index < args.len() {
@@ -793,6 +804,18 @@ async fn export_reading_assets(
 }
 
 #[tauri::command]
+async fn export_reading_js(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    export_reading_js_core(&root, &input, true)
+}
+
+#[tauri::command]
+async fn export_nas_library(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    export_nas_library_core(&root, &input, true)
+}
+
+#[tauri::command]
 async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     build_pack_core(&root, &input, true)
@@ -851,6 +874,8 @@ pub fn run() {
             run_preview_e2e,
             run_auto_pipeline,
             export_reading_assets,
+            export_reading_js,
+            export_nas_library,
             build_pack
         ])
         .run(tauri::generate_context!())
@@ -1145,6 +1170,21 @@ mod tests {
         verify_all_authoring_items(&mut ir);
         write_json(&job_dir(root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
         (job, ir)
+    }
+
+    fn write_nas_source_fixture(source_dir: &Path, file_name: &str, source: &Value) {
+        fs::create_dir_all(source_dir).unwrap();
+        let wrapper = build_wrapper(source).unwrap();
+        write_text(&source_dir.join(file_name), &wrapper).unwrap();
+    }
+
+    fn report_has_error_code(report: &Value, code: &str) -> bool {
+        report
+            .get("errors")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|item| item.get("code").and_then(Value::as_str) == Some(code))
     }
 
     fn verify_all_authoring_items(ir: &mut Value) {
@@ -4676,8 +4716,7 @@ Answers
             .cloned()
             .unwrap_or_default();
         assert!(observations.iter().any(|item| {
-            item.get("kind").and_then(Value::as_str)
-                == Some("cloud_completion_kind_normalized")
+            item.get("kind").and_then(Value::as_str) == Some("cloud_completion_kind_normalized")
         }));
         assert!(observations.iter().any(|item| {
             item.get("kind").and_then(Value::as_str)
@@ -4698,7 +4737,10 @@ Answers
                 .collect::<Vec<_>>(),
             vec!["q8", "q9", "q10", "q11", "q12", "q13"]
         );
-        assert_eq!(ir.pointer("/answerKey/q13").and_then(Value::as_str), Some("400"));
+        assert_eq!(
+            ir.pointer("/answerKey/q13").and_then(Value::as_str),
+            Some("400")
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5647,6 +5689,363 @@ Answers
             load_job(&root, &job.job_id).unwrap().status,
             JobStatus::Working
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_reading_js_core_writes_single_js_and_manifest() {
+        let root = temp_test_root();
+        let (job, ir) = make_publishable_fixture(&root);
+        let expected_exam_id = ir
+            .pointer("/exam/examId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        let out_dir = root.join("manual-js-export");
+        let input = json!({
+            "jobIds": [job.job_id],
+            "exportDir": out_dir.to_string_lossy()
+        });
+
+        let result = export_reading_js_core(&root, &input, true).unwrap();
+
+        assert_eq!(result.get("mode").and_then(Value::as_str), Some("single"));
+        assert_eq!(
+            result
+                .get("examIds")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec![expected_exam_id.as_str()])
+        );
+        assert!(out_dir.join(format!("{}.js", expected_exam_id)).exists());
+        assert!(out_dir.join("manifest.js").exists());
+        assert_eq!(
+            load_job(&root, &job.job_id).unwrap().status,
+            JobStatus::Cleaned
+        );
+        assert_eq!(
+            result
+                .pointer("/cleanup/0/cleaned")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_reading_js_core_writes_batch_js_files() {
+        let root = temp_test_root();
+        let (job_a, ir_a) = make_publishable_fixture(&root);
+        let exam_a = ir_a
+            .pointer("/exam/examId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+
+        let (job_b, ir_b) = make_publishable_fixture(&root);
+        let exam_b = ir_b
+            .pointer("/exam/examId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        let out_dir = root.join("batch-js-export");
+        let input = json!({
+            "jobIds": [job_a.job_id, job_b.job_id],
+            "exportDir": out_dir.to_string_lossy()
+        });
+
+        let result = export_reading_js_core(&root, &input, true).unwrap();
+
+        assert_eq!(result.get("mode").and_then(Value::as_str), Some("batch"));
+        assert!(out_dir.join(format!("{}.js", exam_a)).exists());
+        assert!(out_dir.join(format!("{}.js", exam_b)).exists());
+        assert!(out_dir.join("manifest.js").exists());
+        assert_eq!(
+            result.get("files").and_then(Value::as_array).map(Vec::len),
+            Some(3)
+        );
+        assert_eq!(
+            load_job(&root, &job_a.job_id).unwrap().status,
+            JobStatus::Cleaned
+        );
+        assert_eq!(
+            load_job(&root, &job_b.job_id).unwrap().status,
+            JobStatus::Cleaned
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_nas_library_core_writes_source_and_publish_artifacts() {
+        let root = temp_test_root();
+        let (job, ir) = make_publishable_fixture(&root);
+        let expected_exam_id = ir
+            .pointer("/exam/examId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        let library_root = root.join("nas-library");
+        let input = json!({
+            "jobIds": [job.job_id],
+            "exportDir": library_root.to_string_lossy(),
+            "version": "2026.06.05-1"
+        });
+
+        let result = export_nas_library_core(&root, &input, true).unwrap();
+
+        assert_eq!(
+            result.get("mode").and_then(Value::as_str),
+            Some("nas-library")
+        );
+        assert_eq!(result.get("assetCount").and_then(Value::as_u64), Some(1));
+        assert!(library_root
+            .join("source")
+            .join(format!("{}.js", expected_exam_id))
+            .exists());
+        assert!(library_root
+            .join("source")
+            .join("assets")
+            .join(&expected_exam_id)
+            .join("publishable.pdf")
+            .exists());
+        assert!(library_root.join("publish").join("library.db").exists());
+        assert!(library_root
+            .join("publish")
+            .join("library.version.json")
+            .exists());
+        assert!(library_root
+            .join("publish")
+            .join("library.db.sha256")
+            .exists());
+        assert!(library_root.join("publish").join("report.json").exists());
+        let report: Value = read_json(&library_root.join("publish").join("report.json")).unwrap();
+        assert_eq!(report.get("status").and_then(Value::as_str), Some("ok"));
+        assert_eq!(
+            report
+                .pointer("/summary/assetCountAfter")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        let version_payload: Value =
+            read_json(&library_root.join("publish").join("library.version.json")).unwrap();
+        assert_eq!(
+            version_payload.get("version").and_then(Value::as_str),
+            Some("2026.06.05-1")
+        );
+        let connection =
+            rusqlite::Connection::open(library_root.join("publish").join("library.db")).unwrap();
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM reading_assets", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+        let stored_exam_id: String = connection
+            .query_row("SELECT exam_id FROM reading_assets LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(stored_exam_id, expected_exam_id);
+        assert_eq!(
+            load_job(&root, &job.job_id).unwrap().status,
+            JobStatus::Cleaned
+        );
+        assert_eq!(
+            result
+                .pointer("/cleanup/0/cleaned")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_nas_library_core_preserves_last_good_db_on_failure() {
+        let root = temp_test_root();
+        let (job, _) = make_publishable_fixture(&root);
+        let library_root = root.join("nas-library");
+        let input = json!({
+            "jobIds": [job.job_id],
+            "exportDir": library_root.to_string_lossy(),
+            "version": "2026.06.05-1"
+        });
+
+        export_nas_library_core(&root, &input, true).unwrap();
+        let db_path = library_root.join("publish").join("library.db");
+        let before = fs::read(&db_path).unwrap();
+        write_text(
+            &library_root.join("source").join("broken.js"),
+            "not a valid register payload",
+        )
+        .unwrap();
+
+        let error = export_nas_library_core(&root, &input, true).unwrap_err();
+
+        assert!(error.contains("nas_publish_failed"));
+        assert!(error.contains("reading_asset_parse_failed"));
+        let after = fs::read(&db_path).unwrap();
+        assert_eq!(before, after);
+        let report: Value = read_json(&library_root.join("publish").join("report.json")).unwrap();
+        assert_eq!(report.get("status").and_then(Value::as_str), Some("failed"));
+        assert!(
+            report
+                .pointer("/summary/failed")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                >= 1
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_nas_library_core_rejects_duplicate_exam_id() {
+        let root = temp_test_root();
+        let (job, ir) = make_publishable_fixture(&root);
+        let library_root = root.join("nas-library");
+        let input = json!({
+            "jobIds": [job.job_id],
+            "exportDir": library_root.to_string_lossy(),
+            "version": "2026.06.05-dup"
+        });
+
+        export_nas_library_core(&root, &input, true).unwrap();
+        let source_dir = library_root.join("source");
+        let duplicate = reading_source(&ir);
+        write_nas_source_fixture(&source_dir, "duplicate-exam.js", &duplicate);
+
+        let error = export_nas_library_core(&root, &input, true).unwrap_err();
+
+        assert!(error.contains("nas_publish_failed"));
+        assert!(error.contains("duplicate_exam_id"));
+        let report: Value = read_json(&library_root.join("publish").join("report.json")).unwrap();
+        assert_eq!(report.get("status").and_then(Value::as_str), Some("failed"));
+        assert!(report_has_error_code(&report, "duplicate_exam_id"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_nas_library_core_rejects_missing_answer_key_coverage() {
+        let root = temp_test_root();
+        let (job, ir) = make_publishable_fixture(&root);
+        let library_root = root.join("nas-library");
+        let input = json!({
+            "jobIds": [job.job_id],
+            "exportDir": library_root.to_string_lossy(),
+            "version": "2026.06.05-answer"
+        });
+
+        export_nas_library_core(&root, &input, true).unwrap();
+        let source_dir = library_root.join("source");
+        let mut invalid = reading_source(&ir);
+        invalid
+            .as_object_mut()
+            .unwrap()
+            .insert("examId".to_string(), json!("missing-answer"));
+        let first_question = invalid
+            .get("questionOrder")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        invalid
+            .get_mut("answerKey")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove(&first_question);
+        write_nas_source_fixture(&source_dir, "missing-answer.js", &invalid);
+
+        let error = export_nas_library_core(&root, &input, true).unwrap_err();
+
+        assert!(error.contains("nas_publish_failed"));
+        assert!(error.contains("answer_key_missing_question"));
+        let report: Value = read_json(&library_root.join("publish").join("report.json")).unwrap();
+        assert_eq!(report.get("status").and_then(Value::as_str), Some("failed"));
+        assert!(report_has_error_code(
+            &report,
+            "answer_key_missing_question"
+        ));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_nas_library_core_rejects_unsafe_html() {
+        let root = temp_test_root();
+        let (job, ir) = make_publishable_fixture(&root);
+        let library_root = root.join("nas-library");
+        let input = json!({
+            "jobIds": [job.job_id],
+            "exportDir": library_root.to_string_lossy(),
+            "version": "2026.06.05-html"
+        });
+
+        export_nas_library_core(&root, &input, true).unwrap();
+        let source_dir = library_root.join("source");
+        let mut invalid = reading_source(&ir);
+        invalid
+            .as_object_mut()
+            .unwrap()
+            .insert("examId".to_string(), json!("unsafe-html"));
+        *invalid
+            .pointer_mut("/questionGroups/0/bodyHtml")
+            .expect("question group bodyHtml should exist") =
+            Value::String("<div onclick=\"alert('x')\">bad</div>".to_string());
+        write_nas_source_fixture(&source_dir, "unsafe-html.js", &invalid);
+
+        let error = export_nas_library_core(&root, &input, true).unwrap_err();
+
+        assert!(error.contains("nas_publish_failed"));
+        assert!(error.contains("unsafe_html_inline_handler"));
+        let report: Value = read_json(&library_root.join("publish").join("report.json")).unwrap();
+        assert_eq!(report.get("status").and_then(Value::as_str), Some("failed"));
+        assert!(report_has_error_code(&report, "unsafe_html_inline_handler"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_nas_library_core_rejects_invalid_meta_and_missing_resource() {
+        let root = temp_test_root();
+        let (job, ir) = make_publishable_fixture(&root);
+        let library_root = root.join("nas-library");
+        let input = json!({
+            "jobIds": [job.job_id],
+            "exportDir": library_root.to_string_lossy(),
+            "version": "2026.06.05-meta"
+        });
+
+        export_nas_library_core(&root, &input, true).unwrap();
+        let source_dir = library_root.join("source");
+        let mut invalid = reading_source(&ir);
+        invalid
+            .as_object_mut()
+            .unwrap()
+            .insert("examId".to_string(), json!("invalid-meta"));
+        let meta = invalid
+            .get_mut("meta")
+            .and_then(Value::as_object_mut)
+            .unwrap();
+        meta.insert("category".to_string(), json!("PX"));
+        meta.insert("frequency".to_string(), json!("rare"));
+        meta.insert("pdfFilename".to_string(), json!("assets/not-found.pdf"));
+        write_nas_source_fixture(&source_dir, "invalid-meta.js", &invalid);
+
+        let error = export_nas_library_core(&root, &input, true).unwrap_err();
+
+        assert!(error.contains("nas_publish_failed"));
+        assert!(error.contains("invalid_category"));
+        assert!(error.contains("invalid_frequency"));
+        assert!(error.contains("missing_resource_reference"));
+        let report: Value = read_json(&library_root.join("publish").join("report.json")).unwrap();
+        assert_eq!(report.get("status").and_then(Value::as_str), Some("failed"));
+        assert!(report_has_error_code(&report, "invalid_category"));
+        assert!(report_has_error_code(&report, "invalid_frequency"));
+        assert!(report_has_error_code(&report, "missing_resource_reference"));
 
         let _ = fs::remove_dir_all(root);
     }

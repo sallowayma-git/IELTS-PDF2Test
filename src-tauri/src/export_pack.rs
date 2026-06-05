@@ -3,7 +3,10 @@ use crate::{
         cleanup_transient_job_artifacts, minimize_process_artifacts_after_authoring,
         validation_summary,
     },
-    export_artifacts::{build_pack_entry_bundle, build_reading_asset_bundle, PackSource},
+    export_artifacts::{
+        build_manifest, build_pack_entry_bundle, build_reading_asset_bundle, safe_exam_id,
+        PackSource,
+    },
     job_store::update_job,
     reading_source::reading_source,
     runtime_validation::{publish_readiness_gate, validate_for_runtime_gate},
@@ -72,6 +75,119 @@ pub(crate) fn export_reading_assets_core(
     Ok(json!({
         "examId": bundle.exam_id,
         "files":[{"name":format!("{}.json", bundle.exam_id),"content":serde_json::to_string_pretty(&source).unwrap_or_default()},{"name":format!("{}.js", bundle.exam_id),"content":bundle.wrapper_js},{"name":"manifest.js","content":bundle.manifest_js}],
+        "outputDir": out_dir.to_string_lossy(),
+        "exportSummary": export_summary,
+        "cleanup": cleanup
+    }))
+}
+
+pub(crate) fn export_reading_js_core(
+    root: &Path,
+    input: &Value,
+    require_static_runtime_gate: bool,
+) -> CommandResult<Value> {
+    let job_ids = input
+        .get("jobIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "js_export_requires_job_ids".to_string())?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    if job_ids.is_empty() {
+        return Err("js_export_requires_at_least_one_job".to_string());
+    }
+
+    let export_dir = input
+        .get("exportDir")
+        .and_then(Value::as_str)
+        .unwrap_or("local://exports");
+    let mut sources = Vec::with_capacity(job_ids.len());
+    let mut wrappers = Vec::with_capacity(job_ids.len());
+    let mut exam_ids = Vec::with_capacity(job_ids.len());
+    let mut cleanup = Vec::with_capacity(job_ids.len());
+
+    let out_dir = if export_dir.starts_with("local://") {
+        if job_ids.len() == 1 {
+            job_dir(root, job_ids[0]).join("exports").join("js")
+        } else {
+            root.join("exports").join("reading-exams")
+        }
+    } else {
+        PathBuf::from(export_dir)
+    };
+    fs::create_dir_all(&out_dir).map_err(|error| error.to_string())?;
+
+    for job_id in &job_ids {
+        validate_path_segment("job_id", job_id)?;
+        let ir: Value = read_json(&job_dir(root, job_id).join("authoring-ir.json"))?;
+        let report = validate_for_runtime_gate(root, job_id, &ir, require_static_runtime_gate)?;
+        let report = publish_readiness_gate(root, job_id, &ir, report)?;
+        if !report
+            .get("passed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            let _ = minimize_process_artifacts_after_authoring(
+                root,
+                job_id,
+                "js_export_publish_gate_failed",
+            )?;
+            return Err(format!(
+                "js_export_validation_failed:{}:{}",
+                job_id,
+                serde_json::to_string(&report).unwrap_or_default()
+            ));
+        }
+
+        let source = reading_source(&ir);
+        let exam_id = safe_exam_id(&source)?;
+        let wrapper_js = build_reading_asset_bundle(&source)?.wrapper_js;
+        write_text(&out_dir.join(format!("{}.js", exam_id)), &wrapper_js)?;
+        exam_ids.push(exam_id.clone());
+        wrappers.push(json!({
+            "name": format!("{}.js", exam_id),
+            "content": wrapper_js
+        }));
+        sources.push(source);
+
+        update_job(root, job_id, |job| {
+            job.status = JobStatus::Exported;
+            job.current_step = WorkflowStep::Export;
+        })?;
+    }
+
+    let manifest_js = build_manifest(&sources)?;
+    write_text(&out_dir.join("manifest.js"), &manifest_js)?;
+
+    let mode = if job_ids.len() > 1 { "batch" } else { "single" };
+    let export_summary = json!({
+        "type": "reading-js",
+        "mode": mode,
+        "jobIds": job_ids,
+        "examIds": exam_ids,
+        "outputDir": out_dir.to_string_lossy(),
+        "files": exam_ids.iter().map(|exam_id| format!("{}.js", exam_id)).chain(std::iter::once("manifest.js".to_string())).collect::<Vec<_>>(),
+        "exportedAt": Utc::now().to_rfc3339()
+    });
+
+    for job_id in &job_ids {
+        cleanup.push(cleanup_transient_job_artifacts(
+            root,
+            job_id,
+            export_summary.clone(),
+        )?);
+    }
+
+    wrappers.push(json!({
+        "name": "manifest.js",
+        "content": manifest_js
+    }));
+
+    Ok(json!({
+        "mode": mode,
+        "jobIds": job_ids,
+        "examIds": exam_ids,
+        "files": wrappers,
         "outputDir": out_dir.to_string_lossy(),
         "exportSummary": export_summary,
         "cleanup": cleanup

@@ -3,8 +3,12 @@ import type {
   BuildPackInput,
   CreateJobInput,
   DocumentIr,
+  ExportNasLibraryInput,
+  ExportReadingJsInput,
   ExportResult,
   ImportJob,
+  JsExportResult,
+  NasExportResult,
   JobFilter,
   JobMetaPatch,
   DiagnosticsSettings,
@@ -163,6 +167,14 @@ export async function runAutoPipeline(jobId: string, input?: { profileId?: strin
 
 export async function exportReadingAssets(jobId: string, exportDir = "local://exports"): Promise<ExportResult> {
   return command("export_reading_assets", { jobId, exportDir });
+}
+
+export async function exportReadingJs(input: ExportReadingJsInput): Promise<JsExportResult> {
+  return command("export_reading_js", { input });
+}
+
+export async function exportNasLibrary(input: ExportNasLibraryInput): Promise<NasExportResult> {
+  return command("export_nas_library", { input });
 }
 
 export async function buildPack(input: BuildPackInput): Promise<PackBuildResult> {
