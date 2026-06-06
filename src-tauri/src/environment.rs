@@ -7,6 +7,29 @@ use std::{
     process::Command,
 };
 
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedCommand {
+    pub(crate) program: String,
+    pub(crate) args: Vec<String>,
+    pub(crate) source: String,
+}
+
+impl ResolvedCommand {
+    fn new(program: impl Into<String>, args: Vec<String>, source: impl Into<String>) -> Self {
+        Self {
+            program: program.into(),
+            args,
+            source: source.into(),
+        }
+    }
+
+    pub(crate) fn display(&self) -> String {
+        let mut parts = vec![self.program.clone()];
+        parts.extend(self.args.iter().cloned());
+        parts.join(" ")
+    }
+}
+
 fn sidecar_candidates(relative: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(cwd) = env::current_dir() {
@@ -86,6 +109,41 @@ pub(crate) fn command_probe(program: &str, args: &[&str]) -> Value {
     }
 }
 
+pub(crate) fn command_probe_resolved(command: &ResolvedCommand, extra_args: &[&str]) -> Value {
+    match Command::new(&command.program)
+        .args(&command.args)
+        .args(extra_args)
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            json!({
+                "program": command.program.clone(),
+                "baseArgs": command.args.clone(),
+                "extraArgs": extra_args,
+                "commandLine": command.display(),
+                "source": command.source.clone(),
+                "ok": output.status.success(),
+                "status": output.status.code(),
+                "stdout": stdout,
+                "stderr": stderr
+            })
+        }
+        Err(error) => json!({
+            "program": command.program.clone(),
+            "baseArgs": command.args.clone(),
+            "extraArgs": extra_args,
+            "commandLine": command.display(),
+            "source": command.source.clone(),
+            "ok": false,
+            "status": null,
+            "stdout": "",
+            "stderr": error.to_string()
+        }),
+    }
+}
+
 fn preflight_item(name: &str, ok: bool, severity: &str, message: String, details: Value) -> Value {
     json!({
         "name": name,
@@ -136,6 +194,110 @@ pub(crate) fn node_validator_diagnostics_enabled() -> bool {
         .unwrap_or(false)
 }
 
+fn env_flag_enabled(name: &str, default: bool) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                _ => default,
+            }
+        })
+        .unwrap_or(default)
+}
+
+pub(crate) fn cloud_pdf_vision_enabled() -> bool {
+    env_flag_enabled("EPIC8_ENABLE_CLOUD_PDF_VISION", false)
+}
+
+pub(crate) fn local_ocr_enabled() -> bool {
+    env_flag_enabled("EPIC8_ENABLE_LOCAL_OCR", false)
+}
+
+pub(crate) fn pdf_renderer_setting() -> String {
+    env::var("EPIC8_PDF_RENDERER")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| {
+            matches!(
+                value.as_str(),
+                "auto" | "none" | "sips" | "pdfium" | "poppler" | "pymupdf"
+            )
+        })
+        .unwrap_or_else(|| "auto".to_string())
+}
+
+fn split_command_spec(spec: &str) -> Vec<String> {
+    let mut parts = Vec::<String>::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for ch in spec.trim().chars() {
+        match (quote, ch) {
+            (Some(active), next) if next == active => quote = None,
+            (None, '\'' | '"') => quote = Some(ch),
+            (None, next) if next.is_whitespace() => {
+                if !current.is_empty() {
+                    parts.push(std::mem::take(&mut current));
+                }
+            }
+            (_, next) => current.push(next),
+        }
+    }
+
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
+}
+
+pub(crate) fn python_command_candidates() -> Vec<ResolvedCommand> {
+    let mut candidates = Vec::new();
+    if let Ok(spec) = env::var("EPIC8_PYTHON") {
+        let parts = split_command_spec(&spec);
+        if let Some((program, args)) = parts.split_first() {
+            candidates.push(ResolvedCommand::new(
+                program.clone(),
+                args.to_vec(),
+                "env:EPIC8_PYTHON",
+            ));
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        candidates.push(ResolvedCommand::new(
+            "py",
+            vec!["-3".to_string()],
+            "platform:windows",
+        ));
+        candidates.push(ResolvedCommand::new(
+            "python",
+            Vec::new(),
+            "platform:windows",
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        candidates.push(ResolvedCommand::new("python3", Vec::new(), "platform:unix"));
+        candidates.push(ResolvedCommand::new("python", Vec::new(), "platform:unix"));
+    }
+
+    candidates
+}
+
+pub(crate) fn resolve_python_command() -> Option<ResolvedCommand> {
+    python_command_candidates().into_iter().find(|candidate| {
+        command_probe_resolved(candidate, &["--version"])
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    })
+}
+
 pub(crate) fn environment_preflight_report() -> Value {
     let mut checks = Vec::<Value>::new();
 
@@ -183,15 +345,23 @@ pub(crate) fn environment_preflight_report() -> Value {
         json!({"crates": {"quick-xml": "0.39", "zip": "2.4.2"}}),
     ));
 
-    let python = command_probe("python3", &["--version"]);
-    let python_ok = python.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let python_candidates = python_command_candidates();
+    let python_probes = python_candidates
+        .iter()
+        .map(|candidate| command_probe_resolved(candidate, &["--version"]))
+        .collect::<Vec<_>>();
+    let python = python_probes
+        .iter()
+        .find(|probe| probe.get("ok").and_then(Value::as_bool).unwrap_or(false))
+        .cloned();
+    let python_ok = python.is_some();
     checks.push(preflight_item(
-        "python3",
+        "python",
         python_ok,
         "warning",
-        if python_ok {
+        if let Some(python) = python.as_ref() {
             format!(
-                "Python available: {}{}",
+                "Python available for optional legacy parser and PDF image extraction: {}{}",
                 python
                     .get("stdout")
                     .and_then(Value::as_str)
@@ -204,12 +374,26 @@ pub(crate) fn environment_preflight_report() -> Value {
                     .unwrap_or_default()
             )
         } else {
-            "python3 is optional for TXT/MD and clear text PDF/DOCX parsing because Rust parsers are primary. It is still required for embedded PDF image extraction and legacy parser fallback; Rust can use macOS sips as a rendered-page fallback for vision transcription when Python/pypdf is unavailable.".to_string()
+            "Python is optional for production TXT/MD and clear text PDF/DOCX parsing because Rust parsers are primary. Configure EPIC8_PYTHON or install a platform Python only for embedded PDF image extraction and legacy parser fallback.".to_string()
         },
-        python,
+        json!({
+            "selected": python,
+            "candidates": python_probes,
+            "env": env::var("EPIC8_PYTHON").ok()
+        }),
     ));
 
-    let pypdf = command_probe("python3", &["-c", "import pypdf; print(pypdf.__version__)"]);
+    let pypdf = if let Some(python) = resolve_python_command() {
+        command_probe_resolved(&python, &["-c", "import pypdf; print(pypdf.__version__)"])
+    } else {
+        json!({
+            "ok": false,
+            "status": null,
+            "stdout": "",
+            "stderr": "python_unavailable",
+            "candidates": python_command_candidates().iter().map(ResolvedCommand::display).collect::<Vec<_>>()
+        })
+    };
     let pypdf_ok = pypdf.get("ok").and_then(Value::as_bool).unwrap_or(false);
     checks.push(preflight_item(
         "python:pypdf",
@@ -222,35 +406,138 @@ pub(crate) fn environment_preflight_report() -> Value {
                     .get("stdout")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
-            )
+                )
         } else {
-            "pypdf is optional for TXT/MD and clear text PDF/DOCX parsing because Rust parsers are primary. It is still required for embedded PDF image extraction and Python legacy fallback; macOS sips can still render a page image for vision transcription without pypdf.".to_string()
+            "pypdf is optional for production TXT/MD and clear text PDF/DOCX parsing. Without it, embedded PDF image extraction falls back to the platform PDF renderer or manual review.".to_string()
         },
         pypdf,
     ));
 
-    let sips = command_probe("sips", &["--version"]);
-    let sips_ok = sips.get("ok").and_then(Value::as_bool).unwrap_or(false);
+    let renderer = pdf_renderer_setting();
+    let platform = env::consts::OS;
+    let platform_renderer_name = match platform {
+        "macos" => "renderer:macos-sips",
+        "windows" => "renderer:windows-pdfium",
+        _ => "renderer:unsupported",
+    };
+    let platform_renderer_available = if platform == "macos" && renderer != "none" {
+        command_probe("sips", &["--version"])
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    } else {
+        false
+    };
     checks.push(preflight_item(
-        "renderer:macos-sips",
-        sips_ok,
+        "renderer:pdf-page-renderer",
+        platform_renderer_available,
         "warning",
-        if sips_ok {
-            format!(
-                "macOS sips renderer available: {}{}",
-                sips.get("stdout")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                sips.get("stderr")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.is_empty())
-                    .map(|value| format!(" {}", value))
-                    .unwrap_or_default()
-            )
+        if platform_renderer_available {
+            "PDF page rendering is available for vision transcription inputs through the platform adapter.".to_string()
         } else {
-            "macOS sips renderer is unavailable; scanned PDFs without embedded images will require manual transcription or a future PDFium adapter.".to_string()
+            "PDF page rendering is unavailable or disabled on this platform; scanned PDFs without embedded images require cloud PDF vision or manual transcription.".to_string()
         },
-        sips,
+        json!({
+            "platform": platform,
+            "selectedRenderer": renderer,
+            "provider": platform_renderer_name,
+            "supportedRenderers": ["auto", "none", "sips", "pdfium", "poppler", "pymupdf"],
+            "cloudPdfVisionEnabled": cloud_pdf_vision_enabled(),
+            "localOcrEnabled": local_ocr_enabled()
+        }),
+    ));
+
+    if platform == "macos" {
+        let sips = command_probe("sips", &["--version"]);
+        let sips_ok = sips.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        checks.push(preflight_item(
+            "renderer:macos-sips",
+            sips_ok && renderer != "none",
+            "warning",
+            if renderer == "none" {
+                "macOS sips renderer is disabled by EPIC8_PDF_RENDERER=none; scanned PDFs require cloud PDF vision or manual transcription.".to_string()
+            } else if sips_ok {
+                format!(
+                    "macOS sips renderer available: {}{}",
+                    sips.get("stdout")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    sips.get("stderr")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .map(|value| format!(" {}", value))
+                        .unwrap_or_default()
+                )
+            } else {
+                "macOS sips renderer is unavailable; scanned PDFs without embedded images require cloud PDF vision, manual transcription, or a future PDFium adapter.".to_string()
+            },
+            sips,
+        ));
+    } else if platform == "windows" {
+        checks.push(preflight_item(
+            "renderer:windows-pdfium",
+            false,
+            "warning",
+            "Windows PDFium page renderer is reserved but not bundled in this runtime; scanned PDFs require cloud PDF vision or manual transcription.".to_string(),
+            json!({
+                "selectedRenderer": renderer,
+                "rendererProvider": "windows-pdfium",
+                "implemented": false
+            }),
+        ));
+    }
+
+    let local_ocr = local_ocr_enabled();
+    checks.push(preflight_item(
+        "ocr:local",
+        !local_ocr,
+        if local_ocr { "warning" } else { "info" },
+        if local_ocr {
+            "EPIC8_ENABLE_LOCAL_OCR is enabled, but no local OCR engine is bundled in the default runtime.".to_string()
+        } else {
+            "Local OCR is disabled by default and not bundled; scanned PDFs use page rendering plus cloud vision or manual transcription.".to_string()
+        },
+        json!({
+            "env": env::var("EPIC8_ENABLE_LOCAL_OCR").ok(),
+            "enabled": local_ocr,
+            "bundled": false
+        }),
+    ));
+
+    let cloud_vision = cloud_pdf_vision_enabled();
+    let live_base_url = env::var("EPIC8_LIVE_LLM_BASE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let live_model = env::var("EPIC8_LIVE_LLM_MODEL")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let live_api_key = env::var("EPIC8_LIVE_LLM_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    checks.push(preflight_item(
+        "vision:cloud",
+        !cloud_vision || (live_base_url.is_some() && live_model.is_some()),
+        if cloud_vision { "warning" } else { "info" },
+        if cloud_vision {
+            "Cloud PDF vision is enabled; configure an LLM profile or EPIC8_LIVE_LLM_* environment values that support vision/PDF input.".to_string()
+        } else {
+            "Cloud PDF vision is disabled by default. Enable EPIC8_ENABLE_CLOUD_PDF_VISION only when a configured profile supports image or PDF input.".to_string()
+        },
+        json!({
+            "env": env::var("EPIC8_ENABLE_CLOUD_PDF_VISION").ok(),
+            "enabled": cloud_vision,
+            "liveEnv": {
+                "baseUrl": live_base_url.is_some(),
+                "model": live_model.is_some(),
+                "apiKey": live_api_key.is_some()
+            },
+            "profileCapabilityFields": [
+                "supportsVisionImages",
+                "supportsPdfFileInput",
+                "maxPdfBytes",
+                "maxVisionImages"
+            ]
+        }),
     ));
 
     for (name, relative, severity, missing_message) in [

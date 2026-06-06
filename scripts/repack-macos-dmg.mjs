@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(new URL("..", import.meta.url).pathname);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tauriConfigPath = path.join(root, "src-tauri", "tauri.conf.json");
 const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, "utf8"));
 const productName = tauriConfig.productName;
@@ -13,6 +14,8 @@ const dmgDir = path.join(bundleRoot, "dmg");
 const dmgScript = path.join(dmgDir, "bundle_dmg.sh");
 const helperSource = path.join(root, "scripts", "macos-open-unsigned.command");
 const helperName = "Open Unsigned App.command";
+const instructionsSource = path.join(root, "scripts", "macos-install-instructions.txt");
+const instructionsName = "Install Instructions.txt";
 
 function fail(message) {
   console.error(`[repack-macos-dmg] ${message}`);
@@ -35,6 +38,7 @@ function findDmgArtifacts() {
 assertExists(appPath, "macOS app bundle");
 assertExists(dmgScript, "Tauri DMG helper script");
 assertExists(helperSource, "unsigned app helper script");
+assertExists(instructionsSource, "install instructions");
 
 fs.chmodSync(helperSource, 0o755);
 
@@ -68,6 +72,11 @@ for (const dmgPath of dmgPaths) {
       helperSource,
       "350",
       "320",
+      "--add-file",
+      instructionsName,
+      instructionsSource,
+      "350",
+      "80",
       "--hide-extension",
       helperName,
       tmpPath,

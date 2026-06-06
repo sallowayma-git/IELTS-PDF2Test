@@ -127,6 +127,32 @@ function buildVisionPrompt(input) {
   ].join("\n");
 }
 
+function buildVisionAnswerPrompt(input) {
+  return [
+    "You are extracting the answer key from IELTS Reading PDF page images.",
+    "Return JSON only with shape {\"answers\":{\"8\":\"answer text\"},\"confidence\":0.0,\"warnings\":[],\"evidence\":[{\"questionNumber\":\"8\",\"pageIndex\":1,\"quote\":\"short visible source text\"}]} .",
+    "Use question number strings without q prefix. Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase.",
+    "Multi-answer questions may use arrays. Do not invent answers; omit uncertain numbers and add a warning.",
+    `Job: ${JSON.stringify(input.job ?? {})}`,
+    `Output contract: ${JSON.stringify(input.outputContract ?? {})}`
+  ].join("\n");
+}
+
+function buildCloudOutlinePrompt(input) {
+  return [
+    "You are creating a comparison-only outline from an IELTS Reading PDF.",
+    "Return JSON only with shape {\"title\":\"paper title\",\"groups\":[{\"range\":[1,5],\"kind\":\"true_false_not_given\",\"layoutHint\":\"list\",\"questionIds\":[\"q1\"],\"notesText\":\"\",\"confidence\":0.0,\"evidence\":{\"quotes\":[{\"pageIndex\":1,\"text\":\"short visible source excerpt\"}]}}],\"answerKey\":{\"1\":\"TRUE\"},\"confidence\":0.0,\"warnings\":[]}.",
+    "This output is used only to compare against a local deterministic draft; it must not overwrite the local draft.",
+    "Use only visible PDF evidence. Do not invent missing groups or answers.",
+    `Allowed group kinds: ${allowedKinds.join(", ")}.`,
+    "If the PDF says Complete the notes below, note completion, notes, or contains numbered blank/ellipsis markers such as 8……… or 8 ______, keep the entire range as one group, set layoutHint=inline_completion, include every qN in questionIds, and copy the continuous notes text into notesText.",
+    "Every group must include evidence.quotes. If evidence is missing, lower group confidence below 0.75.",
+    `Job: ${JSON.stringify(input.job ?? {})}`,
+    `Source file: ${JSON.stringify(input.sourceFile ?? {})}`,
+    `Output contract: ${JSON.stringify(input.outputContract ?? {})}`
+  ].join("\n");
+}
+
 async function imageToDataUrl(image) {
   if (!image?.path) throw new Error("vision_image_path_missing");
   const data = await fs.readFile(image.path);
@@ -185,6 +211,55 @@ async function callVisionOpenAiCompatible(input) {
   };
 }
 
+async function callImageJsonOpenAiCompatible(input, promptBuilder, mode) {
+  const profile = input.profile ?? {};
+  const apiKey = process.env.EPIC8_LLM_API_KEY ?? input.apiKey ?? "";
+  if (!profile.baseUrl || !profile.model) return null;
+  const pages = input.pages ?? [];
+  const content = [{ type: "text", text: promptBuilder(input) }];
+  for (const page of pages) {
+    for (const image of page.images ?? []) {
+      content.push({ type: "text", text: `Page ${page.pageIndex}, image ${image.assetId || image.fileName || ""}` });
+      content.push({ type: "image_url", image_url: { url: await imageToDataUrl(image) } });
+    }
+  }
+  if (!content.some((item) => item.type === "image_url")) return null;
+
+  const endpoint = new URL(profile.baseUrl.replace(/\/$/, "") + "/chat/completions");
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {})
+    },
+    body: JSON.stringify({
+      model: profile.model,
+      temperature: profile.temperature ?? 0,
+      response_format: profile.forceJson === false ? undefined : { type: "json_object" },
+      messages: [
+        { role: "system", content: "Return valid JSON only." },
+        { role: "user", content }
+      ]
+    }),
+    signal: AbortSignal.timeout(profile.timeoutMs ?? 120000)
+  });
+  if (!response.ok) throw new Error(`llm_http_${response.status}:${await response.text()}`);
+  const payload = await response.json();
+  const message = payload?.choices?.[0]?.message?.content;
+  if (!message) throw new Error(`${mode}_empty_content`);
+  const parsed = JSON.parse(message);
+  return {
+    ...parsed,
+    metadata: {
+      ...(parsed.metadata ?? {}),
+      mode,
+      source: "openai-compatible-vision",
+      model: profile.model,
+      usage: payload.usage ?? null
+    }
+  };
+}
+
 function validateTranscription(value) {
   if (!value || typeof value !== "object") throw new Error("transcription_not_object");
   if (typeof value.text !== "string") value.text = "";
@@ -192,6 +267,75 @@ function validateTranscription(value) {
   if (!Array.isArray(value.warnings)) value.warnings = [];
   if (!value.text.trim()) value.warnings.push("empty-vision-transcription");
   if (!value.evidence || typeof value.evidence !== "object") value.evidence = {};
+  return value;
+}
+
+function normalizeQuestionKey(key) {
+  const number = Number(String(key ?? "").trim().replace(/^q/i, ""));
+  if (!Number.isInteger(number) || number <= 0 || number > 200) return undefined;
+  return String(number);
+}
+
+function normalizeAnswerValue(value) {
+  if (Array.isArray(value)) {
+    const items = value.map(normalizeAnswerValue).filter((item) => item !== undefined && String(item).trim());
+    return items.length ? items : undefined;
+  }
+  const text = String(value ?? "").trim().replace(/^[."'`;,:[\]{}()\s]+|[."'`;,:[\]{}()\s]+$/g, "");
+  if (!text) return undefined;
+  const compact = text.toUpperCase().replace(/[\s_-]/g, "");
+  if (compact === "NOTGIVEN") return "NOT GIVEN";
+  if (["TRUE", "FALSE", "YES", "NO"].includes(text.toUpperCase())) return text.toUpperCase();
+  if (/^[a-z]$/i.test(text)) return text.toUpperCase();
+  return text;
+}
+
+function validateVisionAnswers(value) {
+  if (!value || typeof value !== "object") throw new Error("vision_answer_not_object");
+  const answers = {};
+  for (const [key, answer] of Object.entries(value.answers ?? {})) {
+    const number = normalizeQuestionKey(key);
+    const normalized = normalizeAnswerValue(answer);
+    if (number && normalized !== undefined) answers[number] = normalized;
+  }
+  if (!Object.keys(answers).length) throw new Error("vision_answer_answers_empty");
+  value.answers = answers;
+  if (typeof value.confidence !== "number") value.confidence = 0.6;
+  if (!Array.isArray(value.warnings)) value.warnings = [];
+  if (!Array.isArray(value.evidence)) value.evidence = [];
+  return value;
+}
+
+function normalizeCloudKind(kind = "") {
+  const normalized = String(kind).trim().toLowerCase().replace(/[-\s]/g, "_");
+  if (["note_completion", "notes_completion", "note_completion_questions"].includes(normalized)) return "summary_completion";
+  return allowedKinds.includes(normalized) ? normalized : "short_answer";
+}
+
+function validateCloudOutline(value) {
+  if (!value || typeof value !== "object") throw new Error("cloud_outline_not_object");
+  value.groups = Array.isArray(value.groups) ? value.groups.map((group) => {
+    const next = group && typeof group === "object" ? { ...group } : {};
+    next.kind = normalizeCloudKind(next.kind);
+    if (!Array.isArray(next.range)) next.range = [];
+    if (!Array.isArray(next.questionIds)) next.questionIds = [];
+    if (typeof next.layoutHint !== "string") next.layoutHint = "";
+    if (typeof next.notesText !== "string") next.notesText = "";
+    if (typeof next.confidence !== "number") next.confidence = 0.5;
+    if (!next.evidence || typeof next.evidence !== "object") next.evidence = {};
+    if (!Array.isArray(next.evidence.quotes)) next.evidence.quotes = [];
+    if (!Array.isArray(next.warnings)) next.warnings = [];
+    return next;
+  }) : [];
+  const answerKey = {};
+  for (const [key, answer] of Object.entries(value.answerKey ?? {})) {
+    const number = normalizeQuestionKey(key);
+    const normalized = normalizeAnswerValue(answer);
+    if (number && normalized !== undefined) answerKey[number] = normalized;
+  }
+  value.answerKey = answerKey;
+  if (typeof value.confidence !== "number") value.confidence = 0.5;
+  if (!Array.isArray(value.warnings)) value.warnings = [];
   return value;
 }
 
@@ -249,8 +393,8 @@ function validateSuggestion(value) {
 
 async function main() {
   const [command, inputPath, outputPath] = process.argv.slice(2);
-  if (!["classify_group", "extract_group", "test_profile", "transcribe_pdf_images"].includes(command) || !inputPath || !outputPath) {
-    console.error("usage: gateway.mjs <classify_group|extract_group|test_profile|transcribe_pdf_images> <input.json> <output.json>");
+  if (!["classify_group", "extract_group", "test_profile", "transcribe_pdf_images", "extract_pdf_image_answers", "generate_pdf_reading_outline"].includes(command) || !inputPath || !outputPath) {
+    console.error("usage: gateway.mjs <classify_group|extract_group|test_profile|transcribe_pdf_images|extract_pdf_image_answers|generate_pdf_reading_outline> <input.json> <output.json>");
     process.exit(2);
   }
   const input = JSON.parse(await fs.readFile(inputPath, "utf8"));
@@ -263,6 +407,18 @@ async function main() {
     }
     if (!transcription) transcription = transcriptionFallback("no-enabled-vision-provider-or-images");
     const output = validateTranscription(transcription);
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, JSON.stringify(output, null, 2));
+    return;
+  }
+  if (command === "extract_pdf_image_answers") {
+    const output = validateVisionAnswers(await callImageJsonOpenAiCompatible(input, buildVisionAnswerPrompt, command));
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, JSON.stringify(output, null, 2));
+    return;
+  }
+  if (command === "generate_pdf_reading_outline") {
+    const output = validateCloudOutline(await callImageJsonOpenAiCompatible(input, buildCloudOutlinePrompt, command));
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     await fs.writeFile(outputPath, JSON.stringify(output, null, 2));
     return;

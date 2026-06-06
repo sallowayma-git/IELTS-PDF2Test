@@ -100,6 +100,8 @@ export interface AutoPipelineReport {
       warnings?: string[];
       failure?: string | null;
       confidence?: number;
+      filledQuestionIds?: string[];
+      missingQuestionIds?: string[];
     };
   };
   quality?: {
@@ -110,6 +112,10 @@ export interface AutoPipelineReport {
       warningCount?: number;
       failure?: string | null;
       issues?: Array<{ message?: string; [key: string]: unknown }>;
+      observations?: Array<{ message?: string; [key: string]: unknown }>;
+      localSummary?: Array<{ range?: number[]; kind?: string; layoutHint?: string; questionIds?: string[] }>;
+      cloudSummary?: Array<{ range?: number[]; kind?: string; layoutHint?: string; questionIds?: string[] }>;
+      comparison?: unknown;
     };
   };
   validationPassed: boolean;

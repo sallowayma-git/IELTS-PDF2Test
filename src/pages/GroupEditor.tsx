@@ -27,6 +27,40 @@ function auditIssueText(issue: string | { message?: string; [key: string]: unkno
   return typeof issue.message === "string" ? issue.message : "";
 }
 
+function auditIssueKind(issue: string | { message?: string; [key: string]: unknown }): string {
+  if (typeof issue === "string") return "";
+  return typeof issue.kind === "string" ? issue.kind : "";
+}
+
+function auditIssuePath(issue: string | { message?: string; [key: string]: unknown }): string {
+  if (typeof issue === "string") return "";
+  return typeof issue.path === "string" ? issue.path : "";
+}
+
+function issueList(issue: string | { message?: string; [key: string]: unknown }, key: string): Array<{ message?: string; [key: string]: unknown }> {
+  if (typeof issue === "string") return [];
+  const value = issue[key];
+  return Array.isArray(value) ? value.filter((item): item is { message?: string; [key: string]: unknown } => Boolean(item && typeof item === "object")) : [];
+}
+
+function issueStringList(issue: string | { message?: string; [key: string]: unknown }, key: string): string[] {
+  if (typeof issue === "string") return [];
+  const value = issue[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function issueSummary(issue: string | { message?: string; [key: string]: unknown }, key: string): Array<{ range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown }> {
+  if (typeof issue === "string") return [];
+  const value = issue[key];
+  return Array.isArray(value) ? value.filter((item): item is { range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown } => Boolean(item && typeof item === "object")) : [];
+}
+
+function formatSummaryRow(item: { range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown }): string {
+  const range = Array.isArray(item.range) && item.range.length >= 2 ? `Q${item.range[0]}-${item.range[1]}` : "范围未知";
+  const ids = Array.isArray(item.questionIds) ? item.questionIds.join(", ") : "";
+  return `${range} · ${String(item.kind ?? "题型未知")} · ${String(item.layoutHint ?? "布局未知")}${ids ? ` · ${ids}` : ""}`;
+}
+
 function buildGroupPreviewSrcDoc(group: QuestionGroupDraft): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     body{font-family:Georgia,serif;margin:0;padding:16px;background:#fffaf0;color:#17211f;line-height:1.55}
@@ -72,7 +106,15 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
   }
 
   const currentGroup = activeGroup;
-  const auditIssues = (ir.audit.issues ?? []).map(auditIssueText).filter(Boolean);
+  const rawAuditIssues = ir.audit.issues ?? [];
+  const auditIssues = rawAuditIssues.map(auditIssueText).filter(Boolean);
+  const cloudIssue = rawAuditIssues.find((issue) => auditIssueKind(issue) === "cloud_comparison_summary" || auditIssuePath(issue).includes("cloudComparison"));
+  const visionAnswerIssue = rawAuditIssues.find((issue) => auditIssueKind(issue) === "vision_answer_extraction_summary");
+  const visibleAuditIssues = auditIssues.filter((issue) => issue !== auditIssueText(cloudIssue ?? "") && issue !== auditIssueText(visionAnswerIssue ?? ""));
+  const emptyAnswerCount = currentGroup.questions.filter((question) => {
+    const answer = question.answer;
+    return Array.isArray(answer) ? answer.length === 0 || answer.every((item) => !String(item).trim()) : !String(answer ?? "").trim();
+  }).length;
 
   function updateGroup(mutator: (group: QuestionGroupDraft) => QuestionGroupDraft) {
     if (!ir || !currentGroup) return;
@@ -80,11 +122,19 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
     void save(next);
   }
 
+  function verifyCurrentGroup() {
+    updateGroup((group) => ({
+      ...group,
+      verified: true,
+      questions: group.questions.map((question) => ({ ...question, verified: true }))
+    }));
+  }
+
   return (
     <section className="group-editor page-enter" data-testid="group-editor">
       <div className="section-heading spread">
         <div><p className="eyebrow">题稿编辑</p><h2>题稿编辑</h2></div>
-        <div className="button-row"><button className="ghost" data-testid="go-llm-review" onClick={() => go(`/jobs/${jobId}/llm-review`)}>需要确认的识别结果</button><button className="primary" data-testid="validate-and-preview" onClick={validate}>检查并预览</button></div>
+        <div className="button-row"><button className="ghost" data-testid="go-llm-review" onClick={() => go(`/jobs/${jobId}/llm-review`)}>需要确认的识别结果</button><button className="ghost" data-testid="verify-current-group" onClick={verifyCurrentGroup}>确认当前题组</button><button className="primary" data-testid="validate-and-preview" onClick={validate}>检查并预览</button></div>
       </div>
       <div className="editor-grid">
         <aside className="group-nav">
@@ -95,10 +145,42 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
           ))}
         </aside>
         <section className="form-section editor-form">
-          {auditIssues.length ? (
+          {visionAnswerIssue ? (
+            <div className="info-box" data-testid="vision-answer-summary">
+              <strong>视觉答案补全</strong>
+              <p>{auditIssueText(visionAnswerIssue)}</p>
+              {issueStringList(visionAnswerIssue, "filledQuestionIds").length ? <small>已写入：{issueStringList(visionAnswerIssue, "filledQuestionIds").join("、")}</small> : null}
+              {issueStringList(visionAnswerIssue, "missingQuestionIds").length ? <small>仍缺少：{issueStringList(visionAnswerIssue, "missingQuestionIds").join("、")}</small> : null}
+            </div>
+          ) : null}
+          {cloudIssue ? (
+            <div className="warning-box" data-testid="cloud-comparison-summary">
+              <strong>云端整卷对照</strong>
+              <p>{auditIssueText(cloudIssue)}</p>
+              {issueList(cloudIssue, "issues").slice(0, 4).map((issue, index) => <p key={`${index}-${issue.message}`}>{issue.message ?? "云端对照发现差异。"}</p>)}
+              {issueList(cloudIssue, "observations").slice(0, 2).map((issue, index) => <small key={`${index}-${issue.message}`}>{issue.message ?? "云端对照备注。"}</small>)}
+              <div className="compare-columns">
+                <div>
+                  <span>本地题稿</span>
+                  {issueSummary(cloudIssue, "localSummary").slice(0, 6).map((item, index) => <small key={`local-${index}`}>{formatSummaryRow(item)}</small>)}
+                </div>
+                <div>
+                  <span>云端对照</span>
+                  {issueSummary(cloudIssue, "cloudSummary").slice(0, 6).map((item, index) => <small key={`cloud-${index}`}>{formatSummaryRow(item)}</small>)}
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {visibleAuditIssues.length ? (
             <div className="warning-box" data-testid="authoring-audit-warnings">
               <strong>需要确认</strong>
-              {auditIssues.slice(0, 6).map((issue, index) => <p key={`${index}-${issue}`}>{issue}</p>)}
+              {visibleAuditIssues.slice(0, 6).map((issue, index) => <p key={`${index}-${issue}`}>{issue}</p>)}
+            </div>
+          ) : null}
+          {emptyAnswerCount ? (
+            <div className="warning-box" data-testid="empty-answer-warning">
+              <strong>当前题组仍有 {emptyAnswerCount} 题缺少答案</strong>
+              <p>视觉模型可能未能从图片答案页安全提取这些题。请补齐答案后再确认导出。</p>
             </div>
           ) : null}
           {ir.passage.questionUmbrellaRanges?.length ? (

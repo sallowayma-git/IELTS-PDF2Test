@@ -1,0 +1,48 @@
+name: Windows Smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-smoke.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "scripts/**"
+      - "sidecars/**"
+      - "src/**"
+      - "src-tauri/**"
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run check
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build Windows NSIS installer
+        run: npm run tauri -- build --bundles nsis
+
+      - name: Audit Windows package
+        run: npm run audit:package:windows
+
+      - name: Audit Windows signatures
+        shell: pwsh
+        run: ./scripts/audit-windows-signatures.ps1

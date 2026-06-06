@@ -5,6 +5,38 @@ import { go } from "../app/router";
 import type { AutoPipelineReport, Frequency, PassageCategory } from "../types";
 import { jobStatusLabel, workflowStepLabel } from "../utils/displayLabels";
 
+type BusyStage = "idle" | "creating" | "uploading" | "modeling";
+
+const stageLabels: Record<BusyStage, string> = {
+  idle: "待开始",
+  creating: "创建任务",
+  uploading: "导入文件",
+  modeling: "云端大模型处理中"
+};
+
+function modelStageText(stage: BusyStage): string {
+  if (stage === "modeling") {
+    return "正在连接并等待云端大模型返回。PDF 图片页、扫描答案页或整卷对照会明显更慢，请保持当前页面打开。";
+  }
+  if (stage === "uploading") return "正在写入本地源文件和可选答案文件。";
+  if (stage === "creating") return "正在建立导题任务。";
+  return "选择文件后开始生成。";
+}
+
+function renderModelReport(report: AutoPipelineReport) {
+  const visionAnswers = report.parser?.visionAnswerExtraction;
+  const cloud = report.quality?.cloudComparison;
+  return (
+    <div className="pipeline-summary">
+      <div><span>视觉答案补全</span><strong>{visionAnswers?.attempted ? visionAnswers.applied ? `已补全 ${visionAnswers.answerCount ?? 0} 题` : "已尝试，未安全写入" : "未触发"}</strong></div>
+      <div><span>云端整卷对照</span><strong>{cloud?.attempted ? cloud.passed ? "通过" : `${cloud.warningCount ?? cloud.issues?.length ?? 0} 项需确认` : "未触发"}</strong></div>
+      <div><span>本地题稿</span><strong>{report.userStatus === "needsConfirmation" ? "已生成，待确认" : "已生成"}</strong></div>
+      {visionAnswers?.missingQuestionIds?.length ? <p>仍缺少答案：{visionAnswers.missingQuestionIds.join("、")}</p> : null}
+      {cloud?.issues?.slice(0, 3).map((issue, index) => <p key={`${index}-${issue.message}`}>{issue.message ?? "云端对照发现差异，请在题稿编辑页核对。"}</p>)}
+    </div>
+  );
+}
+
 export function ImportWizard({ refresh }: { refresh: () => void }) {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<PassageCategory>("P1");
@@ -14,6 +46,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
   const [sourceFiles, setSourceFiles] = useState<PickedPath[]>([]);
   const [answerFile, setAnswerFile] = useState<PickedPath | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyStage, setBusyStage] = useState<BusyStage>("idle");
   const [autoReport, setAutoReport] = useState<AutoPipelineReport | undefined>();
   const [batchProgress, setBatchProgress] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -39,6 +72,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
       return;
     }
     setBusy(true);
+    setBusyStage("creating");
     setError(undefined);
     setBatchProgress(undefined);
     try {
@@ -47,11 +81,13 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
       let latestReport: AutoPipelineReport | undefined;
       const tagList = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
       for (const [index, sourceFile] of sourceFiles.entries()) {
+        setBusyStage("creating");
         setBatchProgress(`正在生成 ${index + 1}/${sourceFiles.length}：${sourceFile.name}`);
         const jobTitle = sourceFiles.length === 1
           ? title
           : sourceFile.titleHint || title || sourceFile.name.replace(/\.[^.]+$/, "");
         const job = await createImportJob({ title: jobTitle, category, frequency, tags: tagList });
+        setBusyStage("uploading");
         await importSourceFile(
           job.jobId,
           sourceFile.path,
@@ -61,6 +97,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
           sourceFile.binaryContentBase64
         );
         if (answerFile) {
+          setBusyStage("uploading");
           await importSourceFile(
             job.jobId,
             answerFile.path,
@@ -70,6 +107,8 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
             answerFile.binaryContentBase64
           );
         }
+        setBusyStage("modeling");
+        setBatchProgress(`正在生成 ${index + 1}/${sourceFiles.length}：${sourceFile.name}。云端大模型正在处理，可能需要等待数十秒到数分钟。`);
         const report = await runAutoPipeline(job.jobId, { confidenceThreshold: 0.85, parseMode, target: "editableDraft" });
         latestReport = report;
         if (!firstJobId) {
@@ -88,6 +127,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setBusy(false);
+      setBusyStage("idle");
       setBatchProgress(undefined);
     }
   }
@@ -99,6 +139,8 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
         <dt>当前步骤</dt><dd>{workflowStepLabel(report.currentStep)}</dd>
         <dt>处理结果</dt><dd>{report.userMessage ?? "题稿已生成，可以开始检查和编辑。"}</dd>
         <dt>需要确认的识别结果</dt><dd>{report.llm.suggestionCount} 条，已采用 {report.llm.appliedCount} 条</dd>
+        <dt>视觉答案补全</dt><dd>{report.parser?.visionAnswerExtraction?.attempted ? report.parser.visionAnswerExtraction.applied ? `已补全 ${report.parser.visionAnswerExtraction.answerCount ?? 0} 题` : "已尝试，未安全写入" : "未触发"}</dd>
+        <dt>云端对照</dt><dd>{report.quality?.cloudComparison?.attempted ? report.quality.cloudComparison.passed ? "通过" : `${report.quality.cloudComparison.warningCount ?? 0} 项需确认` : "未触发"}</dd>
         <dt>仍需确认</dt><dd>{report.authoring?.remainingReviewItems ?? 0} 项</dd>
       </dl>
     );
@@ -149,7 +191,17 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
           <span className="step-number">03</span>
           <h3>生成题稿</h3>
           <p>选择一份或多份主文件后，一次点击即可生成可编辑题稿；答案文件可选，通常可随主文件一并导入。</p>
-          {batchProgress ? <p data-testid="batch-progress">{batchProgress}</p> : null}
+          {busy ? (
+            <div className="progress-panel" data-testid="generation-progress-panel">
+              <div className="spinner" aria-hidden="true" />
+              <div>
+                <strong>{stageLabels[busyStage]}</strong>
+                {batchProgress ? <p data-testid="batch-progress">{batchProgress}</p> : null}
+                <p>{modelStageText(busyStage)}</p>
+              </div>
+            </div>
+          ) : batchProgress ? <p data-testid="batch-progress">{batchProgress}</p> : null}
+          {autoReport ? renderModelReport(autoReport) : null}
           {error ? <p className="error-text" data-testid="import-error">{error}</p> : null}
           <button className="primary wide" data-testid="create-and-auto-process" disabled={busy || !sourceFiles.length} onClick={submit}>{busy ? "正在生成题稿..." : "开始生成题稿"}</button>
         </section>

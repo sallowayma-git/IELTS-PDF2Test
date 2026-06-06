@@ -2,11 +2,57 @@ import { useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../api/desktopDialogs";
 import { exportNasLibrary, exportReadingAssets, exportReadingJs } from "../api/tauriCommands";
 import { StatusPill } from "../components/StatusPill";
-import type { ExportResult, ImportJob, JsExportResult, NasExportResult } from "../types";
+import type { ExportResult, ImportJob, JsExportResult, NasExportResult, ValidationIssue } from "../types";
 
 type ExportMode = "single-js" | "batch-js" | "full-assets" | "nas-library";
 
 const EXPORTABLE_STATUSES = new Set(["ExportReady", "Exported", "Cleaned"]);
+
+interface ExportDiagnostics {
+  title: string;
+  issues: ValidationIssue[];
+  guidance: string[];
+}
+
+function parseValidationPayload(message: string): { issues?: ValidationIssue[] } | undefined {
+  const jsonStart = message.indexOf("{");
+  if (jsonStart < 0) return undefined;
+  try {
+    const parsed = JSON.parse(message.slice(jsonStart)) as { issues?: ValidationIssue[] };
+    return Array.isArray(parsed.issues) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildExportDiagnostics(caught: unknown): ExportDiagnostics {
+  const message = caught instanceof Error ? caught.message : String(caught);
+  const issues = parseValidationPayload(message)?.issues ?? [];
+  if (!issues.length) {
+    return {
+      title: "导出没有完成",
+      issues: [],
+      guidance: [message]
+    };
+  }
+
+  const answerEmpty = issues.filter((issue) => issue.path.includes("$.answerKey"));
+  const sourceReview = issues.filter((issue) => issue.path.includes("$.sourceReview"));
+  const verification = issues.filter((issue) => issue.path.includes(".verified") || issue.path.includes("$.audit.humanVerified") || issue.path.includes("$.job.status"));
+  const cloud = issues.filter((issue) => issue.path.includes("cloudComparison"));
+  const guidance = [
+    answerEmpty.length ? `${answerEmpty.length} 道题仍缺少答案，请在题稿编辑页补齐。` : "",
+    sourceReview.length ? "源文件识别结果仍需确认；如果是图片页 PDF，请核对视觉补全内容后确认。" : "",
+    verification.length ? "题组或题目还没有人工确认；可在题稿编辑页逐题确认，或确认当前题组。" : "",
+    cloud.length ? "云端整卷对照发现差异；本地稿未被覆盖，请核对题型、填空位置和答案。" : ""
+  ].filter(Boolean);
+
+  return {
+    title: "导出前还有项目需要确认",
+    issues,
+    guidance: guidance.length ? guidance : ["请根据下方校验项完成确认后再次导出。"]
+  };
+}
 
 export function ExportPage({
   jobId,
@@ -24,6 +70,7 @@ export function ExportPage({
   const [exportDir, setExportDir] = useState<string>("local://exports");
   const [selected, setSelected] = useState<string[]>([jobId]);
   const [error, setError] = useState<string | undefined>();
+  const [diagnostics, setDiagnostics] = useState<ExportDiagnostics | undefined>();
 
   const exportable = useMemo(
     () => jobs.filter((job) => EXPORTABLE_STATUSES.has(job.status)),
@@ -36,6 +83,7 @@ export function ExportPage({
     setSingleResult(undefined);
     setJsResult(undefined);
     setNasResult(undefined);
+    setDiagnostics(undefined);
   }, [jobId]);
 
   async function chooseDir() {
@@ -48,6 +96,7 @@ export function ExportPage({
     setSingleResult(undefined);
     setJsResult(undefined);
     setNasResult(undefined);
+    setDiagnostics(undefined);
     try {
       if (mode === "full-assets") {
         setSingleResult(await exportReadingAssets(jobId, exportDir));
@@ -60,7 +109,9 @@ export function ExportPage({
       }
       refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      const nextDiagnostics = buildExportDiagnostics(caught);
+      setDiagnostics(nextDiagnostics);
+      setError(nextDiagnostics.title);
     }
   }
 
@@ -192,7 +243,13 @@ export function ExportPage({
               {!exportable.length ? <p className="empty">当前没有可直接导出的题目。</p> : null}
             </>
           ) : null}
-          {error ? <p className="warning-box" data-testid="export-error">{error}</p> : null}
+          {error ? (
+            <div className="warning-box" data-testid="export-error">
+              <strong>{error}</strong>
+              {diagnostics?.guidance.map((item) => <p key={item}>{item}</p>)}
+              {diagnostics?.issues.length ? <small>共 {diagnostics.issues.length} 个校验项；下方列出前 8 个。</small> : null}
+            </div>
+          ) : null}
           {cleanupMessage ? (
             <p
               data-testid="cleanup-message"
@@ -211,6 +268,16 @@ export function ExportPage({
         </section>
         <section className="form-section">
           <h3>输出文件</h3>
+          {diagnostics?.issues.length ? (
+            <div className="issue-list" data-testid="export-issue-list">
+              {diagnostics.issues.slice(0, 8).map((issue) => (
+                <div key={issue.issueId}>
+                  <strong>{issue.message}</strong>
+                  <small>{issue.layer} · {issue.path}</small>
+                </div>
+              ))}
+            </div>
+          ) : null}
           {resultFiles?.map((file) => (
             <button className="file-line" data-testid="export-file" key={file.name}>
               {file.name}

@@ -1,0 +1,31 @@
+IELTS Author Studio Windows installation notes
+
+Default channel
+
+- The default Windows installer is intended to stay small.
+- It does not bundle Node.js, Python, Tesseract, local OCR engines, PDFium, or a fixed WebView2 runtime.
+- The installer relies on Microsoft Edge WebView2 Runtime being present or installable through the selected Tauri WebView2 mode.
+
+Unsigned internal builds
+
+- Internal test builds may be unsigned.
+- Windows SmartScreen or "Unknown publisher" prompts are expected for unsigned builds.
+- Users should only run unsigned installers received directly from the project team.
+
+External distribution
+
+- Before public distribution, sign the installer with an Authenticode certificate.
+- Keep signing as a release step, separate from application build logic.
+- Suggested environment variables for CI/release signing:
+  - WINDOWS_SIGNING_CERT
+  - WINDOWS_SIGNING_PASSWORD
+  - WINDOWS_SIGNING_TIMESTAMP_URL
+- After signing, run:
+
+pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/audit-windows-signatures.ps1 -RequireValid
+
+Offline WebView2 channel
+
+- Use `npm run verify:release:windows:offline` only for school, enterprise, or USB/offline distribution.
+- The offline channel intentionally creates a much larger installer.
+- Do not use the offline WebView2 config for the default small installer channel.

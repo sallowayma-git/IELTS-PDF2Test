@@ -548,16 +548,67 @@ function resolveUnifiedHtmlPath() {
   return null;
 }
 
-function resolvePythonPath() {
-  const fromEnv = process.env.EPIC8_UNIFIED_PYTHON;
-  if (fromEnv && fs.existsSync(fromEnv)) {
-    return path.resolve(fromEnv);
+function splitCommandLine(value) {
+  const parts = [];
+  let current = '';
+  let quote = null;
+  for (const char of String(value ?? '').trim()) {
+    if ((char === '"' || char === "'") && !quote) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+    if (/\s/.test(char) && !quote) {
+      if (current) {
+        parts.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
   }
-  const defaults = [
-    '/usr/bin/python3',
-    '/opt/homebrew/bin/python3',
-  ];
-  return defaults.find((candidate) => fs.existsSync(candidate)) || 'python3';
+  if (current) parts.push(current);
+  return parts;
+}
+
+function pythonCommandFromEnv() {
+  const fromEnv = process.env.EPIC8_PYTHON || process.env.EPIC8_UNIFIED_PYTHON;
+  if (!fromEnv) return null;
+  if (fs.existsSync(fromEnv)) return { command: path.resolve(fromEnv), args: [], label: path.resolve(fromEnv) };
+  const [command, ...args] = splitCommandLine(fromEnv);
+  return command ? { command, args, label: [command, ...args].join(' ') } : null;
+}
+
+function canRun(command, args = []) {
+  const result = spawnSync(command, [...args, '--version'], {
+    encoding: 'utf8',
+    timeout: 10000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return result.status === 0 || result.status === 1;
+}
+
+function resolvePythonCommand() {
+  const candidates = [
+    pythonCommandFromEnv(),
+    ...(process.platform === 'win32'
+      ? [
+          { command: 'py', args: ['-3'], label: 'py -3' },
+          { command: 'python', args: [], label: 'python' },
+        ]
+      : [
+          { command: 'python3', args: [], label: 'python3' },
+          { command: 'python', args: [], label: 'python' },
+        ]),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (canRun(candidate.command, candidate.args)) return candidate;
+  }
+  return candidates[0] ?? { command: 'python3', args: [], label: 'python3' };
 }
 
 function runRealRuntime({ previewDir, examId, jobId }) {
@@ -602,8 +653,8 @@ function runRealRuntime({ previewDir, examId, jobId }) {
   fs.writeFileSync(payloadPath, JSON.stringify(payload), 'utf8');
   fs.writeFileSync(runnerPath, pythonRunnerSource(), 'utf8');
 
-  const pythonPath = resolvePythonPath();
-  const output = spawnSync(pythonPath, [runnerPath, payloadPath], {
+  const python = resolvePythonCommand();
+  const output = spawnSync(python.command, [...python.args, runnerPath, payloadPath], {
     encoding: 'utf8',
     timeout: 240000,
   });
@@ -615,7 +666,7 @@ function runRealRuntime({ previewDir, examId, jobId }) {
       preflightConsoleErrors,
       registeredIds: generated.registeredIds,
       unifiedHtmlPath,
-      pythonPath,
+      pythonCommand: python.label,
     };
     const issues = parsed.issues.map((item) => issue(item.path || 'runtime.real', item.message || 'real runtime issue'));
     return {
@@ -630,7 +681,7 @@ function runRealRuntime({ previewDir, examId, jobId }) {
   return {
     ok: false,
     reason: 'real_runtime_runner_failed',
-    message: `real runtime runner failed: code=${output.status}; stdout=${(output.stdout || '').trim()}; stderr=${(output.stderr || '').trim()}`,
+    message: `real runtime runner failed: python=${python.label}; code=${output.status}; stdout=${(output.stdout || '').trim()}; stderr=${(output.stderr || '').trim()}`,
   };
 }
 

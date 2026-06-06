@@ -1,0 +1,26 @@
+IELTS Author Studio macOS 安装说明
+
+由于 macOS 的安全机制，非 App Store 下载且未使用 Apple Developer ID 公证的应用，可能会提示“已损坏，无法打开”或“Apple 无法验证是否包含恶意软件”。
+
+请按以下顺序处理。所有命令都只处理已经拖入 Applications 的应用，不处理 DMG 里的临时副本。
+
+1. 先将 “IELTS Author Studio.app” 拖入 Applications。
+2. 尝试双击本 DMG 中的 “Open Unsigned App.command”。
+3. 如果 macOS 连该脚本也阻止打开，请打开“终端”，执行以下命令：
+
+APP="/Applications/IELTS Author Studio.app"
+sudo xattr -cr "$APP"
+sudo xattr -dr com.apple.quarantine "$APP"
+sudo codesign --force --deep --sign - "$APP"
+sudo spctl --add --label "IELTS Author Studio" "$APP"
+open "$APP"
+
+如果应用仍然无法打开，请继续在终端执行下面这组检查命令，并把输出反馈给开发者：
+
+uname -m
+sw_vers
+xattr -lr "/Applications/IELTS Author Studio.app" | head -40
+codesign --verify --deep --strict --verbose=4 "/Applications/IELTS Author Studio.app"
+spctl --assess --type execute --verbose=4 "/Applications/IELTS Author Studio.app"
+
+说明：这份构建未使用 Apple Developer ID 证书签名，也未经过 Apple 公证。以上命令用于移除隔离标记、重新进行本机 ad-hoc 签名，并将该应用加入这台 Mac 的 Gatekeeper 例外列表。

@@ -4,20 +4,33 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const defaultCorpusRoot = "/Users/maziheng/Downloads/0.3.1 working";
-const defaultPdfDir = path.join(defaultCorpusRoot, "ReadingPractice", "PDF");
-const defaultLegacyDir = path.join(defaultCorpusRoot, "assets", "generated", "reading-exams");
 const defaultOutDir = path.join(repoRoot, "tmp", "pdf-regression-sample");
 
 const args = parseArgs(process.argv.slice(2));
+if (args.help === true || args.h === true) {
+  printUsageAndExit(0);
+}
+
+const pdfDirArg = args.pdfDir ?? args["pdf-dir"];
+const legacyDirArg = args.legacyDir ?? args["legacy-dir"];
+const outDirArg = args.outDir ?? args["out-dir"];
+const skipBuildArg = args.skipBuild ?? args["skip-build"];
+
+if (!pdfDirArg || !legacyDirArg) {
+  console.error("[pdf-regression] --pdf-dir and --legacy-dir are required for real corpus data.");
+  printUsageAndExit(2);
+}
+
 const sampleSize = Number(args.sample ?? 30);
-const pdfDir = path.resolve(args.pdfDir ?? defaultPdfDir);
-const legacyDir = path.resolve(args.legacyDir ?? defaultLegacyDir);
-const outDir = path.resolve(args.outDir ?? defaultOutDir);
+const pdfDir = path.resolve(pdfDirArg);
+const legacyDir = path.resolve(legacyDirArg);
+const outDir = path.resolve(outDirArg ?? defaultOutDir);
 const seed = args.seed ?? String(Date.now());
 const strict = args.strict === "true" || args.strict === true;
-const skipBuild = args.skipBuild === "true" || args.skipBuild === true;
+const skipBuild = skipBuildArg === "true" || skipBuildArg === true;
 
+assertReadableDirectory(pdfDir, "--pdf-dir");
+assertReadableDirectory(legacyDir, "--legacy-dir");
 fs.mkdirSync(outDir, { recursive: true });
 
 const legacyItems = loadLegacyReadingExams(legacyDir);
@@ -41,7 +54,7 @@ for (const pdfPath of allPdfs) {
 }
 
 const selected = shuffle(matched, seed).slice(0, Math.min(sampleSize, matched.length));
-const cli = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio");
+const cli = path.resolve(args.cli ?? path.join(repoRoot, "src-tauri", "target", "debug", cliBinaryName()));
 if (!skipBuild || !fs.existsSync(cli)) {
   const build = spawnSync("cargo", ["build", "--manifest-path", path.join(repoRoot, "src-tauri", "Cargo.toml")], {
     cwd: repoRoot,
@@ -138,6 +151,37 @@ function parseArgs(argv) {
     }
   }
   return parsed;
+}
+
+function printUsageAndExit(code) {
+  const usage = [
+    "usage: node scripts/pdf-regression-sample.mjs --pdf-dir <dir> --legacy-dir <dir> [options]",
+    "",
+    "Required:",
+    "  --pdf-dir <dir>      Directory containing real PDF corpus files.",
+    "  --legacy-dir <dir>   Directory containing legacy generated reading exam JS files.",
+    "",
+    "Options:",
+    "  --sample <n>         Number of matched PDFs to sample. Default: 30.",
+    "  --out-dir <dir>      Report/output directory. Default: tmp/pdf-regression-sample.",
+    "  --seed <value>       Deterministic sample seed. Default: current timestamp.",
+    "  --cli <path>         Existing ielts-author-studio CLI binary to run.",
+    "  --skip-build         Skip cargo build when --cli/default binary already exists.",
+    "  --strict             Exit non-zero when any sampled comparison fails."
+  ].join("\n");
+  (code === 0 ? console.log : console.error)(usage);
+  process.exit(code);
+}
+
+function assertReadableDirectory(dir, label) {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
+    console.error(`[pdf-regression] ${label} is not a readable directory: ${dir}`);
+    process.exit(2);
+  }
+}
+
+function cliBinaryName() {
+  return process.platform === "win32" ? "ielts-author-studio.exe" : "ielts-author-studio";
 }
 
 function loadLegacyReadingExams(dir) {

@@ -23,11 +23,11 @@ fi
 
 echo "Preparing installed app: $APP_PATH"
 
-if xattr -p com.apple.quarantine "$APP_PATH" >/dev/null 2>&1; then
-  xattr -dr com.apple.quarantine "$APP_PATH"
-fi
+xattr -cr "$APP_PATH"
+xattr -dr com.apple.quarantine "$APP_PATH" 2>/dev/null || true
 
-codesign --force --deep --sign - "$APP_PATH" >/dev/null 2>&1 || true
+codesign --force --deep --sign - "$APP_PATH"
+spctl --add --label "IELTS Author Studio" "$APP_PATH" 2>/dev/null || true
 
 echo "Opening $APP_NAME..."
 open "$APP_PATH"

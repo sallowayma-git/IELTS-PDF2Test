@@ -1,5 +1,8 @@
 use crate::authoring_pipeline::collapse_whitespace;
-use crate::environment::{command_failure, find_sidecar};
+use crate::environment::{
+    cloud_pdf_vision_enabled, command_failure, find_sidecar, local_ocr_enabled,
+    pdf_renderer_setting, resolve_python_command,
+};
 use crate::util::{read_json, write_json};
 use crate::{hash_bytes, html_escape, main_source_file, CommandResult, ImportJob, SourceFile};
 use chrono::Utc;
@@ -1238,7 +1241,10 @@ fn parse_with_python_sidecar(
 ) -> CommandResult<Value> {
     let script = find_sidecar("sidecars/python-parser/parser.py")
         .ok_or_else(|| "python_parser_sidecar_missing".to_string())?;
-    let output = Command::new("python3")
+    let python =
+        resolve_python_command().ok_or_else(|| "python_runtime_unavailable".to_string())?;
+    let output = Command::new(&python.program)
+        .args(&python.args)
         .arg(&script)
         .arg("parse")
         .arg("--input")
@@ -1250,7 +1256,14 @@ fn parse_with_python_sidecar(
         .arg("--mode")
         .arg(mode)
         .output()
-        .map_err(|error| format!("python_parser_spawn_failed:{}:{}", script.display(), error))?;
+        .map_err(|error| {
+            format!(
+                "python_parser_spawn_failed:{}:{}:{}",
+                python.display(),
+                script.display(),
+                error
+            )
+        })?;
     if !output.status.success() {
         return Err(command_failure("python-parser", &output));
     }
@@ -1265,7 +1278,10 @@ pub(crate) fn extract_pdf_images_with_python_sidecar(
 ) -> CommandResult<Value> {
     let script = find_sidecar("sidecars/python-parser/parser.py")
         .ok_or_else(|| "python_parser_sidecar_missing".to_string())?;
-    let output = Command::new("python3")
+    let python =
+        resolve_python_command().ok_or_else(|| "python_runtime_unavailable".to_string())?;
+    let output = Command::new(&python.program)
+        .args(&python.args)
         .arg(&script)
         .arg("extract_pdf_images")
         .arg("--input")
@@ -1277,11 +1293,21 @@ pub(crate) fn extract_pdf_images_with_python_sidecar(
         .arg("--asset-dir")
         .arg(asset_dir)
         .output()
-        .map_err(|error| format!("python_parser_spawn_failed:{}:{}", script.display(), error))?;
+        .map_err(|error| {
+            format!(
+                "python_parser_spawn_failed:{}:{}:{}",
+                python.display(),
+                script.display(),
+                error
+            )
+        })?;
     if !output.status.success() {
         return Err(command_failure("python-parser:extract_pdf_images", &output));
     }
-    read_json(output_path)
+    let mut extraction = read_json(output_path)?;
+    stabilize_pdf_image_extraction_fields(&mut extraction, None, None, None, None, None, None);
+    write_json(output_path, &extraction)?;
+    Ok(extraction)
 }
 
 pub(crate) fn image_count_from_extraction(extraction: &Value) -> usize {
@@ -1299,6 +1325,145 @@ pub(crate) fn image_count_from_extraction(extraction: &Value) -> usize {
         .count()
 }
 
+fn extraction_page_count(extraction: &Value) -> usize {
+    extraction
+        .get("pages")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn rendered_page_count_from_extraction(extraction: &Value) -> usize {
+    extraction
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|page| {
+            page.get("images")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|image| {
+                    image
+                        .get("renderedFallback")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        || image.get("renderSource").is_some()
+                })
+        })
+        .count()
+}
+
+fn extraction_requires_manual_review(extraction: &Value) -> bool {
+    extraction
+        .get("requiresManualReview")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || extraction
+            .get("failureReason")
+            .and_then(Value::as_str)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        || image_count_from_extraction(extraction) == 0
+}
+
+fn renderer_provider_from_extraction(extraction: &Value) -> &'static str {
+    let mut saw_pymupdf = false;
+    let mut saw_poppler = false;
+    let mut saw_sips = false;
+    let mut saw_rendered = false;
+    for image in extraction
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|page| {
+            page.get("images")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+    {
+        let source = image
+            .get("renderSource")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        saw_pymupdf |= source.contains("pymupdf");
+        saw_poppler |= source.contains("pdftoppm") || source.contains("poppler");
+        saw_sips |= source.contains("sips");
+        saw_rendered |= !source.is_empty()
+            || image
+                .get("renderedFallback")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+    }
+    if saw_pymupdf {
+        "pymupdf"
+    } else if saw_poppler {
+        "poppler"
+    } else if saw_sips {
+        "system-sips"
+    } else if saw_rendered {
+        "pdf-page-renderer"
+    } else {
+        "embedded-pdf-images"
+    }
+}
+
+fn stabilize_pdf_image_extraction_fields(
+    extraction: &mut Value,
+    renderer_adapter: Option<&str>,
+    renderer_provider: Option<&str>,
+    renderer_version: Option<Value>,
+    dpi: Option<u64>,
+    failure_reason: Option<&str>,
+    requires_manual_review: Option<bool>,
+) {
+    let page_count = extraction_page_count(extraction);
+    let rendered_page_count = rendered_page_count_from_extraction(extraction);
+    let image_count = image_count_from_extraction(extraction);
+    let inferred_provider =
+        renderer_provider.unwrap_or_else(|| renderer_provider_from_extraction(extraction));
+    let inferred_requires_manual_review =
+        requires_manual_review.unwrap_or_else(|| extraction_requires_manual_review(extraction));
+    let obj = extraction
+        .as_object_mut()
+        .expect("PdfImageExtractionV1 should be a JSON object");
+    obj.entry("schemaVersion".to_string())
+        .or_insert_with(|| json!("PdfImageExtractionV1"));
+    if let Some(adapter) = renderer_adapter {
+        obj.insert("rendererAdapter".to_string(), json!(adapter));
+    } else {
+        obj.entry("rendererAdapter".to_string())
+            .or_insert_with(|| json!("python-sidecar"));
+    }
+    obj.entry("rendererProvider".to_string())
+        .or_insert_with(|| json!(inferred_provider));
+    obj.entry("rendererVersion".to_string())
+        .or_insert(renderer_version.unwrap_or(Value::Null));
+    obj.insert("pageCount".to_string(), json!(page_count));
+    obj.insert("renderedPageCount".to_string(), json!(rendered_page_count));
+    obj.entry("dpi".to_string())
+        .or_insert(json!(dpi.unwrap_or(180)));
+    obj.insert("ocrPerformed".to_string(), json!(false));
+    obj.insert(
+        "requiresManualReview".to_string(),
+        json!(inferred_requires_manual_review),
+    );
+    obj.entry("imageCount".to_string())
+        .or_insert_with(|| json!(image_count));
+    obj.entry("cloudPdfVisionEnabled".to_string())
+        .or_insert_with(|| json!(cloud_pdf_vision_enabled()));
+    obj.entry("localOcrEnabled".to_string())
+        .or_insert_with(|| json!(local_ocr_enabled()));
+    obj.entry("failureReason".to_string()).or_insert_with(|| {
+        failure_reason
+            .map(|value| json!(value))
+            .unwrap_or(Value::Null)
+    });
+}
+
 fn merge_rendered_page_images(extraction: &Value, rendered: &Value) -> Value {
     let mut merged = extraction.clone();
     let Some(extracted_pages) = merged.get_mut("pages").and_then(Value::as_array_mut) else {
@@ -1314,9 +1479,10 @@ fn merge_rendered_page_images(extraction: &Value, rendered: &Value) -> Value {
             .get("pageIndex")
             .and_then(Value::as_u64)
             .unwrap_or(0);
-        let Some(rendered_page) = rendered_pages.iter().find(|page| {
-            page.get("pageIndex").and_then(Value::as_u64).unwrap_or(0) == page_index
-        }) else {
+        let Some(rendered_page) = rendered_pages
+            .iter()
+            .find(|page| page.get("pageIndex").and_then(Value::as_u64).unwrap_or(0) == page_index)
+        else {
             continue;
         };
         let rendered_images = rendered_page
@@ -1335,6 +1501,7 @@ fn merge_rendered_page_images(extraction: &Value, rendered: &Value) -> Value {
             images.extend(rendered_images);
         }
     }
+    let merged_has_images = image_count_from_extraction(&merged) > 0;
     if let Some(obj) = merged.as_object_mut() {
         let mut warnings = obj
             .get("warnings")
@@ -1358,7 +1525,24 @@ fn merge_rendered_page_images(extraction: &Value, rendered: &Value) -> Value {
                         .unwrap_or(false)
             ),
         );
+        if !merged_has_images {
+            if let Some(reason) = rendered
+                .get("failureReason")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                obj.insert("failureReason".to_string(), json!(reason));
+            }
+            if rendered
+                .get("requiresManualReview")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                obj.insert("requiresManualReview".to_string(), json!(true));
+            }
+        }
     }
+    stabilize_pdf_image_extraction_fields(&mut merged, None, None, None, None, None, None);
     merged
 }
 
@@ -1369,7 +1553,155 @@ pub(crate) fn render_pdf_pages_with_adapter(
     asset_dir: &Path,
     prior_warnings: Vec<String>,
 ) -> CommandResult<Value> {
-    render_pdf_pages_with_macos_sips(job_id, input_path, output_path, asset_dir, prior_warnings)
+    match pdf_renderer_setting().as_str() {
+        "none" => render_pdf_pages_unsupported(
+            job_id,
+            input_path,
+            output_path,
+            prior_warnings,
+            "renderer_disabled",
+            "PDF page rendering is disabled by EPIC8_PDF_RENDERER=none; manual review required for scanned PDFs.",
+        ),
+        "sips" => {
+            #[cfg(target_os = "macos")]
+            {
+                render_pdf_pages_with_macos_sips(
+                    job_id,
+                    input_path,
+                    output_path,
+                    asset_dir,
+                    prior_warnings,
+                )
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                render_pdf_pages_unsupported(
+                    job_id,
+                    input_path,
+                    output_path,
+                    prior_warnings,
+                    "renderer_sips_unsupported_on_platform",
+                    "sips PDF rendering is only available on macOS; manual review required for scanned PDFs.",
+                )
+            }
+        }
+        "pdfium" => render_pdf_pages_unsupported(
+            job_id,
+            input_path,
+            output_path,
+            prior_warnings,
+            "renderer_pdfium_unimplemented",
+            "PDFium page renderer is reserved but not bundled in this runtime; manual review required for scanned PDFs.",
+        ),
+        "poppler" => render_pdf_pages_unsupported(
+            job_id,
+            input_path,
+            output_path,
+            prior_warnings,
+            "renderer_poppler_unimplemented",
+            "Poppler page renderer is reserved but not bundled in this runtime; manual review required for scanned PDFs.",
+        ),
+        "pymupdf" => render_pdf_pages_unsupported(
+            job_id,
+            input_path,
+            output_path,
+            prior_warnings,
+            "renderer_pymupdf_unimplemented",
+            "PyMuPDF page renderer is reserved but not bundled in this Rust runtime; manual review required for scanned PDFs.",
+        ),
+        _ => {
+            #[cfg(target_os = "macos")]
+            {
+                render_pdf_pages_with_macos_sips(
+                    job_id,
+                    input_path,
+                    output_path,
+                    asset_dir,
+                    prior_warnings,
+                )
+            }
+            #[cfg(target_os = "windows")]
+            {
+                render_pdf_pages_unsupported(
+                    job_id,
+                    input_path,
+                    output_path,
+                    prior_warnings,
+                    "renderer_windows_pdfium_unimplemented",
+                    "Windows PDF page rendering is not implemented in this runtime; use cloud PDF vision if available or manual transcription/review.",
+                )
+            }
+            #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+            {
+                render_pdf_pages_unsupported(
+                    job_id,
+                    input_path,
+                    output_path,
+                    prior_warnings,
+                    "renderer_unsupported_platform",
+                    "PDF page rendering is unsupported on this platform; use cloud PDF vision if available or manual transcription/review.",
+                )
+            }
+        }
+    }
+}
+
+fn render_pdf_pages_unsupported(
+    job_id: &str,
+    input_path: &Path,
+    output_path: &Path,
+    prior_warnings: Vec<String>,
+    failure_reason: &str,
+    message: &str,
+) -> CommandResult<Value> {
+    let mut warnings = prior_warnings
+        .into_iter()
+        .filter(|warning| !warning.trim().is_empty())
+        .collect::<Vec<_>>();
+    warnings.push(message.to_string());
+    let provider = if cfg!(target_os = "windows") {
+        "windows-pdfium"
+    } else if cfg!(target_os = "macos") {
+        "system-sips"
+    } else {
+        "unsupported-platform"
+    };
+    let adapter = if cfg!(target_os = "windows") {
+        "windows-pdfium"
+    } else if cfg!(target_os = "macos") {
+        "macos-sips"
+    } else {
+        "unsupported-renderer"
+    };
+    let mut extraction = json!({
+        "schemaVersion": "PdfImageExtractionV1",
+        "jobId": job_id,
+        "sourcePath": input_path.to_string_lossy(),
+        "rendererAdapter": adapter,
+        "rendererProvider": provider,
+        "rendererVersion": null,
+        "renderPurpose": "vision-llm-transcription-input",
+        "pageCount": 0,
+        "renderedPageCount": 0,
+        "dpi": 180,
+        "ocrPerformed": false,
+        "failureReason": failure_reason,
+        "requiresManualReview": true,
+        "pages": [],
+        "warnings": warnings,
+        "renderedFallback": false
+    });
+    stabilize_pdf_image_extraction_fields(
+        &mut extraction,
+        Some(adapter),
+        Some(provider),
+        Some(Value::Null),
+        Some(180),
+        Some(failure_reason),
+        Some(true),
+    );
+    write_json(output_path, &extraction)?;
+    Ok(extraction)
 }
 
 fn render_pdf_pages_with_macos_sips(
@@ -1420,14 +1752,20 @@ fn render_pdf_pages_with_macos_sips(
         "sips fallback currently renders a preview image, not full OCR or guaranteed multi-page coverage"
             .to_string(),
     );
-    let extraction = json!({
+    let mut extraction = json!({
         "schemaVersion": "PdfImageExtractionV1",
         "jobId": job_id,
         "sourcePath": input_path.to_string_lossy(),
         "rendererAdapter": "macos-sips",
         "rendererProvider": "system-sips",
+        "rendererVersion": null,
         "renderPurpose": "vision-llm-transcription-input",
+        "pageCount": 1,
+        "renderedPageCount": 1,
+        "dpi": 180,
         "ocrPerformed": false,
+        "failureReason": null,
+        "requiresManualReview": false,
         "futureAdapter": "pdfium-render-page-renderer",
         "pages": [{
             "pageIndex": 1,
@@ -1450,6 +1788,15 @@ fn render_pdf_pages_with_macos_sips(
         "warnings": warnings,
         "renderedFallback": true
     });
+    stabilize_pdf_image_extraction_fields(
+        &mut extraction,
+        Some("macos-sips"),
+        Some("system-sips"),
+        Some(Value::Null),
+        Some(180),
+        None,
+        Some(false),
+    );
     write_json(output_path, &extraction)?;
     Ok(extraction)
 }
@@ -1470,8 +1817,13 @@ pub(crate) fn extract_pdf_images_for_vision(
                 .filter_map(Value::as_str)
                 .map(ToString::to_string)
                 .collect::<Vec<_>>();
-            match render_pdf_pages_with_adapter(job_id, input_path, output_path, asset_dir, warnings)
-            {
+            match render_pdf_pages_with_adapter(
+                job_id,
+                input_path,
+                output_path,
+                asset_dir,
+                warnings,
+            ) {
                 Ok(rendered) => {
                     let merged = merge_rendered_page_images(&extraction, &rendered);
                     write_json(output_path, &merged)?;
@@ -1487,7 +1839,13 @@ pub(crate) fn extract_pdf_images_for_vision(
                         .filter_map(Value::as_str)
                         .map(ToString::to_string)
                         .collect::<Vec<_>>();
-                    render_pdf_pages_with_adapter(job_id, input_path, output_path, asset_dir, warnings)
+                    render_pdf_pages_with_adapter(
+                        job_id,
+                        input_path,
+                        output_path,
+                        asset_dir,
+                        warnings,
+                    )
                 }
             }
         }
@@ -1497,7 +1855,7 @@ pub(crate) fn extract_pdf_images_for_vision(
             output_path,
             asset_dir,
             vec![format!(
-                "python PDF image extraction failed; used Rust sips fallback: {}",
+                "python PDF image extraction failed; used platform PDF renderer fallback: {}",
                 error
             )],
         ),

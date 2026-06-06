@@ -5,8 +5,9 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(new URL("../..", import.meta.url).pathname);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DEFAULT_BASE_URL = "http://127.0.0.1:1420";
 const CLEAR_TEXT_PDF = path.join(root, "fixtures", "parser", "complex-reading.pdf");
 const SCANNED_PDF = path.join(root, "fixtures", "parser", "no-text.pdf");
@@ -88,7 +89,7 @@ async function ensureVite(baseUrl, noStartServer) {
   }
   if (noStartServer) throw new Error(`Vite dev server is not reachable at ${baseUrl}`);
 
-  const proc = spawn("npm", ["run", "dev", "--", "--host", "127.0.0.1"], {
+  const proc = spawn(npmCommand(), ["run", "dev", "--", "--host", "127.0.0.1"], {
     cwd: root,
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, BROWSER: "none" }
@@ -106,6 +107,10 @@ async function ensureVite(baseUrl, noStartServer) {
   return { process: proc, started: true };
 }
 
+function npmCommand() {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
 async function freePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -119,15 +124,27 @@ async function freePort() {
 }
 
 function findChrome(chromePathArg) {
+  const programFiles = [
+    process.env.PROGRAMFILES,
+    process.env["PROGRAMFILES(X86)"],
+    process.env.LOCALAPPDATA
+  ].filter(Boolean);
+  const windowsCandidates = programFiles.flatMap((baseDir) => [
+    path.join(baseDir, "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(baseDir, "Chromium", "Application", "chrome.exe"),
+    path.join(baseDir, "Microsoft", "Edge", "Application", "msedge.exe")
+  ]);
   const candidates = [
     chromePathArg,
     process.env.CHROME_PATH,
+    process.env.EDGE_PATH,
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     "/usr/bin/google-chrome",
     "/usr/bin/chromium",
-    "/usr/bin/chromium-browser"
+    "/usr/bin/chromium-browser",
+    ...windowsCandidates
   ].filter(Boolean);
   const found = candidates.find((candidate) => fs.existsSync(candidate));
   if (!found) throw new Error("No Chrome/Chromium executable found. Set CHROME_PATH or pass --chrome-path.");

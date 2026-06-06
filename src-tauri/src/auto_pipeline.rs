@@ -356,6 +356,102 @@ fn answer_key_by_display_from_authoring(ir: &Value) -> serde_json::Map<String, V
     answers
 }
 
+fn answer_question_ids_from_authoring(ir: &Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    for group in ir
+        .get("groups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for question in group
+            .get("questions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let qid = question
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if qid.is_empty() {
+                continue;
+            }
+            if !crate::authoring_review::answer_is_empty(question.get("answer")) {
+                ids.push(qid);
+            }
+        }
+    }
+    ids
+}
+
+fn empty_answer_question_ids_from_authoring(ir: &Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    for group in ir
+        .get("groups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for question in group
+            .get("questions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let qid = question
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if qid.is_empty() {
+                continue;
+            }
+            if crate::authoring_review::answer_is_empty(question.get("answer")) {
+                ids.push(qid);
+            }
+        }
+    }
+    ids
+}
+
+fn outline_group_summary_from_local(ir: &Value) -> Value {
+    json!(ir
+        .get("groups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|group| {
+            json!({
+                "range": group.get("questionRange").cloned().unwrap_or(Value::Null),
+                "kind": group.get("kind").cloned().unwrap_or(Value::Null),
+                "layoutHint": group.pointer("/layout/layoutHint").cloned().unwrap_or(Value::Null),
+                "questionIds": group.get("questions").and_then(Value::as_array).map(|questions| {
+                    questions.iter().filter_map(|question| question.get("id").and_then(Value::as_str)).collect::<Vec<_>>()
+                }).unwrap_or_default()
+            })
+        })
+        .collect::<Vec<_>>())
+}
+
+fn outline_group_summary_from_cloud(output: &Value) -> Value {
+    json!(output
+        .get("groups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|group| {
+            json!({
+                "range": group.get("range").cloned().unwrap_or(Value::Null),
+                "kind": group.get("kind").cloned().unwrap_or(Value::Null),
+                "layoutHint": group.get("layoutHint").cloned().unwrap_or(Value::Null),
+                "questionIds": group.get("questionIds").cloned().unwrap_or_else(|| json!([]))
+            })
+        })
+        .collect::<Vec<_>>())
+}
+
 fn semantic_group_kind_family(kind: &str) -> &str {
     match kind {
         "summary_completion" | "sentence_completion" | "note_completion" | "notes_completion" => {
@@ -616,10 +712,18 @@ fn cloud_outline_comparison(ir: &Value, output: &Value) -> Value {
     })
 }
 
-fn append_authoring_audit_issue(ir: &mut Value, message: &str) {
+fn append_authoring_audit_issue(ir: &mut Value, issue: Value) {
     let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) else {
         return;
     };
+    let message = issue
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if message.trim().is_empty() {
+        return;
+    }
     let issues = audit
         .entry("issues".to_string())
         .or_insert_with(|| json!([]));
@@ -629,13 +733,9 @@ fn append_authoring_audit_issue(ir: &mut Value, message: &str) {
     if let Some(items) = issues.as_array_mut() {
         if !items
             .iter()
-            .any(|item| item.get("message").and_then(Value::as_str) == Some(message))
+            .any(|item| item.get("message").and_then(Value::as_str) == Some(&message))
         {
-            items.push(json!({
-                "layer": "QualityCheck",
-                "path": "$.audit.cloudComparison",
-                "message": message
-            }));
+            items.push(issue);
         }
     }
 }
@@ -704,7 +804,13 @@ where
                 .get("issues")
                 .cloned()
                 .unwrap_or_else(|| json!([]));
+            report["observations"] = comparison
+                .get("observations")
+                .cloned()
+                .unwrap_or_else(|| json!([]));
             report["comparison"] = comparison;
+            report["localSummary"] = outline_group_summary_from_local(ir);
+            report["cloudSummary"] = outline_group_summary_from_cloud(&output);
             report["outputConfidence"] = output.get("confidence").cloned().unwrap_or(Value::Null);
             report["outputWarnings"] = output.get("warnings").cloned().unwrap_or_else(|| json!([]));
         }
@@ -1167,6 +1273,40 @@ where
             display_map_from_authoring(&Value::Object(obj.clone())),
         );
     }
+    if let Some(obj) = vision_answer_extraction.as_object_mut() {
+        let filled = answer_question_ids_from_authoring(&ir);
+        let missing = empty_answer_question_ids_from_authoring(&ir);
+        obj.insert("filledQuestionIds".to_string(), json!(filled.clone()));
+        obj.insert("missingQuestionIds".to_string(), json!(missing.clone()));
+        if obj
+            .get("attempted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            append_authoring_audit_issue(
+                &mut ir,
+                json!({
+                    "layer": "Parser",
+                    "path": "$.parser.visionAnswerExtraction",
+                    "kind": "vision_answer_extraction_summary",
+                    "message": if filled.is_empty() {
+                        "视觉模型已检查 PDF 图片答案页，但没有可安全写入的答案；空答案仍需人工补齐。"
+                    } else if missing.is_empty() {
+                        "视觉模型已从 PDF 图片页补全答案；请逐题核对后勾选人工确认。"
+                    } else {
+                        "视觉模型已补全部分答案，仍有题目缺少答案；请核对图片答案页并补齐。"
+                    },
+                    "attempted": obj.get("attempted").cloned().unwrap_or(Value::Bool(false)),
+                    "applied": obj.get("applied").cloned().unwrap_or(Value::Bool(false)),
+                    "answerCount": obj.get("answerCount").cloned().unwrap_or_else(|| json!(0)),
+                    "filledQuestionIds": filled,
+                    "missingQuestionIds": missing,
+                    "confidence": obj.get("confidence").cloned().unwrap_or(Value::Null),
+                    "failure": obj.get("failure").cloned().unwrap_or(Value::Null)
+                }),
+            );
+        }
+    }
     let remaining_authoring_review = refresh_authoring_review_state(&mut ir);
     if let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) {
         audit.insert("llmUsed".to_string(), json!(suggestion_count > 0));
@@ -1235,9 +1375,26 @@ where
             .unwrap_or(false)
             || cloud_warning_count > 0);
     if cloud_needs_confirmation {
+        let local_summary = cloud_comparison
+            .get("localSummary")
+            .cloned()
+            .unwrap_or_else(|| outline_group_summary_from_local(&ir));
         append_authoring_audit_issue(
             &mut ir,
-            "云端对照没有通过，请确认题组、填空位置和答案；本地题稿未被云端结果覆盖。",
+            json!({
+                "layer": "QualityCheck",
+                "path": "$.audit.cloudComparison",
+                "kind": "cloud_comparison_summary",
+                "message": "云端对照没有通过，请确认题组、填空位置和答案；本地题稿未被云端结果覆盖。",
+                "attempted": cloud_comparison.get("attempted").cloned().unwrap_or(Value::Bool(false)),
+                "passed": cloud_comparison.get("passed").cloned().unwrap_or(Value::Bool(false)),
+                "warningCount": cloud_warning_count,
+                "failure": cloud_comparison.get("failure").cloned().unwrap_or(Value::Null),
+                "issues": cloud_comparison.get("issues").cloned().unwrap_or_else(|| json!([])),
+                "observations": cloud_comparison.get("observations").cloned().unwrap_or_else(|| json!([])),
+                "localSummary": local_summary,
+                "cloudSummary": cloud_comparison.get("cloudSummary").cloned().unwrap_or_else(|| json!([]))
+            }),
         );
     }
     write_json(&dir.join("authoring-ir.json"), &ir)?;

@@ -1381,9 +1381,11 @@ mod tests {
             "rust:text-parser",
             "rust:pdf-extract",
             "rust:docx-ooxml",
-            "python3",
+            "python",
             "python:pypdf",
-            "renderer:macos-sips",
+            "renderer:pdf-page-renderer",
+            "ocr:local",
+            "vision:cloud",
             "sidecar:python-parser",
             "sidecar:llm-gateway",
             "sidecar:node-validator",
@@ -1397,6 +1399,18 @@ mod tests {
                 names.contains(required),
                 "missing preflight check: {}",
                 required
+            );
+        }
+        if cfg!(target_os = "macos") {
+            assert!(
+                names.contains("renderer:macos-sips"),
+                "missing preflight check: renderer:macos-sips"
+            );
+        }
+        if cfg!(target_os = "windows") {
+            assert!(
+                names.contains("renderer:windows-pdfium"),
+                "missing preflight check: renderer:windows-pdfium"
             );
         }
     }
@@ -2435,7 +2449,11 @@ Answers
         assert!(extraction
             .get("warnings")
             .and_then(Value::as_array)
-            .map(|warnings| warnings.is_empty())
+            .map(|warnings| warnings.iter().all(|warning| {
+                let text = warning.as_str().unwrap_or_default();
+                !text.contains("PDF contains no extractable embedded page images")
+                    && !text.contains("manual transcription required")
+            }))
             .unwrap_or(false));
 
         let _ = fs::remove_dir_all(root);
@@ -2477,16 +2495,21 @@ Answers
             extraction.get("renderedFallback").and_then(Value::as_bool),
             Some(true)
         );
-        assert_eq!(images.len(), 1);
+        assert!(
+            !images.is_empty(),
+            "no-text PDF fixture should expose at least one rendered page image"
+        );
         assert_eq!(
             images[0].get("mimeType").and_then(Value::as_str),
             Some("image/png")
         );
-        assert!(images[0]
-            .get("renderedFallback")
-            .and_then(Value::as_bool)
-            .unwrap_or(false));
-        assert!(PathBuf::from(images[0].get("path").and_then(Value::as_str).unwrap()).exists());
+        for image in images {
+            assert!(image
+                .get("renderedFallback")
+                .and_then(Value::as_bool)
+                .unwrap_or(false));
+            assert!(PathBuf::from(image.get("path").and_then(Value::as_str).unwrap()).exists());
+        }
         assert!(extraction
             .get("warnings")
             .and_then(Value::as_array)
@@ -2495,7 +2518,7 @@ Answers
             .any(|warning| warning
                 .as_str()
                 .unwrap_or_default()
-                .contains("sips rendered-page fallback")));
+                .contains("rendered-page fallback")));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -2573,6 +2596,63 @@ Answers
                     .unwrap_or_default()
                     .contains("python PDF image extraction failed")));
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pdf_render_adapter_reports_manual_review_when_renderer_disabled() {
+        let _guard = env_test_lock().lock().unwrap();
+        env::set_var("EPIC8_PDF_RENDERER", "none");
+        env::remove_var("EPIC8_ENABLE_LOCAL_OCR");
+        env::remove_var("EPIC8_ENABLE_CLOUD_PDF_VISION");
+        let job = test_job();
+        let fixture = parser_fixture("no-text.pdf");
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let output = root
+            .join("cache")
+            .join("parser")
+            .join("disabled-renderer-extraction.json");
+        let asset_dir = root
+            .join("cache")
+            .join("parser")
+            .join("disabled-renderer-assets");
+
+        let extraction = render_pdf_pages_with_adapter(
+            &job.job_id,
+            &fixture,
+            &output,
+            &asset_dir,
+            vec!["prior extraction warning".to_string()],
+        )
+        .expect("disabled renderer should return structured manual-review extraction");
+
+        assert_eq!(image_count_from_extraction(&extraction), 0);
+        assert_eq!(
+            extraction.get("schemaVersion").and_then(Value::as_str),
+            Some("PdfImageExtractionV1")
+        );
+        assert_eq!(
+            extraction.get("failureReason").and_then(Value::as_str),
+            Some("renderer_disabled")
+        );
+        assert_eq!(
+            extraction
+                .get("requiresManualReview")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            extraction.get("ocrPerformed").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            extraction.get("renderedPageCount").and_then(Value::as_u64),
+            Some(0)
+        );
+        assert!(output.exists());
+
+        env::remove_var("EPIC8_PDF_RENDERER");
         let _ = fs::remove_dir_all(root);
     }
 
@@ -5115,6 +5195,39 @@ Answers
         assert_eq!(cloud.get("attempted").and_then(Value::as_bool), Some(true));
         assert_eq!(cloud.get("passed").and_then(Value::as_bool), Some(true));
         assert_eq!(cloud.get("warningCount").and_then(Value::as_u64), Some(0));
+        assert_eq!(
+            report
+                .pointer("/parser/visionAnswerExtraction/filledQuestionIds")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec!["q8", "q9", "q10", "q11", "q12", "q13"]
+        );
+        assert_eq!(
+            report
+                .pointer("/parser/visionAnswerExtraction/missingQuestionIds")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(
+            cloud
+                .pointer("/localSummary/0/questionIds")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec!["q8", "q9", "q10", "q11", "q12", "q13"]
+        );
+        assert_eq!(
+            cloud
+                .pointer("/cloudSummary/0/layoutHint")
+                .and_then(Value::as_str),
+            Some("list")
+        );
         let issues = cloud
             .pointer("/comparison/issues")
             .and_then(Value::as_array)
@@ -5156,6 +5269,163 @@ Answers
             ir.pointer("/answerKey/q13").and_then(Value::as_str),
             Some("400")
         );
+        let audit_issues = ir
+            .pointer("/audit/issues")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(audit_issues.iter().any(|issue| {
+            issue.get("kind").and_then(Value::as_str) == Some("vision_answer_extraction_summary")
+                && issue
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .contains("视觉模型已从 PDF 图片页补全答案")
+        }));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cloud_outline_mismatch_is_persisted_as_authoring_audit_summary() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-cloud-mismatch",
+                "name": "Cloud Mismatch Test",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 60000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
+        let mut job = make_job(CreateJobInput {
+            title: Some("Cloud Notes Mismatch".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["cloud-mismatch-regression".to_string()]),
+            llm_profile_id: Some("profile-cloud-mismatch".to_string()),
+        });
+        attach_fixture_source(&root, &mut job, "no-text.pdf", "MainQuestion");
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"passage","blockType":"paragraph","text":"The artist combined several techniques across a long career.","html":"<p>The artist combined several techniques.</p>","bbox":[72,80,520,180],"confidence":0.98,"roleHint":"passage"},
+                    {"blockId":"q8-13","blockType":"paragraph","text":"Questions 8-13 Complete the notes below. Write ONE WORD ONLY from the passage for each answer. Early work: 8……… first appeared in local shows. 9……… she gave her artworks 1953 exhibition: a very old method called 10……… was used for some prints was inspired by 11……… about Chinese art Old age: still interested in art and 12………. worked for nearly six decades, making more than 13………. artworks","html":"<p>Questions 8-13 Complete the notes below.</p>","bbox":[72,220,520,430],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 8 symbols 9 titles 10 stencilling 11 books 12 travel 13 400","html":"<p>Answers 8 symbols 9 titles 10 stencilling 11 books 12 travel 13 400</p>","bbox":[72,700,520,760],"confidence":0.92,"roleHint":"answer"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+        write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), &doc).unwrap();
+        write_source_review_status(&root, &job.job_id, Some(&doc), true, None).unwrap();
+
+        let report = run_auto_pipeline_core_with_gateway(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                parse_mode: Some("auto".to_string()),
+                confidence_threshold: Some(0.85),
+                profile_id: Some("profile-cloud-mismatch".to_string()),
+                target: Some("editableDraft".to_string()),
+                allow_overwrite: None,
+            }),
+            |_root, _job_id, command_name, _input, _api_key| match command_name {
+                "extract_pdf_image_answers" => Ok(json!({
+                    "answers": {
+                        "8": "symbols",
+                        "9": "titles",
+                        "10": "stencilling",
+                        "11": "books",
+                        "12": "travel",
+                        "13": "400"
+                    },
+                    "confidence": 0.99,
+                    "warnings": [],
+                    "evidence": [{"questionNumber": "8", "pageIndex": 1, "quote": "8 symbols"}]
+                })),
+                "generate_pdf_reading_outline" => Ok(json!({
+                    "title": "Cloud Notes Mismatch",
+                    "groups": [{
+                        "range": [8, 13],
+                        "kind": "summary_completion",
+                        "layoutHint": "inline_completion",
+                        "questionIds": ["q8", "q9", "q10", "q11", "q12", "q13"],
+                        "notesText": "Questions 8-13 Complete the notes below.",
+                        "confidence": 0.9,
+                        "evidence": {
+                            "quotes": [{"pageIndex": 1, "text": "Questions 8-13 Complete the notes below"}]
+                        }
+                    }],
+                    "answerKey": {
+                        "8": "symbols",
+                        "9": "titles",
+                        "10": "stencilling",
+                        "11": "books",
+                        "12": "travel",
+                        "13": "500"
+                    },
+                    "confidence": 0.9,
+                    "warnings": []
+                })),
+                other => Err(format!("unexpected_command:{}", other)),
+            },
+        )
+        .unwrap();
+
+        let cloud = report.pointer("/quality/cloudComparison").unwrap();
+        assert_eq!(cloud.get("attempted").and_then(Value::as_bool), Some(true));
+        assert_eq!(cloud.get("passed").and_then(Value::as_bool), Some(false));
+        assert_eq!(cloud.get("warningCount").and_then(Value::as_u64), Some(1));
+        assert!(cloud
+            .pointer("/issues/0/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("第 13 题答案与云端对照不一致"));
+        let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        assert_eq!(
+            ir.pointer("/answerKey/q13").and_then(Value::as_str),
+            Some("400"),
+            "cloud comparison must not overwrite the local authoritative draft"
+        );
+        let cloud_issue = ir
+            .pointer("/audit/issues")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .find(|issue| {
+                issue.get("kind").and_then(Value::as_str) == Some("cloud_comparison_summary")
+            })
+            .expect("cloud comparison summary should survive artifact minimization");
+        assert_eq!(
+            cloud_issue
+                .pointer("/cloudSummary/0/questionIds")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>(),
+            vec!["q8", "q9", "q10", "q11", "q12", "q13"]
+        );
+        assert!(cloud_issue
+            .pointer("/issues/0/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("第 13 题答案与云端对照不一致"));
 
         let _ = fs::remove_dir_all(root);
     }

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { getDiagnosticsSettings, listLlmProfiles, runEnvironmentPreflight, saveDiagnosticsSettings, saveLlmProfile, testLlmProfile } from "../api/tauriCommands";
-import type { DiagnosticsSettings, EnvironmentPreflightReport, LlmProfilePublic, LlmProvider, LlmTestResult } from "../types";
+import type { DiagnosticsSettings, EnvironmentPreflightCheck, EnvironmentPreflightReport, LlmProfilePublic, LlmProvider, LlmTestResult } from "../types";
+
+type PreflightFilter = "attention" | "all" | "ok";
 
 function secretBackendLabel(profile: LlmProfilePublic) {
   if (!profile.hasApiKey) return "无 API Key，将使用本地确定性建议";
@@ -9,10 +11,29 @@ function secretBackendLabel(profile: LlmProfilePublic) {
   return "API Key 状态未知";
 }
 
+function checkStateLabel(check: EnvironmentPreflightCheck) {
+  if (check.ok) return "OK";
+  if (check.severity === "error") return "Error";
+  if (check.severity === "warning") return "Warning";
+  return "Info";
+}
+
+function checkStateClass(check: EnvironmentPreflightCheck) {
+  if (check.ok) return "ok";
+  return check.severity;
+}
+
+function filterPreflightChecks(checks: EnvironmentPreflightCheck[], filter: PreflightFilter) {
+  if (filter === "attention") return checks.filter((check) => !check.ok);
+  if (filter === "ok") return checks.filter((check) => check.ok);
+  return checks;
+}
+
 export function Settings({ refresh }: { refresh: () => void }) {
   const [profiles, setProfiles] = useState<LlmProfilePublic[]>([]);
   const [result, setResult] = useState<LlmTestResult | undefined>();
   const [preflight, setPreflight] = useState<EnvironmentPreflightReport | undefined>();
+  const [preflightFilter, setPreflightFilter] = useState<PreflightFilter>("attention");
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSettings>({ keepFullProcessArtifacts: false });
   const [form, setForm] = useState({ name: "OpenAI Compatible", provider: "OpenAiCompatible" as LlmProvider, baseUrl: "https://api.openai.com/v1", model: "gpt-4.1", apiKey: "", temperature: 0, timeoutMs: 60000, forceJson: true, enabled: true });
 
@@ -48,31 +69,65 @@ export function Settings({ refresh }: { refresh: () => void }) {
   }
 
   const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((current) => ({ ...current, [key]: value }));
+  const visibleChecks = preflight ? filterPreflightChecks(preflight.checks, preflightFilter) : [];
 
   return (
     <section className="page-enter">
       <div className="section-heading"><p className="eyebrow">Settings</p><h2>设置</h2></div>
       <div className="settings-grid">
-        <section className="form-section">
+        <section className="form-section settings-preflight">
           <div className="spread">
             <h3>运行环境预检</h3>
             <button className="ghost small" onClick={rerunPreflight}>重新检测</button>
           </div>
           {preflight ? (
             <>
-              <p className={preflight.ok ? "success-text" : "error-text"}>
-                {preflight.ok ? "关键依赖可用" : `关键依赖缺失：${preflight.errors} error(s)`} · warnings {preflight.warnings}
-              </p>
-              <div className="layer-list">
-                {preflight.checks.map((check) => (
-                  <div key={check.name}>
-                    <span>
-                      <strong>{check.ok ? "OK" : check.severity.toUpperCase()} · {check.name}</strong>
-                      <small>{check.message}</small>
-                    </span>
-                  </div>
+              <div className="preflight-summary" data-testid="preflight-summary">
+                <div className={preflight.ok ? "good" : preflight.errors ? "bad" : "warn"}>
+                  <span>状态</span>
+                  <strong>{preflight.ok ? "可用" : preflight.errors ? "需处理" : "有提醒"}</strong>
+                </div>
+                <div>
+                  <span>Error</span>
+                  <strong>{preflight.errors}</strong>
+                </div>
+                <div>
+                  <span>Warning</span>
+                  <strong>{preflight.warnings}</strong>
+                </div>
+                <div>
+                  <span>Checks</span>
+                  <strong>{preflight.checks.length}</strong>
+                </div>
+              </div>
+              <div className="segmented-control" data-testid="preflight-filter">
+                {([
+                  ["attention", `需处理 ${preflight.checks.filter((check) => !check.ok).length}`],
+                  ["all", `全部 ${preflight.checks.length}`],
+                  ["ok", `正常 ${preflight.checks.filter((check) => check.ok).length}`]
+                ] as Array<[PreflightFilter, string]>).map(([value, label]) => (
+                  <button key={value} className={preflightFilter === value ? "active" : ""} onClick={() => setPreflightFilter(value)}>{label}</button>
                 ))}
               </div>
+              {visibleChecks.length ? (
+                <div className="preflight-list" data-testid="preflight-check-list">
+                  {visibleChecks.map((check) => (
+                    <details className={`preflight-row ${checkStateClass(check)}`} key={check.name}>
+                      <summary>
+                        <span className="state-dot" aria-hidden="true" />
+                        <span>
+                          <strong>{check.name}</strong>
+                          <small>{check.message}</small>
+                        </span>
+                        <em>{checkStateLabel(check)}</em>
+                      </summary>
+                      {check.details ? <pre>{JSON.stringify(check.details, null, 2)}</pre> : <p className="empty">没有更多细节。</p>}
+                    </details>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty">当前筛选下没有项目。</p>
+              )}
             </>
           ) : <p className="empty">尚未执行环境预检。</p>}
         </section>
