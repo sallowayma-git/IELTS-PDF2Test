@@ -133,10 +133,12 @@ pub(crate) fn main_pdf_needs_vision_transcription(job: &ImportJob, doc: &Value) 
         .pointer("/parser/provider")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let lacks_reliable_groups = !has_reliable_question_groups(&job.job_id, job, doc);
     provider != "vision-llm-transcription"
         && (warnings.contains("no extractable text")
             || warnings.contains("ocr/manual review required")
-            || !low_confidence_block_ids(Some(doc), 0.5).is_empty())
+            || !low_confidence_block_ids(Some(doc), 0.5).is_empty()
+            || lacks_reliable_groups)
 }
 
 fn has_reliable_question_groups(job_id: &str, job: &ImportJob, doc: &Value) -> bool {
@@ -867,9 +869,7 @@ where
     let mut doc = read_json_opt(&dir.join("document-ir.json"))?;
     if let (Some(profile_id_for_vision), Some(current_doc)) = (profile_id.as_deref(), doc.as_ref())
     {
-        if main_pdf_needs_vision_transcription(&job, current_doc)
-            && !has_reliable_question_groups(&job_id, &job, current_doc)
-        {
+        if main_pdf_needs_vision_transcription(&job, current_doc) {
             if let Some(obj) = vision_transcription.as_object_mut() {
                 obj.insert("attempted".to_string(), json!(true));
             }

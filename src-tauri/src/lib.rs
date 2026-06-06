@@ -7293,6 +7293,19 @@ Answers
             let has_image_only_pages = parser_warning_text.contains("no extractable text");
             let needs_vision = main_pdf_needs_vision_transcription(&job, &doc);
             let review_required = review.get("required").and_then(Value::as_bool) == Some(true);
+            let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+            let has_reliable_groups = split
+                .get("questionGroupCandidates")
+                .and_then(Value::as_array)
+                .map(|groups| {
+                    groups.iter().any(|candidate| {
+                        candidate
+                            .get("requiresManualQuestionImport")
+                            .and_then(Value::as_bool)
+                            != Some(true)
+                    })
+                })
+                .unwrap_or(false);
             if has_image_only_pages {
                 mixed_image_page_samples += 1;
                 assert!(
@@ -7307,19 +7320,25 @@ Answers
                 );
             } else {
                 full_text_layer_samples += 1;
-                assert!(
-                    !needs_vision,
-                    "{} is fully text-layer readable and should not enter the vision path",
-                    sample.display()
-                );
-                assert!(
-                    !review_required,
-                    "{} is fully text-layer readable and should not require source review",
-                    sample.display()
-                );
+                if has_reliable_groups {
+                    assert!(
+                        !needs_vision,
+                        "{} has reliable text-layer question groups and should not enter the vision path",
+                        sample.display()
+                    );
+                    assert!(
+                        !review_required,
+                        "{} has reliable text-layer question groups and should not require source review",
+                        sample.display()
+                    );
+                } else {
+                    assert!(
+                        needs_vision,
+                        "{} is text-layer readable but lacks reliable question groups, so it should enter the vision path",
+                        sample.display()
+                    );
+                }
             }
-
-            let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
             assert!(
                 split
                     .get("umbrellaQuestionRanges")
@@ -7480,6 +7499,78 @@ Answers
             full_text_layer_samples >= 1,
             "at least one sample should exercise the fully text-layer readable path"
         );
+    }
+
+    #[test]
+    fn text_layer_pdf_without_reliable_question_groups_still_enters_vision_path() {
+        let root = temp_test_root();
+        let mut job = make_job(CreateJobInput {
+            title: Some("Sunlight Soap Missing Questions".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["sunlight-soap".to_string()]),
+            llm_profile_id: None,
+        });
+        job.source_files = vec![test_source("pdf")];
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [
+                {
+                    "pageIndex": 1,
+                    "width": 595,
+                    "height": 842,
+                    "blocks": [
+                        {
+                            "blockId":"passage-1",
+                            "blockType":"paragraph",
+                            "text":"READING PASSAGE 1 Lever Brothers' Sunlight Soap A Revolution in Hygiene and Industry.",
+                            "html":"<p>READING PASSAGE 1 Lever Brothers' Sunlight Soap A Revolution in Hygiene and Industry.</p>",
+                            "bbox":[72,72,520,120],
+                            "confidence":0.98,
+                            "roleHint":"passage"
+                        }
+                    ]
+                },
+                {
+                    "pageIndex": 2,
+                    "width": 595,
+                    "height": 842,
+                    "blocks": [
+                        {
+                            "blockId":"passage-2",
+                            "blockType":"paragraph",
+                            "text":"Marketing and Branding. Impact on Hygiene and Public Health.",
+                            "html":"<p>Marketing and Branding. Impact on Hygiene and Public Health.</p>",
+                            "bbox":[72,72,520,120],
+                            "confidence":0.98,
+                            "roleHint":"passage"
+                        }
+                    ]
+                }
+            ],
+            "assets": [],
+            "parser": {
+                "provider":"rust-parser:pdf:pdf-extract",
+                "version":"0.3.0",
+                "mode":"auto",
+                "warnings":[]
+            }
+        });
+
+        assert!(
+            main_pdf_needs_vision_transcription(&job, &doc),
+            "text-layer PDFs that contain passage text but no reliable question groups must enter the vision path"
+        );
+        assert!(
+            !make_dynamic_split_candidates(&job.job_id, &job, Some(&doc))
+                .get("questionGroupCandidates")
+                .and_then(Value::as_array)
+                .map(|groups| !groups.is_empty())
+                .unwrap_or(false)
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

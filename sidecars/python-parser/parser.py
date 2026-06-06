@@ -307,6 +307,25 @@ def render_pdf_pages_for_vision(input_path: Path, output_dir: Path, job_id: str)
     return [], all_warnings
 
 
+def merge_rendered_pages(
+    extracted_pages: list[dict], rendered_pages: list[dict]
+) -> list[dict]:
+    rendered_by_index = {
+        int(page.get("pageIndex", 0)): page for page in rendered_pages if page.get("images")
+    }
+    merged: list[dict] = []
+    for page in extracted_pages:
+        page_index = int(page.get("pageIndex", 0) or 0)
+        combined = dict(page)
+        images = list(page.get("images", []))
+        rendered = rendered_by_index.get(page_index)
+        if rendered:
+            images.extend(rendered.get("images", []))
+        combined["images"] = images
+        merged.append(combined)
+    return merged
+
+
 def extract_pdf_images(input_path: Path, output_dir: Path, job_id: str) -> dict:
     warnings: list[str] = []
     try:
@@ -357,13 +376,12 @@ def extract_pdf_images(input_path: Path, output_dir: Path, job_id: str) -> dict:
 
         pages.append({"pageIndex": page_index, "width": width, "height": height, "images": page_images})
 
-    if not any(page["images"] for page in pages):
-        rendered_pages, rendered_warnings = render_pdf_pages_for_vision(input_path, output_dir, job_id)
-        warnings.extend(rendered_warnings)
-        if rendered_pages:
-            pages = rendered_pages
-        else:
-            warnings.append("PDF contains no extractable embedded page images; manual transcription required")
+    rendered_pages, rendered_warnings = render_pdf_pages_for_vision(input_path, output_dir, job_id)
+    warnings.extend(rendered_warnings)
+    if rendered_pages:
+        pages = merge_rendered_pages(pages, rendered_pages)
+    elif not any(page["images"] for page in pages):
+        warnings.append("PDF contains no extractable embedded page images; manual transcription required")
 
     return {
         "schemaVersion": "PdfImageExtractionV1",

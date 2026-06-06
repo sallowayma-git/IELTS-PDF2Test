@@ -13,7 +13,8 @@
     "e2e:ui-flow": "node sidecars/ui-flow-e2e/ui-flow-e2e.mjs",
     "test:pdf-regression": "node scripts/pdf-regression-sample.mjs --sample 30",
     "audit:package": "node scripts/package-audit.mjs",
-    "verify:release": "npm run tauri build && npm run audit:package"
+    "repack:macos-dmg": "node scripts/repack-macos-dmg.mjs",
+    "verify:release": "npm run tauri build && npm run repack:macos-dmg && npm run audit:package"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",

@@ -1299,6 +1299,69 @@ pub(crate) fn image_count_from_extraction(extraction: &Value) -> usize {
         .count()
 }
 
+fn merge_rendered_page_images(extraction: &Value, rendered: &Value) -> Value {
+    let mut merged = extraction.clone();
+    let Some(extracted_pages) = merged.get_mut("pages").and_then(Value::as_array_mut) else {
+        return extraction.clone();
+    };
+    let rendered_pages = rendered
+        .get("pages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for extracted_page in extracted_pages.iter_mut() {
+        let page_index = extracted_page
+            .get("pageIndex")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let Some(rendered_page) = rendered_pages.iter().find(|page| {
+            page.get("pageIndex").and_then(Value::as_u64).unwrap_or(0) == page_index
+        }) else {
+            continue;
+        };
+        let rendered_images = rendered_page
+            .get("images")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if rendered_images.is_empty() {
+            continue;
+        }
+        let images = extracted_page
+            .as_object_mut()
+            .and_then(|obj| obj.get_mut("images"))
+            .and_then(Value::as_array_mut);
+        if let Some(images) = images {
+            images.extend(rendered_images);
+        }
+    }
+    if let Some(obj) = merged.as_object_mut() {
+        let mut warnings = obj
+            .get("warnings")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(rendered_warnings) = rendered.get("warnings").and_then(Value::as_array) {
+            warnings.extend(rendered_warnings.iter().cloned());
+        }
+        obj.insert("warnings".to_string(), Value::Array(warnings));
+        obj.insert(
+            "renderedFallback".to_string(),
+            json!(
+                extraction
+                    .get("renderedFallback")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    || rendered
+                        .get("renderedFallback")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+            ),
+        );
+    }
+    merged
+}
+
 pub(crate) fn render_pdf_pages_with_adapter(
     job_id: &str,
     input_path: &Path,
@@ -1399,18 +1462,33 @@ pub(crate) fn extract_pdf_images_for_vision(
 ) -> CommandResult<Value> {
     match extract_pdf_images_with_python_sidecar(job_id, input_path, output_path, asset_dir) {
         Ok(extraction) => {
-            if image_count_from_extraction(&extraction) > 0 {
-                Ok(extraction)
-            } else {
-                let warnings = extraction
-                    .get("warnings")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>();
-                render_pdf_pages_with_adapter(job_id, input_path, output_path, asset_dir, warnings)
+            let warnings = extraction
+                .get("warnings")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            match render_pdf_pages_with_adapter(job_id, input_path, output_path, asset_dir, warnings)
+            {
+                Ok(rendered) => {
+                    let merged = merge_rendered_page_images(&extraction, &rendered);
+                    write_json(output_path, &merged)?;
+                    Ok(merged)
+                }
+                Err(_) if image_count_from_extraction(&extraction) > 0 => Ok(extraction),
+                Err(_) => {
+                    let warnings = extraction
+                        .get("warnings")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>();
+                    render_pdf_pages_with_adapter(job_id, input_path, output_path, asset_dir, warnings)
+                }
             }
         }
         Err(error) => render_pdf_pages_with_adapter(
