@@ -7844,6 +7844,143 @@ Answers
     }
 
     #[test]
+    fn vision_transcription_without_question_groups_does_not_overwrite_text_layer_parse() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        write_diagnostics_settings(
+            &root,
+            &crate::diagnostics::DiagnosticsSettings {
+                keep_full_process_artifacts: true,
+            },
+        )
+        .unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-vision-transcription",
+                "name": "Vision Transcription Test",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 60000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
+        let mut job = make_job(CreateJobInput {
+            title: Some("Origin of Paper".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["vision-no-overwrite".to_string()]),
+            llm_profile_id: Some("profile-vision-transcription".to_string()),
+        });
+        attach_fixture_source(&root, &mut job, "no-text.pdf", "MainQuestion");
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [{
+                    "blockId": "passage-only",
+                    "blockType": "paragraph",
+                    "text": "READING PASSAGE 1 The Origin of Paper. The earliest paper was made from plant fibres and changed communication.",
+                    "html": "<p>READING PASSAGE 1 The Origin of Paper.</p>",
+                    "bbox": [72, 72, 520, 140],
+                    "confidence": 0.98,
+                    "roleHint": "passage"
+                }]
+            }],
+            "assets": [],
+            "parser": {
+                "provider": "rust-parser:pdf:pdf-extract",
+                "version": "0.3.0",
+                "mode": "auto",
+                "warnings": []
+            }
+        });
+        write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), &doc).unwrap();
+        write_source_review_status(&root, &job.job_id, Some(&doc), false, None).unwrap();
+
+        let report = run_auto_pipeline_core_with_gateway(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                parse_mode: Some("auto".to_string()),
+                confidence_threshold: Some(0.85),
+                profile_id: Some("profile-vision-transcription".to_string()),
+                target: Some("editableDraft".to_string()),
+                allow_overwrite: None,
+            }),
+            |_root, _job_id, command_name, _input, _api_key| match command_name {
+                "transcribe_pdf_images" => Ok(json!({
+                    "text": "题号 答案 原文定位\n1 TRUE 段 4\n2 FALSE 段 5",
+                    "confidence": 0.94,
+                    "warnings": ["Only the answer page was visible in the supplied image set."]
+                })),
+                "extract_pdf_image_answers" => Ok(json!({
+                    "answers": {
+                        "1": "TRUE",
+                        "2": "FALSE"
+                    },
+                    "confidence": 0.99,
+                    "warnings": [],
+                    "evidence": [{"questionNumber": "1", "pageIndex": 1, "quote": "1 TRUE"}]
+                })),
+                "generate_pdf_reading_outline" => Ok(json!({
+                    "title": "Origin of Paper",
+                    "groups": [],
+                    "answerKey": {},
+                    "confidence": 0.0,
+                    "warnings": ["No question groups visible."]
+                })),
+                other => Err(format!("unexpected_command:{}", other)),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            report
+                .pointer("/parser/visionTranscription/attempted")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            report
+                .pointer("/parser/visionTranscription/applied")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert!(report
+            .pointer("/parser/visionTranscription/failure")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("kept original text-layer parse"));
+        let saved_doc: Value =
+            read_json(&job_dir(&root, &job.job_id).join("document-ir.json")).unwrap();
+        let saved_text = dynamic_document_blocks(Some(&saved_doc))
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(saved_text.contains("The Origin of Paper"));
+        assert!(!saved_text.contains("题号 答案"));
+        assert!(parser_warnings(Some(&saved_doc))
+            .iter()
+            .any(|warning| warning.contains("kept original text-layer parse")));
+        let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        let ir_text = serde_json::to_string(&ir).unwrap();
+        assert!(ir_text.contains("The Origin of Paper"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate() {
         let sample_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")

@@ -162,6 +162,26 @@ fn has_reliable_question_groups(job_id: &str, job: &ImportJob, doc: &Value) -> b
         .unwrap_or(false)
 }
 
+fn append_document_parser_warning(doc: &mut Value, warning: &str) {
+    if warning.trim().is_empty() {
+        return;
+    }
+    let Some(parser) = doc.get_mut("parser").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let warnings = parser
+        .entry("warnings".to_string())
+        .or_insert_with(|| json!([]));
+    if !warnings.is_array() {
+        *warnings = json!([]);
+    }
+    if let Some(items) = warnings.as_array_mut() {
+        if !items.iter().any(|item| item.as_str() == Some(warning)) {
+            items.push(json!(warning));
+        }
+    }
+}
+
 fn main_source_is_pdf(job: &ImportJob) -> bool {
     main_source_file(job)
         .map(|source| source.file_type.as_str() == "pdf")
@@ -204,6 +224,19 @@ pub(crate) fn vision_transcription_for_job(
     profile_id: &str,
     note: Option<&str>,
 ) -> CommandResult<(Value, Value)> {
+    vision_transcription_for_job_with_gateway(root, job, profile_id, note, &mut run_llm_gateway)
+}
+
+fn vision_transcription_for_job_with_gateway<F>(
+    root: &Path,
+    job: &ImportJob,
+    profile_id: &str,
+    note: Option<&str>,
+    llm_gateway: &mut F,
+) -> CommandResult<(Value, Value)>
+where
+    F: FnMut(&Path, &str, &str, &Value, Option<&str>) -> CommandResult<Value>,
+{
     let (extraction, asset_dir) = main_pdf_vision_extraction(root, job)?;
     let profile = find_profile(root, profile_id)?;
     let image_count = image_count_from_extraction(&extraction);
@@ -213,7 +246,7 @@ pub(crate) fn vision_transcription_for_job(
 
     let input = make_vision_transcription_input(&profile, job, profile_id, &extraction);
     let api_key = load_llm_api_key(root, profile_id);
-    let output = run_llm_gateway(
+    let output = llm_gateway(
         root,
         &job.job_id,
         "transcribe_pdf_images",
@@ -979,11 +1012,12 @@ where
             if let Some(obj) = vision_transcription.as_object_mut() {
                 obj.insert("attempted".to_string(), json!(true));
             }
-            match vision_transcription_for_job(
+            match vision_transcription_for_job_with_gateway(
                 root,
                 &job,
                 profile_id_for_vision,
                 Some("auto pipeline vision transcription"),
+                &mut llm_gateway,
             ) {
                 Ok((vision_ir, vision_output)) => {
                     write_text(
@@ -997,11 +1031,10 @@ where
                         &dir.join("vision-transcription-output.json"),
                         &vision_output,
                     )?;
-                    write_json(&dir.join("document-ir.json"), &vision_ir)?;
-                    let _ =
-                        write_source_review_status(root, &job_id, Some(&vision_ir), false, None)?;
+                    let vision_has_reliable_groups =
+                        has_reliable_question_groups(&job_id, &job, &vision_ir);
                     if let Some(obj) = vision_transcription.as_object_mut() {
-                        obj.insert("applied".to_string(), json!(true));
+                        obj.insert("applied".to_string(), json!(vision_has_reliable_groups));
                         obj.insert(
                             "confidence".to_string(),
                             vision_output
@@ -1017,11 +1050,35 @@ where
                                 .unwrap_or_else(|| json!([])),
                         );
                     }
-                    doc = Some(vision_ir);
-                    job = update_job(root, &job_id, |item| {
-                        item.status = JobStatus::NeedsReview;
-                        item.current_step = WorkflowStep::DocumentReview;
-                    })?;
+                    if vision_has_reliable_groups {
+                        write_json(&dir.join("document-ir.json"), &vision_ir)?;
+                        let _ = write_source_review_status(
+                            root,
+                            &job_id,
+                            Some(&vision_ir),
+                            false,
+                            None,
+                        )?;
+                        doc = Some(vision_ir);
+                        job = update_job(root, &job_id, |item| {
+                            item.status = JobStatus::NeedsReview;
+                            item.current_step = WorkflowStep::DocumentReview;
+                        })?;
+                    } else if let Some(current_doc) = doc.as_mut() {
+                        let warning = "vision transcription did not produce reliable question groups; kept original text-layer parse";
+                        append_document_parser_warning(current_doc, warning);
+                        write_json(&dir.join("document-ir.json"), current_doc)?;
+                        let _ = write_source_review_status(
+                            root,
+                            &job_id,
+                            Some(current_doc),
+                            false,
+                            None,
+                        )?;
+                        if let Some(obj) = vision_transcription.as_object_mut() {
+                            obj.insert("failure".to_string(), json!(warning));
+                        }
+                    }
                 }
                 Err(error) => {
                     if let Some(obj) = vision_transcription.as_object_mut() {

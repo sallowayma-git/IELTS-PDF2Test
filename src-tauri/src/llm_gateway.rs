@@ -6,7 +6,7 @@ use crate::{
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use serde_json::{json, Value};
-use std::{fs, path::Path, time::Duration};
+use std::{fs, path::Path, thread, time::Duration};
 
 pub(crate) fn run_llm_gateway(
     root: &Path,
@@ -115,6 +115,35 @@ fn parse_llm_json_content(content: &str) -> CommandResult<Value> {
 }
 
 fn openai_post(profile: &Value, api_key: Option<&str>, body: Value) -> CommandResult<Value> {
+    let mut last_error = String::new();
+    for attempt in 0..3 {
+        match openai_post_once(profile, api_key, body.clone()) {
+            Ok(payload) => return Ok(payload),
+            Err(error) => {
+                let retryable = is_retryable_llm_http_error(&error);
+                last_error = error;
+                if !retryable || attempt == 2 {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(400 * (attempt as u64 + 1)));
+            }
+        }
+    }
+    Err(last_error)
+}
+
+fn is_retryable_llm_http_error(error: &str) -> bool {
+    error.starts_with("llm_http_failed:")
+        || error.starts_with("llm_http_body_failed:")
+        || error.starts_with("llm_http_502:")
+        || error.starts_with("llm_http_503:")
+        || error.starts_with("llm_http_504:")
+        || error.starts_with("llm_http_524:")
+        || (error.starts_with("llm_http_json_failed:") && error.contains("error code: 502"))
+        || (error.starts_with("llm_http_json_failed:") && error.contains("error code: 524"))
+}
+
+fn openai_post_once(profile: &Value, api_key: Option<&str>, body: Value) -> CommandResult<Value> {
     let endpoint = openai_chat_completions_endpoint(profile)?;
     let client = reqwest::blocking::Client::builder()
         .timeout(llm_timeout(profile, 60_000))

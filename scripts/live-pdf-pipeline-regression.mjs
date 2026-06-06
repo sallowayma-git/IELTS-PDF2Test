@@ -10,12 +10,14 @@ const args = parseArgs(process.argv.slice(2));
 if (args.help === true || args.h === true) printUsageAndExit(0);
 
 const pdfDirArg = args.pdfDir ?? args["pdf-dir"];
-if (!pdfDirArg) {
-  console.error("[live-pdf-regression] --pdf-dir is required.");
+const pdfListArg = args.pdfList ?? args["pdf-list"];
+if (!pdfDirArg && !pdfListArg) {
+  console.error("[live-pdf-regression] --pdf-dir or --pdf-list is required.");
   printUsageAndExit(2);
 }
 
-const pdfDir = path.resolve(pdfDirArg);
+const pdfDir = pdfDirArg ? path.resolve(pdfDirArg) : "";
+const pdfList = pdfListArg ? path.resolve(pdfListArg) : "";
 const outDir = path.resolve(args.outDir ?? args["out-dir"] ?? defaultOutDir);
 const sampleSize = Number(args.sample ?? 100);
 const seed = String(args.seed ?? Date.now());
@@ -27,7 +29,11 @@ const skipBuild = args.skipBuild === true || args["skip-build"] === true;
 const strict = args.strict === true;
 const cli = path.resolve(args.cli ?? path.join(repoRoot, "src-tauri", "target", "debug", cliBinaryName()));
 
-assertReadableDirectory(pdfDir, "--pdf-dir");
+if (pdfDir) assertReadableDirectory(pdfDir, "--pdf-dir");
+if (pdfList && (!fs.existsSync(pdfList) || !fs.statSync(pdfList).isFile())) {
+  console.error(`[live-pdf-regression] --pdf-list is not a readable file: ${pdfList}`);
+  process.exit(2);
+}
 if (!baseUrl || !model || !apiKey) {
   console.error("[live-pdf-regression] missing live LLM config. Provide --base-url, --model, and --api-key or EPIC8_LIVE_LLM_* env vars.");
   process.exit(2);
@@ -42,10 +48,22 @@ if (!skipBuild || !fs.existsSync(cli)) {
   if (build.status !== 0) process.exit(build.status ?? 1);
 }
 
-const allPdfs = fs.readdirSync(pdfDir)
-  .filter((name) => name.toLowerCase().endsWith(".pdf"))
-  .map((name) => path.join(pdfDir, name))
-  .sort((left, right) => left.localeCompare(right));
+const allPdfs = pdfList
+  ? fs.readFileSync(pdfList, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => path.resolve(line))
+  : fs.readdirSync(pdfDir)
+    .filter((name) => name.toLowerCase().endsWith(".pdf"))
+    .map((name) => path.join(pdfDir, name))
+    .sort((left, right) => left.localeCompare(right));
+for (const pdf of allPdfs) {
+  if (!fs.existsSync(pdf) || !fs.statSync(pdf).isFile()) {
+    console.error(`[live-pdf-regression] PDF is not readable: ${pdf}`);
+    process.exit(2);
+  }
+}
 const selected = shuffle(allPdfs, seed).slice(0, Math.min(sampleSize, allPdfs.length));
 
 const results = [];
@@ -116,6 +134,7 @@ const report = buildReport({
   seed,
   sampleSize,
   pdfDir,
+  pdfList,
   outDir,
   model,
   baseUrl: redactBaseUrl(baseUrl),
@@ -155,18 +174,19 @@ function summarizePayload(pdfPath, outputPath, elapsedMs, payload) {
   const cloud = report.quality?.cloudComparison ?? {};
   const status = payload.job?.status ?? report.status ?? "unknown";
   const currentStep = payload.job?.currentStep ?? report.currentStep ?? "unknown";
-  const ok = Boolean(payload.job?.jobId && authoring.schemaVersion && questions.length);
+  const hasAuthoringOutput = Boolean(payload.job?.jobId && authoring.schemaVersion);
   return {
     pdf: pdfPath,
-    ok,
+    ok: hasAuthoringOutput,
     elapsedMs,
-    category: ok ? "pipeline_completed" : "missing_authoring_output",
+    category: hasAuthoringOutput ? "pipeline_completed" : "missing_authoring_output",
     outputPath,
     jobId: payload.job?.jobId,
     status,
     currentStep,
     groupCount: groups.length,
     questionCount: questions.length,
+    zeroQuestionOutput: hasAuthoringOutput && questions.length === 0,
     emptyAnswerCount: emptyAnswerQuestionIds.length,
     emptyAnswerQuestionIds: emptyAnswerQuestionIds.slice(0, 30),
     remainingReviewItems: report.authoring?.remainingReviewItems ?? null,
@@ -195,7 +215,7 @@ function summarizePayload(pdfPath, outputPath, elapsedMs, payload) {
   };
 }
 
-function buildReport({ seed, sampleSize, pdfDir, outDir, model, baseUrl, selected, results }) {
+function buildReport({ seed, sampleSize, pdfDir, pdfList, outDir, model, baseUrl, selected, results }) {
   const categoryCounts = countBy(results, (result) => result.category ?? "unknown");
   return {
     schemaVersion: "LivePdfPipelineRegressionReportV1",
@@ -204,6 +224,7 @@ function buildReport({ seed, sampleSize, pdfDir, outDir, model, baseUrl, selecte
     requestedSampleSize: sampleSize,
     sampledCount: selected.length,
     pdfDir,
+    pdfList,
     outDir,
     liveConfig: {
       baseUrl,
@@ -214,6 +235,7 @@ function buildReport({ seed, sampleSize, pdfDir, outDir, model, baseUrl, selecte
     okCount: results.filter((result) => result.ok).length,
     failCount: results.filter((result) => !result.ok).length,
     emptyAnswerJobCount: results.filter((result) => Number(result.emptyAnswerCount ?? 0) > 0).length,
+    zeroQuestionJobCount: results.filter((result) => result.zeroQuestionOutput).length,
     totalEmptyAnswers: results.reduce((sum, result) => sum + Number(result.emptyAnswerCount ?? 0), 0),
     visionAttemptedCount: results.filter((result) => result.visionAnswerExtraction?.attempted).length,
     visionAppliedCount: results.filter((result) => result.visionAnswerExtraction?.applied).length,
@@ -284,7 +306,7 @@ function parseArgs(argv) {
 
 function printUsageAndExit(code) {
   const usage = [
-    "usage: node scripts/live-pdf-pipeline-regression.mjs --pdf-dir <dir> --base-url <url> --model <model> --api-key <key> [options]",
+    "usage: node scripts/live-pdf-pipeline-regression.mjs (--pdf-dir <dir>|--pdf-list <file>) --base-url <url> --model <model> --api-key <key> [options]",
     "",
     "Options:",
     "  --sample <n>         Number of PDFs to sample. Default: 100.",
