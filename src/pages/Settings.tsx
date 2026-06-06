@@ -3,6 +3,7 @@ import { getDiagnosticsSettings, listLlmProfiles, runEnvironmentPreflight, saveD
 import type { DiagnosticsSettings, EnvironmentPreflightCheck, EnvironmentPreflightReport, LlmProfilePublic, LlmProvider, LlmTestResult } from "../types";
 
 type PreflightFilter = "attention" | "all" | "ok";
+type DetailRow = { label: string; value: string };
 
 function secretBackendLabel(profile: LlmProfilePublic) {
   if (!profile.hasApiKey) return "无 API Key，将使用本地确定性建议";
@@ -12,10 +13,10 @@ function secretBackendLabel(profile: LlmProfilePublic) {
 }
 
 function checkStateLabel(check: EnvironmentPreflightCheck) {
-  if (check.ok) return "OK";
-  if (check.severity === "error") return "Error";
-  if (check.severity === "warning") return "Warning";
-  return "Info";
+  if (check.ok) return "正常";
+  if (check.severity === "error") return "错误";
+  if (check.severity === "warning") return "提醒";
+  return "信息";
 }
 
 function checkStateClass(check: EnvironmentPreflightCheck) {
@@ -27,6 +28,61 @@ function filterPreflightChecks(checks: EnvironmentPreflightCheck[], filter: Pref
   if (filter === "attention") return checks.filter((check) => !check.ok);
   if (filter === "ok") return checks.filter((check) => check.ok);
   return checks;
+}
+
+function formatDetailValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "未设置";
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(formatDetailValue).filter(Boolean).join("、") || "无";
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .slice(0, 4)
+      .map(([key, item]) => `${key}: ${formatDetailValue(item)}`);
+    return entries.join("；") || "无";
+  }
+  return String(value);
+}
+
+function detailLabel(key: string): string {
+  const labels: Record<string, string> = {
+    backend: "存储后端",
+    bundled: "是否内置",
+    candidateCount: "候选路径数",
+    candidates: "候选命令",
+    cloudPdfVisionEnabled: "云端视觉",
+    crate: "组件",
+    crates: "组件",
+    enabled: "是否启用",
+    env: "环境变量",
+    implemented: "是否实现",
+    liveEnv: "Live LLM",
+    ok: "可用",
+    path: "路径",
+    platform: "平台",
+    provider: "提供方",
+    relative: "相对路径",
+    selected: "已选命令",
+    selectedRenderer: "当前渲染器",
+    status: "状态码",
+    stderr: "错误输出",
+    stdout: "输出",
+    supportedRenderers: "支持渲染器",
+    version: "版本"
+  };
+  return labels[key] ?? key;
+}
+
+function preflightDetailRows(details: unknown): DetailRow[] {
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return details ? [{ label: "详情", value: formatDetailValue(details) }] : [];
+  }
+  return Object.entries(details as Record<string, unknown>)
+    .filter(([, value]) => value !== undefined)
+    .slice(0, 8)
+    .map(([key, value]) => ({ label: detailLabel(key), value: formatDetailValue(value) }));
 }
 
 export function Settings({ refresh }: { refresh: () => void }) {
@@ -70,6 +126,7 @@ export function Settings({ refresh }: { refresh: () => void }) {
 
   const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((current) => ({ ...current, [key]: value }));
   const visibleChecks = preflight ? filterPreflightChecks(preflight.checks, preflightFilter) : [];
+  const attentionCount = preflight?.checks.filter((check) => !check.ok).length ?? 0;
 
   return (
     <section className="page-enter">
@@ -102,7 +159,7 @@ export function Settings({ refresh }: { refresh: () => void }) {
               </div>
               <div className="segmented-control" data-testid="preflight-filter">
                 {([
-                  ["attention", `需处理 ${preflight.checks.filter((check) => !check.ok).length}`],
+                  ["attention", `需处理 ${attentionCount}`],
                   ["all", `全部 ${preflight.checks.length}`],
                   ["ok", `正常 ${preflight.checks.filter((check) => check.ok).length}`]
                 ] as Array<[PreflightFilter, string]>).map(([value, label]) => (
@@ -121,7 +178,16 @@ export function Settings({ refresh }: { refresh: () => void }) {
                         </span>
                         <em>{checkStateLabel(check)}</em>
                       </summary>
-                      {check.details ? <pre>{JSON.stringify(check.details, null, 2)}</pre> : <p className="empty">没有更多细节。</p>}
+                      {preflightDetailRows(check.details).length ? (
+                        <dl className="preflight-details">
+                          {preflightDetailRows(check.details).map((row) => (
+                            <div key={`${check.name}-${row.label}`}>
+                              <dt>{row.label}</dt>
+                              <dd>{row.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : <p className="empty compact">没有更多细节。</p>}
                     </details>
                   ))}
                 </div>

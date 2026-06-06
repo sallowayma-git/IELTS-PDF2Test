@@ -3,6 +3,7 @@ import { chooseExportDirectory } from "../api/desktopDialogs";
 import { exportNasLibrary, exportReadingAssets, exportReadingJs } from "../api/tauriCommands";
 import { StatusPill } from "../components/StatusPill";
 import type { ExportResult, ImportJob, JsExportResult, NasExportResult, ValidationIssue } from "../types";
+import { validationIssueDisplay } from "../utils/displayLabels";
 
 type ExportMode = "single-js" | "batch-js" | "full-assets" | "nas-library";
 
@@ -25,14 +26,24 @@ function parseValidationPayload(message: string): { issues?: ValidationIssue[] }
   }
 }
 
+function plainExportGuidance(message: string): string[] {
+  const guidance = [
+    /answer is empty|答案为空|答案不能为空/i.test(message) ? "仍有题目缺少答案，请在题稿编辑页补齐后再导出。" : "",
+    /human verified|人工确认|NeedsReview|待审核/i.test(message) ? "题目或题组还没有完成确认，请在题稿编辑页完成确认。" : "",
+    /source review|parser warning|low-confidence parsed block|源文档/i.test(message) ? "源文档识别结果仍需确认，请回到源文档审核页处理。" : "",
+    /cloudComparison|云端/i.test(message) ? "云端整卷对照仍有差异，请在题稿编辑页核对云端/本地差异。" : ""
+  ].filter(Boolean);
+  return guidance.length ? guidance : ["导出前检查没有通过，请回到题稿编辑页完成缺失答案和人工确认。"];
+}
+
 function buildExportDiagnostics(caught: unknown): ExportDiagnostics {
   const message = caught instanceof Error ? caught.message : String(caught);
   const issues = parseValidationPayload(message)?.issues ?? [];
   if (!issues.length) {
     return {
-      title: "导出没有完成",
+      title: message.includes("validation_failed") ? "导出前还有项目需要确认" : "导出没有完成",
       issues: [],
-      guidance: [message]
+      guidance: message.includes("validation_failed") ? plainExportGuidance(message) : [message]
     };
   }
 
@@ -270,12 +281,16 @@ export function ExportPage({
           <h3>输出文件</h3>
           {diagnostics?.issues.length ? (
             <div className="issue-list" data-testid="export-issue-list">
-              {diagnostics.issues.slice(0, 8).map((issue) => (
-                <div key={issue.issueId}>
-                  <strong>{issue.message}</strong>
-                  <small>{issue.layer} · {issue.path}</small>
-                </div>
-              ))}
+              {diagnostics.issues.slice(0, 8).map((issue) => {
+                const display = validationIssueDisplay(issue);
+                return (
+                  <div key={issue.issueId}>
+                    <strong>{display.title}</strong>
+                    <small>{display.detail}</small>
+                    <small>{display.action}</small>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
           {resultFiles?.map((file) => (

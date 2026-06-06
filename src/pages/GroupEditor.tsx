@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getJob, updateAuthoringIr, validateAuthoringIr } from "../api/tauriCommands";
 import { go } from "../app/router";
-import type { GroupKind, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
+import type { AutoPipelineReport, GroupKind, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
 import { renderGroupBodyHtml } from "../services/templateRenderer";
 
 const groupKinds: GroupKind[] = ["true_false_not_given", "yes_no_not_given", "single_choice", "multi_choice", "short_answer", "sentence_completion", "summary_completion", "table_completion", "matching", "heading_matching", "matching_information", "classification", "diagram_completion"];
@@ -22,43 +22,214 @@ const groupKindLabels: Record<GroupKind, string> = {
   sentence_completion: "句子填空"
 };
 
-function auditIssueText(issue: string | { message?: string; [key: string]: unknown }): string {
+type AuditIssue = string | { message?: string; [key: string]: unknown };
+type QuestionDraftView = QuestionGroupDraft["questions"][number];
+type QuestionStatusTone = "ok" | "candidate" | "mismatch" | "unknown";
+
+interface QuestionStatus {
+  tone: QuestionStatusTone;
+  label: string;
+  details: string[];
+}
+
+const questionStatusIcon: Record<QuestionStatusTone, string> = {
+  ok: "✓",
+  candidate: "+",
+  mismatch: "!",
+  unknown: "?"
+};
+
+function auditIssueText(issue: AuditIssue): string {
   if (typeof issue === "string") return issue;
   return typeof issue.message === "string" ? issue.message : "";
 }
 
-function auditIssueKind(issue: string | { message?: string; [key: string]: unknown }): string {
+function auditIssueKind(issue: AuditIssue): string {
   if (typeof issue === "string") return "";
   return typeof issue.kind === "string" ? issue.kind : "";
 }
 
-function auditIssuePath(issue: string | { message?: string; [key: string]: unknown }): string {
+function auditIssuePath(issue: AuditIssue): string {
   if (typeof issue === "string") return "";
   return typeof issue.path === "string" ? issue.path : "";
 }
 
-function issueList(issue: string | { message?: string; [key: string]: unknown }, key: string): Array<{ message?: string; [key: string]: unknown }> {
+function issueList(issue: AuditIssue | undefined, key: string): Array<{ message?: string; [key: string]: unknown }> {
+  if (!issue) return [];
   if (typeof issue === "string") return [];
   const value = issue[key];
   return Array.isArray(value) ? value.filter((item): item is { message?: string; [key: string]: unknown } => Boolean(item && typeof item === "object")) : [];
 }
 
-function issueStringList(issue: string | { message?: string; [key: string]: unknown }, key: string): string[] {
+function issueStringList(issue: AuditIssue | undefined, key: string): string[] {
+  if (!issue) return [];
   if (typeof issue === "string") return [];
   const value = issue[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-function issueSummary(issue: string | { message?: string; [key: string]: unknown }, key: string): Array<{ range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown }> {
+function issueSummary(issue: AuditIssue | undefined, key: string): Array<{ range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown }> {
+  if (!issue) return [];
   if (typeof issue === "string") return [];
   const value = issue[key];
   return Array.isArray(value) ? value.filter((item): item is { range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown } => Boolean(item && typeof item === "object")) : [];
+}
+
+function issueBool(issue: AuditIssue | undefined, key: string): boolean {
+  if (!issue || typeof issue === "string") return false;
+  return issue[key] === true;
+}
+
+function issueString(issue: AuditIssue | undefined, key: string): string {
+  if (!issue || typeof issue === "string") return "";
+  return typeof issue[key] === "string" ? issue[key] : "";
 }
 
 function formatSummaryRow(item: { range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown }): string {
   const range = Array.isArray(item.range) && item.range.length >= 2 ? `Q${item.range[0]}-${item.range[1]}` : "范围未知";
   const ids = Array.isArray(item.questionIds) ? item.questionIds.join(", ") : "";
   return `${range} · ${String(item.kind ?? "题型未知")} · ${String(item.layoutHint ?? "布局未知")}${ids ? ` · ${ids}` : ""}`;
+}
+
+function parseQuestionNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value !== "string") return undefined;
+  const match = value.match(/\d+/);
+  return match ? Number(match[0]) : undefined;
+}
+
+function questionNumber(question: QuestionDraftView): number | undefined {
+  return parseQuestionNumber(question.displayNumber) ?? parseQuestionNumber(question.id);
+}
+
+function questionIdFor(question: QuestionDraftView): string {
+  return question.id || (questionNumber(question) ? `q${questionNumber(question)}` : "");
+}
+
+function rangeCovers(item: { [key: string]: unknown }, number: number | undefined): boolean {
+  if (number === undefined || !Array.isArray(item.range) || item.range.length < 2) return false;
+  const start = parseQuestionNumber(item.range[0]);
+  const end = parseQuestionNumber(item.range[1]) ?? start;
+  return start !== undefined && end !== undefined && number >= start && number <= end;
+}
+
+function questionIdsInclude(value: unknown, qid: string): boolean {
+  return Array.isArray(value) && value.some((item) => item === qid);
+}
+
+function itemQuestionNumber(item: { [key: string]: unknown }): number | undefined {
+  return parseQuestionNumber(item.questionNumber);
+}
+
+function itemHasQuestionScope(item: { [key: string]: unknown }): boolean {
+  return itemQuestionNumber(item) !== undefined || Array.isArray(item.range);
+}
+
+function itemAppliesToQuestion(item: { [key: string]: unknown }, question: QuestionDraftView): boolean {
+  const number = questionNumber(question);
+  const qid = questionIdFor(question);
+  return itemQuestionNumber(item) === number
+    || rangeCovers(item, number)
+    || questionIdsInclude(item.localQuestionIds, qid)
+    || questionIdsInclude(item.cloudQuestionIds, qid)
+    || questionIdsInclude(item.expectedQuestionIds, qid);
+}
+
+function formatAnswerValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(formatAnswerValue).filter(Boolean).join(", ");
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function cloudDetailText(item: { message?: string; [key: string]: unknown }): string {
+  const message = item.message ?? "云端对照发现差异，请核对。";
+  const kind = typeof item.kind === "string" ? item.kind : "";
+  const localAnswer = formatAnswerValue(item.localAnswer);
+  const cloudAnswer = formatAnswerValue(item.cloudAnswer);
+  if (kind === "cloud_answer_mismatch" && (localAnswer || cloudAnswer)) {
+    return `${message} 本地：${localAnswer || "空"}；云端：${cloudAnswer || "空"}`;
+  }
+  if (kind === "cloud_answer_candidate_only" && cloudAnswer) {
+    return `云端候选答案：${cloudAnswer}。本地答案为空，请核对图片答案页后决定是否写入。`;
+  }
+  if (kind === "cloud_group_kind_mismatch") {
+    return `${message} 本地题型：${String(item.localKind ?? "未知")}；云端题型：${String(item.cloudKind ?? "未知")}`;
+  }
+  if (kind === "cloud_group_layout_mismatch") {
+    return `${message} 本地布局：${String(item.localLayout ?? "未知")}；云端布局：${String(item.cloudLayout ?? "未知")}`;
+  }
+  return message;
+}
+
+function summaryCoversQuestion(cloudIssue: AuditIssue | undefined, key: string, question: QuestionDraftView): boolean {
+  const number = questionNumber(question);
+  const qid = questionIdFor(question);
+  return issueSummary(cloudIssue, key).some((item) => {
+    const asRecord = item as { [key: string]: unknown };
+    return rangeCovers(asRecord, number) || questionIdsInclude(item.questionIds, qid);
+  });
+}
+
+function cloudCoversQuestion(cloudIssue: AuditIssue | undefined, question: QuestionDraftView): boolean {
+  return summaryCoversQuestion(cloudIssue, "localSummary", question) || summaryCoversQuestion(cloudIssue, "cloudSummary", question);
+}
+
+function buildCloudQuestionStatus(question: QuestionDraftView, cloudIssue: AuditIssue | undefined): QuestionStatus {
+  if (!cloudIssue || !issueBool(cloudIssue, "attempted")) {
+    return { tone: "unknown", label: "云端未核对", details: [] };
+  }
+  const allIssues = issueList(cloudIssue, "issues");
+  const scopedIssues = allIssues.filter((item) => itemAppliesToQuestion(item, question));
+  const scopedObservations = issueList(cloudIssue, "observations").filter((item) => itemAppliesToQuestion(item, question));
+  const answerCandidates = scopedObservations.filter((item) => item.kind === "cloud_answer_candidate_only");
+  if (scopedIssues.length) {
+    return { tone: "mismatch", label: "云端有差异", details: scopedIssues.map(cloudDetailText) };
+  }
+  if (answerCandidates.length) {
+    return { tone: "candidate", label: "云端候选", details: answerCandidates.map(cloudDetailText) };
+  }
+  if (issueString(cloudIssue, "failure")) {
+    return { tone: "unknown", label: "云端未完成", details: [] };
+  }
+  const hasGlobalIssue = allIssues.some((item) => !itemHasQuestionScope(item));
+  if (hasGlobalIssue && !cloudCoversQuestion(cloudIssue, question)) {
+    return { tone: "unknown", label: "云端未定位", details: [] };
+  }
+  if (issueBool(cloudIssue, "passed") || cloudCoversQuestion(cloudIssue, question)) {
+    return { tone: "ok", label: "云端一致", details: scopedObservations.filter((item) => item.kind !== "cloud_answer_candidate_only").map(cloudDetailText) };
+  }
+  return { tone: "unknown", label: "云端未覆盖", details: [] };
+}
+
+function buildVisionQuestionStatus(question: QuestionDraftView, visionIssue: AuditIssue | undefined): QuestionStatus | undefined {
+  if (!visionIssue) return undefined;
+  const qid = questionIdFor(question);
+  const filled = issueStringList(visionIssue, "filledQuestionIds");
+  const missing = issueStringList(visionIssue, "missingQuestionIds");
+  if (filled.includes(qid)) {
+    return { tone: "ok", label: "视觉已补全", details: ["答案来自图片页视觉识别，发布前仍需人工确认。"] };
+  }
+  if (missing.includes(qid)) {
+    return { tone: "mismatch", label: "视觉缺答案", details: ["视觉模型未能从图片答案页安全提取此题答案。"] };
+  }
+  return undefined;
+}
+
+function findLatestCloudIssue(rawAuditIssues: AuditIssue[], fallback?: NonNullable<AutoPipelineReport["quality"]>["cloudComparison"]): AuditIssue | undefined {
+  const persistedIssue = [...rawAuditIssues]
+    .reverse()
+    .find((issue) => auditIssueKind(issue) === "cloud_comparison_summary" || auditIssuePath(issue).includes("cloudComparison"));
+  return persistedIssue ?? fallback;
+}
+
+function StatusBadge({ status }: { status: QuestionStatus }) {
+  return (
+    <span className={`cloud-status-badge ${status.tone}`} title={status.label}>
+      <span aria-hidden="true">{questionStatusIcon[status.tone]}</span>
+      {status.label}
+    </span>
+  );
 }
 
 function buildGroupPreviewSrcDoc(group: QuestionGroupDraft): string {
@@ -76,12 +247,14 @@ function buildGroupPreviewSrcDoc(group: QuestionGroupDraft): string {
 
 export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => void }) {
   const [ir, setIr] = useState<ReadingAuthoringIr | undefined>();
+  const [pipelineReport, setPipelineReport] = useState<AutoPipelineReport | undefined>();
   const [activeGroupId, setActiveGroupId] = useState<string | undefined>();
   const activeGroup = useMemo<QuestionGroupDraft | undefined>(() => ir?.groups.find((group) => group.groupId === activeGroupId) ?? ir?.groups[0], [ir, activeGroupId]);
 
   async function load() {
     const detail = await getJob(jobId);
     setIr(detail.authoringIr);
+    setPipelineReport(detail.pipelineReport);
     setActiveGroupId((current) => current ?? detail.authoringIr?.groups[0]?.groupId);
   }
 
@@ -108,13 +281,21 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
   const currentGroup = activeGroup;
   const rawAuditIssues = ir.audit.issues ?? [];
   const auditIssues = rawAuditIssues.map(auditIssueText).filter(Boolean);
-  const cloudIssue = rawAuditIssues.find((issue) => auditIssueKind(issue) === "cloud_comparison_summary" || auditIssuePath(issue).includes("cloudComparison"));
+  const cloudIssue = findLatestCloudIssue(rawAuditIssues, pipelineReport?.quality?.cloudComparison);
   const visionAnswerIssue = rawAuditIssues.find((issue) => auditIssueKind(issue) === "vision_answer_extraction_summary");
   const visibleAuditIssues = auditIssues.filter((issue) => issue !== auditIssueText(cloudIssue ?? "") && issue !== auditIssueText(visionAnswerIssue ?? ""));
   const emptyAnswerCount = currentGroup.questions.filter((question) => {
     const answer = question.answer;
     return Array.isArray(answer) ? answer.length === 0 || answer.every((item) => !String(item).trim()) : !String(answer ?? "").trim();
   }).length;
+  const cloudPassed = issueBool(cloudIssue, "attempted") && issueBool(cloudIssue, "passed");
+  const cloudQuestionStatuses = Object.fromEntries(currentGroup.questions.map((question) => [question.id, buildCloudQuestionStatus(question, cloudIssue)]));
+  const visionQuestionStatuses = Object.fromEntries(currentGroup.questions.map((question) => [question.id, buildVisionQuestionStatus(question, visionAnswerIssue)]));
+  const cloudStatusCounts = currentGroup.questions.reduce<Record<QuestionStatusTone, number>>((counts, question) => {
+    const tone = cloudQuestionStatuses[question.id]?.tone ?? "unknown";
+    counts[tone] += 1;
+    return counts;
+  }, { ok: 0, candidate: 0, mismatch: 0, unknown: 0 });
 
   function updateGroup(mutator: (group: QuestionGroupDraft) => QuestionGroupDraft) {
     if (!ir || !currentGroup) return;
@@ -154,11 +335,20 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
             </div>
           ) : null}
           {cloudIssue ? (
-            <div className="warning-box" data-testid="cloud-comparison-summary">
-              <strong>云端整卷对照</strong>
+            <div className={cloudPassed ? "info-box" : "warning-box"} data-testid="cloud-comparison-summary">
+              <div className="comparison-heading">
+                <strong>云端整卷对照</strong>
+                <span className={`cloud-status-badge ${cloudPassed ? "ok" : "mismatch"}`}>{cloudPassed ? "已通过" : "需核对"}</span>
+              </div>
               <p>{auditIssueText(cloudIssue)}</p>
-              {issueList(cloudIssue, "issues").slice(0, 4).map((issue, index) => <p key={`${index}-${issue.message}`}>{issue.message ?? "云端对照发现差异。"}</p>)}
-              {issueList(cloudIssue, "observations").slice(0, 2).map((issue, index) => <small key={`${index}-${issue.message}`}>{issue.message ?? "云端对照备注。"}</small>)}
+              <div className="comparison-metrics" data-testid="cloud-question-status-counts">
+                <span><strong>{cloudStatusCounts.ok}</strong> 一致</span>
+                <span><strong>{cloudStatusCounts.candidate}</strong> 候选</span>
+                <span><strong>{cloudStatusCounts.mismatch}</strong> 差异</span>
+                <span><strong>{cloudStatusCounts.unknown}</strong> 未覆盖</span>
+              </div>
+              {issueList(cloudIssue, "issues").slice(0, 4).map((issue, index) => <p key={`${index}-${issue.message}`}>{cloudDetailText(issue)}</p>)}
+              {issueList(cloudIssue, "observations").filter((issue) => issue.kind !== "cloud_answer_candidate_only").slice(0, 2).map((issue, index) => <small key={`${index}-${issue.message}`}>{cloudDetailText(issue)}</small>)}
               <div className="compare-columns">
                 <div>
                   <span>本地题稿</span>
@@ -225,14 +415,32 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
           <label>题型<select value={activeGroup.kind} onChange={(event) => updateGroup((group) => ({ ...group, kind: event.target.value as GroupKind }))}>{groupKinds.map((kind) => <option key={kind} value={kind}>{groupKindLabels[kind]}</option>)}</select></label>
           <label>说明<textarea value={activeGroup.instruction.join("\n")} onChange={(event) => updateGroup((group) => ({ ...group, instruction: event.target.value.split("\n") }))} /></label>
           <div className="question-stack">
-            {activeGroup.questions.map((question, index) => (
-              <div className="question-edit" key={question.id}>
-                <label>题号<input value={question.displayNumber} onChange={(event) => updateGroup((group) => ({ ...group, questions: group.questions.map((item, i) => i === index ? { ...item, displayNumber: event.target.value } : item) }))} /></label>
-                <label>题干<input value={question.prompt} onChange={(event) => updateGroup((group) => ({ ...group, questions: group.questions.map((item, i) => i === index ? { ...item, prompt: event.target.value } : item) }))} /></label>
-                <label>答案<input value={Array.isArray(question.answer) ? question.answer.join(",") : question.answer ?? ""} onChange={(event) => updateGroup((group) => ({ ...group, questions: group.questions.map((item, i) => i === index ? { ...item, answer: event.target.value } : item) }))} /></label>
-                <label className="inline-check"><input type="checkbox" checked={question.verified} onChange={(event) => updateGroup((group) => ({ ...group, questions: group.questions.map((item, i) => i === index ? { ...item, verified: event.target.checked } : item) }))} /> 人工确认</label>
-              </div>
-            ))}
+            {activeGroup.questions.map((question, index) => {
+              const cloudStatus = cloudQuestionStatuses[question.id];
+              const visionStatus = visionQuestionStatuses[question.id];
+              const statusDetails = [...(cloudStatus?.details ?? []), ...(visionStatus?.details ?? [])];
+              const noteTone = cloudStatus?.tone === "mismatch" || visionStatus?.tone === "mismatch" ? "mismatch" : cloudStatus?.tone === "candidate" ? "candidate" : "ok";
+              return (
+                <div className="question-edit" key={question.id}>
+                  <div className="question-edit-header">
+                    <strong>Q{question.displayNumber}</strong>
+                    <div className="question-status-row">
+                      {cloudStatus ? <StatusBadge status={cloudStatus} /> : null}
+                      {visionStatus ? <StatusBadge status={visionStatus} /> : null}
+                    </div>
+                  </div>
+                  {statusDetails.length ? (
+                    <div className={`question-compare-note ${noteTone}`}>
+                      {statusDetails.slice(0, 3).map((detail) => <p key={detail}>{detail}</p>)}
+                    </div>
+                  ) : null}
+                  <label>题号<input value={question.displayNumber} onChange={(event) => updateGroup((group) => ({ ...group, questions: group.questions.map((item, i) => i === index ? { ...item, displayNumber: event.target.value } : item) }))} /></label>
+                  <label>题干<input value={question.prompt} onChange={(event) => updateGroup((group) => ({ ...group, questions: group.questions.map((item, i) => i === index ? { ...item, prompt: event.target.value } : item) }))} /></label>
+                  <label>答案<input value={Array.isArray(question.answer) ? question.answer.join(",") : question.answer ?? ""} onChange={(event) => updateGroup((group) => ({ ...group, questions: group.questions.map((item, i) => i === index ? { ...item, answer: event.target.value } : item) }))} /></label>
+                  <label className="inline-check"><input type="checkbox" checked={question.verified} onChange={(event) => updateGroup((group) => ({ ...group, questions: group.questions.map((item, i) => i === index ? { ...item, verified: event.target.checked } : item) }))} /> 人工确认</label>
+                </div>
+              );
+            })}
           </div>
         </section>
         <aside className="live-preview">

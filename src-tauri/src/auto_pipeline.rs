@@ -764,6 +764,11 @@ fn append_authoring_audit_issue(ir: &mut Value, issue: Value) {
         *issues = json!([]);
     }
     if let Some(items) = issues.as_array_mut() {
+        if issue.get("kind").and_then(Value::as_str) == Some("cloud_comparison_summary") {
+            items.retain(|item| {
+                item.get("kind").and_then(Value::as_str) != Some("cloud_comparison_summary")
+            });
+        }
         if !items
             .iter()
             .any(|item| item.get("message").and_then(Value::as_str) == Some(&message))
@@ -1431,20 +1436,33 @@ where
             .and_then(Value::as_bool)
             .unwrap_or(false)
             || cloud_warning_count > 0);
-    if cloud_needs_confirmation {
+    let cloud_attempted = cloud_comparison
+        .get("attempted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if cloud_attempted {
         let local_summary = cloud_comparison
             .get("localSummary")
             .cloned()
             .unwrap_or_else(|| outline_group_summary_from_local(&ir));
+        let cloud_passed = cloud_comparison
+            .get("passed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         append_authoring_audit_issue(
             &mut ir,
             json!({
                 "layer": "QualityCheck",
                 "path": "$.audit.cloudComparison",
                 "kind": "cloud_comparison_summary",
-                "message": "云端对照没有通过，请确认题组、填空位置和答案；本地题稿未被云端结果覆盖。",
+                "status": if cloud_needs_confirmation { "needs_review" } else { "passed" },
+                "message": if cloud_needs_confirmation {
+                    "云端对照没有通过，请确认题组、填空位置和答案；本地题稿未被云端结果覆盖。"
+                } else {
+                    "云端对照通过：题组、题型、填答布局和答案未发现显著差异。"
+                },
                 "attempted": cloud_comparison.get("attempted").cloned().unwrap_or(Value::Bool(false)),
-                "passed": cloud_comparison.get("passed").cloned().unwrap_or(Value::Bool(false)),
+                "passed": cloud_passed,
                 "warningCount": cloud_warning_count,
                 "failure": cloud_comparison.get("failure").cloned().unwrap_or(Value::Null),
                 "issues": cloud_comparison.get("issues").cloned().unwrap_or_else(|| json!([])),

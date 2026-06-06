@@ -5282,6 +5282,25 @@ Answers
                     .unwrap_or_default()
                     .contains("视觉模型已从 PDF 图片页补全答案")
         }));
+        let cloud_audit = audit_issues
+            .iter()
+            .find(|issue| {
+                issue.get("kind").and_then(Value::as_str) == Some("cloud_comparison_summary")
+            })
+            .expect("cloud pass summary should survive artifact minimization");
+        assert_eq!(
+            cloud_audit.get("status").and_then(Value::as_str),
+            Some("passed")
+        );
+        assert_eq!(
+            cloud_audit.get("passed").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(cloud_audit
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("云端对照通过"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5411,6 +5430,10 @@ Answers
                 issue.get("kind").and_then(Value::as_str) == Some("cloud_comparison_summary")
             })
             .expect("cloud comparison summary should survive artifact minimization");
+        assert_eq!(
+            cloud_issue.get("status").and_then(Value::as_str),
+            Some("needs_review")
+        );
         assert_eq!(
             cloud_issue
                 .pointer("/cloudSummary/0/questionIds")

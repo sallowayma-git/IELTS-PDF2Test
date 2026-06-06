@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { generatePreviewAssets, getJob, runPreviewE2e, validateAuthoringIr } from "../api/tauriCommands";
 import { go } from "../app/router";
 import type { PreviewAssets, ValidationReport } from "../types";
-import { runtimeModeLabel, validationLayerLabel } from "../utils/displayLabels";
+import { runtimeModeLabel, validationIssueDisplay, validationLayerLabel } from "../utils/displayLabels";
 
 function buildSrcDoc(assets: PreviewAssets): string {
   return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Georgia,serif;margin:0;padding:24px;background:#f5f1e8;color:#17211f;line-height:1.6}.layout{display:grid;grid-template-columns:1fr 420px;gap:28px}.pane{background:#fffaf0;border:1px solid #d8cfbf;padding:22px}.choice-row{display:flex;gap:10px;flex-wrap:wrap}.completion-table{width:100%;border-collapse:collapse}.completion-table th,.completion-table td{border:1px solid #c8beaa;padding:8px}.question-umbrella-ranges{padding-left:18px;color:#5d4630}input{font:inherit;padding:6px}</style></head><body><div class="layout"><article class="pane">${assets.source.passage.blocks.map((block) => block.html).join("")}</article><section class="pane">${assets.source.meta.questionIntroHtml}${assets.source.questionGroups.map((group) => group.bodyHtml).join("")}</section></div></body></html>`;
@@ -64,7 +64,23 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
               return <div key={layer.layer}><span>{validationLayerLabel(layer.layer)}</span><strong>{label}</strong></div>;
             })}
           </div>
-          {report?.issues.length ? <details open><summary>问题详情</summary><pre>{JSON.stringify(report.issues.map((issue) => ({ 层级: validationLayerLabel(issue.layer), 位置: issue.path, 问题: issue.message, 建议: issue.fixHint })), null, 2)}</pre></details> : null}
+          {report?.issues.length ? (
+            <details open>
+              <summary>问题详情</summary>
+              <div className="issue-list compact" data-testid="preview-issue-list">
+                {report.issues.slice(0, 8).map((issue) => {
+                  const display = validationIssueDisplay(issue);
+                  return (
+                    <div key={issue.issueId}>
+                      <strong>{display.title}</strong>
+                      <small>{display.detail}</small>
+                      <small>{display.action}</small>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          ) : null}
           <details><summary>高级诊断：已收集答案</summary><pre>{JSON.stringify(report?.runtime?.collectedAnswers ?? {}, null, 2)}</pre></details>
           <details><summary>高级诊断：评分信息</summary><pre>{JSON.stringify({ scoreInfo: report?.runtime?.scoreInfo, wrongScoreInfo: report?.runtime?.wrongScoreInfo, navButtonCount: report?.runtime?.navButtonCount, questionCount: report?.runtime?.questionCount }, null, 2)}</pre></details>
           <details><summary>高级诊断：运行错误</summary><pre>{JSON.stringify(report?.runtime?.consoleErrors ?? [], null, 2)}</pre></details>
