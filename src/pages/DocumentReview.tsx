@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { applyManualTranscription, applyVisionTranscription, getJob, rerunOcr, resolveSourceReview, runRuleSplit } from "../api/tauriCommands";
+import { applyManualTranscription, applyVisionTranscription, buildAuthoringIr, getJob, rerunOcr, resolveSourceReview, runRuleSplit } from "../api/tauriCommands";
 import { go } from "../app/router";
 import type { AutoPipelineReport, DocumentBlock, DocumentIr, ImportJob, SourceReview } from "../types";
 import { jobStatusLabel, workflowStepLabel, runtimeModeLabel } from "../utils/displayLabels";
@@ -27,15 +27,19 @@ export function DocumentReview({ jobId, refresh }: { jobId: string; refresh: () 
     load().catch(console.error);
   }, [jobId]);
 
-  async function split() {
+  async function continueToPreview() {
     try {
-      await runRuleSplit(jobId);
+      const detail = await getJob(jobId);
+      if (!detail.authoringIr) {
+        await runRuleSplit(jobId);
+        await buildAuthoringIr(jobId);
+      }
       refresh();
-      go(`/jobs/${jobId}/split`);
+      go(`/jobs/${jobId}/preview`);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setVisionError(message.includes("editable_draft_exists")
-        ? "当前任务已有题稿，请直接进入题稿编辑；默认不会重新识别并覆盖现有题稿。"
+        ? "当前任务已有题稿，请直接进入确认与编辑；默认不会重新识别并覆盖现有题稿。"
         : message);
     }
   }
@@ -86,7 +90,7 @@ export function DocumentReview({ jobId, refresh }: { jobId: string; refresh: () 
           <p className="eyebrow">源文档确认</p>
           <h2>识别结果预览</h2>
         </div>
-        <div className="button-row"><button className="ghost" data-testid="rerun-ocr" onClick={ocr}>重新识别文字</button><button className="ghost" data-testid="vision-transcribe" disabled={visionBusy} onClick={visionTranscribe}>{visionBusy ? "正在识别..." : "识别扫描件文字"}</button><button className="ghost" data-testid="resolve-source-review" disabled={!sourceReview?.required || sourceReview.resolved} onClick={resolveReview}>确认源文档</button><button className="primary" data-testid="go-split" onClick={split}>进入题组确认</button></div>
+        <div className="button-row"><button className="ghost" data-testid="rerun-ocr" onClick={ocr}>重新识别文字</button><button className="ghost" data-testid="vision-transcribe" disabled={visionBusy} onClick={visionTranscribe}>{visionBusy ? "正在识别..." : "识别扫描件文字"}</button><button className="ghost" data-testid="resolve-source-review" disabled={!sourceReview?.required || sourceReview.resolved} onClick={resolveReview}>确认源文档</button><button className="primary" data-testid="go-preview" onClick={continueToPreview}>进入确认与编辑</button></div>
       </div>
       <div className="review-grid">
         <aside className="document-canvas">

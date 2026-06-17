@@ -1516,7 +1516,7 @@ where
         } else {
             WorkflowStep::Preview
         };
-    let next_route = "groups";
+    let next_route = "preview";
     let user_status = if has_review_blocks {
         "needsConfirmation"
     } else {

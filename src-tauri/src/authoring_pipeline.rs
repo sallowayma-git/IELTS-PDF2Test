@@ -1073,6 +1073,8 @@ fn detect_dynamic_group_kind(text: &str) -> &'static str {
         "summary_completion"
     } else if is_dynamic_notes_completion_text(text) {
         "sentence_completion"
+    } else if is_dynamic_short_answer_instruction_text(text) {
+        "short_answer"
     } else if lower.contains("complete the sentence") || lower.contains("complete the sentences") {
         "sentence_completion"
     } else if has_dynamic_numbered_inline_blanks(text) {
@@ -1164,6 +1166,24 @@ fn is_dynamic_notes_completion_text(text: &str) -> bool {
     lower.contains("complete the notes")
         || lower.contains("notes below")
         || lower.contains("note completion")
+}
+
+fn is_dynamic_short_answer_instruction_text(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let has_word_limit = lower.contains("no more than")
+        || lower.contains("one word only")
+        || lower.contains("two words only")
+        || lower.contains("three words only")
+        || lower.contains("and/or a number");
+    has_word_limit
+        && !lower.contains("complete the summary")
+        && !is_dynamic_notes_completion_text(text)
+        && !lower.contains("complete the sentence")
+        && !lower.contains("complete the sentences")
+        && !lower.contains("complete the table")
+        && !lower.contains("flow chart")
+        && !lower.contains("flow-chart")
+        && !lower.contains("diagram")
 }
 
 fn is_dynamic_sentence_ending_matching_text(text: &str) -> bool {

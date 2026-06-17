@@ -129,7 +129,7 @@ export interface AutoPipelineReport {
   currentStep: string;
   userStatus?: "draftReady" | "needsConfirmation" | "failed";
   userMessage?: string;
-  nextRoute?: "groups" | "document" | "review";
+  nextRoute?: "preview" | "groups" | "document" | "review";
   generatedAt: string;
   validationReport?: unknown;
 }

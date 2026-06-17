@@ -12,10 +12,10 @@ export const jobStatusLabels: Record<JobStatus, string> = {
 export const workflowStepLabels: Record<WorkflowStep, string> = {
   Upload: "上传文件",
   DocumentReview: "核对源文档",
-  Split: "识别题组与答案",
-  Authoring: "题稿编辑",
-  LlmReview: "确认识别结果",
-  Preview: "预览与校验",
+  Split: "后台识别题组与答案",
+  Authoring: "确认与编辑",
+  LlmReview: "后台识别复核",
+  Preview: "预览与编辑",
   Export: "导出",
   Pack: "组卷"
 };

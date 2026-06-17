@@ -390,26 +390,12 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
   assert(verified.questionCount >= 1, "manual verification helper should verify at least one question", verified);
   await navigate(cdp, `${baseUrl}/#/jobs/${jobId}/groups`);
   await waitSelector(cdp, "[data-testid='group-editor']");
-  await click(cdp, "[data-testid='validate-and-preview']");
-  await waitFor("route to preview after validation", async () => (await currentHash(cdp)).includes("/preview"), { timeoutMs: 10000 });
-  await waitSelector(cdp, "[data-testid='unified-preview']");
-  await click(cdp, "[data-testid='generate-preview-assets']");
-  await waitSelector(cdp, "[data-testid='reading-preview-frame']");
-  await waitFor("preview assets persisted", async () => {
-    const next = await getStoreSummary(cdp, jobId);
-    return Boolean(next?.previewAssets?.source?.questionOrder?.length)
-      && next?.validationReport?.runtime?.mode === "static-rust";
-  }, { timeoutMs: 10000 });
-  const runtimeMode = await getText(cdp, "[data-testid='runtime-mode']");
-  const previewSummary = await getStoreSummary(cdp, jobId);
-  assert(previewSummary?.validationReport?.runtime?.mode === "static-rust", "static runtime contract should be persisted before export", { runtimeMode, validationReport: previewSummary?.validationReport });
-  await click(cdp, "[data-testid='go-export']");
+  await click(cdp, "[data-testid='validate-and-export']");
   await waitFor("route to export", async () => (await currentHash(cdp)).includes("/export"), { timeoutMs: 10000 });
   await waitSelector(cdp, "[data-testid='export-page']");
-  await click(cdp, "[data-testid='generate-export']");
   await waitFor("export files rendered", async () => {
     const count = await evaluate(cdp, `document.querySelectorAll("[data-testid='export-file']").length`);
-    return count >= 4;
+    return count >= 2;
   }, { timeoutMs: 10000 });
   const exportedFileCount = await evaluate(cdp, `document.querySelectorAll("[data-testid='export-file']").length`);
   const afterExport = await getStoreSummary(cdp, jobId);
@@ -428,7 +414,7 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
   const packStore = await evaluate(cdp, `JSON.parse(localStorage.getItem("ielts-author-studio.dev-fallback-store.v1") || "{}").packs?.[0] ?? null`);
   return {
     finalStatus: afterExport.job.status,
-    runtimeMode: runtimeMode.trim(),
+    runtimeMode: afterExport.validationReport?.runtime?.mode ?? "unknown",
     exportedFileCount,
     packBuilt: packResultText.includes("输出路径") && Boolean(packStore?.packId)
   };

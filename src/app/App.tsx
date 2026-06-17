@@ -2,13 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "../components/AppShell";
 import { Dashboard } from "../pages/Dashboard";
 import { DocumentReview } from "../pages/DocumentReview";
-import { GroupEditor } from "../pages/GroupEditor";
 import { ImportWizard } from "../pages/ImportWizard";
 import { JobList } from "../pages/JobList";
-import { LlmReview } from "../pages/LlmReview";
 import { PackBuilder } from "../pages/PackBuilder";
 import { Settings } from "../pages/Settings";
-import { SplitAndAnswers } from "../pages/SplitAndAnswers";
 import { UnifiedPreview } from "../pages/UnifiedPreview";
 import { ExportPage } from "../pages/ExportPage";
 import { getJob, listJobs } from "../api/tauriCommands";
@@ -50,9 +47,9 @@ export function App() {
     if (route.name === "jobs") return <JobList jobs={jobs} refresh={refresh} />;
     if (route.name === "new") return <ImportWizard refresh={refresh} />;
     if (route.jobId && route.name === "document") return <DocumentReview jobId={route.jobId} {...common} />;
-    if (route.jobId && route.name === "split") return <SplitAndAnswers jobId={route.jobId} {...common} />;
-    if (route.jobId && route.name === "groups") return <GroupEditor jobId={route.jobId} {...common} />;
-    if (route.jobId && route.name === "llm-review") return <LlmReview jobId={route.jobId} {...common} />;
+    if (route.jobId && (route.name === "split" || route.name === "groups" || route.name === "llm-review")) {
+      return <UnifiedPreview jobId={route.jobId} {...common} />;
+    }
     if (route.jobId && route.name === "preview") return <UnifiedPreview jobId={route.jobId} {...common} />;
     if (route.jobId && route.name === "export") return <ExportPage jobId={route.jobId} jobs={jobs} {...common} />;
     if (route.name === "packs") return <PackBuilder jobs={jobs} refresh={refresh} />;

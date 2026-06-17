@@ -544,6 +544,7 @@ function detectGroupKind(text: string): GroupKind {
   if (lower.includes("match") && lower.includes("letter")) return "matching";
   if (lower.includes("complete the summary")) return "summary_completion";
   if (isNotesCompletionText(text)) return "sentence_completion";
+  if (isShortAnswerInstructionText(text)) return "short_answer";
   if (lower.includes("complete the sentence") || lower.includes("complete the sentences")) return "sentence_completion";
   if (hasNumberedInlineBlanks(text)) return "sentence_completion";
   if (isSingleChoiceText(text)) return "single_choice";
@@ -595,6 +596,24 @@ function isSingleChoiceText(text: string): boolean {
 function isNotesCompletionText(text: string): boolean {
   const lower = text.toLowerCase();
   return lower.includes("complete the notes") || lower.includes("notes below") || lower.includes("note completion");
+}
+
+function isShortAnswerInstructionText(text: string): boolean {
+  const lower = text.toLowerCase();
+  const hasWordLimit = lower.includes("no more than")
+    || lower.includes("one word only")
+    || lower.includes("two words only")
+    || lower.includes("three words only")
+    || lower.includes("and/or a number");
+  return hasWordLimit
+    && !lower.includes("complete the summary")
+    && !isNotesCompletionText(text)
+    && !lower.includes("complete the sentence")
+    && !lower.includes("complete the sentences")
+    && !lower.includes("complete the table")
+    && !lower.includes("flow chart")
+    && !lower.includes("flow-chart")
+    && !lower.includes("diagram");
 }
 
 function isSentenceEndingMatchingText(text: string): boolean {
@@ -2029,7 +2048,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         previewUrl: `local-preview://${source.examId}`,
         source,
         wrapperJs: buildWrapper(source),
-        manifestJs: buildManifest([source])
+        manifestJs: buildManifest([source]),
+        runtimeHtml: previewHtml(source)
       };
       store.previews[jobId] = assets;
 
@@ -2047,7 +2067,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const hasReviewBlocks = lowConfidenceGroups.length > 0 || blockedAutoApplyGroups.length > 0 || requiresParserReview || requiresAuthoringReview;
       const status = hasReviewBlocks ? "NeedsReview" : target === "editableDraft" ? "DraftSaved" : staticRuntimePassed ? "ExportReady" : validationReport.passed ? "DraftSaved" : "NeedsReview";
       const currentStep = target === "editableDraft" || requiresParserReview || requiresAuthoringReview || lowConfidenceGroups.length || blockedAutoApplyGroups.length ? "Authoring" : staticRuntimePassed ? "Export" : "Preview";
-      const nextRoute = "groups";
+      const nextRoute = "preview";
       const userStatus = hasReviewBlocks ? "needsConfirmation" : "draftReady";
       const userMessage = requiresParserReview
         ? "题稿已生成，但源文件识别结果需要你确认。"
@@ -2294,7 +2314,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         previewUrl: `local-preview://${source.examId}`,
         source,
         wrapperJs: buildWrapper(source),
-        manifestJs: buildManifest([source])
+        manifestJs: buildManifest([source]),
+        runtimeHtml: previewHtml(source)
       };
       const validationReport = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
       if (!validationReport.passed) {
@@ -2331,7 +2352,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         previewUrl: `local-preview://${source.examId}`,
         source,
         wrapperJs: buildWrapper(source),
-        manifestJs: buildManifest([source])
+        manifestJs: buildManifest([source]),
+        runtimeHtml: previewHtml(source)
       };
       store.previews[jobId] = assets;
       const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
@@ -2359,7 +2381,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         previewUrl: `local-preview://${source.examId}`,
         source,
         wrapperJs: buildWrapper(source),
-        manifestJs: buildManifest([source])
+        manifestJs: buildManifest([source]),
+        runtimeHtml: previewHtml(source)
       };
       store.previews[jobId] = assets;
       const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
@@ -2404,7 +2427,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           previewUrl: `local-preview://${source.examId}`,
           source,
           wrapperJs: buildWrapper(source),
-          manifestJs: buildManifest([source])
+          manifestJs: buildManifest([source]),
+          runtimeHtml: previewHtml(source)
         };
         store.previews[jobId] = assets;
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
@@ -2456,7 +2480,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           previewUrl: `local-preview://${source.examId}`,
           source,
           wrapperJs: buildWrapper(source),
-          manifestJs: buildManifest([source])
+          manifestJs: buildManifest([source]),
+          runtimeHtml: previewHtml(source)
         };
         store.previews[jobId] = assets;
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
@@ -2543,7 +2568,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           previewUrl: `local-preview://${source.examId}`,
           source,
           wrapperJs: buildWrapper(source),
-          manifestJs: buildManifest([source])
+          manifestJs: buildManifest([source]),
+          runtimeHtml: previewHtml(source)
         };
         store.previews[jobId] = assets;
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));

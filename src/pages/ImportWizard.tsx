@@ -77,7 +77,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
     setBatchProgress(undefined);
     try {
       let firstJobId: string | undefined;
-      let firstRoute: "groups" | "document" | "llm-review" = "groups";
+      let firstRoute: "preview" | "document" | "llm-review" = "preview";
       let latestReport: AutoPipelineReport | undefined;
       const tagList = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
       for (const [index, sourceFile] of sourceFiles.entries()) {
@@ -117,7 +117,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
             ? "document"
             : report.nextRoute === "review"
               ? "llm-review"
-              : "groups";
+              : "preview";
         }
       }
       setAutoReport(latestReport);

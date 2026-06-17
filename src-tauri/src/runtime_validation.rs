@@ -15,10 +15,174 @@ use crate::validator::json_issue;
 use crate::{CommandResult, JobStatus};
 use serde_json::{json, Value};
 use std::{
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
 use uuid::Uuid;
+
+fn inline_script(code: &str) -> String {
+    code.replace("</script>", "<\\/script>")
+}
+
+fn resolve_preview_runtime_html_path() -> Option<PathBuf> {
+    let env_path = std::env::var("EPIC8_UNIFIED_RUNTIME_HTML_PATH")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.exists());
+    env_path.or_else(|| {
+        let candidate = PathBuf::from(
+            "/Users/maziheng/Downloads/0.3.1 working/assets/generated/reading-exams/reading-practice-unified.html",
+        );
+        candidate.exists().then_some(candidate)
+    })
+}
+
+fn resolve_preview_runtime_js_path() -> Option<PathBuf> {
+    let env_path = std::env::var("EPIC8_UNIFIED_RUNTIME_JS_PATH")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.exists());
+    env_path.or_else(|| {
+        let candidate = PathBuf::from(
+            "/Users/maziheng/Downloads/0.3.1 working/js/runtime/unifiedReadingPage.js",
+        );
+        candidate.exists().then_some(candidate)
+    })
+}
+
+fn preview_bridge_script(exam_id: &str) -> String {
+    let exam_id_literal = serde_json::to_string(exam_id).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        r#"(function initAuthorPreviewBridge() {{
+  const examId = {exam_id_literal};
+  const bridgeSource = "author_preview_bridge";
+  const readOnlyInit = () => {{
+    try {{
+      window.postMessage({{
+        type: "INIT_SESSION",
+        data: {{
+          examId,
+          dataKey: examId,
+          reviewMode: true,
+          readOnly: true
+        }}
+      }}, "*");
+    }} catch (_error) {{
+      // ignore preview bridge init errors
+    }}
+  }};
+  const resolveQuestionId = (node) => {{
+    const element = node instanceof Element ? node : node && node.parentElement;
+    if (!element) return "";
+    const holder = element.closest("[data-question-id]");
+    if (holder && holder.getAttribute("data-question-id")) return holder.getAttribute("data-question-id") || "";
+    const control = element.closest("input[name], textarea[name], select[name], [id$='_input']");
+    if (!control) return "";
+    const name = control.getAttribute("name");
+    if (name) return name;
+    const id = control.getAttribute("id") || "";
+    return id.endsWith("_input") ? id.slice(0, -6) : id;
+  }};
+  const highlightQuestion = (questionId) => {{
+    if (!questionId) return;
+    document.querySelectorAll(".author-preview-selected").forEach((node) => node.classList.remove("author-preview-selected"));
+    const selectors = [
+      `[data-question-id="${{questionId}}"]`,
+      `input[name="${{questionId}}"]`,
+      `textarea[name="${{questionId}}"]`,
+      `select[name="${{questionId}}"]`,
+      `#${{CSS.escape(questionId)}}_input`
+    ];
+    const target = document.querySelector(selectors.join(", "));
+    if (!(target instanceof Element)) return;
+    const container = target.closest("[data-question-id], li, tr, .question-item, .match-question-item, .choice-item, .tfng-item") || target;
+    if (container instanceof HTMLElement) {{
+      container.classList.add("author-preview-selected");
+      container.scrollIntoView({{ block: "center", behavior: "smooth" }});
+    }}
+  }};
+  try {{
+    const params = new URLSearchParams(window.location.search || "");
+    params.set("examId", examId);
+    params.set("dataKey", examId);
+    window.history.replaceState(null, "", `?${{params.toString()}}`);
+  }} catch (_error) {{
+    // ignore query-state sync errors
+  }}
+  document.addEventListener("click", (event) => {{
+    const questionId = resolveQuestionId(event.target);
+    if (!questionId || !window.parent || window.parent === window) return;
+    window.parent.postMessage({{
+      source: bridgeSource,
+      type: "question-click",
+      examId,
+      questionId
+    }}, "*");
+  }}, true);
+  window.addEventListener("message", (event) => {{
+    const payload = event && event.data;
+    if (!payload || typeof payload !== "object" || payload.source !== "author_editor") return;
+    if (payload.type === "select-question") {{
+      highlightQuestion(typeof payload.questionId === "string" ? payload.questionId : "");
+    }}
+  }});
+  document.addEventListener("DOMContentLoaded", () => {{
+    const style = document.createElement("style");
+    style.textContent = ".author-preview-selected{{outline:2px solid #d46836;outline-offset:4px;border-radius:8px;background:rgba(212,104,54,.08);}}";
+    document.head.appendChild(style);
+    window.setTimeout(readOnlyInit, 120);
+    window.setTimeout(readOnlyInit, 500);
+  }});
+}})();"#,
+    )
+}
+
+fn build_unified_runtime_html(exam_id: &str, manifest_js: &str, wrapper_js: &str) -> Option<String> {
+    let template_path = resolve_preview_runtime_html_path()?;
+    let runtime_js_path = resolve_preview_runtime_js_path()?;
+    let runtime_dir = runtime_js_path.parent()?;
+    let mut html = fs::read_to_string(template_path).ok()?;
+    let registry_js = fs::read_to_string(runtime_dir.join("readingExamRegistry.js")).ok()?;
+    let explanation_registry_js =
+        fs::read_to_string(runtime_dir.join("readingExplanationRegistry.js")).ok()?;
+    let highlight_shared_js =
+        fs::read_to_string(runtime_dir.join("readingHighlightShared.js")).ok()?;
+    let review_dictionary_js =
+        fs::read_to_string(runtime_dir.join("reviewHighlightDictionary.js")).ok()?;
+    let runtime_js = fs::read_to_string(runtime_js_path).ok()?;
+    html = html.replace(r#"<script src="./manifest.js"></script>"#, "");
+    html = html.replace(
+        r#"<script src="../../../js/bundles/reading-page.bundle.js"></script>"#,
+        "",
+    );
+    let scripts = format!(
+        r#"
+    <script>{}</script>
+    <script>{}</script>
+    <script>{}</script>
+    <script>{}</script>
+    <script>{}</script>
+    <script>{}</script>
+    <script>{}</script>
+    <script>{}</script>
+"#,
+        inline_script(&registry_js),
+        inline_script(&explanation_registry_js),
+        inline_script(&highlight_shared_js),
+        inline_script(&review_dictionary_js),
+        inline_script(manifest_js),
+        inline_script(wrapper_js),
+        inline_script(&runtime_js),
+        inline_script(&preview_bridge_script(exam_id)),
+    );
+    if html.contains("</body>") {
+        html = html.replace("</body>", &format!("{scripts}\n</body>"));
+        Some(html)
+    } else {
+        None
+    }
+}
 
 pub(crate) fn validate_with_node_sidecar(
     root: &Path,
@@ -99,7 +263,9 @@ pub(crate) fn preview_assets_for_source(
         &bundle.wrapper_js,
     )?;
     write_text(&preview_dir.join("manifest.js"), &bundle.manifest_js)?;
-    let assets = json!({"examId": bundle.exam_id, "manifestPath": preview_dir.join("manifest.js").to_string_lossy(), "scriptPath": preview_dir.join(format!("{}.js", bundle.exam_id)).to_string_lossy(), "previewUrl": format!("tauri-local://preview/{}", bundle.source.get("examId").and_then(Value::as_str).unwrap_or("local-authoring-exam")), "source": bundle.source, "wrapperJs": bundle.wrapper_js, "manifestJs": bundle.manifest_js});
+    let runtime_html =
+        build_unified_runtime_html(&bundle.exam_id, &bundle.manifest_js, &bundle.wrapper_js);
+    let assets = json!({"examId": bundle.exam_id, "manifestPath": preview_dir.join("manifest.js").to_string_lossy(), "scriptPath": preview_dir.join(format!("{}.js", bundle.exam_id)).to_string_lossy(), "previewUrl": format!("tauri-local://preview/{}", bundle.source.get("examId").and_then(Value::as_str).unwrap_or("local-authoring-exam")), "source": bundle.source, "wrapperJs": bundle.wrapper_js, "manifestJs": bundle.manifest_js, "runtimeHtml": runtime_html});
     write_json(&preview_dir.join("preview-assets.json"), &assets)?;
     Ok((
         bundle.exam_id,

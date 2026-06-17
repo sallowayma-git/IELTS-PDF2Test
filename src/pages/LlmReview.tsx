@@ -70,6 +70,14 @@ export function LlmReview({ jobId, refresh }: { jobId: string; refresh: () => vo
   const evidence = (suggestion?.evidence ?? {}) as { sourceBlockIds?: string[]; blockIds?: string[]; quotes?: Array<{ blockId?: string; text?: string }>; source?: string };
   const evidenceBlocks = evidence.sourceBlockIds ?? evidence.blockIds ?? [];
 
+  useEffect(() => {
+    // Auto-apply high confidence suggestions
+    if (suggestion && suggestion.confidence >= 0.90 && !activeGroup?.verified) {
+      apply().catch(console.error);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestion?.suggestionId, activeGroup?.verified]);
+
   return (
     <section className="page-enter">
       <div className="section-heading spread">

@@ -5705,6 +5705,50 @@ Answers
     }
 
     #[test]
+    fn classifier_prefers_short_answer_word_limit_before_stray_option_bank() {
+        let job = make_job(CreateJobInput {
+            title: Some("Short Answer Stray Option Regression".to_string()),
+            category: Some("P3".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["classifier-regression".to_string()]),
+            llm_profile_id: None,
+        });
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"passage","blockType":"paragraph","text":"The passage describes language strategy in multinational companies.","html":"<p>The passage describes language strategy in multinational companies.</p>","bbox":[72,80,520,170],"confidence":0.98,"roleHint":"passage"},
+                    {"blockId":"q33-39","blockType":"paragraph","text":"Questions 33-39 Answer the questions below. Choose NO MORE THAN THREE WORDS AND/OR A NUMBER from the passage for each answer. 33 Which policy was introduced first? 34 What did staff receive every week? 35 Which region reported the lowest usage? 36 What did managers review monthly? 37 Which language was used in training? 38 How many offices joined the trial? 39 What was the final recommendation? A Asia B Budget C Compliance D Denmark E English F Feedback G Germany H Hiring I Induction J Japan K Knowledge-sharing L Leadership","html":"<p>Questions 33-39 Answer the questions below.</p>","bbox":[72,190,520,420],"confidence":0.95,"roleHint":"question"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 33 policy handbook 34 a checklist 35 Germany 36 complaints 37 English 38 12 39 shared templates","html":"<p>Answers</p>","bbox":[72,700,520,760],"confidence":0.92,"roleHint":"answer"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split.pointer("/questionGroupCandidates/0/kindHint")
+                .and_then(Value::as_str),
+            Some("short_answer")
+        );
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/0/kind").and_then(Value::as_str),
+            Some("short_answer")
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/layout/template").and_then(Value::as_str),
+            Some("short_answer_list")
+        );
+    }
+
+    #[test]
     fn classifier_keeps_sentence_endings_matching_before_single_choice() {
         let job = make_job(CreateJobInput {
             title: Some("Sentence Ending Regression".to_string()),

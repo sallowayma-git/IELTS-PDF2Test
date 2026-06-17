@@ -13,14 +13,14 @@ const nav = [
 
 const steps = [
   ["document", "源文档确认"],
-  ["split", "识别题组"],
-  ["groups", "题稿编辑"],
-  ["llm-review", "确认识别结果"],
-  ["preview", "统一预览"],
+  ["preview", "确认与编辑"],
   ["export", "导出发布"]
 ] as const;
 
 export function AppShell({ route, activeJob, children }: { route: RouteState; activeJob?: ImportJob; children: React.ReactNode }) {
+  const activeStep = route.name === "split" || route.name === "groups" || route.name === "llm-review"
+    ? "preview"
+    : route.name;
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -64,7 +64,7 @@ export function AppShell({ route, activeJob, children }: { route: RouteState; ac
         {activeJob ? (
           <div className="stepper">
             {steps.map(([step, label]) => (
-              <button key={step} className={route.name === step ? "active" : ""} onClick={() => go(`/jobs/${activeJob.jobId}/${step}`)}>
+              <button key={step} className={activeStep === step ? "active" : ""} onClick={() => go(`/jobs/${activeJob.jobId}/${step}`)}>
                 {label}
               </button>
             ))}

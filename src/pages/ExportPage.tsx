@@ -7,7 +7,8 @@ import { validationIssueDisplay } from "../utils/displayLabels";
 
 type ExportMode = "single-js" | "batch-js" | "full-assets" | "nas-library";
 
-const EXPORTABLE_STATUSES = new Set(["ExportReady", "Exported", "Cleaned"]);
+const EXPORTABLE_STATUSES = new Set(["DraftSaved", "ExportReady", "Exported", "Cleaned"]);
+const EXPORT_INTENT_KEY_PREFIX = "ielts-author-studio.export-intent.";
 
 interface ExportDiagnostics {
   title: string;
@@ -82,6 +83,7 @@ export function ExportPage({
   const [selected, setSelected] = useState<string[]>([jobId]);
   const [error, setError] = useState<string | undefined>();
   const [diagnostics, setDiagnostics] = useState<ExportDiagnostics | undefined>();
+  const [running, setRunning] = useState(false);
 
   const exportable = useMemo(
     () => jobs.filter((job) => EXPORTABLE_STATUSES.has(job.status)),
@@ -102,29 +104,42 @@ export function ExportPage({
     if (selectedDir) setExportDir(selectedDir);
   }
 
-  async function run() {
+  async function run(nextMode: ExportMode = mode, nextSelected: string[] = selected) {
+    setRunning(true);
     setError(undefined);
     setSingleResult(undefined);
     setJsResult(undefined);
     setNasResult(undefined);
     setDiagnostics(undefined);
     try {
-      if (mode === "full-assets") {
+      if (nextMode === "full-assets") {
         setSingleResult(await exportReadingAssets(jobId, exportDir));
-      } else if (mode === "nas-library") {
-        setNasResult(await exportNasLibrary({ jobIds: selected, exportDir }));
-      } else if (mode === "single-js") {
+      } else if (nextMode === "nas-library") {
+        setNasResult(await exportNasLibrary({ jobIds: nextSelected, exportDir }));
+      } else if (nextMode === "single-js") {
         setJsResult(await exportReadingJs({ jobIds: [jobId], exportDir }));
       } else {
-        setJsResult(await exportReadingJs({ jobIds: selected, exportDir }));
+        setJsResult(await exportReadingJs({ jobIds: nextSelected, exportDir }));
       }
       refresh();
     } catch (caught) {
       const nextDiagnostics = buildExportDiagnostics(caught);
       setDiagnostics(nextDiagnostics);
       setError(nextDiagnostics.title);
+    } finally {
+      setRunning(false);
     }
   }
+
+  useEffect(() => {
+    const key = `${EXPORT_INTENT_KEY_PREFIX}${jobId}`;
+    const intent = window.sessionStorage.getItem(key);
+    if (intent !== "single-js") return;
+    window.sessionStorage.removeItem(key);
+    setMode("single-js");
+    setSelected([jobId]);
+    void run("single-js", [jobId]);
+  }, [jobId]);
 
   const previewText =
     mode === "full-assets"
@@ -173,10 +188,12 @@ export function ExportPage({
           <button
             className="primary"
             data-testid="generate-export"
-            disabled={(mode === "batch-js" || mode === "nas-library") && !selected.length}
-            onClick={run}
+            disabled={running || ((mode === "batch-js" || mode === "nas-library") && !selected.length)}
+            onClick={() => void run()}
           >
-            {mode === "full-assets"
+            {running
+              ? "正在导出..."
+              : mode === "full-assets"
               ? "导出完整文件"
               : mode === "batch-js"
                 ? "批量导出 JS"

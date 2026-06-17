@@ -56,6 +56,7 @@ export interface PreviewAssets {
   source: ReadingExamSourceV1;
   wrapperJs: string;
   manifestJs: string;
+  runtimeHtml?: string | null;
 }
 
 export interface ExportResult {

@@ -39,6 +39,8 @@ const questionStatusIcon: Record<QuestionStatusTone, string> = {
   unknown: "?"
 };
 
+const EXPORT_INTENT_KEY_PREFIX = "ielts-author-studio.export-intent.";
+
 function auditIssueText(issue: AuditIssue): string {
   if (typeof issue === "string") return issue;
   return typeof issue.message === "string" ? issue.message : "";
@@ -249,6 +251,7 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
   const [ir, setIr] = useState<ReadingAuthoringIr | undefined>();
   const [pipelineReport, setPipelineReport] = useState<AutoPipelineReport | undefined>();
   const [activeGroupId, setActiveGroupId] = useState<string | undefined>();
+  const [exportBusy, setExportBusy] = useState(false);
   const activeGroup = useMemo<QuestionGroupDraft | undefined>(() => ir?.groups.find((group) => group.groupId === activeGroupId) ?? ir?.groups[0], [ir, activeGroupId]);
 
   async function load() {
@@ -311,11 +314,45 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
     }));
   }
 
+  function verifyAllGroups() {
+    if (!ir) return;
+    const next: ReadingAuthoringIr = {
+      ...ir,
+      groups: ir.groups.map((group) => ({
+        ...group,
+        verified: true,
+        questions: group.questions.map((question) => ({ ...question, verified: true }))
+      }))
+    };
+    void save(next);
+  }
+
+  async function validateAndExport() {
+    if (!ir) return;
+    setExportBusy(true);
+    try {
+      const saved = await updateAuthoringIr(jobId, { ir });
+      setIr(saved);
+      await validateAuthoringIr(jobId);
+      window.sessionStorage.setItem(`${EXPORT_INTENT_KEY_PREFIX}${jobId}`, "single-js");
+      refresh();
+      go(`/jobs/${jobId}/export`);
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   return (
     <section className="group-editor page-enter" data-testid="group-editor">
       <div className="section-heading spread">
         <div><p className="eyebrow">题稿编辑</p><h2>题稿编辑</h2></div>
-        <div className="button-row"><button className="ghost" data-testid="go-llm-review" onClick={() => go(`/jobs/${jobId}/llm-review`)}>需要确认的识别结果</button><button className="ghost" data-testid="verify-current-group" onClick={verifyCurrentGroup}>确认当前题组</button><button className="primary" data-testid="validate-and-preview" onClick={validate}>检查并预览</button></div>
+        <div className="button-row">
+          <button className="ghost" data-testid="go-llm-review" onClick={() => go(`/jobs/${jobId}/llm-review`)}>需要确认的识别结果</button>
+          <button className="ghost" data-testid="verify-current-group" onClick={verifyCurrentGroup}>确认当前题组</button>
+          <button className="secondary" data-testid="verify-all-groups" onClick={verifyAllGroups}>全部确认</button>
+          <button className="primary" data-testid="validate-and-preview" onClick={validate}>检查并预览</button>
+          <button className="primary" data-testid="validate-and-export" disabled={exportBusy} onClick={validateAndExport}>{exportBusy ? "正在导出..." : "直接导出"}</button>
+        </div>
       </div>
       <div className="editor-grid">
         <aside className="group-nav">
