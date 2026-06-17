@@ -2,23 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   generatePreviewAssets,
   getJob,
-  runPreviewE2e,
+  runCloudReview,
   updateAuthoringIr,
   validateAuthoringIr
 } from "../api/tauriCommands";
 import { go } from "../app/router";
-import type {
-  AutoPipelineReport,
-  GroupKind,
-  PreviewAssets,
-  QuestionDraft,
-  QuestionGroupDraft,
-  ReadingAuthoringIr,
-  ValidationReport
-} from "../types";
-import { runtimeModeLabel, validationIssueDisplay, validationLayerLabel } from "../utils/displayLabels";
+import type { AutoPipelineReport, GroupKind, QuestionDraft, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
 
 const EXPORT_INTENT_KEY_PREFIX = "ielts-author-studio.export-intent.";
+const CLOUD_REVIEW_PENDING_KEY_PREFIX = "ielts-author-studio.cloud-review.";
 
 const groupKinds: GroupKind[] = [
   "true_false_not_given",
@@ -52,287 +44,100 @@ const groupKindLabels: Record<GroupKind, string> = {
   sentence_completion: "句子填空"
 };
 
-type AuditIssue = string | { message?: string; [key: string]: unknown };
-type QuestionStatusTone = "ok" | "candidate" | "mismatch" | "unknown";
+type CloudState = "idle" | "running" | "done" | "warning" | "unavailable" | "error";
 
-interface QuestionStatus {
-  tone: QuestionStatusTone;
-  label: string;
-  details: string[];
+function pendingCloudReviewKey(jobId: string): string {
+  return `${CLOUD_REVIEW_PENDING_KEY_PREFIX}${jobId}`;
 }
 
-const questionStatusIcon: Record<QuestionStatusTone, string> = {
-  ok: "✓",
-  candidate: "+",
-  mismatch: "!",
-  unknown: "?"
-};
-
-function buildFallbackSrcDoc(assets: PreviewAssets): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Georgia,serif;margin:0;padding:24px;background:#f5f1e8;color:#17211f;line-height:1.6}.layout{display:grid;grid-template-columns:1fr 420px;gap:28px}.pane{background:#fffaf0;border:1px solid #d8cfbf;padding:22px}.choice-row{display:flex;gap:10px;flex-wrap:wrap}.completion-table{width:100%;border-collapse:collapse}.completion-table th,.completion-table td{border:1px solid #c8beaa;padding:8px}.question-umbrella-ranges{padding-left:18px;color:#5d4630}input{font:inherit;padding:6px}</style></head><body><div class="layout"><article class="pane">${assets.source.passage.blocks.map((block) => block.html).join("")}</article><section class="pane">${assets.source.meta.questionIntroHtml}${assets.source.questionGroups.map((group) => group.bodyHtml).join("")}</section></div></body></html>`;
+function mainSourceIsPdf(ir?: ReadingAuthoringIr): boolean {
+  return ir?.exam.sourceFiles?.some((file) => file.role === "MainQuestion" && file.fileType === "pdf") ?? false;
 }
 
-function auditIssueText(issue: AuditIssue): string {
-  if (typeof issue === "string") return issue;
-  return typeof issue.message === "string" ? issue.message : "";
+function answerText(question: QuestionDraft): string {
+  return Array.isArray(question.answer) ? question.answer.join(", ") : question.answer ?? "";
 }
 
-function auditIssueKind(issue: AuditIssue): string {
-  if (typeof issue === "string") return "";
-  return typeof issue.kind === "string" ? issue.kind : "";
-}
-
-function auditIssuePath(issue: AuditIssue): string {
-  if (typeof issue === "string") return "";
-  return typeof issue.path === "string" ? issue.path : "";
-}
-
-function issueList(issue: AuditIssue | undefined, key: string): Array<{ message?: string; [key: string]: unknown }> {
-  if (!issue || typeof issue === "string") return [];
-  const value = issue[key];
-  return Array.isArray(value) ? value.filter((item): item is { message?: string; [key: string]: unknown } => Boolean(item && typeof item === "object")) : [];
-}
-
-function issueStringList(issue: AuditIssue | undefined, key: string): string[] {
-  if (!issue || typeof issue === "string") return [];
-  const value = issue[key];
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function issueSummary(issue: AuditIssue | undefined, key: string): Array<{ range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown }> {
-  if (!issue || typeof issue === "string") return [];
-  const value = issue[key];
-  return Array.isArray(value) ? value.filter((item): item is { range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown } => Boolean(item && typeof item === "object")) : [];
-}
-
-function issueBool(issue: AuditIssue | undefined, key: string): boolean {
-  if (!issue || typeof issue === "string") return false;
-  return issue[key] === true;
-}
-
-function issueString(issue: AuditIssue | undefined, key: string): string {
-  if (!issue || typeof issue === "string") return "";
-  return typeof issue[key] === "string" ? issue[key] : "";
-}
-
-function formatSummaryRow(item: { range?: unknown; kind?: unknown; layoutHint?: unknown; questionIds?: unknown }): string {
-  const range = Array.isArray(item.range) && item.range.length >= 2 ? `Q${item.range[0]}-${item.range[1]}` : "范围未知";
-  const ids = Array.isArray(item.questionIds) ? item.questionIds.join(", ") : "";
-  return `${range} · ${String(item.kind ?? "题型未知")} · ${String(item.layoutHint ?? "布局未知")}${ids ? ` · ${ids}` : ""}`;
-}
-
-function parseQuestionNumber(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value !== "string") return undefined;
-  const match = value.match(/\d+/);
-  return match ? Number(match[0]) : undefined;
-}
-
-function questionNumber(question: QuestionDraft): number | undefined {
-  return parseQuestionNumber(question.displayNumber) ?? parseQuestionNumber(question.id);
-}
-
-function questionIdFor(question: QuestionDraft): string {
-  return question.id || (questionNumber(question) ? `q${questionNumber(question)}` : "");
-}
-
-function rangeCovers(item: { [key: string]: unknown }, number: number | undefined): boolean {
-  if (number === undefined || !Array.isArray(item.range) || item.range.length < 2) return false;
-  const start = parseQuestionNumber(item.range[0]);
-  const end = parseQuestionNumber(item.range[1]) ?? start;
-  return start !== undefined && end !== undefined && number >= start && number <= end;
-}
-
-function questionIdsInclude(value: unknown, qid: string): boolean {
-  return Array.isArray(value) && value.some((item) => item === qid);
-}
-
-function itemQuestionNumber(item: { [key: string]: unknown }): number | undefined {
-  return parseQuestionNumber(item.questionNumber);
-}
-
-function itemHasQuestionScope(item: { [key: string]: unknown }): boolean {
-  return itemQuestionNumber(item) !== undefined || Array.isArray(item.range);
-}
-
-function itemAppliesToQuestion(item: { [key: string]: unknown }, question: QuestionDraft): boolean {
-  const number = questionNumber(question);
-  const qid = questionIdFor(question);
-  return itemQuestionNumber(item) === number
-    || rangeCovers(item, number)
-    || questionIdsInclude(item.localQuestionIds, qid)
-    || questionIdsInclude(item.cloudQuestionIds, qid)
-    || questionIdsInclude(item.expectedQuestionIds, qid);
-}
-
-function formatAnswerValue(value: unknown): string {
-  if (Array.isArray(value)) return value.map(formatAnswerValue).filter(Boolean).join(", ");
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "";
-}
-
-function cloudDetailText(item: { message?: string; [key: string]: unknown }): string {
-  const message = item.message ?? "云端对照发现差异，请核对。";
-  const kind = typeof item.kind === "string" ? item.kind : "";
-  const localAnswer = formatAnswerValue(item.localAnswer);
-  const cloudAnswer = formatAnswerValue(item.cloudAnswer);
-  if (kind === "cloud_answer_mismatch" && (localAnswer || cloudAnswer)) {
-    return `${message} 本地：${localAnswer || "空"}；云端：${cloudAnswer || "空"}`;
+function answerValueFromInput(question: QuestionDraft, value: string): QuestionDraft["answer"] {
+  if (Array.isArray(question.answer)) {
+    return value
+      .split(/[,\n，]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
-  if (kind === "cloud_answer_candidate_only" && cloudAnswer) {
-    return `云端候选答案：${cloudAnswer}。本地答案为空，请核对图片答案页后决定是否写入。`;
-  }
-  if (kind === "cloud_group_kind_mismatch") {
-    return `${message} 本地题型：${String(item.localKind ?? "未知")}；云端题型：${String(item.cloudKind ?? "未知")}`;
-  }
-  if (kind === "cloud_group_layout_mismatch") {
-    return `${message} 本地布局：${String(item.localLayout ?? "未知")}；云端布局：${String(item.cloudLayout ?? "未知")}`;
-  }
-  return message;
+  return value;
 }
 
-function summaryCoversQuestion(cloudIssue: AuditIssue | undefined, key: string, question: QuestionDraft): boolean {
-  const number = questionNumber(question);
-  const qid = questionIdFor(question);
-  return issueSummary(cloudIssue, key).some((item) => {
-    const asRecord = item as { [key: string]: unknown };
-    return rangeCovers(asRecord, number) || questionIdsInclude(item.questionIds, qid);
-  });
+function promptPreview(prompt: string): string {
+  const normalized = prompt.replace(/\s+/g, " ").trim();
+  if (!normalized) return "题干待补充";
+  if (normalized.length <= 72) return normalized;
+  return `${normalized.slice(0, 72)}...`;
 }
 
-function cloudCoversQuestion(cloudIssue: AuditIssue | undefined, question: QuestionDraft): boolean {
-  return summaryCoversQuestion(cloudIssue, "localSummary", question) || summaryCoversQuestion(cloudIssue, "cloudSummary", question);
+function instructionText(group: QuestionGroupDraft): string {
+  return group.instruction.join("\n");
 }
 
-function buildCloudQuestionStatus(question: QuestionDraft, cloudIssue: AuditIssue | undefined): QuestionStatus {
-  if (!cloudIssue || !issueBool(cloudIssue, "attempted")) {
-    return { tone: "unknown", label: "云端未核对", details: [] };
-  }
-  const allIssues = issueList(cloudIssue, "issues");
-  const scopedIssues = allIssues.filter((item) => itemAppliesToQuestion(item, question));
-  const scopedObservations = issueList(cloudIssue, "observations").filter((item) => itemAppliesToQuestion(item, question));
-  const answerCandidates = scopedObservations.filter((item) => item.kind === "cloud_answer_candidate_only");
-  if (scopedIssues.length) {
-    return { tone: "mismatch", label: "云端有差异", details: scopedIssues.map(cloudDetailText) };
-  }
-  if (answerCandidates.length) {
-    return { tone: "candidate", label: "云端候选", details: answerCandidates.map(cloudDetailText) };
-  }
-  if (issueString(cloudIssue, "failure")) {
-    return { tone: "unknown", label: "云端未完成", details: [] };
-  }
-  const hasGlobalIssue = allIssues.some((item) => !itemHasQuestionScope(item));
-  if (hasGlobalIssue && !cloudCoversQuestion(cloudIssue, question)) {
-    return { tone: "unknown", label: "云端未定位", details: [] };
-  }
-  if (issueBool(cloudIssue, "passed") || cloudCoversQuestion(cloudIssue, question)) {
-    return { tone: "ok", label: "云端一致", details: scopedObservations.filter((item) => item.kind !== "cloud_answer_candidate_only").map(cloudDetailText) };
-  }
-  return { tone: "unknown", label: "云端未覆盖", details: [] };
+function questionRangeLabel(group: QuestionGroupDraft): string {
+  if (group.questionRange) return `${group.questionRange[0]}-${group.questionRange[1]}`;
+  if (group.questions.length === 1) return `${group.questions[0]?.displayNumber ?? "?"}`;
+  return `${group.questions.length} 题`;
 }
 
-function buildVisionQuestionStatus(question: QuestionDraft, visionIssue: AuditIssue | undefined): QuestionStatus | undefined {
-  if (!visionIssue) return undefined;
-  const qid = questionIdFor(question);
-  const filled = issueStringList(visionIssue, "filledQuestionIds");
-  const missing = issueStringList(visionIssue, "missingQuestionIds");
-  if (filled.includes(qid)) {
-    return { tone: "ok", label: "视觉已补全", details: ["答案来自图片页视觉识别，发布前仍需人工确认。"] };
-  }
-  if (missing.includes(qid)) {
-    return { tone: "mismatch", label: "视觉缺答案", details: ["视觉模型未能从图片答案页安全提取此题答案。"] };
-  }
-  return undefined;
+function cloudStateFromReport(report?: AutoPipelineReport, sourceIsPdf = false): { state: CloudState; label: string } {
+  if (!sourceIsPdf) return { state: "unavailable", label: "仅本地预览" };
+  const cloud = report?.quality?.cloudComparison;
+  if (!cloud?.profileId || cloud.profileId === "profile-local-placeholder") return { state: "unavailable", label: "未配置云端模型" };
+  if (!cloud.attempted) return { state: "idle", label: "等待云端复核" };
+  if (cloud.failure) return { state: "error", label: "云端复核失败" };
+  if (cloud.passed) return { state: "done", label: "云端复核已完成" };
+  return { state: "warning", label: "云端提示有差异" };
 }
 
-function findLatestCloudIssue(rawAuditIssues: AuditIssue[], fallback?: NonNullable<AutoPipelineReport["quality"]>["cloudComparison"]): AuditIssue | undefined {
-  const persistedIssue = [...rawAuditIssues]
-    .reverse()
-    .find((issue) => auditIssueKind(issue) === "cloud_comparison_summary" || auditIssuePath(issue).includes("cloudComparison"));
-  return persistedIssue ?? fallback;
-}
-
-function questionTone(question: QuestionDraft): QuestionStatusTone {
-  const answer = Array.isArray(question.answer) ? question.answer.join(", ").trim() : String(question.answer ?? "").trim();
-  if (!answer) return "mismatch";
-  if (question.verified) return "ok";
-  if (question.confidence < 0.85) return "candidate";
-  return "unknown";
-}
-
-function questionStatusLabel(question: QuestionDraft): string {
-  const tone = questionTone(question);
-  if (tone === "mismatch") return "缺答案";
-  if (tone === "ok") return "已确认";
-  if (tone === "candidate") return `低置信 ${Math.round(question.confidence * 100)}%`;
-  return `待确认 ${Math.round(question.confidence * 100)}%`;
-}
-
-function groupSummary(group: QuestionGroupDraft): { missingAnswers: number; lowConfidence: number } {
-  return group.questions.reduce(
-    (summary, question) => {
-      const answer = Array.isArray(question.answer) ? question.answer.join(", ").trim() : String(question.answer ?? "").trim();
-      if (!answer) summary.missingAnswers += 1;
-      if (question.confidence < 0.85 && !question.verified) summary.lowConfidence += 1;
-      return summary;
-    },
-    { missingAnswers: 0, lowConfidence: 0 }
-  );
-}
-
-function findQuestion(ir: ReadingAuthoringIr | undefined, questionId: string | undefined): { group: QuestionGroupDraft; question: QuestionDraft; groupIndex: number; questionIndex: number } | undefined {
-  if (!ir || !questionId) return undefined;
-  for (const [groupIndex, group] of ir.groups.entries()) {
-    for (const [questionIndex, question] of group.questions.entries()) {
-      if (question.id === questionId) return { group, question, groupIndex, questionIndex };
-    }
-  }
-  return undefined;
-}
-
-function StatusBadge({ status }: { status: QuestionStatus }) {
-  return (
-    <span className={`cloud-status-badge ${status.tone}`} title={status.label}>
-      <span aria-hidden="true">{questionStatusIcon[status.tone]}</span>
-      {status.label}
-    </span>
-  );
+function startBackgroundArtifacts(jobId: string): void {
+  void Promise.all([
+    validateAuthoringIr(jobId),
+    generatePreviewAssets(jobId)
+  ]).catch(() => undefined);
 }
 
 export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () => void }) {
-  const [assets, setAssets] = useState<PreviewAssets | undefined>();
-  const [report, setReport] = useState<ValidationReport | undefined>();
-  const [pipelineReport, setPipelineReport] = useState<AutoPipelineReport | undefined>();
   const [ir, setIr] = useState<ReadingAuthoringIr | undefined>();
-  const [activeGroupId, setActiveGroupId] = useState<string>("");
-  const [selectedQuestionId, setSelectedQuestionId] = useState<string>("");
-  const [saving, setSaving] = useState(false);
+  const [pipelineReport, setPipelineReport] = useState<AutoPipelineReport | undefined>();
   const [runtimeError, setRuntimeError] = useState<string | undefined>();
-  const [previewBusy, setPreviewBusy] = useState(false);
-  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [cloudState, setCloudState] = useState<CloudState>("idle");
+  const [cloudLabel, setCloudLabel] = useState("等待云端复核");
+  const [activeGroupId, setActiveGroupId] = useState<string | undefined>();
+  const [activeQuestionId, setActiveQuestionId] = useState<string | undefined>();
+  const cloudRunStarted = useRef(false);
+  const cloudPollTimer = useRef<number | undefined>(undefined);
 
-  const activeGroup = useMemo(
-    () => ir?.groups.find((group) => group.groupId === activeGroupId) ?? ir?.groups[0],
-    [ir, activeGroupId]
-  );
-  const selectedQuestion = useMemo(
-    () => findQuestion(ir, selectedQuestionId) ?? findQuestion(ir, activeGroup?.questions[0]?.id),
-    [ir, selectedQuestionId, activeGroup]
-  );
+  useEffect(() => {
+    cloudRunStarted.current = false;
+  }, [jobId]);
 
-  async function load(autoGenerate = false) {
+  async function load(autoWarm = false) {
     const detail = await getJob(jobId);
-    setIr(detail.authoringIr);
-    setAssets(detail.previewAssets);
-    setReport(detail.validationReport);
-    setPipelineReport(detail.pipelineReport);
-    const firstGroupId = detail.authoringIr?.groups[0]?.groupId ?? "";
-    const firstQuestionId = detail.authoringIr?.groups[0]?.questions[0]?.id ?? "";
-    setActiveGroupId((current) => current || firstGroupId);
-    setSelectedQuestionId((current) => current || firstQuestionId);
-    if (autoGenerate && detail.authoringIr && !detail.previewAssets) {
-      await refreshPreview(detail.authoringIr, false);
+    const nextIr = detail.authoringIr;
+    const nextPipeline = detail.pipelineReport;
+    setIr(nextIr);
+    setPipelineReport(nextPipeline);
+
+    const sourceIsPdf = mainSourceIsPdf(nextIr);
+    const nextCloud = cloudStateFromReport(nextPipeline, sourceIsPdf);
+    const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
+    if (pending && nextCloud.state !== "done" && nextCloud.state !== "warning" && nextCloud.state !== "error") {
+      setCloudState("running");
+      setCloudLabel("云端复核中");
+    } else {
+      setCloudState(nextCloud.state);
+      setCloudLabel(nextCloud.label);
+    }
+
+    if (autoWarm && nextIr) {
+      startBackgroundArtifacts(jobId);
     }
   }
 
@@ -341,71 +146,147 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   }, [jobId]);
 
   useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      const payload = event.data;
-      if (!payload || typeof payload !== "object" || payload.source !== "author_preview_bridge") return;
-      if (payload.type === "question-click" && typeof payload.questionId === "string") {
-        const match = findQuestion(ir, payload.questionId);
-        if (match) {
-          setActiveGroupId(match.group.groupId);
-          setSelectedQuestionId(match.question.id);
-        }
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    if (!ir?.groups.length) {
+      setActiveGroupId(undefined);
+      return;
+    }
+    setActiveGroupId((current) => current && ir.groups.some((group) => group.groupId === current) ? current : ir.groups[0].groupId);
   }, [ir]);
 
+  const activeGroup = useMemo(() => {
+    if (!ir?.groups.length) return undefined;
+    return ir.groups.find((group) => group.groupId === activeGroupId) ?? ir.groups[0];
+  }, [activeGroupId, ir]);
+
   useEffect(() => {
-    if (!selectedQuestion?.question.id) return;
-    frameRef.current?.contentWindow?.postMessage({
-      source: "author_editor",
-      type: "select-question",
-      questionId: selectedQuestion.question.id
-    }, "*");
-  }, [selectedQuestion?.question.id, assets?.examId]);
+    if (!activeGroup?.questions.length) {
+      setActiveQuestionId(undefined);
+      return;
+    }
+    setActiveQuestionId((current) => current && activeGroup.questions.some((question) => question.id === current) ? current : activeGroup.questions[0].id);
+  }, [activeGroup]);
 
-  function replaceIr(next: ReadingAuthoringIr) {
-    setIr(next);
+  const activeQuestion = useMemo(() => {
+    if (!activeGroup?.questions.length) return undefined;
+    return activeGroup.questions.find((question) => question.id === activeQuestionId) ?? activeGroup.questions[0];
+  }, [activeGroup, activeQuestionId]);
+
+  useEffect(() => {
+    const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
+    if (!pending) return undefined;
+    cloudPollTimer.current = window.setInterval(() => {
+      void getJob(jobId).then((detail) => {
+        const nextReport = detail.pipelineReport;
+        if (!nextReport?.quality?.cloudComparison?.attempted) return;
+        setPipelineReport(nextReport);
+        const nextCloud = cloudStateFromReport(nextReport, mainSourceIsPdf(detail.authoringIr));
+        setCloudState(nextCloud.state);
+        setCloudLabel(nextCloud.label);
+        window.sessionStorage.removeItem(pendingCloudReviewKey(jobId));
+        if (cloudPollTimer.current) window.clearInterval(cloudPollTimer.current);
+      }).catch(() => undefined);
+    }, 1600);
+    return () => {
+      if (cloudPollTimer.current) window.clearInterval(cloudPollTimer.current);
+    };
+  }, [jobId, pipelineReport?.quality?.cloudComparison?.attempted]);
+
+  useEffect(() => {
+    if (!ir || cloudRunStarted.current) return;
+    if (!mainSourceIsPdf(ir)) return;
+    const comparison = pipelineReport?.quality?.cloudComparison;
+    if (comparison?.attempted || !pipelineReport?.llm?.profileId || pipelineReport.llm.profileId === "profile-local-placeholder") return;
+    const pendingKey = pendingCloudReviewKey(jobId);
+    if (window.sessionStorage.getItem(pendingKey) === "1") return;
+
+    cloudRunStarted.current = true;
+    window.sessionStorage.setItem(pendingKey, "1");
+    setCloudState("running");
+    setCloudLabel("云端复核中");
+    void runCloudReview(jobId, { profileId: pipelineReport.llm.profileId })
+      .then((nextReport) => {
+        setPipelineReport(nextReport);
+        const nextCloud = cloudStateFromReport(nextReport, true);
+        setCloudState(nextCloud.state);
+        setCloudLabel(nextCloud.label);
+        refresh();
+      })
+      .catch((error) => {
+        setCloudState("error");
+        setCloudLabel("云端复核失败");
+        setRuntimeError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        window.sessionStorage.removeItem(pendingKey);
+      });
+  }, [ir, jobId, pipelineReport?.llm?.profileId, pipelineReport?.quality?.cloudComparison?.attempted, refresh]);
+
+  const passageBlocks = useMemo(() => ir?.passage.htmlBlocks ?? [], [ir]);
+  const groupQuestionCount = activeGroup?.questions.length ?? 0;
+  const verifiedQuestionCount = activeGroup?.questions.filter((question) => question.verified).length ?? 0;
+  const activeGroupIndex = activeGroup && ir
+    ? ir.groups.findIndex((group) => group.groupId === activeGroup.groupId)
+    : -1;
+  const activeQuestionIndex = activeQuestion && activeGroup
+    ? activeGroup.questions.findIndex((question) => question.id === activeQuestion.id)
+    : -1;
+  const focusedSourceIds = useMemo(() => {
+    const ids = activeQuestion?.sourceBlockIds?.length ? activeQuestion.sourceBlockIds : activeGroup?.sourceBlockIds ?? [];
+    return new Set(ids);
+  }, [activeGroup?.sourceBlockIds, activeQuestion?.sourceBlockIds]);
+
+  function updateGroup(groupId: string, mutator: (group: QuestionGroupDraft) => QuestionGroupDraft) {
+    setIr((current) => current ? {
+      ...current,
+      groups: current.groups.map((group) => group.groupId === groupId ? mutator(group) : group)
+    } : current);
   }
 
-  function updateGroup(mutator: (group: QuestionGroupDraft) => QuestionGroupDraft) {
-    if (!ir || !activeGroup) return;
-    replaceIr({
-      ...ir,
-      groups: ir.groups.map((group) => (group.groupId === activeGroup.groupId ? mutator(group) : group))
-    });
-  }
-
-  function updateQuestion(mutator: (question: QuestionDraft) => QuestionDraft) {
-    if (!selectedQuestion) return;
-    updateGroup((group) => ({
-      ...group,
-      questions: group.questions.map((question, index) => (index === selectedQuestion.questionIndex ? mutator(question) : question))
-    }));
-  }
-
-  function verifyCurrentGroup() {
-    updateGroup((group) => ({
-      ...group,
-      verified: true,
-      questions: group.questions.map((question) => ({ ...question, verified: true }))
-    }));
-  }
-
-  function verifyAllGroups() {
-    if (!ir) return;
-    replaceIr({
-      ...ir,
-      groups: ir.groups.map((group) => ({
+  function updateQuestion(groupId: string, questionId: string, mutator: (question: QuestionDraft) => QuestionDraft) {
+    setIr((current) => {
+      if (!current) return current;
+      let nextQuestion: QuestionDraft | undefined;
+      const groups = current.groups.map((group) => group.groupId === groupId ? {
         ...group,
-        verified: true,
-        questions: group.questions.map((question) => ({ ...question, verified: true }))
-      }))
+        questions: group.questions.map((question) => {
+          if (question.id !== questionId) return question;
+          nextQuestion = mutator(question);
+          return nextQuestion;
+        })
+      } : group);
+      if (!nextQuestion) return current;
+      return {
+        ...current,
+        groups,
+        answerKey: {
+          ...current.answerKey,
+          [questionId]: nextQuestion.answer ?? ""
+        }
+      };
     });
   }
 
-  async function saveDraft(nextIr = ir, regeneratePreview = false) {
+  function updateQuestionAnswer(groupId: string, questionId: string, value: string) {
+    updateQuestion(groupId, questionId, (question) => ({
+      ...question,
+      answer: answerValueFromInput(question, value)
+    }));
+  }
+
+  function selectGroup(groupId: string) {
+    setActiveGroupId(groupId);
+    const nextGroup = ir?.groups.find((group) => group.groupId === groupId);
+    setActiveQuestionId(nextGroup?.questions[0]?.id);
+  }
+
+  function jumpQuestion(offset: -1 | 1) {
+    if (!activeGroup?.questions.length || !activeQuestion) return;
+    const currentIndex = activeGroup.questions.findIndex((question) => question.id === activeQuestion.id);
+    const nextQuestion = activeGroup.questions[currentIndex + offset];
+    if (nextQuestion) setActiveQuestionId(nextQuestion.id);
+  }
+
+  async function saveDraft(nextIr = ir) {
     if (!nextIr) return;
     setSaving(true);
     setRuntimeError(undefined);
@@ -413,46 +294,11 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       const saved = await updateAuthoringIr(jobId, { ir: nextIr });
       setIr(saved);
       refresh();
-      if (regeneratePreview) {
-        await refreshPreview(saved, true);
-      }
+      startBackgroundArtifacts(jobId);
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function refreshPreview(nextIr = ir, saveFirst = true) {
-    if (!nextIr) return;
-    setPreviewBusy(true);
-    setRuntimeError(undefined);
-    try {
-      const latestIr = saveFirst ? await updateAuthoringIr(jobId, { ir: nextIr }) : nextIr;
-      if (saveFirst) {
-        setIr(latestIr);
-        refresh();
-      }
-      const validation = await validateAuthoringIr(jobId);
-      const nextAssets = await generatePreviewAssets(jobId);
-      setReport(validation);
-      setAssets(nextAssets);
-      refresh();
-      await load(false);
-    } catch (error) {
-      setRuntimeError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setPreviewBusy(false);
-    }
-  }
-
-  async function runRuntimeCheck() {
-    try {
-      const next = await runPreviewE2e(jobId);
-      setReport(next);
-      refresh();
-    } catch (error) {
-      setRuntimeError(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -463,7 +309,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     try {
       const saved = await updateAuthoringIr(jobId, { ir });
       setIr(saved);
-      await validateAuthoringIr(jobId);
+      startBackgroundArtifacts(jobId);
       window.sessionStorage.setItem(`${EXPORT_INTENT_KEY_PREFIX}${jobId}`, "single-js");
       refresh();
       go(`/jobs/${jobId}/export`);
@@ -474,323 +320,246 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     }
   }
 
-  if (!ir || !activeGroup) {
-    return <section className="page-enter"><p className="empty">题稿尚未生成。请先完成上传和自动处理。</p></section>;
+  if (!ir) {
+    return <section className="page-enter"><p className="empty">题稿尚未生成。请先完成上传并执行本地粗切。</p></section>;
   }
 
-  const rawAuditIssues = ir.audit.issues ?? [];
-  const auditIssues = rawAuditIssues.map(auditIssueText).filter(Boolean);
-  const cloudIssue = findLatestCloudIssue(rawAuditIssues, pipelineReport?.quality?.cloudComparison);
-  const visionAnswerIssue = rawAuditIssues.find((issue) => auditIssueKind(issue) === "vision_answer_extraction_summary");
-  const visibleAuditIssues = auditIssues.filter((issue) => issue !== auditIssueText(cloudIssue ?? "") && issue !== auditIssueText(visionAnswerIssue ?? ""));
-  const emptyAnswerCount = activeGroup.questions.filter((question) => {
-    const answer = question.answer;
-    return Array.isArray(answer) ? answer.length === 0 || answer.every((item) => !String(item).trim()) : !String(answer ?? "").trim();
-  }).length;
-  const cloudPassed = issueBool(cloudIssue, "attempted") && issueBool(cloudIssue, "passed");
-  const cloudQuestionStatuses = Object.fromEntries(activeGroup.questions.map((question) => [question.id, buildCloudQuestionStatus(question, cloudIssue)]));
-  const visionQuestionStatuses = Object.fromEntries(activeGroup.questions.map((question) => [question.id, buildVisionQuestionStatus(question, visionAnswerIssue)]));
-  const cloudStatusCounts = activeGroup.questions.reduce<Record<QuestionStatusTone, number>>((counts, question) => {
-    const tone = cloudQuestionStatuses[question.id]?.tone ?? "unknown";
-    counts[tone] += 1;
-    return counts;
-  }, { ok: 0, candidate: 0, mismatch: 0, unknown: 0 });
-  const selectedCloudStatus = selectedQuestion ? cloudQuestionStatuses[selectedQuestion.question.id] : undefined;
-  const selectedVisionStatus = selectedQuestion ? visionQuestionStatuses[selectedQuestion.question.id] : undefined;
-  const selectedStatusDetails = [...(selectedCloudStatus?.details ?? []), ...(selectedVisionStatus?.details ?? [])];
-  const runtimeMode = report?.runtime?.mode;
-  const srcDoc = assets?.runtimeHtml ?? (assets ? buildFallbackSrcDoc(assets) : "<p>正在准备统一阅读页预览...</p>");
-
   return (
-    <section className="page-enter" data-testid="unified-preview">
-      <div className="section-heading spread">
+    <section className="page-enter preview-workspace" data-testid="group-editor" data-view="unified-preview">
+      <header className="preview-topbar">
         <div>
           <p className="eyebrow">确认与编辑</p>
-          <h2>统一阅读页确认与编辑</h2>
+          <h2>{ir.exam.title || "题稿预览"}</h2>
         </div>
-        <div className="button-row">
-          <button className="secondary" data-testid="verify-current-group" onClick={verifyCurrentGroup}>确认当前题组</button>
-          <button className="secondary" data-testid="verify-all-groups" onClick={verifyAllGroups}>全部确认</button>
-          <button className="primary" data-testid="save-draft" disabled={saving} onClick={() => void saveDraft(ir, false)}>
-            {saving ? "正在保存..." : "保存修改"}
-          </button>
-          <button className="ghost" data-testid="refresh-preview" disabled={previewBusy || saving} onClick={() => void refreshPreview(ir, true)}>
-            {previewBusy ? "正在刷新预览..." : "保存并刷新预览"}
-          </button>
-          <button className="primary" data-testid="direct-export" disabled={saving} onClick={() => void directExport()}>
-            直接导出
-          </button>
+        <div className="preview-actions">
+          <div className={`cloud-indicator ${cloudState}`} title={cloudLabel} aria-label={cloudLabel}>
+            <span className="cloud-indicator-dot" aria-hidden="true" />
+            <small>{cloudLabel}</small>
+          </div>
+          <button className="ghost" onClick={() => void saveDraft()} disabled={saving}>{saving ? "正在保存..." : "保存"}</button>
+          <button className="primary" data-testid="validate-and-export" onClick={() => void directExport()} disabled={saving}>导出</button>
         </div>
-      </div>
+      </header>
 
-      {pipelineReport?.authoring?.remainingReviewItems ? (
-        <div className="warning-box">
-          <strong>当前还有 {pipelineReport.authoring.remainingReviewItems} 项需要确认</strong>
-          <p>不再拆成单独页面处理。请直接在右侧查看低置信题目、缺失答案和题型提醒并修订。</p>
+      {runtimeError ? (
+        <div className="warning-box compact-banner">
+          <strong>当前操作未完成</strong>
+          <p>{runtimeError}</p>
         </div>
       ) : null}
-      {runtimeError ? <div className="warning-box"><strong>预览或保存未完成</strong><p>{runtimeError}</p></div> : null}
 
-      <div className="editor-grid">
-        <aside className="group-nav">
-          {ir.groups.map((group) => {
-            const summary = groupSummary(group);
-            return (
-              <button
-                key={group.groupId}
-                className={group.groupId === activeGroup.groupId ? "active" : ""}
-                onClick={() => {
-                  setActiveGroupId(group.groupId);
-                  setSelectedQuestionId(group.questions[0]?.id ?? "");
-                }}
-              >
-                <strong>{group.groupId}</strong>
-                <span>Q{group.questionRange?.[0]}-{group.questionRange?.[1]}</span>
-                <small>{group.requiresManualQuestionImport ? "需要补题干" : groupKindLabels[group.kind]}</small>
-                <small>{group.verified ? "已确认" : `置信度 ${Math.round(group.confidence * 100)}%`}</small>
-                {summary.missingAnswers || summary.lowConfidence || group.reviewWarnings?.length ? (
-                  <small>
-                    {summary.missingAnswers ? `${summary.missingAnswers} 题缺答案` : ""}
-                    {summary.missingAnswers && (summary.lowConfidence || group.reviewWarnings?.length) ? " · " : ""}
-                    {summary.lowConfidence ? `${summary.lowConfidence} 题低置信` : ""}
-                    {summary.lowConfidence && group.reviewWarnings?.length ? " · " : ""}
-                    {group.reviewWarnings?.length ? `${group.reviewWarnings.length} 条题型提醒` : ""}
-                  </small>
-                ) : null}
-              </button>
-            );
-          })}
-        </aside>
-
-        <section className="live-preview">
-          <p className="eyebrow">统一阅读页预览</p>
-          <iframe
-            ref={frameRef}
-            className="html-preview-frame unified-runtime-frame"
-            title="reading-preview"
-            data-testid="reading-preview-frame"
-            sandbox=""
-            srcDoc={srcDoc}
-          />
-          <div className="info-box">
-            <strong>当前预览运行时</strong>
-            <p>{assets?.runtimeHtml ? "已切到 unifiedReadingPage.js 宿主渲染。" : "当前使用内置简化预览回退。"} {runtimeMode ? `检查状态：${runtimeModeLabel(runtimeMode)}。` : ""}</p>
-            <small>在左侧预览里点击题目，会同步定位到右侧编辑面板；修改后点击“保存修改”或“保存并刷新预览”即可回写。</small>
-          </div>
-          <details>
-            <summary>高级检查</summary>
-            <div className="button-row" style={{ marginTop: 12 }}>
-              <button className="ghost" data-testid="run-preview-e2e" disabled={!assets} onClick={() => void runRuntimeCheck()}>
-                运行预览检查
-              </button>
+      <div className="preview-two-pane">
+        <section className="preview-passage-pane">
+          <div className="pane-heading">
+            <div>
+              <h3>原文</h3>
+              <small>{passageBlocks.length} 个段落块</small>
             </div>
-            <dl>
-              <dt>当前运行时</dt><dd>{runtimeModeLabel(runtimeMode)}</dd>
-              <dt>校验层</dt><dd>{report?.layers.map((layer) => `${validationLayerLabel(layer.layer)}:${layer.issueCount}`).join(" · ") || "未运行"}</dd>
-            </dl>
-            <pre>{JSON.stringify(report?.runtime ?? {}, null, 2)}</pre>
-          </details>
-          {report?.issues.length ? (
-            <details open>
-              <summary>当前校验提醒</summary>
-              <div className="issue-list compact" data-testid="preview-issue-list">
-                {report.issues.slice(0, 8).map((issue) => {
-                  const display = validationIssueDisplay(issue);
-                  return (
-                    <div key={issue.issueId}>
-                      <strong>{display.title}</strong>
-                      <small>{display.detail}</small>
-                      <small>{display.action}</small>
-                    </div>
-                  );
-                })}
-              </div>
-            </details>
-          ) : null}
+            <small className="passage-focus-note">
+              {focusedSourceIds.size
+                ? `已高亮 ${focusedSourceIds.size} 个关联段落`
+                : "当前题目未绑定来源段落"}
+            </small>
+          </div>
+          <article className="passage-sheet">
+            {passageBlocks.map((block) => {
+              const hasFocus = focusedSourceIds.size > 0;
+              const focused = focusedSourceIds.has(block.blockId);
+              return (
+                <div
+                  key={block.blockId}
+                  className={`passage-block ${hasFocus ? (focused ? "active" : "muted") : ""}`}
+                >
+                  <div className="passage-block-meta">
+                    <span>{block.blockId}</span>
+                    {focused ? <strong>当前关联</strong> : null}
+                  </div>
+                  <div dangerouslySetInnerHTML={{ __html: block.html }} />
+                </div>
+              );
+            })}
+          </article>
         </section>
 
-        <aside className="form-section editor-form">
-          <p className="eyebrow">编辑面板</p>
-          <h3>{activeGroup.groupId}</h3>
-          {visionAnswerIssue ? (
-            <div className="info-box" data-testid="vision-answer-summary">
-              <strong>视觉答案补全</strong>
-              <p>{auditIssueText(visionAnswerIssue)}</p>
-              {issueStringList(visionAnswerIssue, "filledQuestionIds").length ? <small>已写入：{issueStringList(visionAnswerIssue, "filledQuestionIds").join("、")}</small> : null}
-              {issueStringList(visionAnswerIssue, "missingQuestionIds").length ? <small>仍缺少：{issueStringList(visionAnswerIssue, "missingQuestionIds").join("、")}</small> : null}
+        <section className="preview-groups-pane">
+          <div className="pane-heading">
+            <div>
+              <h3>题组工作台</h3>
+              <small>{ir.groups.length} 组题目</small>
             </div>
-          ) : null}
-          {cloudIssue ? (
-            <div className={cloudPassed ? "info-box" : "warning-box"} data-testid="cloud-comparison-summary">
-              <div className="comparison-heading">
-                <strong>云端整卷对照</strong>
-                <span className={`cloud-status-badge ${cloudPassed ? "ok" : "mismatch"}`}>{cloudPassed ? "已通过" : "需核对"}</span>
-              </div>
-              <p>{auditIssueText(cloudIssue)}</p>
-              <div className="comparison-metrics" data-testid="cloud-question-status-counts">
-                <span><strong>{cloudStatusCounts.ok}</strong> 一致</span>
-                <span><strong>{cloudStatusCounts.candidate}</strong> 候选</span>
-                <span><strong>{cloudStatusCounts.mismatch}</strong> 差异</span>
-                <span><strong>{cloudStatusCounts.unknown}</strong> 未覆盖</span>
-              </div>
-              {issueList(cloudIssue, "issues").slice(0, 4).map((issue, index) => <p key={`${index}-${issue.message}`}>{cloudDetailText(issue)}</p>)}
-              {issueList(cloudIssue, "observations").filter((issue) => issue.kind !== "cloud_answer_candidate_only").slice(0, 2).map((issue, index) => <small key={`${index}-${issue.message}`}>{cloudDetailText(issue)}</small>)}
-              <div className="compare-columns">
-                <div>
-                  <span>本地题稿</span>
-                  {issueSummary(cloudIssue, "localSummary").slice(0, 6).map((item, index) => <small key={`local-${index}`}>{formatSummaryRow(item)}</small>)}
-                </div>
-                <div>
-                  <span>云端对照</span>
-                  {issueSummary(cloudIssue, "cloudSummary").slice(0, 6).map((item, index) => <small key={`cloud-${index}`}>{formatSummaryRow(item)}</small>)}
-                </div>
-              </div>
-            </div>
-          ) : null}
-          {visibleAuditIssues.length ? (
-            <div className="warning-box" data-testid="authoring-audit-warnings">
-              <strong>需要确认</strong>
-              {visibleAuditIssues.slice(0, 6).map((issue, index) => <p key={`${index}-${issue}`}>{issue}</p>)}
-            </div>
-          ) : null}
-          {emptyAnswerCount ? (
-            <div className="warning-box" data-testid="empty-answer-warning">
-              <strong>当前题组仍有 {emptyAnswerCount} 题缺少答案</strong>
-              <p>答案页是图片嵌入时，提取不到文字是正常现象；这里会直接提示缺失题号，用户在当前确认页补齐即可。</p>
-            </div>
-          ) : null}
-          {ir.passage.questionUmbrellaRanges?.length ? (
-            <div className="info-box" data-testid="umbrella-ranges">
-              <strong>开头总题组范围已纳入</strong>
-              {ir.passage.questionUmbrellaRanges.map((range) => (
-                <p key={`${range.blockId}-${range.questionRange.join("-")}`}>
-                  {range.heading}: Q{range.questionRange[0]}-{range.questionRange[1]}
-                </p>
-              ))}
-            </div>
-          ) : null}
-          {activeGroup.requiresManualQuestionImport ? (
-            <div className="warning-box" data-testid="manual-question-import-warning">
-              <strong>需要人工补题</strong>
-              <p>当前只识别到开头总范围 Q{activeGroup.questionRange?.[0]}-{activeGroup.questionRange?.[1]}，尚未检测到每道题的题干。请直接在这里补齐具体题干、答案并确认。</p>
-            </div>
-          ) : null}
-          {activeGroup.reviewWarnings?.length ? (
-            <div className="warning-box" data-testid="classification-review-warning">
-              <strong>题型/选项规则需要确认</strong>
-              {activeGroup.reviewWarnings.map((warning) => <p key={warning}>{warning}</p>)}
-              {activeGroup.classificationEvidence?.length ? <small>依据段落：{activeGroup.classificationEvidence.join(", ")}</small> : null}
-            </div>
-          ) : null}
-          {activeGroup.sectionEvidence?.length ? (
-            <div className="info-box" data-testid="section-evidence">
-              <strong>切分证据</strong>
+            {activeGroup ? (
               <small>
-                {activeGroup.sectionEvidence.map((item) => `${item.blockId}@p${item.pageIndex}/c${item.column}${item.tableRows ? `/table:${item.tableRows}x${item.tableCols ?? "?"}` : ""}${item.headingLevel ? `/h${item.headingLevel}` : ""}${item.numberingLevel !== undefined ? `/num:${item.numberingLevel}` : ""}`).join(" -> ")}
+                当前第 {activeGroupIndex + 1} 组 · 已核对 {verifiedQuestionCount}/{groupQuestionCount}
               </small>
-              {activeGroup.continuationEdges?.length ? (
-                <small>
-                  连续关系：{activeGroup.continuationEdges.map((edge) => `${edge.fromBlockId} 延续到 ${edge.toBlockId}（${edge.reason}）`).join("；")}
-                </small>
-              ) : null}
-            </div>
-          ) : null}
-          {(activeGroup.kind === "matching" || activeGroup.kind === "heading_matching" || activeGroup.kind === "matching_information" || activeGroup.kind === "classification") ? (
-            <label className="inline-check">
-              <input type="checkbox" checked={activeGroup.allowOptionReuse === true} onChange={(event) => updateGroup((group) => ({ ...group, allowOptionReuse: event.target.checked }))} />
-              允许选项重复使用
-            </label>
-          ) : null}
-          <label>题型
-            <select value={activeGroup.kind} onChange={(event) => updateGroup((group) => ({ ...group, kind: event.target.value as GroupKind }))}>
-              {groupKinds.map((kind) => <option key={kind} value={kind}>{groupKindLabels[kind]}</option>)}
-            </select>
-          </label>
-          <label>题组说明
-            <textarea value={activeGroup.instruction.join("\n")} onChange={(event) => updateGroup((group) => ({ ...group, instruction: event.target.value.split("\n") }))} />
-          </label>
-          {activeGroup.reviewWarnings?.length ? (
-            <div className="warning-box">
-              <strong>题型提醒</strong>
-              {activeGroup.reviewWarnings.map((warning) => <p key={warning}>{warning}</p>)}
-            </div>
-          ) : null}
+            ) : null}
+          </div>
 
-          <div className="question-stack">
-            {activeGroup.questions.map((question) => {
-              const tone = questionTone(question);
-              const active = selectedQuestion?.question.id === question.id;
-              const cloudStatus = cloudQuestionStatuses[question.id];
-              const visionStatus = visionQuestionStatuses[question.id];
-              const statusDetails = [...(cloudStatus?.details ?? []), ...(visionStatus?.details ?? [])];
-              const noteTone = cloudStatus?.tone === "mismatch" || visionStatus?.tone === "mismatch" ? "mismatch" : cloudStatus?.tone === "candidate" ? "candidate" : "ok";
+          <div className="group-tab-row" role="tablist" aria-label="题组切换">
+            {ir.groups.map((group, index) => {
+              const active = group.groupId === activeGroup?.groupId;
               return (
                 <button
-                  key={question.id}
-                  className={active ? "question-edit active-question-edit" : "question-edit"}
-                  onClick={() => setSelectedQuestionId(question.id)}
+                  key={group.groupId}
+                  className={`group-tab ${active ? "active" : ""}`}
+                  onClick={() => selectGroup(group.groupId)}
+                  role="tab"
+                  aria-selected={active}
                 >
-                  <div className="question-edit-header">
-                    <strong>Q{question.displayNumber}</strong>
-                    <div className="question-status-row">
-                      <span className={`cloud-status-badge ${tone}`}>{questionStatusLabel(question)}</span>
-                      {cloudStatus ? <StatusBadge status={cloudStatus} /> : null}
-                      {visionStatus ? <StatusBadge status={visionStatus} /> : null}
-                    </div>
-                  </div>
-                  {statusDetails.length ? (
-                    <div className={`question-compare-note ${noteTone}`}>
-                      {statusDetails.slice(0, 2).map((detail) => <p key={detail}>{detail}</p>)}
-                    </div>
-                  ) : null}
-                  <p>{question.prompt || "当前题干为空，请补齐。"}</p>
+                  <strong>题组 {index + 1}</strong>
+                  <span>{questionRangeLabel(group)} · {groupKindLabels[group.kind]}</span>
+                  <small>{group.verified ? "已核对" : "待核对"}</small>
                 </button>
               );
             })}
           </div>
 
-          {selectedQuestion ? (
-            <>
-              <div className="comparison-heading">
-                <strong>Q{selectedQuestion.question.displayNumber}</strong>
-                <div className="question-status-row">
-                  <span className={`cloud-status-badge ${questionTone(selectedQuestion.question)}`}>{questionStatusLabel(selectedQuestion.question)}</span>
-                  {selectedCloudStatus ? <StatusBadge status={selectedCloudStatus} /> : null}
-                  {selectedVisionStatus ? <StatusBadge status={selectedVisionStatus} /> : null}
+          {activeGroup ? (
+            <div className="preview-groups-workbench">
+              <section className="group-meta-panel">
+                <div className="group-meta-head">
+                  <div>
+                    <strong>{groupKindLabels[activeGroup.kind]}</strong>
+                    <small>题号范围 {questionRangeLabel(activeGroup)}</small>
+                  </div>
+                  <label className="inline-check group-verified-toggle">
+                    <input
+                      type="checkbox"
+                      checked={activeGroup.verified}
+                      onChange={(event) => updateGroup(activeGroup.groupId, (group) => ({ ...group, verified: event.target.checked }))}
+                    />
+                    已核对本题组
+                  </label>
                 </div>
-              </div>
-              {selectedStatusDetails.length ? (
-                <div className={`question-compare-note ${selectedCloudStatus?.tone === "mismatch" || selectedVisionStatus?.tone === "mismatch" ? "mismatch" : selectedCloudStatus?.tone === "candidate" ? "candidate" : "ok"}`}>
-                  {selectedStatusDetails.map((detail) => <p key={detail}>{detail}</p>)}
+
+                <div className="group-meta-grid">
+                  <label>
+                    题型
+                    <select
+                      value={activeGroup.kind}
+                      onChange={(event) => updateGroup(activeGroup.groupId, (group) => ({ ...group, kind: event.target.value as GroupKind }))}
+                    >
+                      {groupKinds.map((kind) => <option key={kind} value={kind}>{groupKindLabels[kind]}</option>)}
+                    </select>
+                  </label>
+                  <label className="group-instruction-field">
+                    题组说明
+                    <textarea
+                      value={instructionText(activeGroup)}
+                      onChange={(event) => updateGroup(activeGroup.groupId, (group) => ({
+                        ...group,
+                        instruction: event.target.value.split("\n").map((line) => line.trim()).filter(Boolean)
+                      }))}
+                    />
+                  </label>
                 </div>
-              ) : null}
-              <label>题号
-                <input value={selectedQuestion.question.displayNumber} onChange={(event) => updateQuestion((question) => ({ ...question, displayNumber: event.target.value }))} />
-              </label>
-              <label>题干
-                <textarea value={selectedQuestion.question.prompt} onChange={(event) => updateQuestion((question) => ({ ...question, prompt: event.target.value }))} />
-              </label>
-              <label>答案
-                <input
-                  value={Array.isArray(selectedQuestion.question.answer) ? selectedQuestion.question.answer.join(", ") : selectedQuestion.question.answer ?? ""}
-                  onChange={(event) => updateQuestion((question) => ({ ...question, answer: event.target.value }))}
-                />
-              </label>
-              <label className="inline-check">
-                <input
-                  type="checkbox"
-                  checked={selectedQuestion.question.verified}
-                  onChange={(event) => updateQuestion((question) => ({ ...question, verified: event.target.checked }))}
-                /> 人工确认
-              </label>
-              <div className="info-box">
-                <strong>识别置信度</strong>
-                <p>{Math.round(selectedQuestion.question.confidence * 100)}%</p>
-                <small>低于 85% 的题目建议优先核对；这里不再单独拆页面，只在当前确认页提示。</small>
+
+                {activeGroup.reviewWarnings?.length ? (
+                  <div className="warning-box group-warning-box">
+                    <strong>本题组仍有待确认项</strong>
+                    <p>{activeGroup.reviewWarnings.join("；")}</p>
+                  </div>
+                ) : null}
+              </section>
+
+              <div className="question-workbench">
+                <aside className="question-list-pane">
+                  <div className="question-list-head">
+                    <strong>题目列表</strong>
+                    <small>左侧选题，右侧细改；列表中可直接快改答案。</small>
+                  </div>
+                  <div className="question-list-scroll">
+                    {activeGroup.questions.map((question) => {
+                      const active = question.id === activeQuestion?.id;
+                      return (
+                        <article key={question.id} className={`question-list-row ${active ? "active" : ""}`}>
+                          <button className="question-row-select" onClick={() => setActiveQuestionId(question.id)}>
+                            <div className="question-row-top">
+                              <strong>{question.displayNumber}</strong>
+                              <small className={`question-row-state ${question.verified ? "verified" : ""}`}>
+                                {question.verified ? "已核对" : "待核对"}
+                              </small>
+                            </div>
+                            <p>{promptPreview(question.prompt)}</p>
+                          </button>
+                          <label className="question-quick-answer">
+                            快改答案
+                            <input
+                              value={answerText(question)}
+                              onChange={(event) => updateQuestionAnswer(activeGroup.groupId, question.id, event.target.value)}
+                              onFocus={() => setActiveQuestionId(question.id)}
+                            />
+                          </label>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </aside>
+
+                <section className="question-detail-pane">
+                  {activeQuestion ? (
+                    <div className="question-detail-card">
+                      <div className="question-detail-head">
+                        <div>
+                          <p className="eyebrow">当前题目</p>
+                          <h3>{activeQuestion.displayNumber}</h3>
+                          <small>
+                            第 {activeQuestionIndex + 1} 题 / 共 {groupQuestionCount} 题 · 交互 {activeQuestion.interaction.type}
+                          </small>
+                        </div>
+                        <div className="question-nav-actions">
+                          <button className="ghost small" onClick={() => jumpQuestion(-1)} disabled={activeQuestionIndex <= 0}>上一题</button>
+                          <button className="ghost small" onClick={() => jumpQuestion(1)} disabled={activeQuestionIndex >= groupQuestionCount - 1}>下一题</button>
+                        </div>
+                      </div>
+
+                      <div className="source-chip-row">
+                        {(activeQuestion.sourceBlockIds.length ? activeQuestion.sourceBlockIds : activeGroup.sourceBlockIds).map((blockId) => (
+                          <span key={blockId} className="source-chip">{blockId}</span>
+                        ))}
+                      </div>
+
+                      <label>
+                        题干
+                        <textarea
+                          value={activeQuestion.prompt}
+                          onChange={(event) => updateQuestion(activeGroup.groupId, activeQuestion.id, (question) => ({
+                            ...question,
+                            prompt: event.target.value
+                          }))}
+                        />
+                      </label>
+
+                      <div className="question-detail-grid">
+                        <label>
+                          标准答案
+                          <input
+                            value={answerText(activeQuestion)}
+                            onChange={(event) => updateQuestionAnswer(activeGroup.groupId, activeQuestion.id, event.target.value)}
+                          />
+                        </label>
+                        <label className="inline-check detail-check">
+                          <input
+                            type="checkbox"
+                            checked={activeQuestion.verified}
+                            onChange={(event) => updateQuestion(activeGroup.groupId, activeQuestion.id, (question) => ({
+                              ...question,
+                              verified: event.target.checked
+                            }))}
+                          />
+                          已核对题干与答案
+                        </label>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="empty">当前题组暂无题目。</p>
+                  )}
+                </section>
               </div>
-            </>
-          ) : null}
-        </aside>
+            </div>
+          ) : (
+            <p className="empty">当前没有可编辑的题组。</p>
+          )}
+        </section>
       </div>
     </section>
   );

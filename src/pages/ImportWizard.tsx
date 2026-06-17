@@ -5,22 +5,20 @@ import { go } from "../app/router";
 import type { AutoPipelineReport, Frequency, PassageCategory } from "../types";
 import { jobStatusLabel, workflowStepLabel } from "../utils/displayLabels";
 
-type BusyStage = "idle" | "creating" | "uploading" | "modeling";
+type BusyStage = "idle" | "creating" | "uploading" | "processing";
 
 const stageLabels: Record<BusyStage, string> = {
   idle: "待开始",
   creating: "创建任务",
   uploading: "导入文件",
-  modeling: "云端大模型处理中"
+  processing: "本地粗切处理中"
 };
 
 function modelStageText(stage: BusyStage): string {
-  if (stage === "modeling") {
-    return "正在连接并等待云端大模型返回。PDF 图片页、扫描答案页或整卷对照会明显更慢，请保持当前页面打开。";
-  }
+  if (stage === "processing") return "正在本地完成首轮粗切与题组生成。进入预览后，云端复核会在后台异步进行。";
   if (stage === "uploading") return "正在写入本地源文件和可选答案文件。";
   if (stage === "creating") return "正在建立导题任务。";
-  return "选择文件后开始生成。";
+  return "选择文件后开始本地粗切。";
 }
 
 function renderModelReport(report: AutoPipelineReport) {
@@ -107,17 +105,13 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
             answerFile.binaryContentBase64
           );
         }
-        setBusyStage("modeling");
-        setBatchProgress(`正在生成 ${index + 1}/${sourceFiles.length}：${sourceFile.name}。云端大模型正在处理，可能需要等待数十秒到数分钟。`);
-        const report = await runAutoPipeline(job.jobId, { confidenceThreshold: 0.85, parseMode, target: "editableDraft" });
+        setBusyStage("processing");
+        setBatchProgress(`正在生成 ${index + 1}/${sourceFiles.length}：${sourceFile.name}。当前先执行本地粗切。`);
+        const report = await runAutoPipeline(job.jobId, { confidenceThreshold: 0.85, parseMode, executionMode: "localOnly", target: "editableDraft" });
         latestReport = report;
         if (!firstJobId) {
           firstJobId = job.jobId;
-          firstRoute = report.nextRoute === "document"
-            ? "document"
-            : report.nextRoute === "review"
-              ? "llm-review"
-              : "preview";
+          firstRoute = "preview";
         }
       }
       setAutoReport(latestReport);
@@ -140,7 +134,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
         <dt>处理结果</dt><dd>{report.userMessage ?? "题稿已生成，可以开始检查和编辑。"}</dd>
         <dt>需要确认的识别结果</dt><dd>{report.llm.suggestionCount} 条，已采用 {report.llm.appliedCount} 条</dd>
         <dt>视觉答案补全</dt><dd>{report.parser?.visionAnswerExtraction?.attempted ? report.parser.visionAnswerExtraction.applied ? `已补全 ${report.parser.visionAnswerExtraction.answerCount ?? 0} 题` : "已尝试，未安全写入" : "未触发"}</dd>
-        <dt>云端对照</dt><dd>{report.quality?.cloudComparison?.attempted ? report.quality.cloudComparison.passed ? "通过" : `${report.quality.cloudComparison.warningCount ?? 0} 项需确认` : "未触发"}</dd>
+        <dt>云端对照</dt><dd>{report.quality?.cloudComparison?.attempted ? report.quality.cloudComparison.passed ? "通过" : `${report.quality.cloudComparison.warningCount ?? 0} 项需确认` : "将在预览页后台执行"}</dd>
         <dt>仍需确认</dt><dd>{report.authoring?.remainingReviewItems ?? 0} 项</dd>
       </dl>
     );
@@ -190,7 +184,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
         <section className="form-section contrast">
           <span className="step-number">03</span>
           <h3>生成题稿</h3>
-          <p>选择一份或多份主文件后，一次点击即可生成可编辑题稿；答案文件可选，通常可随主文件一并导入。</p>
+          <p>上传后先直接生成本地粗切题稿并进入预览；云端复核不再阻塞当前页面。</p>
           {busy ? (
             <div className="progress-panel" data-testid="generation-progress-panel">
               <div className="spinner" aria-hidden="true" />
@@ -203,7 +197,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
           ) : batchProgress ? <p data-testid="batch-progress">{batchProgress}</p> : null}
           {autoReport ? renderModelReport(autoReport) : null}
           {error ? <p className="error-text" data-testid="import-error">{error}</p> : null}
-          <button className="primary wide" data-testid="create-and-auto-process" disabled={busy || !sourceFiles.length} onClick={submit}>{busy ? "正在生成题稿..." : "开始生成题稿"}</button>
+          <button className="primary wide" data-testid="create-and-auto-process" disabled={busy || !sourceFiles.length} onClick={submit}>{busy ? "正在生成本地题稿..." : "开始生成题稿"}</button>
         </section>
       </div>
     </section>

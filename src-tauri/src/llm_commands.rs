@@ -3,8 +3,8 @@ use crate::{
     job_store::{load_job, update_job},
     llm_gateway::run_llm_gateway,
     llm_profiles::{
-        file_secret_ref, find_profile, load_llm_api_key, load_profiles, os_secret_ref,
-        save_profile_secret, save_profiles,
+        delete_profile_secret, file_secret_ref, find_profile, load_llm_api_key, load_profiles,
+        os_secret_ref, redact_profile_for_ui, save_profile_secret, save_profiles,
     },
     llm_suggestions::{
         apply_suggestion_to_authoring, deterministic_llm_output, llm_group_context,
@@ -30,15 +30,47 @@ pub(crate) fn save_llm_profile_core(
     let profile_id = input
         .profile_id
         .unwrap_or_else(|| format!("profile-{}", Uuid::new_v4().simple()));
-    let (has_api_key, secret_backend, secret_message) =
-        save_profile_secret(root, &profile_id, input.api_key.as_deref())?;
-    let api_key_secret_ref = if secret_backend == "os" {
-        os_secret_ref(&profile_id)
-    } else if secret_backend == "file" {
-        file_secret_ref(&profile_id)
-    } else {
-        String::new()
-    };
+    let (has_api_key, secret_backend, secret_message, api_key_secret_ref) =
+        if input.api_key.is_some() {
+            let (has_api_key, secret_backend, secret_message) =
+                save_profile_secret(root, &profile_id, input.api_key.as_deref())?;
+            let api_key_secret_ref = if secret_backend == "os" {
+                os_secret_ref(&profile_id)
+            } else if secret_backend == "file" {
+                file_secret_ref(&profile_id)
+            } else {
+                String::new()
+            };
+            (
+                has_api_key,
+                secret_backend,
+                secret_message,
+                api_key_secret_ref,
+            )
+        } else {
+            let secret_meta = redact_profile_for_ui(root, json!({ "profileId": profile_id }));
+            (
+                secret_meta
+                    .get("hasApiKey")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                secret_meta
+                    .get("secretStorageBackend")
+                    .and_then(Value::as_str)
+                    .unwrap_or("none")
+                    .to_string(),
+                secret_meta
+                    .get("secretStorageMessage")
+                    .and_then(Value::as_str)
+                    .unwrap_or("No API key is stored.")
+                    .to_string(),
+                secret_meta
+                    .get("apiKeySecretRef")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+        };
     let profile = json!({
         "profileId": profile_id,
         "name": input.name,
@@ -65,6 +97,14 @@ pub(crate) fn save_llm_profile_core(
     profiles.insert(0, profile.clone());
     save_profiles(root, &profiles)?;
     Ok(profile)
+}
+
+pub(crate) fn delete_llm_profile_core(root: &Path, profile_id: &str) -> CommandResult<Vec<Value>> {
+    let mut profiles = load_profiles(root)?;
+    profiles.retain(|item| item.get("profileId").and_then(Value::as_str) != Some(profile_id));
+    save_profiles(root, &profiles)?;
+    delete_profile_secret(root, profile_id)?;
+    Ok(load_profiles(root)?)
 }
 
 pub(crate) fn test_llm_profile_core(root: &Path, profile_id: &str) -> CommandResult<Value> {

@@ -121,6 +121,11 @@ fn file_delete_secret(root: &Path, profile_id: &str) -> CommandResult<()> {
     Ok(())
 }
 
+pub(crate) fn delete_profile_secret(root: &Path, profile_id: &str) -> CommandResult<()> {
+    let _ = os_secret_delete_secret(profile_id);
+    file_delete_secret(root, profile_id)
+}
+
 pub(crate) fn redact_profile_for_ui(root: &Path, mut profile: Value) -> Value {
     let Some(profile_id) = profile
         .get("profileId")

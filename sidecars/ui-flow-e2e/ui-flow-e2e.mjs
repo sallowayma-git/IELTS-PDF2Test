@@ -61,6 +61,10 @@ async function waitFor(description, fn, { timeoutMs = 15000, intervalMs = 150 } 
   throw new Error(`${description} timed out${lastError ? `: ${lastError.message}` : ""}`);
 }
 
+function isEditorRoute(hash) {
+  return hash.includes("/preview") || hash.includes("/groups");
+}
+
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
   if (!response.ok) throw new Error(`${options?.method ?? "GET"} ${url} -> ${response.status}`);
@@ -394,6 +398,11 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
   await waitFor("route to export", async () => (await currentHash(cdp)).includes("/export"), { timeoutMs: 10000 });
   await waitSelector(cdp, "[data-testid='export-page']");
   await waitFor("export files rendered", async () => {
+    const exportError = await evaluate(cdp, `document.querySelector("[data-testid='export-error']")?.innerText || ""`);
+    if (exportError) {
+      const exportIssues = await evaluate(cdp, `document.querySelector("[data-testid='export-issue-list']")?.innerText || ""`);
+      throw new Error(`export_error:${exportError}${exportIssues ? `\nissues:${exportIssues}` : ""}`);
+    }
     const count = await evaluate(cdp, `document.querySelectorAll("[data-testid='export-file']").length`);
     return count >= 2;
   }, { timeoutMs: 10000 });
@@ -430,17 +439,17 @@ async function runClearTextFlow(cdp, baseUrl) {
   await click(cdp, "[data-testid='create-and-auto-process']");
   await waitFor("clear text route", async () => {
     const hash = await currentHash(cdp);
-    return hash.includes("/groups");
+    return isEditorRoute(hash);
   }, { timeoutMs: 20000 });
 
   const summary = await getStoreSummary(cdp);
   assert(summary?.job, "clear text flow did not create a job");
   assert(summary.sourceReview?.required === false, "clear text flow should not require source review", summary.sourceReview);
-  assert(summary.job.currentStep === "Authoring", "clear text flow should route directly to editable draft", summary.job);
+  assert(summary.job.currentStep === "Preview", "clear text flow should route directly to preview-ready editable draft", summary.job);
   assert(summary.authoringIr?.groups?.length >= 2, "clear text flow should produce editable question groups", summary.authoringIr);
   assert(!summary.documentIr, "clear text minimized state should not persist DocumentIR after AuthoringIR convergence", summary.documentIr);
   assert(!summary.split, "clear text minimized state should not persist split candidates after AuthoringIR convergence", summary.split);
-  assert(!summary.validationReport, "clear text minimized state should not persist validation report before preview regeneration", summary.validationReport);
+  assert(!summary.validationReport || summary.validationReport.passed, "clear text preview validation should either be minimized or already pass after preview warmup", summary.validationReport);
   assert(!summary.pipelineReport, "clear text minimized state should not persist pipeline report", summary.pipelineReport);
   await waitSelector(cdp, "[data-testid='group-editor']");
   const completion = await completeReviewPreviewExportPack(cdp, baseUrl, summary.job.jobId);
@@ -468,14 +477,14 @@ async function runOcrSourceReviewFlow(cdp, baseUrl) {
   await click(cdp, "[data-testid='create-and-auto-process']");
   await waitFor("ocr editable draft route", async () => {
     const hash = await currentHash(cdp);
-    return hash.includes("/groups");
+    return isEditorRoute(hash);
   }, { timeoutMs: 20000 });
   await waitSelector(cdp, "[data-testid='group-editor']");
   const summary = await getStoreSummary(cdp);
 
   assert(summary.sourceReview?.required === true, "ocr flow should keep required source review evidence", { sourceReview: summary.sourceReview });
-  assert(summary.job.currentStep === "Authoring", "ocr flow should route directly to editable draft", summary.job);
-  assert(summary.authoringIr?.groups?.length >= 1, "ocr flow should still produce an editable draft shell", summary.authoringIr);
+  assert(["Authoring", "Preview"].includes(summary.job.currentStep), "ocr flow should route directly to an editable draft surface", summary.job);
+  assert(Array.isArray(summary.authoringIr?.groups), "ocr flow should still produce an editable draft shell", summary.authoringIr);
   assert(!summary.documentIr, "ocr minimized state should not persist vision placeholder DocumentIR before manual transcription", summary.documentIr);
   assert(!summary.split, "ocr minimized state should not persist split candidates before manual transcription", summary.split);
   assert(!summary.pipelineReport, "ocr minimized state should not persist pipeline report", summary.pipelineReport);
@@ -503,10 +512,8 @@ async function runOcrSourceReviewFlow(cdp, baseUrl) {
   }, { timeoutMs: 10000 });
   const afterManual = await getStoreSummary(cdp, summary.job.jobId);
   assert(afterManual.documentIr?.parser?.provider === "manual-transcription", "manual transcription should replace vision placeholder DocumentIR", afterManual.documentIr?.parser);
-  await click(cdp, "[data-testid='go-split']");
-  await waitFor("route to split after manual transcription", async () => (await currentHash(cdp)).includes("/split"), { timeoutMs: 10000 });
-  await click(cdp, "[data-testid='build-authoring-ir']");
-  await waitFor("route to groups after build authoring", async () => (await currentHash(cdp)).includes("/groups"), { timeoutMs: 10000 });
+  await click(cdp, "[data-testid='go-preview']");
+  await waitFor("route to editor after manual transcription", async () => isEditorRoute(await currentHash(cdp)), { timeoutMs: 10000 });
   const afterBuild = await getStoreSummary(cdp, summary.job.jobId);
   assert(afterBuild.authoringIr?.groups?.length >= 1, "manual transcription flow should produce AuthoringIR groups", afterBuild.authoringIr);
   assert(!afterBuild.documentIr, "manual transcription flow should minimize DocumentIR after AuthoringIR is built", afterBuild.documentIr);

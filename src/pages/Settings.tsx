@@ -1,117 +1,202 @@
-import { useEffect, useState } from "react";
-import { getDiagnosticsSettings, listLlmProfiles, runEnvironmentPreflight, saveDiagnosticsSettings, saveLlmProfile, testLlmProfile } from "../api/tauriCommands";
+import { useEffect, useRef, useState } from "react";
+import {
+  deleteLlmProfile,
+  getDiagnosticsSettings,
+  listLlmProfiles,
+  runEnvironmentPreflight,
+  saveDiagnosticsSettings,
+  saveLlmProfile,
+  testLlmProfile
+} from "../api/tauriCommands";
 import type { DiagnosticsSettings, EnvironmentPreflightCheck, EnvironmentPreflightReport, LlmProfilePublic, LlmProvider, LlmTestResult } from "../types";
 
-type PreflightFilter = "attention" | "all" | "ok";
-type DetailRow = { label: string; value: string };
+type ProfileForm = {
+  profileId?: string;
+  name: string;
+  provider: LlmProvider;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  temperature: number;
+  timeoutMs: number;
+  forceJson: boolean;
+  enabled: boolean;
+};
 
-function secretBackendLabel(profile: LlmProfilePublic) {
-  if (!profile.hasApiKey) return "无 API Key，将使用本地确定性建议";
+function blankProfileForm(): ProfileForm {
+  return {
+    name: "OpenAI Compatible",
+    provider: "OpenAiCompatible",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1",
+    apiKey: "",
+    temperature: 0,
+    timeoutMs: 60000,
+    forceJson: true,
+    enabled: true
+  };
+}
+
+function toProfileForm(profile?: LlmProfilePublic): ProfileForm {
+  return profile ? {
+    profileId: profile.profileId,
+    name: profile.name,
+    provider: profile.provider,
+    baseUrl: profile.baseUrl,
+    model: profile.model,
+    apiKey: "",
+    temperature: profile.temperature,
+    timeoutMs: profile.timeoutMs,
+    forceJson: profile.forceJson,
+    enabled: profile.enabled
+  } : blankProfileForm();
+}
+
+function secretBackendLabel(profile: LlmProfilePublic): string {
+  if (!profile.hasApiKey) return "未保存 API Key";
   if (profile.secretStorageBackend === "os" || profile.secretStorageBackend === "keychain") return "API Key 已写入系统安全存储";
-  if (profile.secretStorageBackend === "file") return "API Key 已写入明文文件兜底（仅 dev/emergency）";
+  if (profile.secretStorageBackend === "file") return "API Key 已写入文件兜底";
   return "API Key 状态未知";
 }
 
-function checkStateLabel(check: EnvironmentPreflightCheck) {
+function checkStateLabel(check: EnvironmentPreflightCheck): string {
   if (check.ok) return "正常";
   if (check.severity === "error") return "错误";
   if (check.severity === "warning") return "提醒";
   return "信息";
 }
 
-function checkStateClass(check: EnvironmentPreflightCheck) {
-  if (check.ok) return "ok";
-  return check.severity;
-}
-
-function filterPreflightChecks(checks: EnvironmentPreflightCheck[], filter: PreflightFilter) {
-  if (filter === "attention") return checks.filter((check) => !check.ok);
-  if (filter === "ok") return checks.filter((check) => check.ok);
-  return checks;
-}
-
-function formatDetailValue(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "未设置";
-  if (typeof value === "boolean") return value ? "是" : "否";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(formatDetailValue).filter(Boolean).join("、") || "无";
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .slice(0, 4)
-      .map(([key, item]) => `${key}: ${formatDetailValue(item)}`);
-    return entries.join("；") || "无";
-  }
-  return String(value);
-}
-
-function detailLabel(key: string): string {
-  const labels: Record<string, string> = {
-    backend: "存储后端",
-    bundled: "是否内置",
-    candidateCount: "候选路径数",
-    candidates: "候选命令",
-    cloudPdfVisionEnabled: "云端视觉",
-    crate: "组件",
-    crates: "组件",
-    enabled: "是否启用",
-    env: "环境变量",
-    implemented: "是否实现",
-    liveEnv: "Live LLM",
-    ok: "可用",
-    path: "路径",
-    platform: "平台",
-    provider: "提供方",
-    relative: "相对路径",
-    selected: "已选命令",
-    selectedRenderer: "当前渲染器",
-    status: "状态码",
-    stderr: "错误输出",
-    stdout: "输出",
-    supportedRenderers: "支持渲染器",
-    version: "版本"
-  };
-  return labels[key] ?? key;
-}
-
-function preflightDetailRows(details: unknown): DetailRow[] {
-  if (!details || typeof details !== "object" || Array.isArray(details)) {
-    return details ? [{ label: "详情", value: formatDetailValue(details) }] : [];
-  }
-  return Object.entries(details as Record<string, unknown>)
-    .filter(([, value]) => value !== undefined)
-    .slice(0, 8)
-    .map(([key, value]) => ({ label: detailLabel(key), value: formatDetailValue(value) }));
+function SettingsPreflight({ preflight, rerun }: { preflight?: EnvironmentPreflightReport; rerun: () => void }) {
+  const attention = preflight?.checks.filter((check) => !check.ok) ?? [];
+  return (
+    <details className="compact-panel">
+      <summary>
+        <span>
+          <strong>环境预检</strong>
+          <small>{preflight ? `${preflight.errors} 个错误，${preflight.warnings} 个提醒` : "尚未执行"}</small>
+        </span>
+        <button className="ghost small" onClick={(event) => { event.preventDefault(); rerun(); }}>重新检测</button>
+      </summary>
+      {preflight ? (
+        <div className="compact-panel-body">
+          <div className="preflight-summary mini">
+            <div className={preflight.ok ? "good" : preflight.errors ? "bad" : "warn"}>
+              <span>状态</span>
+              <strong>{preflight.ok ? "可用" : preflight.errors ? "需处理" : "有提醒"}</strong>
+            </div>
+            <div>
+              <span>Error</span>
+              <strong>{preflight.errors}</strong>
+            </div>
+            <div>
+              <span>Warning</span>
+              <strong>{preflight.warnings}</strong>
+            </div>
+          </div>
+          <div className="preflight-list compact">
+            {(attention.length ? attention : preflight.checks.slice(0, 4)).map((check) => (
+              <div key={check.name} className={`preflight-inline ${check.ok ? "ok" : check.severity}`}>
+                <strong>{check.name}</strong>
+                <small>{check.message}</small>
+                <em>{checkStateLabel(check)}</em>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : <p className="empty compact">尚未执行环境预检。</p>}
+    </details>
+  );
 }
 
 export function Settings({ refresh }: { refresh: () => void }) {
   const [profiles, setProfiles] = useState<LlmProfilePublic[]>([]);
-  const [result, setResult] = useState<LlmTestResult | undefined>();
+  const [selectedProfileId, setSelectedProfileId] = useState<string | undefined>();
+  const [form, setForm] = useState<ProfileForm>(blankProfileForm());
   const [preflight, setPreflight] = useState<EnvironmentPreflightReport | undefined>();
-  const [preflightFilter, setPreflightFilter] = useState<PreflightFilter>("attention");
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSettings>({ keepFullProcessArtifacts: false });
-  const [form, setForm] = useState({ name: "OpenAI Compatible", provider: "OpenAiCompatible" as LlmProvider, baseUrl: "https://api.openai.com/v1", model: "gpt-4.1", apiKey: "", temperature: 0, timeoutMs: 60000, forceJson: true, enabled: true });
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [testResult, setTestResult] = useState<LlmTestResult | undefined>();
+  const [error, setError] = useState<string | undefined>();
+  const [dirtyVersion, setDirtyVersion] = useState(0);
+  const suppressAutosave = useRef(true);
 
   async function load() {
-    const [profileList, preflightReport, diagnosticsSettings] = await Promise.all([listLlmProfiles(), runEnvironmentPreflight(), getDiagnosticsSettings()]);
+    const [profileList, preflightReport, diagnosticsSettings] = await Promise.all([
+      listLlmProfiles(),
+      runEnvironmentPreflight(),
+      getDiagnosticsSettings()
+    ]);
     setProfiles(profileList);
     setPreflight(preflightReport);
     setDiagnostics(diagnosticsSettings);
+    setSelectedProfileId((current) => current && profileList.some((profile) => profile.profileId === current) ? current : profileList[0]?.profileId);
+    suppressAutosave.current = true;
+    setForm((current) => {
+      if (current.profileId && profileList.some((profile) => profile.profileId === current.profileId)) return current;
+      return toProfileForm(profileList[0]);
+    });
   }
 
   useEffect(() => {
-    load().catch(console.error);
+    load().catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
   }, []);
 
-  async function save() {
-    await saveLlmProfile(form);
-    await load();
-    refresh();
+  useEffect(() => {
+    if (dirtyVersion === 0 || suppressAutosave.current) {
+      suppressAutosave.current = false;
+      return;
+    }
+    if (!form.name.trim() || !form.baseUrl.trim() || !form.model.trim()) return;
+    const timer = window.setTimeout(async () => {
+      setSaveState("saving");
+      setError(undefined);
+      try {
+        const saved = await saveLlmProfile({
+          profileId: form.profileId,
+          name: form.name.trim(),
+          provider: form.provider,
+          baseUrl: form.baseUrl.trim(),
+          model: form.model.trim(),
+          ...(form.apiKey ? { apiKey: form.apiKey } : {}),
+          temperature: form.temperature,
+          timeoutMs: form.timeoutMs,
+          forceJson: form.forceJson,
+          enabled: form.enabled
+        });
+        const nextProfiles = await listLlmProfiles();
+        setProfiles(nextProfiles);
+        setSelectedProfileId(saved.profileId);
+        suppressAutosave.current = true;
+        setForm((current) => ({ ...current, profileId: saved.profileId, apiKey: "" }));
+        setSaveState("saved");
+        refresh();
+      } catch (caught) {
+        setSaveState("error");
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [dirtyVersion, form, refresh]);
+
+  function selectProfile(profile?: LlmProfilePublic) {
+    suppressAutosave.current = true;
+    setSelectedProfileId(profile?.profileId);
+    setForm(toProfileForm(profile));
+    setTestResult(undefined);
+    setError(undefined);
+    setSaveState("idle");
   }
 
-  async function test(profileId: string) {
-    setResult(await testLlmProfile(profileId));
+  async function removeProfile(profileId: string) {
+    const nextProfiles = await deleteLlmProfile(profileId);
+    setProfiles(nextProfiles);
+    refresh();
+    selectProfile(nextProfiles[0]);
+  }
+
+  async function runProfileTest() {
+    if (!form.profileId) return;
+    setTestResult(await testLlmProfile(form.profileId));
   }
 
   async function rerunPreflight() {
@@ -124,115 +209,119 @@ export function Settings({ refresh }: { refresh: () => void }) {
     refresh();
   }
 
-  const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((current) => ({ ...current, [key]: value }));
-  const visibleChecks = preflight ? filterPreflightChecks(preflight.checks, preflightFilter) : [];
-  const attentionCount = preflight?.checks.filter((check) => !check.ok).length ?? 0;
+  const update = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
+    setDirtyVersion((current) => current + 1);
+  };
 
   return (
     <section className="page-enter">
-      <div className="section-heading"><p className="eyebrow">Settings</p><h2>设置</h2></div>
-      <div className="settings-grid">
-        <section className="form-section settings-preflight">
+      <div className="section-heading">
+        <p className="eyebrow">Settings</p>
+        <h2>模型与环境设置</h2>
+      </div>
+
+      <div className="settings-studio">
+        <aside className="settings-profile-list">
           <div className="spread">
-            <h3>运行环境预检</h3>
-            <button className="ghost small" onClick={rerunPreflight}>重新检测</button>
+            <h3>模型配置</h3>
+            <button className="ghost small" onClick={() => selectProfile(undefined)}>新建配置</button>
           </div>
-          {preflight ? (
-            <>
-              <div className="preflight-summary" data-testid="preflight-summary">
-                <div className={preflight.ok ? "good" : preflight.errors ? "bad" : "warn"}>
-                  <span>状态</span>
-                  <strong>{preflight.ok ? "可用" : preflight.errors ? "需处理" : "有提醒"}</strong>
+          <div className="profile-stack">
+            {profiles.map((profile) => (
+              <article key={profile.profileId} className={`profile-card ${selectedProfileId === profile.profileId ? "active" : ""}`}>
+                <button className="profile-card-main" onClick={() => selectProfile(profile)}>
+                  <strong>{profile.name}</strong>
+                  <small>{profile.model} · {profile.baseUrl}</small>
+                  <small>{secretBackendLabel(profile)}</small>
+                </button>
+                <div className="profile-card-actions">
+                  <button className="ghost small" onClick={() => selectProfile(profile)}>编辑</button>
+                  <button className="ghost small" onClick={() => void removeProfile(profile.profileId)}>删除</button>
                 </div>
-                <div>
-                  <span>Error</span>
-                  <strong>{preflight.errors}</strong>
-                </div>
-                <div>
-                  <span>Warning</span>
-                  <strong>{preflight.warnings}</strong>
-                </div>
-                <div>
-                  <span>Checks</span>
-                  <strong>{preflight.checks.length}</strong>
-                </div>
-              </div>
-              <div className="segmented-control" data-testid="preflight-filter">
-                {([
-                  ["attention", `需处理 ${attentionCount}`],
-                  ["all", `全部 ${preflight.checks.length}`],
-                  ["ok", `正常 ${preflight.checks.filter((check) => check.ok).length}`]
-                ] as Array<[PreflightFilter, string]>).map(([value, label]) => (
-                  <button key={value} className={preflightFilter === value ? "active" : ""} onClick={() => setPreflightFilter(value)}>{label}</button>
-                ))}
-              </div>
-              {visibleChecks.length ? (
-                <div className="preflight-list" data-testid="preflight-check-list">
-                  {visibleChecks.map((check) => (
-                    <details className={`preflight-row ${checkStateClass(check)}`} key={check.name}>
-                      <summary>
-                        <span className="state-dot" aria-hidden="true" />
-                        <span>
-                          <strong>{check.name}</strong>
-                          <small>{check.message}</small>
-                        </span>
-                        <em>{checkStateLabel(check)}</em>
-                      </summary>
-                      {preflightDetailRows(check.details).length ? (
-                        <dl className="preflight-details">
-                          {preflightDetailRows(check.details).map((row) => (
-                            <div key={`${check.name}-${row.label}`}>
-                              <dt>{row.label}</dt>
-                              <dd>{row.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      ) : <p className="empty compact">没有更多细节。</p>}
-                    </details>
-                  ))}
-                </div>
-              ) : (
-                <p className="empty">当前筛选下没有项目。</p>
-              )}
-            </>
-          ) : <p className="empty">尚未执行环境预检。</p>}
-        </section>
-        <section className="form-section">
-          <h3>大模型配置</h3>
-          {profiles.map((profile) => (
-            <div className="profile-row" key={profile.profileId}>
-              <span>
-                <strong>{profile.name}</strong>
-                <small>{profile.provider} · {profile.model} · {profile.baseUrl}</small>
-                <small>{secretBackendLabel(profile)}</small>
-                {profile.apiKeySecretRef ? <small>密钥已保存</small> : null}
-                {profile.secretStorageMessage ? <small>{profile.secretStorageMessage}</small> : null}
-              </span>
-              <button className="ghost small" onClick={() => test(profile.profileId)}>测试连接</button>
-            </div>
-          ))}
-          <pre>{result ? JSON.stringify(result, null, 2) : "尚未测试连接。"}</pre>
-        </section>
-        <section className="form-section contrast">
-          <h3>新建模型配置</h3>
-          <label>名称<input value={form.name} onChange={(event) => update("name", event.target.value)} /></label>
-          <label>Provider<select value={form.provider} onChange={(event) => update("provider", event.target.value as LlmProvider)}><option>OpenAiCompatible</option></select><small>当前 gateway 只实现 OpenAI-compatible chat completions；其他 provider 需要新增 adapter 后再开放。</small></label>
-          <label>Base URL<input value={form.baseUrl} onChange={(event) => update("baseUrl", event.target.value)} /></label>
-          <label>Model<input value={form.model} onChange={(event) => update("model", event.target.value)} /></label>
-          <label>API Key<input type="password" value={form.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder="写入系统安全存储；明文文件兜底默认禁用" /></label>
-          <label>Temperature<input type="number" min="0" max="1" step="0.1" value={form.temperature} onChange={(event) => update("temperature", Number(event.target.value))} /></label>
-          <label>Timeout ms<input type="number" min="1000" step="1000" value={form.timeoutMs} onChange={(event) => update("timeoutMs", Number(event.target.value))} /></label>
-          <label className="inline-check"><input type="checkbox" checked={form.forceJson} onChange={(event) => update("forceJson", event.target.checked)} /> 强制 JSON 输出</label>
-          <label className="inline-check"><input type="checkbox" checked={form.enabled} onChange={(event) => update("enabled", event.target.checked)} /> 启用</label>
-          <button className="primary wide" onClick={save}>保存模型配置</button>
-        </section>
-        <aside className="inspector">
-          <p className="eyebrow">高级诊断</p>
-          <h3>过程文件保留</h3>
-          <p>默认关闭。导出成功后会自动清理上传缓存、预览文件和识别日志，只保留题稿和摘要。</p>
-          <label className="inline-check"><input type="checkbox" checked={diagnostics.keepFullProcessArtifacts} onChange={(event) => void toggleArtifactRetention(event.target.checked)} /> 保留完整过程文件</label>
-          {diagnostics.keepFullProcessArtifacts ? <p className="warning-box">已开启调试保留：导出后不会自动删除完整过程文件。仅用于排查解析或模型问题。</p> : <p className="success-text">普通模式：导出后自动清理中间文件。</p>}
+              </article>
+            ))}
+            {!profiles.length ? <p className="empty compact">还没有模型配置。右上角可以直接新建。</p> : null}
+          </div>
         </aside>
+
+        <section className="settings-editor">
+          <div className="spread">
+            <div>
+              <h3>{form.profileId ? "编辑配置" : "新建配置"}</h3>
+              <p className="settings-save-hint">
+                {saveState === "saving" ? "正在自动保存..." : saveState === "saved" ? "已自动保存" : "修改后会自动保存到当前配置"}
+              </p>
+            </div>
+            {form.profileId ? <button className="ghost small" onClick={() => void runProfileTest()}>测试连接</button> : null}
+          </div>
+
+          <div className="settings-editor-grid">
+            <label>名称
+              <input value={form.name} onChange={(event) => update("name", event.target.value)} />
+            </label>
+            <label>Provider
+              <select value={form.provider} onChange={(event) => update("provider", event.target.value as LlmProvider)}>
+                <option value="OpenAiCompatible">OpenAiCompatible</option>
+                <option value="AnthropicCompatible">AnthropicCompatible</option>
+                <option value="Ollama">Ollama</option>
+                <option value="Custom">Custom</option>
+              </select>
+            </label>
+            <label>Base URL
+              <input value={form.baseUrl} onChange={(event) => update("baseUrl", event.target.value)} placeholder="https://api.openai.com/v1" />
+            </label>
+            <label>Model
+              <input value={form.model} onChange={(event) => update("model", event.target.value)} />
+            </label>
+            <label>API Key
+              <input type="password" value={form.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder={form.profileId ? "留空则保留已保存密钥" : "填写后自动保存"} />
+            </label>
+            <label>Timeout ms
+              <input type="number" min="1000" step="1000" value={form.timeoutMs} onChange={(event) => update("timeoutMs", Number(event.target.value))} />
+            </label>
+            <label>Temperature
+              <input type="number" min="0" max="1" step="0.1" value={form.temperature} onChange={(event) => update("temperature", Number(event.target.value))} />
+            </label>
+            <div className="settings-checks">
+              <label className="inline-check">
+                <input type="checkbox" checked={form.forceJson} onChange={(event) => update("forceJson", event.target.checked)} />
+                强制 JSON 输出
+              </label>
+              <label className="inline-check">
+                <input type="checkbox" checked={form.enabled} onChange={(event) => update("enabled", event.target.checked)} />
+                启用当前配置
+              </label>
+            </div>
+          </div>
+
+          {testResult ? (
+            <div className={testResult.ok ? "info-box" : "warning-box"}>
+              <strong>{testResult.ok ? "连接成功" : "连接失败"}</strong>
+              <p>{testResult.message}</p>
+              <small>{testResult.latencyMs} ms</small>
+            </div>
+          ) : null}
+          {error ? <p className="error-text">{error}</p> : null}
+
+          <div className="settings-secondary-panels">
+            <SettingsPreflight preflight={preflight} rerun={() => void rerunPreflight()} />
+            <details className="compact-panel">
+              <summary>
+                <span>
+                  <strong>过程文件保留</strong>
+                  <small>{diagnostics.keepFullProcessArtifacts ? "当前保留完整中间文件" : "导出后自动清理中间文件"}</small>
+                </span>
+              </summary>
+              <div className="compact-panel-body">
+                <label className="inline-check">
+                  <input type="checkbox" checked={diagnostics.keepFullProcessArtifacts} onChange={(event) => void toggleArtifactRetention(event.target.checked)} />
+                  保留完整过程文件
+                </label>
+              </div>
+            </details>
+          </div>
+        </section>
       </div>
     </section>
   );

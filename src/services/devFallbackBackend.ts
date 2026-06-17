@@ -182,6 +182,18 @@ function mainSourceFile(job: ImportJob): SourceFile | undefined {
   return job.sourceFiles.find((source) => source.role === "MainQuestion");
 }
 
+function preferredProfileId(store: Store, job?: ImportJob, requestedProfileId?: string): string | undefined {
+  const enabled = store.profiles.filter((profile) => profile.enabled);
+  const explicit = requestedProfileId ?? job?.activeLlmProfileId;
+  if (explicit && enabled.some((profile) => profile.profileId === explicit)) return explicit;
+  const ranked = [...enabled].sort((left, right) => {
+    const leftScore = Number(left.hasApiKey) * 100 + Number(left.profileId !== "profile-local-placeholder") * 10 + Number(left.provider === "OpenAiCompatible");
+    const rightScore = Number(right.hasApiKey) * 100 + Number(right.profileId !== "profile-local-placeholder") * 10 + Number(right.provider === "OpenAiCompatible");
+    return rightScore - leftScore;
+  });
+  return ranked[0]?.profileId;
+}
+
 function devFallbackUnsupportedSourceMessage(source?: SourceFile): string {
   const name = source?.originalName ?? "未选择文件";
   const type = source?.fileType ?? "unknown";
@@ -1956,15 +1968,18 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 
     case "run_auto_pipeline": {
       const jobId = args.jobId as string;
-      const input = (args.input ?? {}) as { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"]; target?: "editableDraft"; allowOverwrite?: boolean };
+      const input = (args.input ?? {}) as { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"]; executionMode?: "localOnly" | "full"; target?: "editableDraft"; allowOverwrite?: boolean };
       const threshold = Math.min(1, Math.max(0, input.confidenceThreshold ?? 0.85));
+      const localOnly = input.executionMode === "localOnly";
       const target = input.target ?? "editableDraft";
       protectExistingAuthoring(store, jobId, args);
       let job = requireJob(store, jobId);
+      const profileId = preferredProfileId(store, job, input.profileId) ?? "profile-local-placeholder";
 
       let documentIr = store.documents[jobId] ?? makeDocumentIr(job, { mode: input.parseMode ?? "auto" }, store.sourceTexts[jobId]);
-      const visionTranscription = { attempted: false, applied: false, profileId: input.profileId ?? store.profiles.find((profile) => profile.enabled)?.profileId ?? "profile-local-placeholder", warnings: [] as string[], failure: null as string | null, confidence: undefined as number | undefined };
+      const visionTranscription = { attempted: false, applied: false, profileId, warnings: [] as string[], failure: null as string | null, confidence: undefined as number | undefined };
       if (
+        !localOnly &&
         documentNeedsVisionTranscription(documentIr, input.parseMode)
       ) {
         visionTranscription.attempted = true;
@@ -1990,9 +2005,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const failures: string[] = [];
       let suggestionCount = 0;
       let appliedCount = 0;
-      const profileId = input.profileId ?? store.profiles.find((profile) => profile.enabled)?.profileId ?? "profile-local-placeholder";
 
-      if (input.profileId) {
+      if (!localOnly && input.profileId) {
         for (const group of ir.groups) {
           const suggestion: LlmSuggestion = {
             suggestionId: id("suggestion"),
@@ -2142,6 +2156,78 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       return pipelineReport as T;
     }
 
+    case "run_cloud_review": {
+      const jobId = args.jobId as string;
+      const input = (args.input ?? {}) as { profileId?: string };
+      const job = requireJob(store, jobId);
+      const ir = store.authoring[jobId];
+      if (!ir) throw new Error("authoring_ir_missing_for_cloud_review");
+      const profileId = preferredProfileId(store, job, input.profileId) ?? "profile-local-placeholder";
+      const previous = store.pipelineReports[jobId];
+      const cloudComparison = {
+        attempted: mainSourceFile(job)?.fileType === "pdf",
+        passed: mainSourceFile(job)?.fileType === "pdf",
+        profileId,
+        warningCount: mainSourceFile(job)?.fileType === "pdf" ? 0 : 0,
+        failure: mainSourceFile(job)?.fileType === "pdf" ? null : null,
+        issues: [] as Array<{ message?: string; [key: string]: unknown }>,
+        observations: mainSourceFile(job)?.fileType === "pdf"
+          ? [{ kind: "dev_cloud_review_placeholder", message: "浏览器开发预览使用本地占位云端复核结果；真实 Tauri 会调用实际云端模型。" }]
+          : []
+      };
+      const next: AutoPipelineReport = {
+        ...(previous ?? {
+          jobId,
+          confidenceThreshold: 0.85,
+          llm: {
+            profileId,
+            suggestionCount: 0,
+            appliedCount: 0,
+            highConfidenceAppliedGroups: [],
+            lowConfidenceGroups: [],
+            blockedAutoApplyGroups: [],
+            failures: []
+          },
+          parser: {
+            warnings: [],
+            lowConfidenceBlocks: [],
+            visionTranscription: { attempted: false, applied: false, profileId, warnings: [], failure: null },
+            visionAnswerExtraction: { attempted: false, applied: false, profileId, answerCount: 0, warnings: [], failure: null }
+          },
+          validationPassed: true,
+          staticRuntimePassed: true,
+          runtimeMode: "static-rust",
+          authoring: { remainingReviewItems: 0 },
+          status: "DraftSaved",
+          currentStep: "Authoring",
+          userStatus: "draftReady",
+          userMessage: "题稿已生成，可以开始检查和编辑。",
+          nextRoute: "preview",
+          generatedAt: now()
+        }),
+        llm: {
+          ...(previous?.llm ?? {
+            suggestionCount: 0,
+            appliedCount: 0,
+            highConfidenceAppliedGroups: [],
+            lowConfidenceGroups: [],
+            blockedAutoApplyGroups: [],
+            failures: []
+          }),
+          profileId
+        },
+        quality: {
+          ...(previous?.quality ?? {}),
+          cloudComparison
+        },
+        generatedAt: now(),
+        userMessage: cloudComparison.attempted ? "题稿已生成，云端复核已完成。" : previous?.userMessage ?? "题稿已生成，可以开始检查和编辑。"
+      };
+      store.pipelineReports[jobId] = next;
+      save(store);
+      return next as T;
+    }
+
     case "update_authoring_ir": {
       const jobId = args.jobId as string;
       const patch = args.patch as AuthoringPatch;
@@ -2207,6 +2293,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 
     case "save_llm_profile": {
       const input = args.input as SaveLlmProfileInput;
+      const existing = input.profileId ? store.profiles.find((item) => item.profileId === input.profileId) : undefined;
+      const hasApiKey = input.apiKey === undefined ? Boolean(existing?.hasApiKey) : Boolean(input.apiKey);
       const profile: LlmProfilePublic = {
         profileId: input.profileId ?? id("profile"),
         name: input.name,
@@ -2217,14 +2305,21 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         timeoutMs: input.timeoutMs,
         forceJson: input.forceJson,
         enabled: input.enabled,
-        hasApiKey: Boolean(input.apiKey),
-        apiKeySecretRef: `dev-fallback-secret:${input.profileId ?? "new"}`,
-        secretStorageBackend: input.apiKey ? "file" : "none",
-        secretStorageMessage: input.apiKey ? "Browser dev fallback keeps only key presence metadata in localStorage." : "No API key saved."
+        hasApiKey,
+        apiKeySecretRef: hasApiKey ? `dev-fallback-secret:${input.profileId ?? "new"}` : undefined,
+        secretStorageBackend: hasApiKey ? "file" : "none",
+        secretStorageMessage: hasApiKey ? "Browser dev fallback keeps only key presence metadata in localStorage." : "No API key saved."
       };
       store.profiles = [profile, ...store.profiles.filter((item) => item.profileId !== profile.profileId)];
       save(store);
       return profile as T;
+    }
+
+    case "delete_llm_profile": {
+      const profileId = args.profileId as string;
+      store.profiles = store.profiles.filter((profile) => profile.profileId !== profileId);
+      save(store);
+      return store.profiles as T;
     }
 
     case "test_llm_profile": {

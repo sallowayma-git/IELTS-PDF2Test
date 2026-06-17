@@ -3,7 +3,7 @@ use authoring_commands::{
     parse_document_core, render_group_html_core, resolve_source_review_core, run_rule_split_core,
     save_split_adjustments_core, update_authoring_ir_core,
 };
-use auto_pipeline::run_auto_pipeline_core;
+use auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
 use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
 use export_nas_library::{
@@ -11,7 +11,8 @@ use export_nas_library::{
 };
 use export_pack::{build_pack_core, export_reading_assets_core, export_reading_js_core};
 use llm_commands::{
-    apply_llm_suggestion_core, llm_run_group_core, save_llm_profile_core, test_llm_profile_core,
+    apply_llm_suggestion_core, delete_llm_profile_core, llm_run_group_core,
+    save_llm_profile_core, test_llm_profile_core,
 };
 use preview_commands::{
     generate_preview_assets_core, run_preview_e2e_core, validate_authoring_ir_core,
@@ -189,9 +190,17 @@ pub struct AutoPipelineInput {
     pub confidence_threshold: Option<f64>,
     #[serde(rename = "parseMode")]
     pub parse_mode: Option<String>,
+    #[serde(rename = "executionMode")]
+    pub execution_mode: Option<String>,
     pub target: Option<String>,
     #[serde(rename = "allowOverwrite")]
     pub allow_overwrite: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct RunCloudReviewInput {
+    #[serde(rename = "profileId")]
+    pub profile_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -478,6 +487,7 @@ fn run_auto_pipeline_from_path(path: &Path, args: &[String]) -> CommandResult<Va
             profile_id: Some(profile_id),
             confidence_threshold: Some(0.85),
             parse_mode: Some("auto".to_string()),
+            execution_mode: None,
             target: Some("editableDraft".to_string()),
             allow_overwrite: Some(false),
         }),
@@ -780,6 +790,13 @@ async fn save_llm_profile(input: SaveLlmProfileInput, app: AppHandle) -> Command
 }
 
 #[tauri::command]
+async fn delete_llm_profile(profile_id: String, app: AppHandle) -> CommandResult<Vec<Value>> {
+    let root = app_root(&app)?;
+    ensure_app_dirs(&root)?;
+    delete_llm_profile_core(&root, &profile_id)
+}
+
+#[tauri::command]
 async fn test_llm_profile(profile_id: String, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     ensure_app_dirs(&root)?;
@@ -875,6 +892,16 @@ async fn run_auto_pipeline(
     run_auto_pipeline_core(&root, &job_id, input)
 }
 
+#[tauri::command]
+async fn run_cloud_review(
+    job_id: String,
+    input: Option<RunCloudReviewInput>,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    run_cloud_review_core(&root, &job_id, input)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -909,6 +936,7 @@ pub fn run() {
             get_diagnostics_settings,
             save_diagnostics_settings,
             save_llm_profile,
+            delete_llm_profile,
             test_llm_profile,
             llm_classify_group,
             llm_extract_group,
@@ -917,6 +945,7 @@ pub fn run() {
             generate_preview_assets,
             run_preview_e2e,
             run_auto_pipeline,
+            run_cloud_review,
             export_reading_assets,
             export_reading_js,
             export_nas_library,
@@ -3640,6 +3669,7 @@ Answers
                 parse_mode: None,
                 confidence_threshold: Some(0.85),
                 profile_id: None,
+                execution_mode: None,
                 target: None,
                 allow_overwrite: None,
             }),
@@ -3894,6 +3924,7 @@ Answers
                 parse_mode: Some("auto".to_string()),
                 confidence_threshold: Some(0.85),
                 profile_id: Some("profile-local-placeholder".to_string()),
+                execution_mode: None,
                 target: None,
                 allow_overwrite: None,
             }),
@@ -5145,6 +5176,7 @@ Answers
                 parse_mode: Some("auto".to_string()),
                 confidence_threshold: Some(0.85),
                 profile_id: Some("profile-cloud-compare".to_string()),
+                execution_mode: None,
                 target: Some("editableDraft".to_string()),
                 allow_overwrite: None,
             }),
@@ -5360,6 +5392,7 @@ Answers
                 parse_mode: Some("auto".to_string()),
                 confidence_threshold: Some(0.85),
                 profile_id: Some("profile-cloud-mismatch".to_string()),
+                execution_mode: None,
                 target: Some("editableDraft".to_string()),
                 allow_overwrite: None,
             }),
@@ -7981,6 +8014,7 @@ Answers
                 parse_mode: Some("auto".to_string()),
                 confidence_threshold: Some(0.85),
                 profile_id: Some("profile-vision-transcription".to_string()),
+                execution_mode: None,
                 target: Some("editableDraft".to_string()),
                 allow_overwrite: None,
             }),

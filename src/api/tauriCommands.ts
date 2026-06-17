@@ -133,6 +133,10 @@ export async function saveLlmProfile(input: SaveLlmProfileInput): Promise<LlmPro
   return command("save_llm_profile", { input });
 }
 
+export async function deleteLlmProfile(profileId: string): Promise<LlmProfilePublic[]> {
+  return command("delete_llm_profile", { profileId });
+}
+
 export async function testLlmProfile(profileId: string): Promise<LlmTestResult> {
   return command("test_llm_profile", { profileId });
 }
@@ -161,8 +165,12 @@ export async function runPreviewE2e(jobId: string): Promise<ValidationReport> {
   return command("run_preview_e2e", { jobId });
 }
 
-export async function runAutoPipeline(jobId: string, input?: { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"]; target?: "editableDraft"; allowOverwrite?: boolean }): Promise<AutoPipelineReport> {
+export async function runAutoPipeline(jobId: string, input?: { profileId?: string; confidenceThreshold?: number; parseMode?: ParseOptions["mode"]; executionMode?: "localOnly" | "full"; target?: "editableDraft"; allowOverwrite?: boolean }): Promise<AutoPipelineReport> {
   return command("run_auto_pipeline", { jobId, input });
+}
+
+export async function runCloudReview(jobId: string, input?: { profileId?: string }): Promise<AutoPipelineReport> {
+  return command("run_cloud_review", { jobId, input });
 }
 
 export async function exportReadingAssets(jobId: string, exportDir = "local://exports"): Promise<ExportResult> {

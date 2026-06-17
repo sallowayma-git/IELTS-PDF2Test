@@ -4,7 +4,6 @@ import { Dashboard } from "../pages/Dashboard";
 import { DocumentReview } from "../pages/DocumentReview";
 import { ImportWizard } from "../pages/ImportWizard";
 import { JobList } from "../pages/JobList";
-import { PackBuilder } from "../pages/PackBuilder";
 import { Settings } from "../pages/Settings";
 import { UnifiedPreview } from "../pages/UnifiedPreview";
 import { ExportPage } from "../pages/ExportPage";
@@ -52,7 +51,7 @@ export function App() {
     }
     if (route.jobId && route.name === "preview") return <UnifiedPreview jobId={route.jobId} {...common} />;
     if (route.jobId && route.name === "export") return <ExportPage jobId={route.jobId} jobs={jobs} {...common} />;
-    if (route.name === "packs") return <PackBuilder jobs={jobs} refresh={refresh} />;
+    if (route.name === "packs") return <ExportPage jobs={jobs} {...common} />;
     if (route.name === "settings") return <Settings refresh={refresh} />;
     return <Dashboard jobs={jobs} refresh={refresh} />;
   }, [jobs, route, refreshToken]);

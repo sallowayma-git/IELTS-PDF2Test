@@ -1,14 +1,15 @@
+import { useEffect, useState, type ReactNode } from "react";
 import type { ImportJob } from "../types";
 import type { RouteState } from "../app/router";
 import { go } from "../app/router";
 import { StatusPill } from "./StatusPill";
 
 const nav = [
-  { label: "工作台", path: "/dashboard", match: "dashboard" },
-  { label: "导题任务", path: "/jobs", match: "jobs" },
-  { label: "新建导题", path: "/jobs/new", match: "new" },
-  { label: "Pack 组卷", path: "/packs", match: "packs" },
-  { label: "设置", path: "/settings", match: "settings" }
+  { label: "工作台", short: "台", path: "/dashboard", match: "dashboard" },
+  { label: "导题任务", short: "任务", path: "/jobs", match: "jobs" },
+  { label: "新建导题", short: "新建", path: "/jobs/new", match: "new" },
+  { label: "导出/组卷", short: "导出", path: "/packs", match: "packs" },
+  { label: "设置", short: "设", path: "/settings", match: "settings" }
 ];
 
 const steps = [
@@ -17,32 +18,52 @@ const steps = [
   ["export", "导出发布"]
 ] as const;
 
-export function AppShell({ route, activeJob, children }: { route: RouteState; activeJob?: ImportJob; children: React.ReactNode }) {
+export function AppShell({ route, activeJob, children }: { route: RouteState; activeJob?: ImportJob; children: ReactNode }) {
+  const [collapsed, setCollapsed] = useState(false);
   const activeStep = route.name === "split" || route.name === "groups" || route.name === "llm-review"
     ? "preview"
     : route.name;
+
+  useEffect(() => {
+    setCollapsed(window.localStorage.getItem("ielts-author-studio.sidebar-collapsed") === "1");
+  }, []);
+
+  function toggleSidebar() {
+    setCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem("ielts-author-studio.sidebar-collapsed", next ? "1" : "0");
+      return next;
+    });
+  }
+
   return (
-    <div className="shell">
+    <div className={`shell ${collapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
-        <button className="brand" onClick={() => go("/dashboard")}>
-          <span className="brand-mark">IA</span>
-          <span>
-            <strong>IELTS Author</strong>
-            <small>Epic 8 Studio</small>
-          </span>
-        </button>
+        <div className="sidebar-header">
+          <button className="brand" onClick={() => go("/dashboard")}>
+            <span className="brand-mark">IA</span>
+            <span className="brand-copy">
+              <strong>IELTS Author</strong>
+              <small>Epic 8 Studio</small>
+            </span>
+          </button>
+          <button
+            className="ghost small sidebar-toggle"
+            onClick={toggleSidebar}
+            title={collapsed ? "展开导航栏" : "收起导航栏"}
+            aria-label={collapsed ? "展开导航栏" : "收起导航栏"}
+          >
+            {collapsed ? "›" : "‹"}
+          </button>
+        </div>
         <nav className="primary-nav">
           {nav.map((item) => (
-            <button key={item.path} className={route.name === item.match ? "active" : ""} onClick={() => go(item.path)}>
-              {item.label}
+            <button key={item.path} className={route.name === item.match ? "active" : ""} onClick={() => go(item.path)} title={item.label}>
+              <span className="nav-short">{item.short}</span>
+              <span className="nav-label">{item.label}</span>
             </button>
           ))}
         </nav>
-        <div className="sidebar-note">
-          <span>本地处理说明</span>
-          <strong>桌面端本地处理</strong>
-          <p>文件解析、题稿生成、校验和导出都在本地应用内完成；开发预览只用于调试，不代表普通用户流程。</p>
-        </div>
       </aside>
       <main className="workspace">
         <header className="topbar">

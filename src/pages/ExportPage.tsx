@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../api/desktopDialogs";
-import { exportNasLibrary, exportReadingAssets, exportReadingJs } from "../api/tauriCommands";
+import { buildPack, exportNasLibrary, exportReadingAssets, exportReadingJs } from "../api/tauriCommands";
 import { StatusPill } from "../components/StatusPill";
-import type { ExportResult, ImportJob, JsExportResult, NasExportResult, ValidationIssue } from "../types";
+import type { ExportResult, ImportJob, JsExportResult, NasExportResult, PackBuildResult, ValidationIssue } from "../types";
 import { validationIssueDisplay } from "../utils/displayLabels";
 
 type ExportMode = "single-js" | "batch-js" | "full-assets" | "nas-library";
 
 const EXPORTABLE_STATUSES = new Set(["DraftSaved", "ExportReady", "Exported", "Cleaned"]);
+const PACKABLE_STATUSES = new Set(["ExportReady", "Exported", "Cleaned"]);
 const EXPORT_INTENT_KEY_PREFIX = "ielts-author-studio.export-intent.";
 
 interface ExportDiagnostics {
@@ -71,33 +72,73 @@ export function ExportPage({
   jobs,
   refresh
 }: {
-  jobId: string;
+  jobId?: string;
   jobs: ImportJob[];
   refresh: () => void;
 }) {
-  const [mode, setMode] = useState<ExportMode>("single-js");
+  const [mode, setMode] = useState<ExportMode>(jobId ? "single-js" : "batch-js");
   const [singleResult, setSingleResult] = useState<ExportResult | undefined>();
   const [jsResult, setJsResult] = useState<JsExportResult | undefined>();
   const [nasResult, setNasResult] = useState<NasExportResult | undefined>();
   const [exportDir, setExportDir] = useState<string>("local://exports");
-  const [selected, setSelected] = useState<string[]>([jobId]);
+  const [selected, setSelected] = useState<string[]>(jobId ? [jobId] : []);
+  const [packSelected, setPackSelected] = useState<string[]>([]);
+  const [packId, setPackId] = useState("pack-20260617-basic");
+  const [packVersion, setPackVersion] = useState("0.1.0");
+  const [packInstitution, setPackInstitution] = useState("internal");
+  const [packDescription, setPackDescription] = useState("IELTS Author Studio generated pack");
+  const [packValidFrom, setPackValidFrom] = useState("");
+  const [packValidTo, setPackValidTo] = useState("");
+  const [packResult, setPackResult] = useState<PackBuildResult | undefined>();
+  const [packError, setPackError] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [diagnostics, setDiagnostics] = useState<ExportDiagnostics | undefined>();
   const [running, setRunning] = useState(false);
+  const [packRunning, setPackRunning] = useState(false);
 
   const exportable = useMemo(
     () => jobs.filter((job) => EXPORTABLE_STATUSES.has(job.status)),
     [jobs]
   );
+  const packable = useMemo(
+    () => jobs.filter((job) => PACKABLE_STATUSES.has(job.status)),
+    [jobs]
+  );
+  const focusedJobId = jobId ?? exportable[0]?.jobId ?? "";
+  const canRunSingle = Boolean(focusedJobId);
 
   useEffect(() => {
-    setSelected([jobId]);
+    setMode(jobId ? "single-js" : "batch-js");
+    setSelected(jobId ? [jobId] : []);
+    setPackSelected([]);
     setError(undefined);
     setSingleResult(undefined);
     setJsResult(undefined);
     setNasResult(undefined);
     setDiagnostics(undefined);
+    setPackResult(undefined);
+    setPackError(undefined);
   }, [jobId]);
+
+  useEffect(() => {
+    if (jobId) {
+      setSelected([jobId]);
+    } else {
+      setSelected((current) => {
+        const allowed = new Set(exportable.map((job) => job.jobId));
+        const next = current.filter((id) => allowed.has(id));
+        return next.length ? next : exportable.map((job) => job.jobId).slice(0, 1);
+      });
+    }
+
+    setPackSelected((current) => {
+      const allowed = new Set(packable.map((job) => job.jobId));
+      const next = current.filter((id) => allowed.has(id));
+      if (next.length) return next;
+      if (jobId && allowed.has(jobId)) return [jobId];
+      return [];
+    });
+  }, [jobId, exportable, packable]);
 
   async function chooseDir() {
     const selectedDir = await chooseExportDirectory();
@@ -113,11 +154,13 @@ export function ExportPage({
     setDiagnostics(undefined);
     try {
       if (nextMode === "full-assets") {
-        setSingleResult(await exportReadingAssets(jobId, exportDir));
+        if (!focusedJobId) throw new Error("no_export_focus_job");
+        setSingleResult(await exportReadingAssets(focusedJobId, exportDir));
       } else if (nextMode === "nas-library") {
         setNasResult(await exportNasLibrary({ jobIds: nextSelected, exportDir }));
       } else if (nextMode === "single-js") {
-        setJsResult(await exportReadingJs({ jobIds: [jobId], exportDir }));
+        if (!focusedJobId) throw new Error("no_export_focus_job");
+        setJsResult(await exportReadingJs({ jobIds: [focusedJobId], exportDir }));
       } else {
         setJsResult(await exportReadingJs({ jobIds: nextSelected, exportDir }));
       }
@@ -131,7 +174,29 @@ export function ExportPage({
     }
   }
 
+  async function runPack() {
+    setPackRunning(true);
+    setPackError(undefined);
+    try {
+      setPackResult(await buildPack({
+        packId,
+        version: packVersion,
+        institution: packInstitution,
+        description: packDescription,
+        validFrom: packValidFrom || undefined,
+        validTo: packValidTo || undefined,
+        jobIds: packSelected
+      }));
+      refresh();
+    } catch (caught) {
+      setPackError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setPackRunning(false);
+    }
+  }
+
   useEffect(() => {
+    if (!jobId) return;
     const key = `${EXPORT_INTENT_KEY_PREFIX}${jobId}`;
     const intent = window.sessionStorage.getItem(key);
     if (intent !== "single-js") return;
@@ -180,15 +245,15 @@ export function ExportPage({
     <section className="page-enter" data-testid="export-page">
       <div className="section-heading spread">
         <div>
-          <p className="eyebrow">导出</p>
-          <h2>导出题目 JS 文件</h2>
+          <p className="eyebrow">发布</p>
+          <h2>导出与组卷</h2>
         </div>
         <div className="button-row">
           <button className="ghost" data-testid="choose-export-dir" onClick={chooseDir}>选择导出目录</button>
           <button
             className="primary"
             data-testid="generate-export"
-            disabled={running || ((mode === "batch-js" || mode === "nas-library") && !selected.length)}
+            disabled={running || (!canRunSingle && (mode === "single-js" || mode === "full-assets")) || ((mode === "batch-js" || mode === "nas-library") && !selected.length)}
             onClick={() => void run()}
           >
             {running
@@ -206,17 +271,20 @@ export function ExportPage({
       <div className="export-grid">
         <section className="form-section">
           <h3>导出方式</h3>
+          {!jobId ? <p className="muted-inline">当前页面已经合并了批量导出和 Pack 组卷。单题导出仍可从具体题目进入。</p> : null}
           <div className="button-row">
-            <button
-              className={mode === "single-js" ? "primary" : "ghost"}
-              data-testid="mode-single-js"
-              onClick={() => {
-                setMode("single-js");
-                setSelected([jobId]);
-              }}
-            >
-              当前题目 JS
-            </button>
+            {jobId ? (
+              <button
+                className={mode === "single-js" ? "primary" : "ghost"}
+                data-testid="mode-single-js"
+                onClick={() => {
+                  setMode("single-js");
+                  setSelected([jobId]);
+                }}
+              >
+                当前题目 JS
+              </button>
+            ) : null}
             <button
               className={mode === "batch-js" ? "primary" : "ghost"}
               data-testid="mode-batch-js"
@@ -224,13 +292,15 @@ export function ExportPage({
             >
               批量导出 JS
             </button>
-            <button
-              className={mode === "full-assets" ? "primary" : "ghost"}
-              data-testid="mode-full-assets"
-              onClick={() => setMode("full-assets")}
-            >
-              完整导出
-            </button>
+            {jobId ? (
+              <button
+                className={mode === "full-assets" ? "primary" : "ghost"}
+                data-testid="mode-full-assets"
+                onClick={() => setMode("full-assets")}
+              >
+                完整导出
+              </button>
+            ) : null}
             <button
               className={mode === "nas-library" ? "primary" : "ghost"}
               data-testid="mode-nas-library"
@@ -321,6 +391,60 @@ export function ExportPage({
           <p className="eyebrow">导出预览</p>
           <h3>{mode === "batch-js" ? "批量题目脚本" : mode === "nas-library" ? "NAS 题库脚本" : "题目脚本"}</h3>
           <pre>{previewText}</pre>
+        </aside>
+      </div>
+
+      <div className="pack-grid merged-pack-grid" data-testid="pack-builder">
+        <section className="form-section">
+          <div className="spread">
+            <h3>发布包题目</h3>
+            <button className="primary" data-testid="build-pack" disabled={packRunning || !packSelected.length} onClick={() => void runPack()}>
+              {packRunning ? "正在生成..." : "生成发布包"}
+            </button>
+          </div>
+          <p className="muted-inline">Pack 已并入当前发布中心，用于一次打包多份已发布就绪的题目。</p>
+          {packable.map((job) => (
+            <label className="pick-row" key={job.jobId}>
+              <input
+                type="checkbox"
+                data-testid="pack-job-checkbox"
+                checked={packSelected.includes(job.jobId)}
+                onChange={(event) =>
+                  setPackSelected((current) =>
+                    event.target.checked
+                      ? current.includes(job.jobId)
+                        ? current
+                        : [...current, job.jobId]
+                      : current.filter((id) => id !== job.jobId)
+                  )
+                }
+              />
+              <span>{job.title}</span>
+              <StatusPill status={job.status} />
+            </label>
+          ))}
+          {!packable.length ? <p className="empty">当前没有可打包的题目。</p> : null}
+        </section>
+        <section className="form-section contrast">
+          <h3>发布包设置</h3>
+          <label>packId<input value={packId} onChange={(event) => setPackId(event.target.value)} /></label>
+          <label>version<input value={packVersion} onChange={(event) => setPackVersion(event.target.value)} /></label>
+          <label>institution<input value={packInstitution} onChange={(event) => setPackInstitution(event.target.value)} /></label>
+          <label>validFrom<input type="date" value={packValidFrom} onChange={(event) => setPackValidFrom(event.target.value)} /></label>
+          <label>validTo<input type="date" value={packValidTo} onChange={(event) => setPackValidTo(event.target.value)} /></label>
+          <label>description<textarea value={packDescription} onChange={(event) => setPackDescription(event.target.value)} /></label>
+        </section>
+        <aside className="inspector">
+          <p className="eyebrow">发布包结果</p>
+          <h3>{packResult?.packId ?? "未生成"}</h3>
+          {packError ? <p className="error-text" data-testid="pack-error">{packError}</p> : null}
+          {packResult ? (
+            <dl data-testid="pack-result">
+              <dt>输出路径</dt><dd>{packResult.outputPath}</dd>
+              <dt>文件数量</dt><dd>{packResult.files.length}</dd>
+              <dt>压缩包大小</dt><dd>{packResult.zipSizeBytes ?? "未记录"}</dd>
+            </dl>
+          ) : <p className="empty" data-testid="pack-result">尚未生成发布包。</p>}
         </aside>
       </div>
     </section>

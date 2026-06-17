@@ -27,7 +27,8 @@ use crate::{
         write_source_review_status,
     },
     util::{ensure_job_dirs, job_dir, read_json_opt, write_json, write_text},
-    AutoPipelineInput, CommandResult, ImportJob, JobStatus, SourceFile, WorkflowStep,
+    AutoPipelineInput, CommandResult, ImportJob, JobStatus, RunCloudReviewInput, SourceFile,
+    WorkflowStep,
 };
 use chrono::Utc;
 use serde_json::{json, Value};
@@ -101,24 +102,57 @@ pub(crate) fn select_llm_profile(
     requested_profile_id: Option<String>,
 ) -> Option<String> {
     let profiles = load_profiles(root).unwrap_or_default();
-    requested_profile_id
-        .or_else(|| job.active_llm_profile_id.clone())
-        .or_else(|| {
-            profiles.iter().find_map(|profile| {
-                if profile
+    let preferred = requested_profile_id.or_else(|| job.active_llm_profile_id.clone());
+    if let Some(profile_id) = preferred {
+        let enabled = profiles.iter().any(|profile| {
+            profile.get("profileId").and_then(Value::as_str) == Some(profile_id.as_str())
+                && profile
                     .get("enabled")
                     .and_then(Value::as_bool)
                     .unwrap_or(true)
-                {
-                    profile
-                        .get("profileId")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string)
-                } else {
-                    None
-                }
-            })
-        })
+        });
+        if enabled {
+            return Some(profile_id);
+        }
+    }
+
+    let enabled_profiles = profiles.into_iter().filter(|profile| {
+        profile
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    });
+
+    let mut best: Option<(String, (u8, u8, u8))> = None;
+    for profile in enabled_profiles {
+        let Some(profile_id) = profile
+            .get("profileId")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+        else {
+            continue;
+        };
+        let has_api_key = profile
+            .get("hasApiKey")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let is_placeholder = profile_id == "profile-local-placeholder";
+        let is_openai_compatible = profile
+            .get("provider")
+            .and_then(Value::as_str)
+            .map(|value| value == "OpenAiCompatible")
+            .unwrap_or(false);
+        let score = (
+            if has_api_key { 2 } else { 0 },
+            if !is_placeholder { 1 } else { 0 },
+            if is_openai_compatible { 1 } else { 0 },
+        );
+        match best {
+            Some((_, current_score)) if current_score >= score => {}
+            _ => best = Some((profile_id, score)),
+        }
+    }
+    best.map(|(profile_id, _)| profile_id)
 }
 
 pub(crate) fn main_pdf_needs_vision_transcription(job: &ImportJob, doc: &Value) -> bool {
@@ -933,6 +967,7 @@ where
     let options = input.unwrap_or_default();
     let parse_mode = options.parse_mode.as_deref().unwrap_or("auto");
     let confidence_threshold = options.confidence_threshold.unwrap_or(0.85).clamp(0.0, 1.0);
+    let local_only = matches!(options.execution_mode.as_deref(), Some("localOnly"));
     let target = options.target.as_deref().unwrap_or("editableDraft");
     let allow_overwrite = options.allow_overwrite.unwrap_or(false);
 
@@ -1011,135 +1046,140 @@ where
     let mut vision_answer_candidates = Vec::<Value>::new();
 
     let mut doc = read_json_opt(&dir.join("document-ir.json"))?;
-    if let (Some(profile_id_for_vision), Some(current_doc)) = (profile_id.as_deref(), doc.as_ref())
-    {
-        if main_pdf_needs_vision_transcription(&job, current_doc) {
-            if let Some(obj) = vision_transcription.as_object_mut() {
-                obj.insert("attempted".to_string(), json!(true));
-            }
-            match vision_transcription_for_job_with_gateway(
-                root,
-                &job,
-                profile_id_for_vision,
-                Some("auto pipeline vision transcription"),
-                &mut llm_gateway,
-            ) {
-                Ok((vision_ir, vision_output)) => {
-                    write_text(
-                        &dir.join("vision-transcription.txt"),
-                        vision_output
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default(),
-                    )?;
-                    write_json(
-                        &dir.join("vision-transcription-output.json"),
-                        &vision_output,
-                    )?;
-                    let vision_has_reliable_groups =
-                        has_reliable_question_groups(&job_id, &job, &vision_ir);
-                    if let Some(obj) = vision_transcription.as_object_mut() {
-                        obj.insert("applied".to_string(), json!(vision_has_reliable_groups));
-                        obj.insert(
-                            "confidence".to_string(),
+    if !local_only {
+        if let (Some(profile_id_for_vision), Some(current_doc)) =
+            (profile_id.as_deref(), doc.as_ref())
+        {
+            if main_pdf_needs_vision_transcription(&job, current_doc) {
+                if let Some(obj) = vision_transcription.as_object_mut() {
+                    obj.insert("attempted".to_string(), json!(true));
+                }
+                match vision_transcription_for_job_with_gateway(
+                    root,
+                    &job,
+                    profile_id_for_vision,
+                    Some("auto pipeline vision transcription"),
+                    &mut llm_gateway,
+                ) {
+                    Ok((vision_ir, vision_output)) => {
+                        write_text(
+                            &dir.join("vision-transcription.txt"),
                             vision_output
-                                .get("confidence")
-                                .cloned()
-                                .unwrap_or(Value::Null),
-                        );
-                        obj.insert(
-                            "warnings".to_string(),
-                            vision_output
-                                .get("warnings")
-                                .cloned()
-                                .unwrap_or_else(|| json!([])),
-                        );
-                    }
-                    if vision_has_reliable_groups {
-                        write_json(&dir.join("document-ir.json"), &vision_ir)?;
-                        let _ = write_source_review_status(
-                            root,
-                            &job_id,
-                            Some(&vision_ir),
-                            false,
-                            None,
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
                         )?;
-                        doc = Some(vision_ir);
-                        job = update_job(root, &job_id, |item| {
-                            item.status = JobStatus::NeedsReview;
-                            item.current_step = WorkflowStep::DocumentReview;
-                        })?;
-                    } else if let Some(current_doc) = doc.as_mut() {
-                        let warning = "vision transcription did not produce reliable question groups; kept original text-layer parse";
-                        append_document_parser_warning(current_doc, warning);
-                        write_json(&dir.join("document-ir.json"), current_doc)?;
-                        let _ = write_source_review_status(
-                            root,
-                            &job_id,
-                            Some(current_doc),
-                            false,
-                            None,
+                        write_json(
+                            &dir.join("vision-transcription-output.json"),
+                            &vision_output,
                         )?;
+                        let vision_has_reliable_groups =
+                            has_reliable_question_groups(&job_id, &job, &vision_ir);
                         if let Some(obj) = vision_transcription.as_object_mut() {
-                            obj.insert("failure".to_string(), json!(warning));
+                            obj.insert("applied".to_string(), json!(vision_has_reliable_groups));
+                            obj.insert(
+                                "confidence".to_string(),
+                                vision_output
+                                    .get("confidence")
+                                    .cloned()
+                                    .unwrap_or(Value::Null),
+                            );
+                            obj.insert(
+                                "warnings".to_string(),
+                                vision_output
+                                    .get("warnings")
+                                    .cloned()
+                                    .unwrap_or_else(|| json!([])),
+                            );
+                        }
+                        if vision_has_reliable_groups {
+                            write_json(&dir.join("document-ir.json"), &vision_ir)?;
+                            let _ = write_source_review_status(
+                                root,
+                                &job_id,
+                                Some(&vision_ir),
+                                false,
+                                None,
+                            )?;
+                            doc = Some(vision_ir);
+                            job = update_job(root, &job_id, |item| {
+                                item.status = JobStatus::NeedsReview;
+                                item.current_step = WorkflowStep::DocumentReview;
+                            })?;
+                        } else if let Some(current_doc) = doc.as_mut() {
+                            let warning = "vision transcription did not produce reliable question groups; kept original text-layer parse";
+                            append_document_parser_warning(current_doc, warning);
+                            write_json(&dir.join("document-ir.json"), current_doc)?;
+                            let _ = write_source_review_status(
+                                root,
+                                &job_id,
+                                Some(current_doc),
+                                false,
+                                None,
+                            )?;
+                            if let Some(obj) = vision_transcription.as_object_mut() {
+                                obj.insert("failure".to_string(), json!(warning));
+                            }
                         }
                     }
-                }
-                Err(error) => {
-                    if let Some(obj) = vision_transcription.as_object_mut() {
-                        obj.insert("failure".to_string(), json!(error));
+                    Err(error) => {
+                        if let Some(obj) = vision_transcription.as_object_mut() {
+                            obj.insert("failure".to_string(), json!(error));
+                        }
                     }
                 }
             }
         }
     }
 
-    if let Some(profile_id_for_answers) = selected_profile_id.as_deref() {
-        if main_source_is_pdf(&job) {
-            if let Some(obj) = vision_answer_extraction.as_object_mut() {
-                obj.insert("attempted".to_string(), json!(true));
-            }
-            match main_pdf_vision_extraction(root, &job) {
-                Ok((extraction, _asset_dir)) => {
-                    pdf_vision_extraction = Some(extraction.clone());
-                    match vision_answer_candidate_for_job(
-                        root,
-                        &job,
-                        profile_id_for_answers,
-                        &extraction,
-                        &mut llm_gateway,
-                    ) {
-                        Ok((candidate, output)) => {
-                            let answer_count = candidate
-                                .get("answers")
-                                .and_then(Value::as_object)
-                                .map(|answers| answers.len())
-                                .unwrap_or(0);
-                            write_json(&dir.join("vision-answer-output.json"), &output)?;
-                            vision_answer_candidates.push(candidate);
-                            if let Some(obj) = vision_answer_extraction.as_object_mut() {
-                                obj.insert("applied".to_string(), json!(answer_count > 0));
-                                obj.insert("answerCount".to_string(), json!(answer_count));
-                                obj.insert(
-                                    "confidence".to_string(),
-                                    output.get("confidence").cloned().unwrap_or(Value::Null),
-                                );
-                                obj.insert(
-                                    "warnings".to_string(),
-                                    output.get("warnings").cloned().unwrap_or_else(|| json!([])),
-                                );
+    if !local_only {
+        if let Some(profile_id_for_answers) = selected_profile_id.as_deref() {
+            if main_source_is_pdf(&job) {
+                if let Some(obj) = vision_answer_extraction.as_object_mut() {
+                    obj.insert("attempted".to_string(), json!(true));
+                }
+                match main_pdf_vision_extraction(root, &job) {
+                    Ok((extraction, _asset_dir)) => {
+                        pdf_vision_extraction = Some(extraction.clone());
+                        match vision_answer_candidate_for_job(
+                            root,
+                            &job,
+                            profile_id_for_answers,
+                            &extraction,
+                            &mut llm_gateway,
+                        ) {
+                            Ok((candidate, output)) => {
+                                let answer_count = candidate
+                                    .get("answers")
+                                    .and_then(Value::as_object)
+                                    .map(|answers| answers.len())
+                                    .unwrap_or(0);
+                                write_json(&dir.join("vision-answer-output.json"), &output)?;
+                                vision_answer_candidates.push(candidate);
+                                if let Some(obj) = vision_answer_extraction.as_object_mut() {
+                                    obj.insert("applied".to_string(), json!(answer_count > 0));
+                                    obj.insert("answerCount".to_string(), json!(answer_count));
+                                    obj.insert(
+                                        "confidence".to_string(),
+                                        output.get("confidence").cloned().unwrap_or(Value::Null),
+                                    );
+                                    obj.insert(
+                                        "warnings".to_string(),
+                                        output.get("warnings").cloned().unwrap_or_else(|| json!([])),
+                                    );
+                                }
                             }
-                        }
-                        Err(error) => {
-                            if let Some(obj) = vision_answer_extraction.as_object_mut() {
-                                obj.insert("failure".to_string(), json!(error));
+                            Err(error) => {
+                                if let Some(obj) = vision_answer_extraction.as_object_mut() {
+                                    obj.insert("failure".to_string(), json!(error));
+                                }
                             }
                         }
                     }
-                }
-                Err(error) => {
-                    if let Some(obj) = vision_answer_extraction.as_object_mut() {
-                        obj.insert("failure".to_string(), json!(error));
+                    Err(error) => {
+                        if let Some(obj) = vision_answer_extraction.as_object_mut() {
+                            obj.insert("failure".to_string(), json!(error));
+                        }
                     }
                 }
             }
@@ -1187,7 +1227,7 @@ where
     let mut suggestion_count = 0u32;
     let mut applied_count = 0u32;
 
-    let should_run_group_repair = !main_source_is_pdf(&job);
+    let should_run_group_repair = !local_only && !main_source_is_pdf(&job);
     if should_run_group_repair {
         if let Some(profile_id) = selected_profile_id.clone() {
             let profile = find_profile(root, &profile_id)?;
@@ -1387,29 +1427,31 @@ where
         "warningCount": 0,
         "issues": []
     });
-    if let Some(profile_id_for_cloud) = selected_profile_id.as_deref() {
-        if main_source_is_pdf(&job) {
-            let extraction = if let Some(extraction) = pdf_vision_extraction.clone() {
-                Some(extraction)
-            } else {
-                match main_pdf_vision_extraction(root, &job) {
-                    Ok((extraction, _asset_dir)) => Some(extraction),
-                    Err(error) => {
-                        cloud_comparison["attempted"] = json!(true);
-                        cloud_comparison["failure"] = json!(error);
-                        None
+    if !local_only {
+        if let Some(profile_id_for_cloud) = selected_profile_id.as_deref() {
+            if main_source_is_pdf(&job) {
+                let extraction = if let Some(extraction) = pdf_vision_extraction.clone() {
+                    Some(extraction)
+                } else {
+                    match main_pdf_vision_extraction(root, &job) {
+                        Ok((extraction, _asset_dir)) => Some(extraction),
+                        Err(error) => {
+                            cloud_comparison["attempted"] = json!(true);
+                            cloud_comparison["failure"] = json!(error);
+                            None
+                        }
                     }
+                };
+                if let Some(extraction) = extraction {
+                    cloud_comparison = cloud_outline_check_for_job(
+                        root,
+                        &job,
+                        profile_id_for_cloud,
+                        &extraction,
+                        &ir,
+                        &mut llm_gateway,
+                    );
                 }
-            };
-            if let Some(extraction) = extraction {
-                cloud_comparison = cloud_outline_check_for_job(
-                    root,
-                    &job,
-                    profile_id_for_cloud,
-                    &extraction,
-                    &ir,
-                    &mut llm_gateway,
-                );
             }
         }
     }
@@ -1561,6 +1603,7 @@ where
         "jobId": job_id,
         "confidenceThreshold": confidence_threshold,
         "llm": {
+            "profileId": selected_profile_id,
             "suggestionCount": suggestion_count,
             "appliedCount": applied_count,
             "highConfidenceAppliedGroups": high_confidence_applied_groups,
@@ -1594,5 +1637,302 @@ where
     });
     write_json(&dir.join("pipeline-report.json"), &pipeline_report)?;
     let _ = minimize_process_artifacts_after_authoring(root, &job_id, "run_auto_pipeline")?;
+    Ok(pipeline_report)
+}
+
+fn cloud_warning_count(cloud_comparison: &Value) -> u32 {
+    cloud_comparison
+        .get("warningCount")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| {
+            if cloud_comparison
+                .get("failure")
+                .and_then(Value::as_str)
+                .is_some()
+            {
+                1
+            } else {
+                0
+            }
+        }) as u32
+}
+
+pub(crate) fn run_cloud_review_core(
+    root: &Path,
+    job_id: &str,
+    input: Option<RunCloudReviewInput>,
+) -> CommandResult<Value> {
+    let options = input.unwrap_or_default();
+    let mut job = load_job(root, job_id)?;
+    let dir = job_dir(root, job_id);
+    ensure_job_dirs(&dir)?;
+
+    let mut ir = read_json_opt(&dir.join("authoring-ir.json"))?
+        .ok_or_else(|| "authoring_ir_missing_for_cloud_review".to_string())?;
+    let selected_profile_id = select_llm_profile(root, &job, options.profile_id.clone());
+    let mut cloud_comparison = json!({
+        "attempted": false,
+        "passed": false,
+        "profileId": selected_profile_id,
+        "failure": null,
+        "warningCount": 0,
+        "issues": []
+    });
+
+    if let Some(profile_id_for_cloud) = selected_profile_id.as_deref() {
+        if main_source_is_pdf(&job) {
+            match main_pdf_vision_extraction(root, &job) {
+                Ok((extraction, _asset_dir)) => {
+                    cloud_comparison = cloud_outline_check_for_job(
+                        root,
+                        &job,
+                        profile_id_for_cloud,
+                        &extraction,
+                        &ir,
+                        &mut run_llm_gateway,
+                    );
+                }
+                Err(error) => {
+                    cloud_comparison["attempted"] = json!(true);
+                    cloud_comparison["failure"] = json!(error);
+                }
+            }
+        }
+    }
+
+    let cloud_warning_count = cloud_warning_count(&cloud_comparison);
+    let cloud_needs_confirmation = cloud_comparison
+        .get("attempted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && (!cloud_comparison
+            .get("passed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || cloud_warning_count > 0);
+    if cloud_comparison
+        .get("attempted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let local_summary = cloud_comparison
+            .get("localSummary")
+            .cloned()
+            .unwrap_or_else(|| outline_group_summary_from_local(&ir));
+        let cloud_passed = cloud_comparison
+            .get("passed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        append_authoring_audit_issue(
+            &mut ir,
+            json!({
+                "layer": "QualityCheck",
+                "path": "$.audit.cloudComparison",
+                "kind": "cloud_comparison_summary",
+                "status": if cloud_needs_confirmation { "needs_review" } else { "passed" },
+                "message": if cloud_needs_confirmation {
+                    "云端对照没有通过，请确认题组、填空位置和答案；本地题稿未被云端结果覆盖。"
+                } else {
+                    "云端对照通过：题组、题型、填答布局和答案未发现显著差异。"
+                },
+                "attempted": cloud_comparison.get("attempted").cloned().unwrap_or(Value::Bool(false)),
+                "passed": cloud_passed,
+                "warningCount": cloud_warning_count,
+                "failure": cloud_comparison.get("failure").cloned().unwrap_or(Value::Null),
+                "issues": cloud_comparison.get("issues").cloned().unwrap_or_else(|| json!([])),
+                "observations": cloud_comparison.get("observations").cloned().unwrap_or_else(|| json!([])),
+                "localSummary": local_summary,
+                "cloudSummary": cloud_comparison.get("cloudSummary").cloned().unwrap_or_else(|| json!([]))
+            }),
+        );
+        write_json(&dir.join("authoring-ir.json"), &ir)?;
+    }
+
+    let source_doc = read_json_opt(&dir.join("document-ir.json"))?;
+    let source_review = source_review_status(root, job_id, source_doc.as_ref())?;
+    let source_review_issue_count = source_review_issues(&source_review).len() as u32;
+    let parser_warnings = source_review
+        .get("parserWarnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let low_confidence_blocks = source_review
+        .get("lowConfidenceBlocks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    let mut review_ir = ir.clone();
+    let remaining_authoring_review = refresh_authoring_review_state(&mut review_ir);
+    let report = match read_json_opt(&dir.join("validation-report.json"))? {
+        Some(existing) => existing,
+        None => {
+            let generated = validate_for_runtime_gate(root, job_id, &ir, false)?;
+            write_json(&dir.join("validation-report.json"), &generated)?;
+            generated
+        }
+    };
+    let report_passed = report
+        .get("passed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let runtime_mode = report
+        .get("runtime")
+        .and_then(|runtime| runtime.get("mode"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let static_runtime_passed = report_passed && runtime_mode == "static-rust";
+    let requires_parser_review = source_review_issue_count > 0;
+
+    let mut pipeline_report = read_json_opt(&dir.join("pipeline-report.json"))?.unwrap_or_else(|| {
+        json!({
+            "jobId": job_id,
+            "confidenceThreshold": 0.85,
+            "llm": {
+                "profileId": selected_profile_id,
+                "suggestionCount": 0,
+                "appliedCount": 0,
+                "highConfidenceAppliedGroups": [],
+                "lowConfidenceGroups": [],
+                "blockedAutoApplyGroups": [],
+                "failures": []
+            },
+            "parser": {
+                "warnings": [],
+                "lowConfidenceBlocks": [],
+                "visionTranscription": {
+                    "attempted": false,
+                    "applied": false,
+                    "profileId": Value::Null,
+                    "warnings": [],
+                    "failure": Value::Null
+                },
+                "visionAnswerExtraction": {
+                    "attempted": false,
+                    "applied": false,
+                    "profileId": Value::Null,
+                    "answerCount": 0,
+                    "warnings": [],
+                    "failure": Value::Null
+                }
+            },
+            "quality": {
+                "cloudComparison": cloud_comparison
+            }
+        })
+    });
+
+    let low_confidence_group_count = pipeline_report
+        .pointer("/llm/lowConfidenceGroups")
+        .and_then(Value::as_array)
+        .map(|items| items.len())
+        .unwrap_or(0) as u32;
+    let blocked_auto_apply_count = pipeline_report
+        .pointer("/llm/blockedAutoApplyGroups")
+        .and_then(Value::as_array)
+        .map(|items| items.len())
+        .unwrap_or(0) as u32;
+
+    let has_review_blocks = low_confidence_group_count > 0
+        || blocked_auto_apply_count > 0
+        || requires_parser_review
+        || cloud_needs_confirmation
+        || remaining_authoring_review > 0;
+    let next_status = if has_review_blocks {
+        JobStatus::NeedsReview
+    } else {
+        JobStatus::DraftSaved
+    };
+    let next_step = if static_runtime_passed && !has_review_blocks {
+        WorkflowStep::Export
+    } else {
+        WorkflowStep::Authoring
+    };
+    let user_status = if has_review_blocks {
+        "needsConfirmation"
+    } else {
+        "draftReady"
+    };
+    let user_message = if cloud_needs_confirmation {
+        "题稿已生成，但云端对照提示存在不一致，请在题稿编辑页确认题组、填空位置和答案。"
+    } else if requires_parser_review {
+        "题稿已生成，但源文件识别结果需要你确认。"
+    } else if low_confidence_group_count > 0 || blocked_auto_apply_count > 0 {
+        "题稿已生成，请在题稿编辑页确认部分识别结果。"
+    } else if remaining_authoring_review > 0 {
+        "题稿已生成，还有题干、答案或题型需要你确认。"
+    } else {
+        "题稿已生成，云端复核已完成。"
+    };
+
+    update_job(root, job_id, |item| {
+        item.status = next_status.clone();
+        item.current_step = next_step.clone();
+        item.issue_counts.needs_review = low_confidence_group_count
+            + blocked_auto_apply_count
+            + source_review_issue_count
+            + cloud_warning_count
+            + remaining_authoring_review;
+        let issues = report
+            .get("issues")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        item.issue_counts.errors = issues
+            .iter()
+            .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("error"))
+            .count() as u32;
+        item.issue_counts.warnings = issues
+            .iter()
+            .filter(|issue| issue.get("severity").and_then(Value::as_str) == Some("warning"))
+            .count() as u32;
+    })?;
+    job = load_job(root, job_id)?;
+
+    if let Some(llm) = pipeline_report.get_mut("llm").and_then(Value::as_object_mut) {
+        llm.insert("profileId".to_string(), json!(selected_profile_id));
+    } else {
+        pipeline_report["llm"] = json!({
+            "profileId": selected_profile_id,
+            "suggestionCount": 0,
+            "appliedCount": 0,
+            "highConfidenceAppliedGroups": [],
+            "lowConfidenceGroups": [],
+            "blockedAutoApplyGroups": [],
+            "failures": []
+        });
+    }
+    if let Some(parser) = pipeline_report.get_mut("parser").and_then(Value::as_object_mut) {
+        parser.insert("warnings".to_string(), json!(parser_warnings));
+        parser.insert("lowConfidenceBlocks".to_string(), json!(low_confidence_blocks));
+    }
+    if let Some(quality) = pipeline_report
+        .get_mut("quality")
+        .and_then(Value::as_object_mut)
+    {
+        quality.insert("cloudComparison".to_string(), cloud_comparison.clone());
+    } else {
+        pipeline_report["quality"] = json!({ "cloudComparison": cloud_comparison });
+    }
+    pipeline_report["jobId"] = json!(job.job_id);
+    pipeline_report["validationPassed"] = json!(report_passed);
+    pipeline_report["staticRuntimePassed"] = json!(static_runtime_passed);
+    pipeline_report["runtimeMode"] = json!(runtime_mode);
+    pipeline_report["authoring"] = json!({ "remainingReviewItems": remaining_authoring_review });
+    pipeline_report["status"] = json!(format!("{:?}", next_status));
+    pipeline_report["currentStep"] = json!(format!("{:?}", next_step));
+    pipeline_report["userStatus"] = json!(user_status);
+    pipeline_report["userMessage"] = json!(user_message);
+    pipeline_report["nextRoute"] = json!("preview");
+    pipeline_report["generatedAt"] = json!(Utc::now().to_rfc3339());
+    pipeline_report["validationReport"] = report.clone();
+    write_json(&dir.join("pipeline-report.json"), &pipeline_report)?;
     Ok(pipeline_report)
 }
