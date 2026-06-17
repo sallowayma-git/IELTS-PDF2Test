@@ -11,11 +11,11 @@ const stageLabels: Record<BusyStage, string> = {
   idle: "待开始",
   creating: "创建任务",
   uploading: "导入文件",
-  processing: "本地粗切处理中"
+  processing: "首轮题稿生成中"
 };
 
 function modelStageText(stage: BusyStage): string {
-  if (stage === "processing") return "正在本地完成首轮粗切与题组生成。进入预览后，云端复核会在后台异步进行。";
+  if (stage === "processing") return "正在完成首轮粗切与题组生成；若 PDF 文字层不完整，会自动补做视觉识别。进入预览后，整卷云端复核会在后台异步进行。";
   if (stage === "uploading") return "正在写入本地源文件和可选答案文件。";
   if (stage === "creating") return "正在建立导题任务。";
   return "选择文件后开始本地粗切。";
@@ -184,7 +184,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
         <section className="form-section contrast">
           <span className="step-number">03</span>
           <h3>生成题稿</h3>
-          <p>上传后先直接生成本地粗切题稿并进入预览；云端复核不再阻塞当前页面。</p>
+          <p>上传后先直接生成首轮题稿；若 PDF 文字层不完整会自动补做视觉识别，整卷云端复核不再阻塞当前页面。</p>
           {busy ? (
             <div className="progress-panel" data-testid="generation-progress-panel">
               <div className="spinner" aria-hidden="true" />

@@ -11,6 +11,7 @@ import type { AutoPipelineReport, GroupKind, QuestionDraft, QuestionGroupDraft, 
 
 const EXPORT_INTENT_KEY_PREFIX = "ielts-author-studio.export-intent.";
 const CLOUD_REVIEW_PENDING_KEY_PREFIX = "ielts-author-studio.cloud-review.";
+type AuditIssue = string | { message?: string; [key: string]: unknown };
 
 const groupKinds: GroupKind[] = [
   "true_false_not_given",
@@ -100,6 +101,94 @@ function startBackgroundArtifacts(jobId: string): void {
     validateAuthoringIr(jobId),
     generatePreviewAssets(jobId)
   ]).catch(() => undefined);
+}
+
+function auditIssueText(issue: AuditIssue | undefined): string {
+  if (!issue) return "";
+  if (typeof issue === "string") return issue;
+  return typeof issue.message === "string" ? issue.message : "";
+}
+
+function auditIssueKind(issue: AuditIssue): string {
+  if (typeof issue === "string") return "";
+  return typeof issue.kind === "string" ? issue.kind : "";
+}
+
+function auditIssuePath(issue: AuditIssue): string {
+  if (typeof issue === "string") return "";
+  return typeof issue.path === "string" ? issue.path : "";
+}
+
+function issueBool(issue: AuditIssue | undefined, key: string): boolean {
+  if (!issue || typeof issue === "string") return false;
+  return issue[key] === true;
+}
+
+function issueString(issue: AuditIssue | undefined, key: string): string {
+  if (!issue || typeof issue === "string") return "";
+  return typeof issue[key] === "string" ? issue[key] : "";
+}
+
+function issueStringList(issue: AuditIssue | undefined, key: string): string[] {
+  if (!issue || typeof issue === "string") return [];
+  const value = issue[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function buildVisionTranscriptionFallbackIssue(
+  fallback?: NonNullable<NonNullable<AutoPipelineReport["parser"]>["visionTranscription"]>
+): AuditIssue | undefined {
+  if (!fallback) return undefined;
+  const profileUnavailable = !fallback.profileId || fallback.profileId === "profile-local-placeholder";
+  const message = !fallback.attempted && profileUnavailable
+    ? "未配置可用云端模型，视觉题目识别未启动；当前仅保留本地解析结果，题干已留空。"
+    : !fallback.attempted
+      ? "视觉题目识别未启动；当前仅保留本地解析结果，题干已留空。"
+      : !fallback.applied
+        ? "视觉题目识别已尝试，但未生成可靠题组；当前保留本地解析结果，题干已留空。"
+        : fallback.failure
+          ? "视觉题目识别未成功完成；当前保留本地解析结果，题干已留空。"
+          : "";
+  if (!message) return undefined;
+  return {
+    kind: "vision_transcription_summary",
+    path: "$.parser.visionTranscription",
+    message,
+    attempted: fallback.attempted,
+    applied: fallback.applied,
+    profileId: fallback.profileId ?? null,
+    failure: fallback.failure ?? null,
+    confidence: fallback.confidence ?? null,
+    warnings: fallback.warnings ?? []
+  };
+}
+
+function findLatestVisionTranscriptionIssue(
+  rawAuditIssues: AuditIssue[],
+  fallback?: NonNullable<NonNullable<AutoPipelineReport["parser"]>["visionTranscription"]>
+): AuditIssue | undefined {
+  const persistedIssue = [...rawAuditIssues]
+    .reverse()
+    .find((issue) => auditIssueKind(issue) === "vision_transcription_summary" || auditIssuePath(issue).includes("visionTranscription"));
+  return persistedIssue ?? buildVisionTranscriptionFallbackIssue(fallback);
+}
+
+function formatConfidence(value: number | undefined): string {
+  const normalized = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+  return `${Math.round(normalized * 100)}%`;
+}
+
+function missingPromptIdsForGroup(issue: AuditIssue | undefined, group: QuestionGroupDraft): string[] {
+  const missingIds = new Set(issueStringList(issue, "missingPromptQuestionIds"));
+  return group.questions.filter((question) => missingIds.has(question.id) || !question.prompt.trim()).map((question) => question.id);
+}
+
+function visionConfigurationHint(issue: AuditIssue | undefined): string {
+  const profileId = issueString(issue, "profileId");
+  if (!issueBool(issue, "applied") && (!profileId || profileId === "profile-local-placeholder")) {
+    return "当前没有可用的云端视觉模型配置，或默认本地视觉网关不可用。";
+  }
+  return "";
 }
 
 export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () => void }) {
@@ -222,8 +311,12 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   }, [ir, jobId, pipelineReport?.llm?.profileId, pipelineReport?.quality?.cloudComparison?.attempted, refresh]);
 
   const passageBlocks = useMemo(() => ir?.passage.htmlBlocks ?? [], [ir]);
+  const rawAuditIssues = ir?.audit.issues ?? [];
+  const visionTranscriptionIssue = findLatestVisionTranscriptionIssue(rawAuditIssues, pipelineReport?.parser?.visionTranscription);
+  const visionConfigHint = visionConfigurationHint(visionTranscriptionIssue);
   const groupQuestionCount = activeGroup?.questions.length ?? 0;
   const verifiedQuestionCount = activeGroup?.questions.filter((question) => question.verified).length ?? 0;
+  const activeGroupMissingPromptIds = activeGroup ? missingPromptIdsForGroup(visionTranscriptionIssue, activeGroup) : [];
   const activeGroupIndex = activeGroup && ir
     ? ir.groups.findIndex((group) => group.groupId === activeGroup.groupId)
     : -1;
@@ -347,6 +440,16 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
           <p>{runtimeError}</p>
         </div>
       ) : null}
+      {visionTranscriptionIssue ? (
+        <div className="warning-box compact-banner" data-testid="vision-transcription-summary">
+          <strong>视觉题目识别</strong>
+          <p>{auditIssueText(visionTranscriptionIssue)}</p>
+          {issueStringList(visionTranscriptionIssue, "missingPromptQuestionIds").length ? (
+            <small>仍缺少题干：{issueStringList(visionTranscriptionIssue, "missingPromptQuestionIds").slice(0, 12).join("、")}</small>
+          ) : null}
+          {visionConfigHint ? <small>{visionConfigHint}</small> : null}
+        </div>
+      ) : null}
 
       <div className="preview-two-pane">
         <section className="preview-passage-pane">
@@ -408,6 +511,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                   <strong>题组 {index + 1}</strong>
                   <span>{questionRangeLabel(group)} · {groupKindLabels[group.kind]}</span>
                   <small>{group.verified ? "已核对" : "待核对"}</small>
+                  <small className={`confidence-note ${group.confidence < 0.85 ? "low" : ""}`}>置信度 {formatConfidence(group.confidence)}</small>
                 </button>
               );
             })}
@@ -459,6 +563,14 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                     <p>{activeGroup.reviewWarnings.join("；")}</p>
                   </div>
                 ) : null}
+                {(activeGroup.requiresManualQuestionImport || activeGroupMissingPromptIds.length) ? (
+                  <div className="warning-box group-warning-box">
+                    <strong>题干待补充</strong>
+                    <p>当前题组仍有 {Math.max(activeGroupMissingPromptIds.length, activeGroup.questions.filter((question) => !question.prompt.trim()).length)} 题题干留空。系统不再自动补占位文本，请根据源文档补齐后再确认。</p>
+                    {visionTranscriptionIssue ? <small>{auditIssueText(visionTranscriptionIssue)}</small> : null}
+                    {visionConfigHint ? <small>{visionConfigHint}</small> : null}
+                  </div>
+                ) : null}
               </section>
 
               <div className="question-workbench">
@@ -475,9 +587,12 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                           <button className="question-row-select" onClick={() => setActiveQuestionId(question.id)}>
                             <div className="question-row-top">
                               <strong>{question.displayNumber}</strong>
-                              <small className={`question-row-state ${question.verified ? "verified" : ""}`}>
-                                {question.verified ? "已核对" : "待核对"}
-                              </small>
+                              <div className="question-row-meta">
+                                <small className={`confidence-note ${question.confidence < 0.85 ? "low" : ""}`}>置信度 {formatConfidence(question.confidence)}</small>
+                                <small className={`question-row-state ${question.verified ? "verified" : ""}`}>
+                                  {question.verified ? "已核对" : "待核对"}
+                                </small>
+                              </div>
                             </div>
                             <p>{promptPreview(question.prompt)}</p>
                           </button>
@@ -503,7 +618,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                           <p className="eyebrow">当前题目</p>
                           <h3>{activeQuestion.displayNumber}</h3>
                           <small>
-                            第 {activeQuestionIndex + 1} 题 / 共 {groupQuestionCount} 题 · 交互 {activeQuestion.interaction.type}
+                            第 {activeQuestionIndex + 1} 题 / 共 {groupQuestionCount} 题 · 交互 {activeQuestion.interaction.type} · 置信度 {formatConfidence(activeQuestion.confidence)}
                           </small>
                         </div>
                         <div className="question-nav-actions">
@@ -517,6 +632,14 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                           <span key={blockId} className="source-chip">{blockId}</span>
                         ))}
                       </div>
+
+                      {!activeQuestion.prompt.trim() ? (
+                        <div className="warning-box">
+                          <strong>当前题干为空</strong>
+                          <p>视觉题目识别没有给出可靠题干，系统已保留空白，等待人工补齐。</p>
+                          {visionConfigHint ? <small>{visionConfigHint}</small> : null}
+                        </div>
+                      ) : null}
 
                       <label>
                         题干

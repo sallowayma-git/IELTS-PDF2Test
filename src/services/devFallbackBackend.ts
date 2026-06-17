@@ -1181,14 +1181,14 @@ function templateForKind(kind: GroupKind): string {
   return mapping[kind] ?? "short_answer_list";
 }
 
-function promptForQuestion(groupText: string, number: number, fallbackHeading: string, rangeEnd: number, kind: GroupKind): string {
+function promptForQuestion(groupText: string, number: number, _fallbackHeading: string, rangeEnd: number, kind: GroupKind): string {
   const normalized = groupText.replace(/\s+/g, " ").trim();
   const blankMarker = findNumberedBlankMarker(normalized, number, 0);
   if (blankMarker) {
     const nextBlankMarker = number < rangeEnd ? findNumberedBlankMarker(normalized, number + 1, blankMarker[1]) : undefined;
     const boundary = nextBlankMarker?.[0] ?? findFinalPromptBoundary(normalized, blankMarker[1]);
     const prompt = normalized.slice(blankMarker[1], boundary).replace(/^Questions?\s+\d+(?:\s*[-–—]\s*\d+)?\s*/i, "").trim();
-    return prompt || `原文第 ${number} 空`;
+    return prompt || "";
   }
   const escaped = String(number).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const next = String(number + 1).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1200,7 +1200,7 @@ function promptForQuestion(groupText: string, number: number, fallbackHeading: s
     const prompt = normalized.slice(marker[1], nextBoundary).trim();
     if (prompt) return prompt;
   }
-  return `${fallbackHeading} 第 ${number} 题`;
+  return "";
 }
 
 function findFinalPromptBoundary(text: string, from: number): number {
@@ -1231,7 +1231,7 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       return {
         id: idValue,
         displayNumber,
-        prompt: requiresManualQuestionImport ? `Manual import required for question ${number}` : promptForQuestion(groupText, number, candidate.heading, end, kind),
+        prompt: requiresManualQuestionImport ? "" : promptForQuestion(groupText, number, candidate.heading, end, kind),
         interaction: candidate.classification?.interaction ?? interactionForKind(kind),
         answer: answerByDisplay[displayNumber],
         sourceBlockIds: candidate.blockIds,
@@ -1297,6 +1297,72 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       revision: 1,
       updatedAt: now()
     }
+  };
+}
+
+interface AuditIssueObject {
+  kind?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+function appendAuthoringAuditIssue(ir: ReadingAuthoringIr, issue: AuditIssueObject | undefined): ReadingAuthoringIr {
+  if (!issue || !issue.message?.trim()) return ir;
+  const nextIssues = ir.audit.issues.filter((item) => {
+    if (!issue.kind || !item || typeof item !== "object") return true;
+    return (item as AuditIssueObject).kind !== issue.kind;
+  });
+  const duplicate = nextIssues.some((item) => item && typeof item === "object" && (item as AuditIssueObject).message === issue.message);
+  if (!duplicate) nextIssues.push(issue);
+  return {
+    ...ir,
+    audit: {
+      ...ir.audit,
+      issues: nextIssues
+    }
+  };
+}
+
+function emptyPromptQuestionIds(ir: ReadingAuthoringIr): string[] {
+  return ir.groups.flatMap((group) => group.questions.filter((question) => !question.prompt.trim()).map((question) => question.id));
+}
+
+function buildVisionTranscriptionAuditIssue(
+  visionTranscription: {
+    attempted: boolean;
+    applied: boolean;
+    profileId?: string | null;
+    warnings?: string[];
+    failure?: string | null;
+    confidence?: number;
+  },
+  ir: ReadingAuthoringIr
+): AuditIssueObject | undefined {
+  const missingPromptQuestionIds = emptyPromptQuestionIds(ir);
+  const profileUnavailable = !visionTranscription.profileId || visionTranscription.profileId === "profile-local-placeholder";
+  if (!missingPromptQuestionIds.length && !visionTranscription.failure) return undefined;
+
+  const message = !visionTranscription.attempted && profileUnavailable
+    ? "未配置可用云端模型，视觉题目识别未启动；当前仅保留本地解析结果，题干已留空。"
+    : !visionTranscription.attempted
+      ? "视觉题目识别未启动；当前仅保留本地解析结果，题干已留空。"
+      : !visionTranscription.applied
+        ? "视觉题目识别已尝试，但未生成可靠题组；当前保留本地解析结果，题干已留空。"
+        : "视觉题目识别已尝试，但仍有题干未能可靠提取；当前未识别题干已留空，请人工补齐。";
+
+  return {
+    layer: "Parser",
+    path: "$.parser.visionTranscription",
+    kind: "vision_transcription_summary",
+    status: "needs_review",
+    message,
+    attempted: visionTranscription.attempted,
+    applied: visionTranscription.applied,
+    profileId: visionTranscription.profileId ?? null,
+    confidence: visionTranscription.confidence,
+    warnings: visionTranscription.warnings ?? [],
+    failure: visionTranscription.failure ?? null,
+    missingPromptQuestionIds
   };
 }
 
@@ -1978,15 +2044,16 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 
       let documentIr = store.documents[jobId] ?? makeDocumentIr(job, { mode: input.parseMode ?? "auto" }, store.sourceTexts[jobId]);
       const visionTranscription = { attempted: false, applied: false, profileId, warnings: [] as string[], failure: null as string | null, confidence: undefined as number | undefined };
-      if (
-        !localOnly &&
-        documentNeedsVisionTranscription(documentIr, input.parseMode)
-      ) {
-        visionTranscription.attempted = true;
-        documentIr = makeVisionDocumentIr(job);
-        visionTranscription.applied = true;
-        visionTranscription.confidence = 0.72;
-        visionTranscription.warnings = documentIr.parser.warnings;
+      if (documentNeedsVisionTranscription(documentIr, input.parseMode)) {
+        if (profileId && profileId !== "profile-local-placeholder") {
+          visionTranscription.attempted = true;
+          documentIr = makeVisionDocumentIr(job);
+          visionTranscription.applied = true;
+          visionTranscription.confidence = 0.72;
+          visionTranscription.warnings = documentIr.parser.warnings;
+        } else {
+          visionTranscription.failure = "no_enabled_llm_profile_available_for_pdf_vision_transcription";
+        }
       }
       store.documents[jobId] = documentIr;
       job = updateJob(store, jobId, { status: "Working", currentStep: "DocumentReview" });
@@ -1996,6 +2063,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       job = updateJob(store, jobId, { status: "Working", currentStep: "Split" });
 
       let ir = makeAuthoring(job, split, documentIr);
+      ir = appendAuthoringAuditIssue(ir, buildVisionTranscriptionAuditIssue(visionTranscription, ir));
       store.authoring[jobId] = ir;
       updateJob(store, jobId, { status: "DraftSaved", currentStep: "Authoring" });
 
@@ -2081,7 +2149,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const hasReviewBlocks = lowConfidenceGroups.length > 0 || blockedAutoApplyGroups.length > 0 || requiresParserReview || requiresAuthoringReview;
       const status = hasReviewBlocks ? "NeedsReview" : target === "editableDraft" ? "DraftSaved" : staticRuntimePassed ? "ExportReady" : validationReport.passed ? "DraftSaved" : "NeedsReview";
       const currentStep = target === "editableDraft" || requiresParserReview || requiresAuthoringReview || lowConfidenceGroups.length || blockedAutoApplyGroups.length ? "Authoring" : staticRuntimePassed ? "Export" : "Preview";
-      const nextRoute = "preview";
+      const nextRoute = hasReviewBlocks ? "groups" : "preview";
       const userStatus = hasReviewBlocks ? "needsConfirmation" : "draftReady";
       const userMessage = requiresParserReview
         ? "题稿已生成，但源文件识别结果需要你确认。"

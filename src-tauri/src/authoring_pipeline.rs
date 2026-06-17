@@ -1073,11 +1073,11 @@ fn detect_dynamic_group_kind(text: &str) -> &'static str {
         "summary_completion"
     } else if is_dynamic_notes_completion_text(text) {
         "sentence_completion"
+    } else if has_dynamic_numbered_inline_blanks(text) {
+        "sentence_completion"
     } else if is_dynamic_short_answer_instruction_text(text) {
         "short_answer"
     } else if lower.contains("complete the sentence") || lower.contains("complete the sentences") {
-        "sentence_completion"
-    } else if has_dynamic_numbered_inline_blanks(text) {
         "sentence_completion"
     } else if is_dynamic_single_choice_text(text) {
         "single_choice"
@@ -2425,7 +2425,7 @@ fn find_dynamic_prompt_boundary(
 fn dynamic_prompt_for_question(
     group_text: &str,
     number: u32,
-    fallback_heading: &str,
+    _fallback_heading: &str,
     range_end: u32,
     group_kind: &str,
 ) -> String {
@@ -2454,7 +2454,7 @@ fn dynamic_prompt_for_question(
             return prompt.to_string();
         }
     }
-    format!("{} 第 {} 题", fallback_heading, number)
+    String::new()
 }
 
 fn dynamic_block_html(block: &Value) -> String {
@@ -2674,7 +2674,7 @@ pub(crate) fn make_dynamic_authoring_ir(
                         id: qid,
                         display_number: display.clone(),
                         prompt: if requires_manual_question_import {
-                            format!("Manual import required for question {}", number)
+                            String::new()
                         } else {
                             dynamic_prompt_for_question(&group_text, number, heading, end, kind)
                         },

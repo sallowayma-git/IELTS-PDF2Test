@@ -225,6 +225,66 @@ function findLatestCloudIssue(rawAuditIssues: AuditIssue[], fallback?: NonNullab
   return persistedIssue ?? fallback;
 }
 
+function buildVisionTranscriptionFallbackIssue(
+  fallback?: NonNullable<NonNullable<AutoPipelineReport["parser"]>["visionTranscription"]>
+): AuditIssue | undefined {
+  if (!fallback) return undefined;
+  const profileUnavailable = !fallback.profileId || fallback.profileId === "profile-local-placeholder";
+  const message = !fallback.attempted && profileUnavailable
+    ? "未配置可用云端模型，视觉题目识别未启动；当前仅保留本地解析结果，题干已留空。"
+    : !fallback.attempted
+      ? "视觉题目识别未启动；当前仅保留本地解析结果，题干已留空。"
+      : !fallback.applied
+        ? "视觉题目识别已尝试，但未生成可靠题组；当前保留本地解析结果，题干已留空。"
+        : fallback.failure
+          ? "视觉题目识别未成功完成；当前保留本地解析结果，题干已留空。"
+          : "";
+  if (!message) return undefined;
+  return {
+    kind: "vision_transcription_summary",
+    path: "$.parser.visionTranscription",
+    message,
+    attempted: fallback.attempted,
+    applied: fallback.applied,
+    profileId: fallback.profileId ?? null,
+    failure: fallback.failure ?? null,
+    confidence: fallback.confidence ?? null,
+    warnings: fallback.warnings ?? []
+  };
+}
+
+function findLatestVisionTranscriptionIssue(
+  rawAuditIssues: AuditIssue[],
+  fallback?: NonNullable<NonNullable<AutoPipelineReport["parser"]>["visionTranscription"]>
+): AuditIssue | undefined {
+  const persistedIssue = [...rawAuditIssues]
+    .reverse()
+    .find((issue) => auditIssueKind(issue) === "vision_transcription_summary" || auditIssuePath(issue).includes("visionTranscription"));
+  return persistedIssue ?? buildVisionTranscriptionFallbackIssue(fallback);
+}
+
+function formatConfidence(value: number | undefined): string {
+  const normalized = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+  return `${Math.round(normalized * 100)}%`;
+}
+
+function emptyPromptCount(group: QuestionGroupDraft): number {
+  return group.questions.filter((question) => !question.prompt.trim()).length;
+}
+
+function missingPromptIdsForGroup(issue: AuditIssue | undefined, group: QuestionGroupDraft): string[] {
+  const missingIds = new Set(issueStringList(issue, "missingPromptQuestionIds"));
+  return group.questions.filter((question) => missingIds.has(question.id) || !question.prompt.trim()).map((question) => question.id);
+}
+
+function visionConfigurationHint(issue: AuditIssue | undefined): string {
+  const profileId = issueString(issue, "profileId");
+  if (!issueBool(issue, "applied") && (!profileId || profileId === "profile-local-placeholder")) {
+    return "当前没有可用的云端视觉模型配置，或默认本地视觉网关不可用。";
+  }
+  return "";
+}
+
 function StatusBadge({ status }: { status: QuestionStatus }) {
   return (
     <span className={`cloud-status-badge ${status.tone}`} title={status.label}>
@@ -285,12 +345,15 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
   const rawAuditIssues = ir.audit.issues ?? [];
   const auditIssues = rawAuditIssues.map(auditIssueText).filter(Boolean);
   const cloudIssue = findLatestCloudIssue(rawAuditIssues, pipelineReport?.quality?.cloudComparison);
+  const visionTranscriptionIssue = findLatestVisionTranscriptionIssue(rawAuditIssues, pipelineReport?.parser?.visionTranscription);
   const visionAnswerIssue = rawAuditIssues.find((issue) => auditIssueKind(issue) === "vision_answer_extraction_summary");
-  const visibleAuditIssues = auditIssues.filter((issue) => issue !== auditIssueText(cloudIssue ?? "") && issue !== auditIssueText(visionAnswerIssue ?? ""));
+  const visibleAuditIssues = auditIssues.filter((issue) => issue !== auditIssueText(cloudIssue ?? "") && issue !== auditIssueText(visionAnswerIssue ?? "") && issue !== auditIssueText(visionTranscriptionIssue ?? ""));
   const emptyAnswerCount = currentGroup.questions.filter((question) => {
     const answer = question.answer;
     return Array.isArray(answer) ? answer.length === 0 || answer.every((item) => !String(item).trim()) : !String(answer ?? "").trim();
   }).length;
+  const missingPromptIds = missingPromptIdsForGroup(visionTranscriptionIssue, currentGroup);
+  const visionConfigHint = visionConfigurationHint(visionTranscriptionIssue);
   const cloudPassed = issueBool(cloudIssue, "attempted") && issueBool(cloudIssue, "passed");
   const cloudQuestionStatuses = Object.fromEntries(currentGroup.questions.map((question) => [question.id, buildCloudQuestionStatus(question, cloudIssue)]));
   const visionQuestionStatuses = Object.fromEntries(currentGroup.questions.map((question) => [question.id, buildVisionQuestionStatus(question, visionAnswerIssue)]));
@@ -358,11 +421,24 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
         <aside className="group-nav">
           {ir.groups.map((group) => (
             <button key={group.groupId} className={group.groupId === activeGroup.groupId ? "active" : ""} onClick={() => setActiveGroupId(group.groupId)}>
-              <strong>{group.groupId}</strong><span>Q{group.questionRange?.[0]}-{group.questionRange?.[1]}</span><small>{group.requiresManualQuestionImport ? "需要补题干" : groupKindLabels[group.kind]}</small>
+              <strong>{group.groupId}</strong>
+              <span>Q{group.questionRange?.[0]}-{group.questionRange?.[1]}</span>
+              <small>{group.requiresManualQuestionImport ? "题干待补充" : groupKindLabels[group.kind]}</small>
+              <small className={`confidence-note ${group.confidence < 0.85 ? "low" : ""}`}>置信度 {formatConfidence(group.confidence)}</small>
             </button>
           ))}
         </aside>
         <section className="form-section editor-form">
+          {visionTranscriptionIssue ? (
+            <div className="warning-box" data-testid="vision-transcription-summary">
+              <strong>视觉题目识别</strong>
+              <p>{auditIssueText(visionTranscriptionIssue)}</p>
+              {issueStringList(visionTranscriptionIssue, "missingPromptQuestionIds").length ? (
+                <small>仍缺少题干：{issueStringList(visionTranscriptionIssue, "missingPromptQuestionIds").slice(0, 12).join("、")}</small>
+              ) : null}
+              {visionConfigHint ? <small>{visionConfigHint}</small> : null}
+            </div>
+          ) : null}
           {visionAnswerIssue ? (
             <div className="info-box" data-testid="vision-answer-summary">
               <strong>视觉答案补全</strong>
@@ -422,8 +498,10 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
           ) : null}
           {activeGroup.requiresManualQuestionImport ? (
             <div className="warning-box" data-testid="manual-question-import-warning">
-              <strong>需要人工补题</strong>
-              <p>当前只识别到开头总范围 Q{activeGroup.questionRange?.[0]}-{activeGroup.questionRange?.[1]}，尚未检测到每道题的题干。请粘贴或修订具体题干、答案并逐题确认。</p>
+              <strong>题干待补充</strong>
+              <p>当前只识别到开头总范围 Q{activeGroup.questionRange?.[0]}-{activeGroup.questionRange?.[1]}，尚未检测到每道题的可靠题干。该题组现已保留空题干 {Math.max(missingPromptIds.length, emptyPromptCount(activeGroup))} 题，不再自动补占位文本。</p>
+              {visionTranscriptionIssue ? <small>{auditIssueText(visionTranscriptionIssue)}</small> : null}
+              {visionConfigHint ? <small>{visionConfigHint}</small> : null}
             </div>
           ) : null}
           {activeGroup.reviewWarnings?.length ? (
@@ -455,12 +533,20 @@ export function GroupEditor({ jobId, refresh }: { jobId: string; refresh: () => 
             {activeGroup.questions.map((question, index) => {
               const cloudStatus = cloudQuestionStatuses[question.id];
               const visionStatus = visionQuestionStatuses[question.id];
-              const statusDetails = [...(cloudStatus?.details ?? []), ...(visionStatus?.details ?? [])];
-              const noteTone = cloudStatus?.tone === "mismatch" || visionStatus?.tone === "mismatch" ? "mismatch" : cloudStatus?.tone === "candidate" ? "candidate" : "ok";
+              const promptMissing = !question.prompt.trim();
+              const statusDetails = [
+                ...(promptMissing ? ["题干未被可靠提取，当前保持留空，请人工补齐。"] : []),
+                ...(cloudStatus?.details ?? []),
+                ...(visionStatus?.details ?? [])
+              ];
+              const noteTone = promptMissing || cloudStatus?.tone === "mismatch" || visionStatus?.tone === "mismatch" ? "mismatch" : cloudStatus?.tone === "candidate" ? "candidate" : "ok";
               return (
                 <div className="question-edit" key={question.id}>
                   <div className="question-edit-header">
-                    <strong>Q{question.displayNumber}</strong>
+                    <div>
+                      <strong>Q{question.displayNumber}</strong>
+                      <small className={`confidence-note ${question.confidence < 0.85 ? "low" : ""}`}>置信度 {formatConfidence(question.confidence)}</small>
+                    </div>
                     <div className="question-status-row">
                       {cloudStatus ? <StatusBadge status={cloudStatus} /> : null}
                       {visionStatus ? <StatusBadge status={visionStatus} /> : null}

@@ -11,8 +11,8 @@ use export_nas_library::{
 };
 use export_pack::{build_pack_core, export_reading_assets_core, export_reading_js_core};
 use llm_commands::{
-    apply_llm_suggestion_core, delete_llm_profile_core, llm_run_group_core,
-    save_llm_profile_core, test_llm_profile_core,
+    apply_llm_suggestion_core, delete_llm_profile_core, llm_run_group_core, save_llm_profile_core,
+    test_llm_profile_core,
 };
 use preview_commands::{
     generate_preview_assets_core, run_preview_e2e_core, validate_authoring_ir_core,
@@ -5765,7 +5765,8 @@ Answers
 
         let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
         assert_eq!(
-            split.pointer("/questionGroupCandidates/0/kindHint")
+            split
+                .pointer("/questionGroupCandidates/0/kindHint")
                 .and_then(Value::as_str),
             Some("short_answer")
         );
@@ -5776,7 +5777,8 @@ Answers
             Some("short_answer")
         );
         assert_eq!(
-            ir.pointer("/groups/0/layout/template").and_then(Value::as_str),
+            ir.pointer("/groups/0/layout/template")
+                .and_then(Value::as_str),
             Some("short_answer_list")
         );
     }
@@ -6328,7 +6330,7 @@ Answers
         );
         assert_eq!(
             first_question.get("prompt").and_then(Value::as_str),
-            Some("Manual import required for question 14")
+            Some("")
         );
         assert_eq!(
             first_question
@@ -8077,6 +8079,266 @@ Answers
         let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
         let ir_text = serde_json::to_string(&ir).unwrap();
         assert!(ir_text.contains("The Origin of Paper"));
+        assert!(ir
+            .pointer("/audit/issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|issue| {
+                issue.get("kind").and_then(Value::as_str) == Some("vision_transcription_summary")
+            }));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_pipeline_records_vision_unavailable_for_umbrella_only_pdf_without_profile() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        crate::llm_profiles::save_profiles(&root, &[]).unwrap();
+        let mut job = make_job(CreateJobInput {
+            title: Some("P2 Umbrella Only".to_string()),
+            category: Some("P2".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["umbrella-no-profile".to_string()]),
+            llm_profile_id: None,
+        });
+        attach_fixture_source(&root, &mut job, "no-text.pdf", "MainQuestion");
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [
+                    {"blockId":"p2-header","blockType":"header","text":"READING PASSAGE 2","html":"<h2>READING PASSAGE 2</h2>","bbox":[72,60,460,88],"confidence":0.99,"roleHint":"passage"},
+                    {"blockId":"p2-umbrella","blockType":"paragraph","text":"Questions 14\u{2013}26","html":"<p>Questions 14\u{2013}26</p>","bbox":[72,92,520,120],"confidence":0.98,"roleHint":"question"},
+                    {"blockId":"p2-passage","blockType":"paragraph","text":"The passage content is available but the concrete question prompts were not extracted.","html":"<p>The passage content is available but the concrete question prompts were not extracted.</p>","bbox":[72,130,520,210],"confidence":0.97,"roleHint":"passage"},
+                    {"blockId":"answers","blockType":"paragraph","text":"Answers 14 TRUE 15 FALSE 16 TRUE 17 NOT GIVEN 18 TRUE 19 FALSE 20 A 21 B 22 C 23 D 24 chemicals 25 threats 26 information","html":"<p>Answers 14 TRUE 15 FALSE 16 TRUE 17 NOT GIVEN 18 TRUE 19 FALSE 20 A 21 B 22 C 23 D 24 chemicals 25 threats 26 information</p>","bbox":[72,600,520,650],"confidence":0.92,"roleHint":"answer"}
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+        write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), &doc).unwrap();
+        write_source_review_status(&root, &job.job_id, Some(&doc), false, None).unwrap();
+
+        let report = run_auto_pipeline_core(&root, &job.job_id, None).unwrap();
+
+        assert_eq!(
+            report
+                .pointer("/parser/visionTranscription/attempted")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            report
+                .pointer("/parser/visionTranscription/failure")
+                .and_then(Value::as_str),
+            Some("no_enabled_llm_profile_available_for_pdf_vision_transcription")
+        );
+
+        let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/prompt")
+                .and_then(Value::as_str),
+            Some("")
+        );
+        let vision_issue = ir
+            .pointer("/audit/issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|issue| {
+                issue.get("kind").and_then(Value::as_str) == Some("vision_transcription_summary")
+            })
+            .cloned()
+            .unwrap();
+        assert!(vision_issue
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("未配置可用云端模型"));
+        assert!(vision_issue
+            .get("missingPromptQuestionIds")
+            .and_then(Value::as_array)
+            .map(|items| !items.is_empty())
+            .unwrap_or(false));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_pipeline_local_only_still_runs_pdf_vision_rescue_and_skips_cloud_review() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        write_diagnostics_settings(
+            &root,
+            &crate::diagnostics::DiagnosticsSettings {
+                keep_full_process_artifacts: true,
+            },
+        )
+        .unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-vision-transcription",
+                "name": "Vision Transcription Test",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 60000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
+        let mut job = make_job(CreateJobInput {
+            title: Some("Origin of Paper".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["vision-local-only".to_string()]),
+            llm_profile_id: Some("profile-vision-transcription".to_string()),
+        });
+        attach_fixture_source(&root, &mut job, "no-text.pdf", "MainQuestion");
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595,
+                "height": 842,
+                "blocks": [{
+                    "blockId": "passage-only",
+                    "blockType": "paragraph",
+                    "text": "READING PASSAGE 1 The Origin of Paper. The earliest paper was made from plant fibres and changed communication.",
+                    "html": "<p>READING PASSAGE 1 The Origin of Paper.</p>",
+                    "bbox": [72, 72, 520, 140],
+                    "confidence": 0.98,
+                    "roleHint": "passage"
+                }]
+            }],
+            "assets": [],
+            "parser": {
+                "provider": "rust-parser:pdf:pdf-extract",
+                "version": "0.3.0",
+                "mode": "auto",
+                "warnings": []
+            }
+        });
+        write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), &doc).unwrap();
+        write_source_review_status(&root, &job.job_id, Some(&doc), false, None).unwrap();
+        let vision_text = fs::read_to_string(parser_fixture("complex-reading.txt")).unwrap();
+
+        let report = run_auto_pipeline_core_with_gateway(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                parse_mode: Some("auto".to_string()),
+                confidence_threshold: Some(0.85),
+                profile_id: Some("profile-vision-transcription".to_string()),
+                execution_mode: Some("localOnly".to_string()),
+                target: Some("editableDraft".to_string()),
+                allow_overwrite: None,
+            }),
+            move |_root, _job_id, command_name, _input, _api_key| match command_name {
+                "transcribe_pdf_images" => Ok(json!({
+                    "text": vision_text.clone(),
+                    "confidence": 0.94,
+                    "warnings": []
+                })),
+                "extract_pdf_image_answers" => Ok(json!({
+                    "answers": {
+                        "1": "TRUE",
+                        "2": "FALSE",
+                        "3": "TRUE",
+                        "4": "diaries",
+                        "5": "diaries"
+                    },
+                    "confidence": 0.99,
+                    "warnings": [],
+                    "evidence": [{"questionNumber": "1", "pageIndex": 1, "quote": "1 TRUE"}]
+                })),
+                other => Err(format!("unexpected_command:{}", other)),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            report
+                .pointer("/parser/visionTranscription/attempted")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            report
+                .pointer("/parser/visionTranscription/applied")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            report
+                .pointer("/parser/visionAnswerExtraction/attempted")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            report
+                .pointer("/parser/visionAnswerExtraction/applied")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            report
+                .pointer("/parser/visionAnswerExtraction/answerCount")
+                .and_then(Value::as_u64),
+            Some(5)
+        );
+        assert_eq!(
+            report
+                .pointer("/quality/cloudComparison/attempted")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+
+        let saved_doc: Value =
+            read_json(&job_dir(&root, &job.job_id).join("document-ir.json")).unwrap();
+        assert_eq!(
+            saved_doc
+                .pointer("/parser/provider")
+                .and_then(Value::as_str),
+            Some("vision-llm-transcription")
+        );
+        let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        assert_eq!(
+            ir.get("questionOrder")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(5)
+        );
+        assert!(!ir
+            .get("groups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|group| group
+                .get("questions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten())
+            .any(|question| {
+                question
+                    .get("prompt")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .starts_with("Manual import required for question")
+            }));
 
         let _ = fs::remove_dir_all(root);
     }

@@ -138,7 +138,11 @@ fn preview_bridge_script(exam_id: &str) -> String {
     )
 }
 
-fn build_unified_runtime_html(exam_id: &str, manifest_js: &str, wrapper_js: &str) -> Option<String> {
+fn build_unified_runtime_html(
+    exam_id: &str,
+    manifest_js: &str,
+    wrapper_js: &str,
+) -> Option<String> {
     let template_path = resolve_preview_runtime_html_path()?;
     let runtime_js_path = resolve_preview_runtime_js_path()?;
     let runtime_dir = runtime_js_path.parent()?;
