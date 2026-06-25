@@ -11,3 +11,6 @@ tmp/
 
 # Local test PDFs should not be uploaded
 Files/*.pdf
+
+# Test artifacts and generated data
+output/
