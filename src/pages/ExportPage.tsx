@@ -211,7 +211,7 @@ export function ExportPage({
       ? singleResult?.files.find((file) => file.name.endsWith(".js") && file.name !== "manifest.js")
           ?.content.slice(0, 900) ?? "尚未生成导出脚本。"
       : mode === "nas-library"
-        ? nasResult?.files.find((file) => file.name.startsWith("source/") && file.name.endsWith(".js"))
+        ? nasResult?.files.find((file) => file.name.endsWith(".js") && file.name !== "manifest.js")
             ?.content.slice(0, 900) ?? "尚未生成 NAS 题库脚本。"
       : jsResult?.files.find((file) => file.name.endsWith(".js") && file.name !== "manifest.js")
           ?.content.slice(0, 900) ?? "尚未生成题目脚本。";
@@ -359,7 +359,7 @@ export function ExportPage({
           {mode === "nas-library" && nasResult?.version ? (
             <div className="warning-box">
               <strong>NAS 版本</strong>
-              <p>将题目脚本写入 `source/`，并重建 `publish/library.db`、`library.version.json`、`library.db.sha256` 与 `report.json`。</p>
+              <p>将 manifest 与题目脚本直接写入所选数据目录，供 NAS 学生端直接消费。</p>
               <code>{nasResult.version}</code>
             </div>
           ) : null}

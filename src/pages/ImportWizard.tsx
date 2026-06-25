@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createImportJob, importSourceFile, runAutoPipeline } from "../api/tauriCommands";
-import { chooseSourceFile, chooseSourceFiles, type PickedPath } from "../api/desktopDialogs";
+import { choosePdfFolderSources, chooseSourceFile, chooseSourceFiles, type PickedPath } from "../api/desktopDialogs";
 import { go } from "../app/router";
 import type { AutoPipelineReport, Frequency, PassageCategory } from "../types";
 import { jobStatusLabel, workflowStepLabel } from "../utils/displayLabels";
@@ -51,6 +51,12 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
 
   async function pickSource() {
     const picked = await chooseSourceFiles();
+    setSourceFiles(picked);
+    if (picked.length === 1 && picked[0]?.titleHint) setTitle(picked[0].titleHint);
+  }
+
+  async function pickPdfFolder() {
+    const picked = await choosePdfFolderSources();
     setSourceFiles(picked);
     if (picked.length === 1 && picked[0]?.titleHint) setTitle(picked[0].titleHint);
   }
@@ -162,6 +168,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
               </small>
             </span>
             <button className="ghost small" data-testid="pick-source-file" onClick={pickSource}>选择主文件</button>
+            <button className="ghost small" data-testid="pick-source-folder" onClick={pickPdfFolder}>选择 PDF 文件夹</button>
           </div>
           <div className="path-picker">
             <span>

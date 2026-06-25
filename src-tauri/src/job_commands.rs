@@ -12,11 +12,63 @@ use crate::{
     JobStatus, SourceFile, WorkflowStep,
 };
 use chrono::Utc;
+use serde::Serialize;
 use serde_json::Value;
-use std::{fs, path::PathBuf};
+use std::{env, fs, path::PathBuf};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PickedSourcePath {
+    pub path: String,
+    pub name: String,
+    pub size_bytes: u64,
+    pub title_hint: String,
+    pub requires_desktop_parser: bool,
+}
+
+fn clean_file_stem(name: &str) -> String {
+    let stem = name.rsplit_once('.').map(|(value, _)| value).unwrap_or(name);
+    stem.replace(['_', '-'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn list_pdf_files_in_dir(dir: PathBuf) -> CommandResult<Vec<PickedSourcePath>> {
+    let mut files = fs::read_dir(&dir)
+        .map_err(|error| error.to_string())?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| value.eq_ignore_ascii_case("pdf"))
+                    .unwrap_or(false)
+        })
+        .map(|path| {
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("source.pdf")
+                .to_string();
+            let size_bytes = fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+            PickedSourcePath {
+                path: path.to_string_lossy().to_string(),
+                title_hint: clean_file_stem(&name),
+                name,
+                size_bytes,
+                requires_desktop_parser: false,
+            }
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(files)
+}
 
 pub(crate) async fn create_import_job_core(
     input: CreateJobInput,
@@ -138,6 +190,12 @@ pub(crate) async fn reveal_job_folder_core(job_id: String, app: AppHandle) -> Co
 }
 
 pub(crate) async fn choose_export_dir_core(app: AppHandle) -> CommandResult<Option<String>> {
+    if let Ok(path) = env::var("PDF2TEST_AUTOMATION_EXPORT_DIR") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
     tauri::async_runtime::spawn_blocking(move || {
         app.dialog()
             .file()
@@ -153,6 +211,33 @@ pub(crate) async fn choose_export_dir_core(app: AppHandle) -> CommandResult<Opti
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn pick_pdf_folder_sources_core(
+    app: AppHandle,
+) -> CommandResult<Vec<PickedSourcePath>> {
+    if let Ok(path) = env::var("PDF2TEST_AUTOMATION_PDF_DIR") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return list_pdf_files_in_dir(PathBuf::from(trimmed));
+        }
+    }
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Choose PDF folder")
+            .set_can_create_directories(false)
+            .blocking_pick_folder()
+            .map(|path| {
+                path.into_path()
+                    .map_err(|error| error.to_string())
+                    .and_then(list_pdf_files_in_dir)
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    Ok(selected.unwrap_or_default())
 }
 
 pub(crate) async fn list_llm_profiles_core(app: AppHandle) -> CommandResult<Vec<Value>> {

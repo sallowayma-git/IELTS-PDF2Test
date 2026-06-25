@@ -104,6 +104,7 @@ export interface NasExportResult {
   examIds: string[];
   assetCount: number;
   libraryRoot?: string;
+  readingExamsDir?: string;
   sourceDir?: string;
   publishDir?: string;
   version?: string;

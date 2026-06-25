@@ -15,6 +15,14 @@ export interface PickedPath {
   requiresDesktopParser?: boolean;
 }
 
+interface TauriPickedPath {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  titleHint?: string;
+  requiresDesktopParser?: boolean;
+}
+
 function nameFromPath(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
@@ -99,6 +107,42 @@ export async function chooseSourceFiles(): Promise<PickedPath[]> {
   });
 }
 
+export async function choosePdfFolderSources(): Promise<PickedPath[]> {
+  if (isTauriRuntime()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<TauriPickedPath[]>("pick_pdf_folder_sources");
+  }
+
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    (input as HTMLInputElement & { webkitdirectory?: boolean }).webkitdirectory = true;
+    input.accept = ".pdf,application/pdf";
+    input.style.position = "fixed";
+    input.style.left = "-9999px";
+    input.addEventListener("change", async () => {
+      const files = Array.from(input.files ?? []).filter((file) => /\.pdf$/i.test(file.name));
+      input.remove();
+      if (!files.length) {
+        resolve([]);
+        return;
+      }
+      const picked = await Promise.all(files.map(async (file) => ({
+        path: file.webkitRelativePath || file.name,
+        name: file.name,
+        sizeBytes: file.size,
+        titleHint: cleanFileStem(file.name),
+        binaryContentBase64: await fileToBase64(file),
+        requiresDesktopParser: false
+      })));
+      resolve(picked);
+    }, { once: true });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
 export async function chooseSourceFile(): Promise<PickedPath | null> {
   const files = await chooseSourceFiles();
   return files[0] ?? null;
@@ -147,10 +191,8 @@ async function browserFileMetadata(file: File): Promise<Pick<PickedPath, "titleH
 
 export async function chooseExportDirectory(): Promise<string | null> {
   if (isTauriRuntime()) {
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const selected = await open({ multiple: false, directory: true });
-    if (!selected || Array.isArray(selected)) return null;
-    return selected;
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<string | null>("choose_export_dir");
   }
 
   const fallback = await devFallbackInvoke<string | null>("choose_export_dir");

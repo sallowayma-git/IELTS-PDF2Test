@@ -1,6 +1,6 @@
 use crate::{
     cleanup::{cleanup_transient_job_artifacts, minimize_process_artifacts_after_authoring},
-    export_artifacts::build_wrapper,
+    export_artifacts::{build_manifest, build_wrapper},
     job_store::update_job,
     reading_source::reading_source,
     runtime_validation::{publish_readiness_gate, validate_for_runtime_gate},
@@ -48,6 +48,13 @@ struct WrittenSourceFile {
     job_id: String,
     exam_id: String,
     wrapper_js: String,
+    source: Value,
+}
+
+#[derive(Debug, Clone)]
+struct NasDirectWriteResult {
+    files: Vec<WrittenSourceFile>,
+    manifest_js: String,
 }
 
 #[derive(Debug, Clone)]
@@ -803,70 +810,15 @@ fn replace_atomically(next_path: &Path, target_path: &Path) -> CommandResult<()>
     }
 }
 
-fn copy_main_source_asset(
-    root: &Path,
-    job_id: &str,
-    source: &mut Value,
-    source_dir: &Path,
-) -> CommandResult<Option<String>> {
-    let ir: Value = read_json(&job_dir(root, job_id).join("authoring-ir.json"))?;
-    let Some(source_file) = ir
-        .pointer("/exam/sourceFiles")
-        .and_then(Value::as_array)
-        .and_then(|items| {
-            items
-                .iter()
-                .find(|item| item.get("role").and_then(Value::as_str) == Some("MainQuestion"))
-        })
-    else {
-        return Ok(None);
-    };
-    let original_name = source_file
-        .get("originalName")
-        .and_then(Value::as_str)
-        .unwrap_or("source.pdf");
-    let stored_name = source_file
-        .get("storedName")
-        .and_then(Value::as_str)
-        .unwrap_or(original_name);
-    let upload_path = job_dir(root, job_id).join("uploads").join(stored_name);
-    if !upload_path.exists() {
-        return Ok(None);
-    }
-    let exam_id = source
-        .get("examId")
-        .and_then(Value::as_str)
-        .unwrap_or("local-authoring-exam");
-    let assets_dir = source_dir.join("assets").join(exam_id);
-    fs::create_dir_all(&assets_dir).map_err(|error| error.to_string())?;
-    let safe_name = crate::util::sanitize_filename(original_name);
-    let dest_path = assets_dir.join(&safe_name);
-    let bytes = fs::read(&upload_path).map_err(|error| error.to_string())?;
-    write_bytes(&dest_path, &bytes)?;
-    let relative = normalize_slashes(
-        &dest_path
-            .strip_prefix(source_dir)
-            .ok()
-            .unwrap_or(dest_path.as_path())
-            .to_string_lossy(),
-    );
-
-    if let Some(meta) = source.get_mut("meta").and_then(Value::as_object_mut) {
-        meta.insert("pdfFilename".to_string(), Value::String(relative.clone()));
-    }
-    if let Some(source_refs) = source.get_mut("sourceRefs").and_then(Value::as_object_mut) {
-        source_refs.insert("shuiPdf".to_string(), Value::String(relative.clone()));
-    }
-    Ok(Some(relative))
-}
-
-fn write_selected_source_files(
+fn write_selected_nas_direct_files(
     root: &Path,
     job_ids: &[String],
-    source_dir: &Path,
+    reading_exams_dir: &Path,
     require_static_runtime_gate: bool,
-) -> CommandResult<Vec<WrittenSourceFile>> {
-    let mut written = Vec::with_capacity(job_ids.len());
+) -> CommandResult<NasDirectWriteResult> {
+    let mut files = Vec::with_capacity(job_ids.len());
+    let mut seen_exam_ids = HashSet::new();
+
     for job_id in job_ids {
         validate_path_segment("job_id", job_id)?;
         let ir: Value = read_json(&job_dir(root, job_id).join("authoring-ir.json"))?;
@@ -880,7 +832,7 @@ fn write_selected_source_files(
             let _ = minimize_process_artifacts_after_authoring(
                 root,
                 job_id,
-                "nas_export_publish_gate_failed",
+                "nas_js_direct_export_publish_gate_failed",
             )?;
             return Err(format!(
                 "nas_export_validation_failed:{}:{}",
@@ -889,22 +841,38 @@ fn write_selected_source_files(
             ));
         }
 
-        let mut source = reading_source(&ir);
+        let source = reading_source(&ir);
         let exam_id = source
             .get("examId")
             .and_then(Value::as_str)
             .unwrap_or("local-authoring-exam")
             .to_string();
-        let _ = copy_main_source_asset(root, job_id, &mut source, source_dir)?;
+        if !seen_exam_ids.insert(exam_id.clone()) {
+            return Err(format!("duplicate_exam_id:{exam_id}"));
+        }
         let wrapper = build_wrapper(&source)?;
-        write_text(&source_dir.join(format!("{exam_id}.js")), &wrapper)?;
-        written.push(WrittenSourceFile {
+        files.push(WrittenSourceFile {
             job_id: job_id.clone(),
             exam_id,
             wrapper_js: wrapper,
+            source,
         });
     }
-    Ok(written)
+
+    let sources = files
+        .iter()
+        .map(|written| written.source.clone())
+        .collect::<Vec<_>>();
+    let manifest_js = build_manifest(&sources)?;
+    fs::create_dir_all(reading_exams_dir).map_err(|error| error.to_string())?;
+    for file in &files {
+        write_text(
+            &reading_exams_dir.join(format!("{}.js", file.exam_id)),
+            &file.wrapper_js,
+        )?;
+    }
+    write_text(&reading_exams_dir.join("manifest.js"), &manifest_js)?;
+    Ok(NasDirectWriteResult { files, manifest_js })
 }
 
 pub(crate) fn copy_pdf_into_source_tree(
@@ -1219,10 +1187,7 @@ pub(crate) fn export_nas_library_core(
         PathBuf::from(export_dir)
     };
     fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
-    let source_dir = library_root.join("source");
-    let publish_dir = library_root.join("publish");
-    fs::create_dir_all(&source_dir).map_err(|error| error.to_string())?;
-    fs::create_dir_all(&publish_dir).map_err(|error| error.to_string())?;
+    let reading_exams_dir = library_root.clone();
 
     let requested_version = input.get("version").and_then(Value::as_str).map(str::trim);
     let version = requested_version
@@ -1230,17 +1195,26 @@ pub(crate) fn export_nas_library_core(
         .map(ToString::to_string)
         .unwrap_or_else(|| Utc::now().format("%Y.%m.%d-%H%M%S").to_string());
 
-    let written_sources =
-        write_selected_source_files(root, &job_ids, &source_dir, require_static_runtime_gate)?;
-    let publish_result = publish_nas_library_from_source_tree(&library_root, Some(&version))?;
-    let report = publish_result
-        .get("report")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let asset_count = publish_result
-        .get("assetCount")
-        .and_then(Value::as_u64)
-        .unwrap_or_default() as usize;
+    let write_result = write_selected_nas_direct_files(
+        root,
+        &job_ids,
+        &reading_exams_dir,
+        require_static_runtime_gate,
+    )?;
+    let written_sources = write_result.files;
+    let asset_count = written_sources.len();
+    let report = json!({
+        "status": "ok",
+        "version": version.clone(),
+        "generatedAt": Utc::now().to_rfc3339(),
+        "summary": {
+            "runtime": "nas-js-direct",
+            "readingExamFileCount": asset_count,
+            "manifestFileCount": 1,
+            "assetCount": asset_count
+        },
+        "errors": []
+    });
 
     let mut cleanup = Vec::with_capacity(written_sources.len());
     for written in &written_sources {
@@ -1253,6 +1227,7 @@ pub(crate) fn export_nas_library_core(
             &written.job_id,
             json!({
                 "type": "nas-library",
+                "runtime": "nas-js-direct",
                 "version": version,
                 "outputDir": library_root.to_string_lossy(),
                 "exportedAt": Utc::now().to_rfc3339()
@@ -1262,11 +1237,12 @@ pub(crate) fn export_nas_library_core(
 
     let mut files = written_sources
         .iter()
-        .map(|written| json!({"name": format!("source/{}.js", written.exam_id), "content": written.wrapper_js}))
+        .map(|written| json!({"name": format!("{}.js", written.exam_id), "content": written.wrapper_js}))
         .collect::<Vec<_>>();
-    if let Some(publish_files) = publish_result.get("files").and_then(Value::as_array) {
-        files.extend(publish_files.iter().cloned());
-    }
+    files.push(json!({
+        "name": "manifest.js",
+        "content": write_result.manifest_js
+    }));
 
     Ok(json!({
         "mode": "nas-library",
@@ -1274,16 +1250,17 @@ pub(crate) fn export_nas_library_core(
         "examIds": written_sources.iter().map(|written| written.exam_id.clone()).collect::<Vec<_>>(),
         "assetCount": asset_count,
         "libraryRoot": library_root.to_string_lossy(),
-        "sourceDir": source_dir.to_string_lossy(),
-        "publishDir": publish_dir.to_string_lossy(),
-        "version": version,
+        "readingExamsDir": reading_exams_dir.to_string_lossy(),
+        "version": version.clone(),
         "files": files,
         "report": report,
         "exportSummary": {
             "type": "nas-library",
+            "runtime": "nas-js-direct",
             "jobIds": job_ids,
             "version": Value::String(version.clone()),
             "outputDir": library_root.to_string_lossy(),
+            "readingExamsDir": reading_exams_dir.to_string_lossy(),
             "assetCount": asset_count,
             "exportedAt": Utc::now().to_rfc3339()
         },

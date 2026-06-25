@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   generatePreviewAssets,
   getJob,
+  resolveSourceReview,
   runCloudReview,
   updateAuthoringIr,
   validateAuthoringIr
@@ -379,6 +380,45 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     if (nextQuestion) setActiveQuestionId(nextQuestion.id);
   }
 
+  function buildFullyVerifiedIr(current: ReadingAuthoringIr): ReadingAuthoringIr {
+    return {
+      ...current,
+      groups: current.groups.map((group) => ({
+        ...group,
+        verified: true,
+        questions: group.questions.map((question) => ({
+          ...question,
+          verified: true
+        }))
+      })),
+      answerKey: current.groups.reduce((acc, group) => {
+        for (const question of group.questions) {
+          acc[question.id] = question.answer ?? "";
+        }
+        return acc;
+      }, { ...current.answerKey } as ReadingAuthoringIr["answerKey"])
+    };
+  }
+
+  async function verifyAllGroups() {
+    if (!ir) return;
+    const nextIr = buildFullyVerifiedIr(ir);
+    setIr(nextIr);
+    setSaving(true);
+    setRuntimeError(undefined);
+    try {
+      const saved = await updateAuthoringIr(jobId, { ir: nextIr });
+      await resolveSourceReview(jobId, "批量核对确认");
+      setIr(saved);
+      refresh();
+      startBackgroundArtifacts(jobId);
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function saveDraft(nextIr = ir) {
     if (!nextIr) return;
     setSaving(true);
@@ -429,6 +469,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
             <span className="cloud-indicator-dot" aria-hidden="true" />
             <small>{cloudLabel}</small>
           </div>
+          <button className="ghost" data-testid="verify-all-groups" onClick={() => void verifyAllGroups()} disabled={saving}>全部核对</button>
           <button className="ghost" onClick={() => void saveDraft()} disabled={saving}>{saving ? "正在保存..." : "保存"}</button>
           <button className="primary" data-testid="validate-and-export" onClick={() => void directExport()} disabled={saving}>导出</button>
         </div>

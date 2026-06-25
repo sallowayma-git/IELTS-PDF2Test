@@ -2656,25 +2656,25 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       });
       const version = input.version || now().replace(/[:TZ]/g, "-").slice(0, 19);
       const libraryRoot = input.exportDir ?? "local://exports/nas-library";
-      const sourceFiles = sources.map((source) => ({
-        name: `source/${source.examId}.js`,
-        content: buildWrapper(source)
-      }));
+      const runtimeFiles = [
+        ...sources.map((source) => ({
+          name: `${source.examId}.js`,
+          content: buildWrapper(source)
+        })),
+        {
+          name: "manifest.js",
+          content: buildManifest(sources)
+        }
+      ];
       const reportPayload = {
         status: "ok",
         version,
         generatedAt: now(),
         summary: {
-          sourceFileCount: sourceFiles.length,
-          assetCountBefore: 0,
-          assetCountAfter: sources.length,
-          added: sources.length,
-          modified: 0,
-          removed: 0,
-          unchanged: 0,
-          failed: 0,
-          htmlCount: sources.length,
-          pdfCount: sources.filter((source) => Boolean(source.meta.pdfFilename)).length
+          runtime: "nas-js-direct",
+          readingExamFileCount: sources.length,
+          manifestFileCount: 1,
+          assetCount: sources.length
         },
         errors: []
       };
@@ -2684,23 +2684,18 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         examIds: sources.map((source) => source.examId),
         assetCount: sources.length,
         libraryRoot,
-        sourceDir: `${libraryRoot}/source`,
-        publishDir: `${libraryRoot}/publish`,
+        readingExamsDir: libraryRoot,
         version,
-        files: [
-          ...sourceFiles,
-          { name: "publish/library.db", content: `sqlite:${sources.length} assets` },
-          { name: "publish/library.version.json", content: JSON.stringify({ version, libraryVersion: version, buildId: version, generatedAt: now(), assetCount: sources.length, htmlCount: sources.length, pdfCount: sources.filter((source) => Boolean(source.meta.pdfFilename)).length }, null, 2) },
-          { name: "publish/library.db.sha256", content: `dev-fallback-sha256  library.db\n` },
-          { name: "publish/report.json", content: JSON.stringify(reportPayload, null, 2) }
-        ],
+        files: runtimeFiles,
         report: reportPayload,
         exportSummary: {
           type: "nas-library",
+          runtime: "nas-js-direct",
           jobIds: [...input.jobIds],
           examIds: sources.map((source) => source.examId),
           version,
           outputDir: libraryRoot,
+          readingExamsDir: libraryRoot,
           assetCount: sources.length,
           exportedAt: now()
         },
@@ -2708,6 +2703,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           updateJob(store, jobId, { status: "Exported", currentStep: "Export" });
           return cleanupDevArtifacts(store, jobId, {
             type: "nas-library",
+            runtime: "nas-js-direct",
             version,
             outputDir: libraryRoot,
             exportedAt: now()
