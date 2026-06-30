@@ -1,4 +1,4 @@
-import type { JobStatus, ValidationIssue, ValidationLayer, WorkflowStep } from "../types";
+import type { JobStatus, LibraryStatus, ValidationIssue, ValidationLayer, WorkflowStep } from "../types";
 
 export const jobStatusLabels: Record<JobStatus, string> = {
   Working: "处理中",
@@ -8,6 +8,18 @@ export const jobStatusLabels: Record<JobStatus, string> = {
   Exported: "已导出",
   Cleaned: "已清理"
 };
+
+export const libraryStatusLabels: Record<LibraryStatus, string> = {
+  draft: "草稿",
+  needs_review: "待审核",
+  ready: "已定稿",
+  exported: "已发布"
+};
+
+export function libraryStatusLabel(status: LibraryStatus | string | undefined): string {
+  if (!status) return "未知状态";
+  return libraryStatusLabels[status as LibraryStatus] ?? String(status);
+}
 
 export const workflowStepLabels: Record<WorkflowStep, string> = {
   Upload: "上传文件",

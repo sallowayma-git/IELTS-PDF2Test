@@ -146,6 +146,44 @@ dd { margin: 0; }
 .status-validationfailed { color: var(--danger); background: rgba(184,75,63,.12); }
 .status-published, .status-exportready { color: #7a4a09; background: rgba(199,120,56,.14); }
 
+/* 题库统一状态色（draft / needs_review / ready / exported） */
+.status-draft { color: var(--muted); background: rgba(108,117,108,.16); }
+.status-needs_review { color: var(--danger); background: rgba(184,75,63,.12); }
+.status-ready { color: #7a4a09; background: rgba(199,120,56,.14); }
+.status-exported { color: var(--accent); background: rgba(31,138,112,.16); }
+
+/* 分组可展开导航 */
+.nav-group { display: grid; gap: 2px; }
+.nav-group-title { border: 0; background: transparent; text-align: left; padding: 12px 14px; border-radius: 18px; color: var(--muted); transition: 180ms ease; display: flex; align-items: center; gap: 10px; }
+.nav-group-title:hover, .nav-group-title.in-active-group { background: var(--ink); color: var(--paper-2); transform: translateX(2px); }
+.nav-group-title.in-active-group .nav-short { background: rgba(255,250,240,.14); }
+.nav-caret { margin-left: auto; font-size: 11px; opacity: .8; }
+.nav-children { display: grid; gap: 2px; padding-left: 26px; }
+.nav-child { border: 0; background: transparent; text-align: left; padding: 9px 12px; border-radius: 14px; color: var(--muted); transition: 160ms ease; display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.nav-child:hover { background: rgba(19,32,29,.06); color: var(--ink); }
+.nav-child.active { background: var(--ink); color: var(--paper-2); }
+.shell.sidebar-collapsed .nav-children,
+.shell.sidebar-collapsed .nav-caret { display: none; }
+
+/* 题库管理界面 */
+.library-filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 18px 0; }
+.library-filters select, .library-filters .library-search { width: auto; min-width: 0; }
+.library-filters .library-search { flex: 1; min-width: 200px; }
+.library-overview { border: 1px solid var(--line); border-radius: 24px; background: rgba(255,250,240,.62); padding: 18px; margin: 22px 0; }
+.library-overview .metric-row { margin: 14px 0 0; }
+.library-payload { display: grid; gap: 16px; }
+.read-only-html { border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.72); padding: 16px; line-height: 1.7; }
+.read-only-html :is(h1,h2,h3) { margin: 6px 0; }
+.answer-key-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.answer-key-grid div { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,250,240,.62); font-size: 13px; }
+.answer-key-grid strong { color: var(--accent); }
+.meta-list { display: grid; gap: 10px; margin: 12px 0; }
+.meta-list div { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; }
+.meta-list dt { color: var(--muted); font-size: 13px; }
+.meta-list dd { margin: 0; color: var(--ink); }
+.field { display: grid; gap: 6px; margin: 12px 0; }
+.field span { color: var(--muted); font-size: 13px; font-weight: 700; }
+
 label { display: grid; gap: 7px; color: var(--muted); font-weight: 700; margin: 12px 0; }
 input, select, textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: 14px; padding: 11px 12px; background: rgba(255,255,255,.72); color: var(--ink); }
 textarea { min-height: 120px; resize: vertical; }

@@ -139,6 +139,10 @@ pub(crate) async fn delete_job_core(job_id: String, app: AppHandle) -> CommandRe
     if dir.exists() {
         fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
     }
+    // 同步删除题库 DB 中的记录（失败记日志但不阻断文件删除——文件已删，DB 孤儿可被迁移/重试清理）。
+    if let Err(error) = crate::db::delete_exam_by_id(&root, &job_id) {
+        eprintln!("[library] delete_exam_by_id failed for {}: {}", job_id, error);
+    }
     Ok(())
 }
 

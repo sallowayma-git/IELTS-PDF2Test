@@ -119,7 +119,12 @@ pub(crate) fn load_writing_job(root: &Path, job_id: &str) -> CommandResult<Writi
 
 pub(crate) fn save_writing_job(root: &Path, job: &WritingJob) -> CommandResult<()> {
     validate_path_segment("writing_job_id", &job.job_id)?;
-    write_json(&writing_job_dir(root, &job.job_id).join("writing-job.json"), job)
+    write_json(&writing_job_dir(root, &job.job_id).join("writing-job.json"), job)?;
+    // 双写题库 DB（失败记日志但不阻断主流程）。
+    if let Err(error) = crate::library_commands::upsert_writing_job(root, job) {
+        eprintln!("[library] upsert_writing_job failed for {}: {}", job.job_id, error);
+    }
+    Ok(())
 }
 
 pub(crate) fn update_writing_job(
@@ -171,6 +176,10 @@ pub(crate) fn delete_writing_job(root: &Path, job_id: &str) -> CommandResult<()>
     let dir = safe_writing_job_dir(root, job_id)?;
     if dir.exists() {
         fs::remove_dir_all(&dir).map_err(|error| format!("remove_writing_job_dir:{}", error))?;
+    }
+    // 同步删除题库 DB 中的记录（失败记日志但不阻断）。
+    if let Err(error) = crate::db::delete_exam_by_id(root, job_id) {
+        eprintln!("[library] delete_exam_by_id failed for writing {}: {}", job_id, error);
     }
     Ok(())
 }

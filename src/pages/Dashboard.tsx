@@ -1,12 +1,20 @@
+import { useEffect, useState } from "react";
 import { StatusPill } from "../components/StatusPill";
 import { go } from "../app/router";
-import type { ImportJob, JobStatus } from "../types";
+import { getLibraryStats } from "../api/tauriCommands";
+import { libraryStatusLabel } from "../utils/displayLabels";
+import type { ImportJob, JobStatus, LibraryStats } from "../types";
 import { jobStatusLabel } from "../utils/displayLabels";
 
 const statusOrder: JobStatus[] = ["Working", "NeedsReview", "DraftSaved", "ExportReady", "Exported", "Cleaned"];
 
 export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () => void }) {
   const counts = statusOrder.map((status) => ({ status, count: jobs.filter((job) => job.status === status).length }));
+  const [stats, setStats] = useState<LibraryStats | null>(null);
+
+  useEffect(() => {
+    getLibraryStats().then(setStats).catch(console.error);
+  }, [jobs]);
 
   return (
     <section className="dashboard page-enter">
@@ -18,7 +26,7 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
         </div>
         <div className="hero-actions">
           <button className="primary" onClick={() => go("/jobs/new")}>新建导题任务</button>
-          <button className="ghost" onClick={() => go("/writing")}>写作题创作</button>
+          <button className="ghost" onClick={() => go("/library")}>题库管理</button>
         </div>
       </div>
 
@@ -30,6 +38,25 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
           </div>
         ))}
       </div>
+
+      {stats ? (
+        <section className="library-overview">
+          <div className="section-heading spread">
+            <div>
+              <p className="eyebrow">Library</p>
+              <h3>题库概览</h3>
+            </div>
+            <button className="ghost small" onClick={() => go("/library")}>进入题库</button>
+          </div>
+          <div className="metric-row">
+            <div className="metric"><span>总题数</span><strong>{stats.total}</strong></div>
+            <div className="metric"><span>阅读</span><strong>{stats.bySubject.reading ?? 0}</strong></div>
+            <div className="metric"><span>写作</span><strong>{stats.bySubject.writing ?? 0}</strong></div>
+            <div className="metric"><span>已定稿</span><strong>{stats.byStatus.ready ?? 0}</strong></div>
+            <div className="metric"><span>已发布</span><strong>{stats.byStatus.exported ?? 0}</strong></div>
+          </div>
+        </section>
+      ) : null}
 
       <div className="two-column">
         <section>

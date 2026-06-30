@@ -8,6 +8,7 @@ import {
   validateAuthoringIr
 } from "../api/tauriCommands";
 import { go } from "../app/router";
+import { sanitizeHtml } from "../utils/sanitizeHtml";
 import type { AutoPipelineReport, GroupKind, QuestionDraft, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
 
 const EXPORT_INTENT_KEY_PREFIX = "ielts-author-studio.export-intent.";
@@ -518,7 +519,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                     <span>{block.blockId}</span>
                     {focused ? <strong>当前关联</strong> : null}
                   </div>
-                  <div dangerouslySetInnerHTML={{ __html: block.html }} />
+                  <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(block.html) }} />
                 </div>
               );
             })}

@@ -136,7 +136,7 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
           <p>创作完成后到导出页选择两个任务打包下发。</p>
         </div>
         <div className="hero-actions">
-          <button className="primary" onClick={() => go("/export")}>前往导出</button>
+          <button className="primary" onClick={() => go("/packs")}>前往导出</button>
         </div>
       </div>
 

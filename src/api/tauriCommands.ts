@@ -34,7 +34,12 @@ import type {
   WritingJobPatch,
   WritingJobFilter,
   ExportWritingLibraryInput,
-  WritingExportResult
+  WritingExportResult,
+  LibraryFilter,
+  LibraryExamSummary,
+  LibraryExamDetail,
+  LibraryMetaPatch,
+  LibraryStats
 } from "../types";
 import { devFallbackInvoke, type JobDetail } from "../services/devFallbackBackend";
 
@@ -218,4 +223,29 @@ export async function deleteWritingJob(jobId: string): Promise<{ deleted: true; 
 
 export async function exportWritingLibrary(input: ExportWritingLibraryInput): Promise<WritingExportResult> {
   return command("export_writing_library", { input });
+}
+
+// ---------- 题库管理命令 ----------
+export async function listLibraryExams(filter: LibraryFilter = {}): Promise<LibraryExamSummary[]> {
+  return command("list_library_exams", { filter });
+}
+
+export async function getLibraryExam(id: string): Promise<LibraryExamDetail | null> {
+  return command("get_library_exam", { id });
+}
+
+export async function updateLibraryExamMeta(id: string, patch: LibraryMetaPatch): Promise<LibraryExamSummary | null> {
+  return command("update_library_exam_meta", { id, patch });
+}
+
+export async function deleteLibraryExam(id: string): Promise<boolean> {
+  return command("delete_library_exam", { id });
+}
+
+export async function searchLibraryExams(query: string): Promise<LibraryExamSummary[]> {
+  return command("search_library_exams", { query });
+}
+
+export async function getLibraryStats(): Promise<LibraryStats> {
+  return command("get_library_stats");
 }

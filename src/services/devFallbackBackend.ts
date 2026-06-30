@@ -34,7 +34,13 @@ import type {
   WritingJobPatch,
   WritingJobFilter,
   WritingTaskType,
-  ExportWritingLibraryInput
+  ExportWritingLibraryInput,
+  LibraryFilter,
+  LibraryExamSummary,
+  LibraryExamDetail,
+  LibraryMetaPatch,
+  LibraryStats,
+  LibraryStatus
 } from "../types";
 import type { DiagnosticsSettings } from "../types/settings";
 import { buildManifest, buildWrapper, escapeHtml, renderGroupBodyHtml, toReadingExamSource } from "./templateRenderer";
@@ -78,6 +84,73 @@ function now(): string {
 function id(prefix: string): string {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   return `${prefix}-${stamp}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// ── 题库投影：从 ImportJob / WritingJob 派生 LibraryExamSummary（与后端 status 映射一致）──
+
+function readingStatusFromLibrary(status: LibraryStatus): ImportJob["status"] {
+  switch (status) {
+    case "draft": return "Working";
+    case "needs_review": return "NeedsReview";
+    case "ready": return "DraftSaved";
+    case "exported": return "Exported";
+  }
+}
+
+function writingStatusFromLibrary(status: LibraryStatus): WritingJob["status"] {
+  switch (status) {
+    case "draft": return "Draft";
+    case "needs_review": return "Draft";
+    case "ready": return "ExportReady";
+    case "exported": return "Exported";
+  }
+}
+
+function readingSummary(job: ImportJob): LibraryExamSummary {
+  const status: LibraryStatus =
+    job.status === "Working" ? "draft"
+    : job.status === "NeedsReview" ? "needs_review"
+    : job.status === "DraftSaved" || job.status === "ExportReady" ? "ready"
+    : "exported";
+  return {
+    id: job.jobId,
+    examId: job.jobId,
+    title: job.title,
+    subject: "reading",
+    category: job.category,
+    frequency: job.frequency,
+    status,
+    taskType: undefined,
+    tags: job.tags,
+    sourceHash: job.sourceFiles[0]?.sha256,
+    issueErrors: job.issueCounts.errors,
+    issueWarnings: job.issueCounts.warnings,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt
+  };
+}
+
+function writingSummary(job: WritingJob): LibraryExamSummary {
+  const status: LibraryStatus =
+    job.status === "Draft" ? "draft"
+    : job.status === "ExportReady" ? "ready"
+    : "exported";
+  return {
+    id: job.jobId,
+    examId: job.examId,
+    title: job.title,
+    subject: "writing",
+    category: job.taskType,
+    frequency: undefined,
+    status,
+    taskType: job.taskType,
+    tags: [],
+    sourceHash: undefined,
+    issueErrors: 0,
+    issueWarnings: 0,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt
+  };
 }
 
 function initialStore(): Store {
@@ -2897,6 +2970,109 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         exportSummary: { type: "writing-library", runtime: "nas-js-direct", jobIds, version, outputDir: "local://exports/nas-library", writingExamsDir: "local://exports/nas-library/writing-exams", assetCount: tasks.length, exportedAt: now() },
         cleanup: tasks.map((t) => ({ jobId: t.jobId, taskType: t.taskType, status: "Exported" }))
       } as T;
+    }
+
+    // ---------- 题库管理命令（library）----------
+    // dev 模式下题库 = 现有 jobs + writingJobs 的投影，与后端「全部 job 入库」一致。
+
+    case "list_library_exams": {
+      const filter = (args.filter ?? {}) as LibraryFilter;
+      let list = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)];
+      if (filter.subject) list = list.filter((e) => e.subject === filter.subject);
+      if (filter.status) list = list.filter((e) => e.status === filter.status);
+      if (filter.category) list = list.filter((e) => e.category === filter.category);
+      list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const offset = filter.offset ?? 0;
+      const limit = filter.limit ?? 200;
+      return list.slice(offset, offset + limit) as T;
+    }
+
+    case "get_library_exam": {
+      const id = String(args.id ?? "");
+      const reading = store.jobs.find((j) => j.jobId === id);
+      if (reading) {
+        const ir = store.authoring[id];
+        return { summary: readingSummary(reading), payload: ir ?? reading } as T as LibraryExamDetail as T;
+      }
+      const writing = store.writingJobs.find((j) => j.jobId === id);
+      if (writing) return { summary: writingSummary(writing), payload: writing } as T as LibraryExamDetail as T;
+      return null as T;
+    }
+
+    case "update_library_exam_meta": {
+      const id = String(args.id ?? "");
+      const patch = (args.patch ?? {}) as LibraryMetaPatch;
+      const reading = store.jobs.find((j) => j.jobId === id);
+      if (reading) {
+        if (patch.title !== undefined) reading.title = patch.title;
+        if (patch.category !== undefined) reading.category = patch.category as ImportJob["category"];
+        if (patch.frequency !== undefined) reading.frequency = patch.frequency as ImportJob["frequency"];
+        if (patch.tags !== undefined) reading.tags = patch.tags;
+        if (patch.status !== undefined) {
+          // exported 是 Exported|Cleaned 的合并态；若任务已是 Cleaned，保留 Cleaned 语义，避免降级。
+          if (patch.status === "exported" && reading.status === "Cleaned") {
+            // 保留 Cleaned
+          } else {
+            reading.status = readingStatusFromLibrary(patch.status);
+          }
+        }
+        reading.updatedAt = now();
+        save(store);
+        return readingSummary(reading) as T;
+      }
+      const writing = store.writingJobs.find((j) => j.jobId === id);
+      if (writing) {
+        if (patch.title !== undefined) writing.title = patch.title;
+        if (patch.taskType === "task1" || patch.taskType === "task2") writing.taskType = patch.taskType;
+        if (patch.status !== undefined) writing.status = writingStatusFromLibrary(patch.status);
+        writing.updatedAt = now();
+        save(store);
+        return writingSummary(writing) as T;
+      }
+      return null as T;
+    }
+
+    case "delete_library_exam": {
+      const id = String(args.id ?? "");
+      const beforeR = store.jobs.length;
+      const beforeW = store.writingJobs.length;
+      store.jobs = store.jobs.filter((j) => j.jobId !== id);
+      store.writingJobs = store.writingJobs.filter((j) => j.jobId !== id);
+      const removed = store.jobs.length !== beforeR || store.writingJobs.length !== beforeW;
+      if (removed) save(store);
+      return removed as T;
+    }
+
+    case "search_library_exams": {
+      const query = String(args.query ?? "").trim().toLowerCase();
+      if (!query) return [] as T;
+      const all = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)];
+      const hits = all.filter(
+        (e) =>
+          e.title.toLowerCase().includes(query) ||
+          (e.examId ?? "").toLowerCase().includes(query) ||
+          e.tags.some((t) => t.toLowerCase().includes(query))
+      );
+      hits.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return hits.slice(0, 200) as T;
+    }
+
+    case "get_library_stats": {
+      const all = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)];
+      const by = (key: keyof LibraryExamSummary) => {
+        const map: Record<string, number> = {};
+        for (const e of all) {
+          const k = String((e[key] as string | undefined) ?? "(none)");
+          map[k] = (map[k] ?? 0) + 1;
+        }
+        return map;
+      };
+      return {
+        total: all.length,
+        bySubject: by("subject"),
+        byStatus: by("status"),
+        byCategory: by("category")
+      } as T as LibraryStats as T;
     }
 
     default:

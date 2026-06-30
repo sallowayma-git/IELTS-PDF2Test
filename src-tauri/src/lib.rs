@@ -32,6 +32,7 @@ mod authoring_review;
 mod authoring_validation;
 mod auto_pipeline;
 mod cleanup;
+mod db;
 mod diagnostics;
 mod environment;
 mod export_artifacts;
@@ -40,6 +41,7 @@ mod export_pack;
 mod export_writing_library;
 mod job_commands;
 mod job_store;
+mod library_commands;
 mod llm_commands;
 mod llm_gateway;
 mod llm_profiles;
@@ -166,6 +168,71 @@ pub struct JobMetaPatch {
     pub tags: Option<Vec<String>>,
     #[serde(rename = "activeLlmProfileId")]
     pub active_llm_profile_id: Option<String>,
+}
+
+// ── 题库管理（library）类型 ───────────────────────────────────────────────
+// 统一收录阅读 + 写作题目，subject 区分；status 用统一枚举避免两套模型混淆。
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct LibraryFilter {
+    pub subject: Option<String>,  // "reading" | "writing"
+    pub status: Option<String>,   // draft | needs_review | ready | exported
+    pub category: Option<String>, // P1|P2|P3 (阅读) | task1|task2 (写作)
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LibraryExamSummary {
+    pub id: String,
+    #[serde(rename = "examId")]
+    pub exam_id: Option<String>,
+    pub title: String,
+    pub subject: String,
+    pub category: Option<String>,
+    pub frequency: Option<String>,
+    pub status: String,
+    #[serde(rename = "taskType")]
+    pub task_type: Option<String>,
+    pub tags: Vec<String>,
+    #[serde(rename = "sourceHash")]
+    pub source_hash: Option<String>,
+    #[serde(rename = "issueErrors")]
+    pub issue_errors: u32,
+    #[serde(rename = "issueWarnings")]
+    pub issue_warnings: u32,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LibraryExamDetail {
+    pub summary: LibraryExamSummary,
+    pub payload: Value,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct LibraryMetaPatch {
+    pub title: Option<String>,
+    pub category: Option<String>,
+    pub frequency: Option<String>,
+    pub status: Option<String>,
+    #[serde(rename = "taskType")]
+    pub task_type: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct LibraryStats {
+    pub total: u32,
+    #[serde(rename = "bySubject")]
+    pub by_subject: std::collections::BTreeMap<String, u32>,
+    #[serde(rename = "byStatus")]
+    pub by_status: std::collections::BTreeMap<String, u32>,
+    #[serde(rename = "byCategory")]
+    pub by_category: std::collections::BTreeMap<String, u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -1146,6 +1213,69 @@ async fn run_cloud_review(
         .map_err(|error| error.to_string())?
 }
 
+// ── 题库管理命令（library）──────────────────────────────────────────────────
+
+#[tauri::command]
+async fn list_library_exams(
+    filter: Option<LibraryFilter>,
+    app: AppHandle,
+) -> CommandResult<Vec<LibraryExamSummary>> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || library_commands::list_library_exams_core(&root, filter))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn get_library_exam(
+    id: String,
+    app: AppHandle,
+) -> CommandResult<Option<LibraryExamDetail>> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || library_commands::get_library_exam_core(&root, &id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn update_library_exam_meta(
+    id: String,
+    patch: LibraryMetaPatch,
+    app: AppHandle,
+) -> CommandResult<Option<LibraryExamSummary>> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || library_commands::update_library_exam_meta_core(&root, &id, patch))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn delete_library_exam(id: String, app: AppHandle) -> CommandResult<bool> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || library_commands::delete_library_exam_core(&root, &id))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn search_library_exams(
+    query: String,
+    app: AppHandle,
+) -> CommandResult<Vec<LibraryExamSummary>> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || library_commands::search_library_exams_core(&root, &query))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn get_library_stats(app: AppHandle) -> CommandResult<LibraryStats> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || library_commands::get_library_stats_core(&root))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1154,6 +1284,8 @@ pub fn run() {
         .setup(|app| {
             let root = app_root(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
             ensure_app_dirs(&root).map_err(Box::<dyn std::error::Error>::from)?;
+            // 初始化题库 DB schema + 首次启动迁移既有 job 数据（幂等，失败不阻断启动）。
+            let _ = library_commands::migrate_existing_into_library(&root);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1200,7 +1332,13 @@ pub fn run() {
             get_writing_job,
             update_writing_job,
             delete_writing_job,
-            build_pack
+            build_pack,
+            list_library_exams,
+            get_library_exam,
+            update_library_exam_meta,
+            delete_library_exam,
+            search_library_exams,
+            get_library_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
