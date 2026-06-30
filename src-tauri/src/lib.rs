@@ -656,6 +656,16 @@ fn run_cli(args: &[String]) -> CommandResult<bool> {
 
 pub fn run_cli_or_app() {
     let args = env::args().skip(1).collect::<Vec<_>>();
+    let is_cli = run_cli_is_active(&args);
+    // In a release build the binary uses the Windows GUI subsystem (see
+    // main.rs `windows_subsystem = "windows"`), so no console window is
+    // allocated on launch. When invoked as a CLI (e.g.
+    // `--generate-reading-source`), re-attach to the parent process's console
+    // and reopen the std streams so `println!`/`eprintln!` still reach the
+    // terminal. GUI launches skip this and run windowed with no console.
+    if is_cli {
+        attach_parent_console();
+    }
     match run_cli(&args) {
         Ok(true) => {}
         Ok(false) => run(),
@@ -664,6 +674,82 @@ pub fn run_cli_or_app() {
             std::process::exit(1);
         }
     }
+}
+
+/// Returns true when the given args select the CLI path (a known headless
+/// command) rather than the GUI. Mirrors the dispatch in `run_cli`.
+fn run_cli_is_active(args: &[String]) -> bool {
+    matches!(
+        args.first().map(String::as_str),
+        Some("--generate-reading-source")
+            | Some("--run-auto-pipeline")
+            | Some("--export-nas-library")
+            | Some("--help")
+            | Some("-h")
+            | Some("--version")
+            | Some("-V")
+    )
+}
+
+/// Attach to the parent process's console (Windows release builds only) and
+/// rebind the standard handles so CLI output is visible. No-op on non-Windows,
+/// when no parent console exists (e.g. launched from Explorer), or when
+/// stdout/stderr are already redirected to a file/pipe (so
+/// `app.exe --generate-reading-source > out.json` still works).
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+fn attach_parent_console() {
+    // Raw FFI to kernel32 — avoids pulling in the windows-sys/winapi crate.
+    // Rust's `println!`/`eprintln!` write via io::stdout()/io::stderr(), which
+    // read the standard handle through GetStdHandle on each write, so calling
+    // SetStdHandle with a new console output handle is enough to redirect
+    // Rust's std streams (no C-runtime freopen needed).
+    extern "system" {
+        fn AttachConsole(pid: u32) -> i32;
+        fn GetStdHandle(nstd: u32) -> *mut std::ffi::c_void;
+        fn SetStdHandle(nstd: u32, handle: *mut std::ffi::c_void) -> i32;
+        fn GetConsoleMode(handle: *mut std::ffi::c_void, mode: *mut u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF;
+    const STD_INPUT_HANDLE: u32 = 0xFFFFFFF6; // (u32)-10
+    const STD_OUTPUT_HANDLE: u32 = 0xFFFFFFF5; // (u32)-11
+    const STD_ERROR_HANDLE: u32 = 0xFFFFFFF4; // (u32)-12
+
+    unsafe {
+        let out_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        let err_handle = GetStdHandle(STD_ERROR_HANDLE);
+        let mut mode: u32 = 0;
+        let out_is_console = !out_handle.is_null() && GetConsoleMode(out_handle, &mut mode) != 0;
+        let err_is_console = !err_handle.is_null() && GetConsoleMode(err_handle, &mut mode) != 0;
+        // Already wired to a console (launched from an existing console) —
+        // nothing to do, and redirecting would break shell pipes.
+        if out_is_console && err_is_console {
+            return;
+        }
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return; // no parent console to attach to (e.g. launched from Explorer)
+        }
+        // After AttachConsole, GetStdHandle returns the parent console's
+        // handles. Rebind only the streams that were not already redirected
+        // to a file/pipe, preserving `> file` and `|` behaviour.
+        let conout = GetStdHandle(STD_OUTPUT_HANDLE);
+        let conerr = GetStdHandle(STD_ERROR_HANDLE);
+        let conin = GetStdHandle(STD_INPUT_HANDLE);
+        if !out_is_console && !conout.is_null() {
+            SetStdHandle(STD_OUTPUT_HANDLE, conout);
+        }
+        if !err_is_console && !conerr.is_null() {
+            SetStdHandle(STD_ERROR_HANDLE, conerr);
+        }
+        if !conin.is_null() {
+            SetStdHandle(STD_INPUT_HANDLE, conin);
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "windows", not(debug_assertions))))]
+fn attach_parent_console() {
+    // Debug builds and non-Windows platforms always have a console / are
+    // already wired to std streams.
 }
 
 #[tauri::command]
