@@ -28,7 +28,13 @@ import type {
   SourceReview,
   SplitCandidates,
   ValidationIssue,
-  ValidationReport
+  ValidationReport,
+  WritingJob,
+  CreateWritingJobInput,
+  WritingJobPatch,
+  WritingJobFilter,
+  WritingTaskType,
+  ExportWritingLibraryInput
 } from "../types";
 import type { DiagnosticsSettings } from "../types/settings";
 import { buildManifest, buildWrapper, escapeHtml, renderGroupBodyHtml, toReadingExamSource } from "./templateRenderer";
@@ -48,6 +54,7 @@ type Store = {
   revisions: Record<string, Array<Record<string, unknown>>>;
   packs: PackBuildResult[];
   diagnostics: DiagnosticsSettings;
+  writingJobs: WritingJob[];
 };
 
 export interface JobDetail {
@@ -101,7 +108,8 @@ function initialStore(): Store {
     pipelineReports: {},
     revisions: {},
     packs: [],
-    diagnostics: { keepFullProcessArtifacts: false }
+    diagnostics: { keepFullProcessArtifacts: false },
+    writingJobs: []
   };
 }
 
@@ -2764,6 +2772,131 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "reveal_job_folder":
     case "choose_export_dir": {
       return "local://exports" as T;
+    }
+
+    // ---------- 写作题库 fallback ----------
+    case "create_writing_job": {
+      const input = (args.input ?? {}) as CreateWritingJobInput;
+      const taskType: WritingTaskType = input.taskType === "task2" ? "task2" : "task1";
+      const suggestedWordCount = input.suggestedWordCount && input.suggestedWordCount > 0
+        ? input.suggestedWordCount
+        : (taskType === "task2" ? 250 : 150);
+      const job: WritingJob = {
+        jobId: id("writing"),
+        title: input.title?.trim() || `Untitled Writing ${taskType}`,
+        taskType,
+        examId: `wt-${taskType}-${Date.now()}`,
+        promptText: input.promptText ?? "",
+        suggestedWordCount,
+        status: "Draft",
+        createdAt: now(),
+        updatedAt: now()
+      };
+      store.writingJobs.push(job);
+      save(store);
+      return job as T;
+    }
+
+    case "list_writing_jobs": {
+      const filter = (args.filter ?? {}) as WritingJobFilter;
+      let list = [...store.writingJobs];
+      if (filter.taskType) list = list.filter((j) => j.taskType === filter.taskType);
+      if (filter.search?.trim()) {
+        const q = filter.search.toLowerCase();
+        list = list.filter((j) => j.title.toLowerCase().includes(q) || j.jobId.toLowerCase().includes(q) || j.examId.toLowerCase().includes(q));
+      }
+      list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return list as T;
+    }
+
+    case "get_writing_job": {
+      const jobId = String(args.jobId ?? "");
+      const job = store.writingJobs.find((j) => j.jobId === jobId);
+      if (!job) throw new Error(`writing_job_not_found:${jobId}`);
+      return job as T;
+    }
+
+    case "update_writing_job": {
+      const jobId = String(args.jobId ?? "");
+      const patch = (args.patch ?? {}) as WritingJobPatch;
+      const job = store.writingJobs.find((j) => j.jobId === jobId);
+      if (!job) throw new Error(`writing_job_not_found:${jobId}`);
+      if (patch.title !== undefined) job.title = patch.title;
+      if (patch.taskType === "task1" || patch.taskType === "task2") job.taskType = patch.taskType;
+      if (patch.examId !== undefined) job.examId = patch.examId;
+      if (patch.promptText !== undefined) job.promptText = patch.promptText;
+      if (patch.suggestedWordCount !== undefined) job.suggestedWordCount = patch.suggestedWordCount;
+      if (patch.status !== undefined) job.status = patch.status;
+      job.updatedAt = now();
+      save(store);
+      return job as T;
+    }
+
+    case "delete_writing_job": {
+      const jobId = String(args.jobId ?? "");
+      store.writingJobs = store.writingJobs.filter((j) => j.jobId !== jobId);
+      save(store);
+      return { deleted: true, jobId } as T;
+    }
+
+    case "export_writing_library": {
+      const input = (args.input ?? {}) as ExportWritingLibraryInput;
+      const jobIds = Array.isArray(input.jobIds) ? input.jobIds : [];
+      if (jobIds.length !== 2) throw new Error("writing_export_requires_two_jobs:task1+task2");
+      const tasks: WritingJob[] = [];
+      for (const jid of jobIds) {
+        const found = store.writingJobs.find((j) => j.jobId === jid);
+        if (!found) throw new Error(`writing_job_not_found:${jid}`);
+        if (!found.promptText.trim()) throw new Error(`writing_export_prompt_empty:${jid}`);
+        tasks.push(found);
+      }
+      const taskTypes = new Set(tasks.map((t) => t.taskType));
+      if (!taskTypes.has("task1") || !taskTypes.has("task2")) {
+        throw new Error("writing_export_requires_both_tasks");
+      }
+      const buildWritingWrapper = (task: WritingJob): string => {
+        const payload = {
+          schemaVersion: "WritingExamSourceV1",
+          examId: task.examId,
+          taskType: task.taskType,
+          promptText: task.promptText,
+          suggestedWordCount: task.suggestedWordCount,
+          meta: { title: task.title, taskType: task.taskType }
+        };
+        return `(function registerWritingExamData(global) {\n  'use strict';\n  if (!global.__WRITING_EXAM_DATA__ || typeof global.__WRITING_EXAM_DATA__.register !== "function") {\n    throw new Error("writing_exam_registry_missing");\n  }\n  global.__WRITING_EXAM_DATA__.register(${JSON.stringify(task.taskType)}, ${JSON.stringify(payload, null, 2)});\n})(typeof window !== "undefined" ? window : globalThis);\n`;
+      };
+      const manifestObj: Record<string, unknown> = {};
+      for (const task of tasks) {
+        manifestObj[task.taskType] = {
+          taskType: task.taskType,
+          examId: task.examId,
+          dataKey: task.taskType,
+          script: `./${task.taskType}.js`,
+          title: task.title
+        };
+      }
+      const manifestJs = `window.__WRITING_EXAM_MANIFEST__ = ${JSON.stringify(manifestObj, null, 2)};\n`;
+      const files = tasks.map((task) => ({ name: `${task.taskType}.js`, content: buildWritingWrapper(task) }));
+      files.push({ name: "manifest.js", content: manifestJs });
+      for (const task of tasks) {
+        task.status = "Exported";
+        task.updatedAt = now();
+      }
+      save(store);
+      const version = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+      return {
+        mode: "writing-library",
+        jobIds: tasks.map((t) => t.jobId),
+        taskTypes: tasks.map((t) => t.taskType),
+        assetCount: tasks.length,
+        libraryRoot: "local://exports/nas-library",
+        writingExamsDir: "local://exports/nas-library/writing-exams",
+        version,
+        files,
+        report: { status: "ok", version, generatedAt: now(), summary: { runtime: "nas-js-direct", writingTaskCount: tasks.length, manifestFileCount: 1 }, errors: [] },
+        exportSummary: { type: "writing-library", runtime: "nas-js-direct", jobIds, version, outputDir: "local://exports/nas-library", writingExamsDir: "local://exports/nas-library/writing-exams", assetCount: tasks.length, exportedAt: now() },
+        cleanup: tasks.map((t) => ({ jobId: t.jobId, taskType: t.taskType, status: "Exported" }))
+      } as T;
     }
 
     default:

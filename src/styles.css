@@ -413,3 +413,56 @@ textarea { min-height: 120px; resize: vertical; }
   margin-top: 4px;
   overflow-wrap: anywhere;
 }
+
+/* ---------- 写作题库创作页（WritingStudio） ---------- */
+.writing-create-form {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.writing-create-form label {
+  margin: 0;
+}
+.writing-create-form button {
+  justify-self: start;
+}
+
+.writing-editor-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.writing-edit-form {
+  display: grid;
+  gap: 14px;
+}
+.writing-edit-form label {
+  margin: 0;
+}
+.writing-prompt-textarea {
+  min-height: 280px;
+  font-family: var(--font-display);
+  line-height: 1.7;
+  resize: vertical;
+}
+.writing-edit-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.writing-status-hint {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 写作任务列表选中态（job-row.is-active） */
+.job-row.is-active {
+  border-color: var(--accent);
+  background: rgba(31, 138, 112, 0.12);
+}

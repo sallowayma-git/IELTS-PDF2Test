@@ -18,6 +18,7 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
         </div>
         <div className="hero-actions">
           <button className="primary" onClick={() => go("/jobs/new")}>新建导题任务</button>
+          <button className="ghost" onClick={() => go("/writing")}>写作题创作</button>
         </div>
       </div>
 

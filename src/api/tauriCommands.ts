@@ -28,7 +28,13 @@ import type {
   SourceFileRole,
   SourceReview,
   SplitCandidates,
-  ValidationReport
+  ValidationReport,
+  WritingJob,
+  CreateWritingJobInput,
+  WritingJobPatch,
+  WritingJobFilter,
+  ExportWritingLibraryInput,
+  WritingExportResult
 } from "../types";
 import { devFallbackInvoke, type JobDetail } from "../services/devFallbackBackend";
 
@@ -187,4 +193,29 @@ export async function exportNasLibrary(input: ExportNasLibraryInput): Promise<Na
 
 export async function buildPack(input: BuildPackInput): Promise<PackBuildResult> {
   return command("build_pack", { input });
+}
+
+// ---------- 写作题库命令 ----------
+export async function createWritingJob(input: CreateWritingJobInput): Promise<WritingJob> {
+  return command("create_writing_job", { input });
+}
+
+export async function listWritingJobs(filter: WritingJobFilter = {}): Promise<WritingJob[]> {
+  return command("list_writing_jobs", { filter });
+}
+
+export async function getWritingJob(jobId: string): Promise<WritingJob> {
+  return command("get_writing_job", { jobId });
+}
+
+export async function updateWritingJob(jobId: string, patch: WritingJobPatch): Promise<WritingJob> {
+  return command("update_writing_job", { jobId, patch });
+}
+
+export async function deleteWritingJob(jobId: string): Promise<{ deleted: true; jobId: string }> {
+  return command("delete_writing_job", { jobId });
+}
+
+export async function exportWritingLibrary(input: ExportWritingLibraryInput): Promise<WritingExportResult> {
+  return command("export_writing_library", { input });
 }

@@ -7,6 +7,7 @@ import { JobList } from "../pages/JobList";
 import { Settings } from "../pages/Settings";
 import { UnifiedPreview } from "../pages/UnifiedPreview";
 import { ExportPage } from "../pages/ExportPage";
+import { WritingStudio } from "../pages/WritingStudio";
 import { getJob, listJobs } from "../api/tauriCommands";
 import type { ImportJob } from "../types";
 import { parseRoute, type RouteState } from "./router";
@@ -52,6 +53,7 @@ export function App() {
     if (route.jobId && route.name === "preview") return <UnifiedPreview jobId={route.jobId} {...common} />;
     if (route.jobId && route.name === "export") return <ExportPage jobId={route.jobId} jobs={jobs} {...common} />;
     if (route.name === "packs") return <ExportPage jobs={jobs} {...common} />;
+    if (route.name === "writing") return <WritingStudio {...common} />;
     if (route.name === "settings") return <Settings refresh={refresh} />;
     return <Dashboard jobs={jobs} refresh={refresh} />;
   }, [jobs, route, refreshToken]);

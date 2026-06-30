@@ -9,6 +9,7 @@ export type RouteName =
   | "preview"
   | "export"
   | "packs"
+  | "writing"
   | "settings";
 
 export interface RouteState {
@@ -28,6 +29,7 @@ export function parseRoute(hash = window.location.hash): RouteState {
     return { name: "document", jobId };
   }
   if (parts[0] === "packs") return { name: "packs" };
+  if (parts[0] === "writing") return { name: "writing" };
   if (parts[0] === "settings") return { name: "settings" };
   if (parts[0] === "jobs") return { name: "jobs" };
   return { name: "dashboard" };

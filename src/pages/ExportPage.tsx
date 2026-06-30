@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../api/desktopDialogs";
-import { buildPack, exportNasLibrary, exportReadingAssets, exportReadingJs } from "../api/tauriCommands";
+import { buildPack, exportNasLibrary, exportReadingAssets, exportReadingJs, exportWritingLibrary, listWritingJobs } from "../api/tauriCommands";
 import { StatusPill } from "../components/StatusPill";
-import type { ExportResult, ImportJob, JsExportResult, NasExportResult, PackBuildResult, ValidationIssue } from "../types";
+import type { ExportResult, ImportJob, JsExportResult, NasExportResult, PackBuildResult, ValidationIssue, WritingExportResult, WritingJob } from "../types";
 import { validationIssueDisplay } from "../utils/displayLabels";
 
-type ExportMode = "single-js" | "batch-js" | "full-assets" | "nas-library";
+type ExportMode = "single-js" | "batch-js" | "full-assets" | "nas-library" | "writing-library";
 
 const EXPORTABLE_STATUSES = new Set(["DraftSaved", "ExportReady", "Exported", "Cleaned"]);
 const PACKABLE_STATUSES = new Set(["ExportReady", "Exported", "Cleaned"]);
@@ -95,6 +95,12 @@ export function ExportPage({
   const [diagnostics, setDiagnostics] = useState<ExportDiagnostics | undefined>();
   const [running, setRunning] = useState(false);
   const [packRunning, setPackRunning] = useState(false);
+
+  // ---------- 写作导出状态 ----------
+  const [writingJobs, setWritingJobs] = useState<WritingJob[]>([]);
+  const [writingSelected, setWritingSelected] = useState<string[]>([]);
+  const [writingResult, setWritingResult] = useState<WritingExportResult | undefined>();
+  const [writingRunning, setWritingRunning] = useState(false);
 
   const exportable = useMemo(
     () => jobs.filter((job) => EXPORTABLE_STATUSES.has(job.status)),
@@ -206,6 +212,46 @@ export function ExportPage({
     void run("single-js", [jobId]);
   }, [jobId]);
 
+  // 加载写作任务列表（写作导出模式用）
+  const [writingRefreshTick, setWritingRefreshTick] = useState(0);
+  useEffect(() => {
+    void listWritingJobs().then((list) => {
+      setWritingJobs(list);
+      setWritingSelected((current) => {
+        if (current.length) return current;
+        // 默认预选一个 task1 + 一个 task2
+        const task1 = list.find((j) => j.taskType === "task1");
+        const task2 = list.find((j) => j.taskType === "task2");
+        return [task1?.jobId, task2?.jobId].filter(Boolean) as string[];
+      });
+    }).catch(() => setWritingJobs([]));
+  }, [writingRefreshTick]);
+
+  const writingExportable = useMemo(
+    () => writingJobs.filter((j) => j.status === "ExportReady" || j.status === "Exported"),
+    [writingJobs]
+  );
+  const writingTask1 = writingExportable.find((j) => j.taskType === "task1");
+  const writingTask2 = writingExportable.find((j) => j.taskType === "task2");
+  const canExportWriting = Boolean(writingTask1) && Boolean(writingTask2)
+    && writingSelected.length === 2
+    && new Set(writingSelected).size === 2;
+
+  async function runWritingExport() {
+    setWritingRunning(true);
+    setError(undefined);
+    setWritingResult(undefined);
+    try {
+      const result = await exportWritingLibrary({ jobIds: writingSelected, exportDir });
+      setWritingResult(result);
+      refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setWritingRunning(false);
+    }
+  }
+
   const previewText =
     mode === "full-assets"
       ? singleResult?.files.find((file) => file.name.endsWith(".js") && file.name !== "manifest.js")
@@ -308,6 +354,13 @@ export function ExportPage({
             >
               NAS 题库
             </button>
+            <button
+              className={mode === "writing-library" ? "primary" : "ghost"}
+              data-testid="mode-writing-library"
+              onClick={() => setMode("writing-library")}
+            >
+              写作题库
+            </button>
           </div>
           <div className="path-picker">
             <span>
@@ -339,6 +392,57 @@ export function ExportPage({
                 </label>
               ))}
               {!exportable.length ? <p className="empty">当前没有可直接导出的题目。</p> : null}
+            </>
+          ) : null}
+          {mode === "writing-library" ? (
+            <>
+              <h3>选择 Task 1 与 Task 2 写作任务</h3>
+              <p className="muted-inline">写作题库需选一个 Task 1 + 一个 Task 2，且二者都需先在写作创作页标记为「可导出」。</p>
+              {writingExportable.map((job) => (
+                <label className="pick-row" key={job.jobId}>
+                  <input
+                    type="checkbox"
+                    data-testid="writing-job-checkbox"
+                    checked={writingSelected.includes(job.jobId)}
+                    onChange={(event) =>
+                      setWritingSelected((current) => {
+                        const next = event.target.checked
+                          ? (current.includes(job.jobId) ? current : [...current, job.jobId])
+                          : current.filter((id) => id !== job.jobId);
+                        // 最多选两个，且应覆盖 task1+task2
+                        return next.slice(-2);
+                      })
+                    }
+                  />
+                  <span>{job.title}</span>
+                  <small>{job.taskType} · {job.examId}</small>
+                  <StatusPill status={mapWritingStatusToJobStatus(job.status)} />
+                </label>
+              ))}
+              {!writingExportable.length ? (
+                <p className="empty">暂无可导出的写作任务。请到「写作创作」页创建并标记为可导出。</p>
+              ) : !canExportWriting ? (
+                <p className="warning-box">需同时勾选一个 Task 1 和一个 Task 2。</p>
+              ) : null}
+              <p>
+                <button
+                  className="primary"
+                  data-testid="export-writing-library"
+                  disabled={writingRunning || !canExportWriting}
+                  onClick={() => void runWritingExport()}
+                >
+                  {writingRunning ? "正在导出写作题库..." : "导出写作题库"}
+                </button>
+              </p>
+              {writingResult ? (
+                <div className="warning-box" data-testid="writing-export-result">
+                  <strong>写作题库已导出</strong>
+                  <p>版本：<code>{writingResult.version}</code></p>
+                  <p>输出目录：<code>{writingResult.writingExamsDir}</code></p>
+                  <p>文件：{writingResult.files.map((f) => f.name).join("、")}</p>
+                  <small>把 {writingResult.writingExamsDir} 下的 manifest.js + task1.js + task2.js 放进 NAS 学生端 publish/assets/generated/writing-exams/ 即可被识别。</small>
+                </div>
+              ) : null}
             </>
           ) : null}
           {error ? (
@@ -449,4 +553,10 @@ export function ExportPage({
       </div>
     </section>
   );
+}
+
+function mapWritingStatusToJobStatus(status: WritingJob["status"]): "Working" | "DraftSaved" | "ExportReady" | "Exported" {
+  if (status === "Exported") return "Exported";
+  if (status === "ExportReady") return "ExportReady";
+  return "DraftSaved";
 }

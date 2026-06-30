@@ -9,6 +9,7 @@ use diagnostics::DiagnosticsSettings;
 use export_artifacts::{build_manifest, build_wrapper, safe_exam_id};
 use export_nas_library::export_nas_library_core;
 use export_pack::{build_pack_core, export_reading_assets_core, export_reading_js_core};
+use export_writing_library::export_writing_library_core;
 use llm_commands::{
     apply_llm_suggestion_core, delete_llm_profile_core, llm_run_group_core, save_llm_profile_core,
     test_llm_profile_core,
@@ -36,6 +37,7 @@ mod environment;
 mod export_artifacts;
 mod export_nas_library;
 mod export_pack;
+mod export_writing_library;
 mod job_commands;
 mod job_store;
 mod llm_commands;
@@ -43,6 +45,7 @@ mod llm_gateway;
 mod llm_profiles;
 mod llm_suggestions;
 mod parser;
+mod pdf_geometry;
 mod preview_commands;
 mod reading_source;
 mod runtime_validation;
@@ -50,6 +53,7 @@ mod source_review;
 mod util;
 mod validator;
 mod workflow_state;
+mod writing_store;
 use tauri::{AppHandle, Manager};
 
 pub type CommandResult<T> = Result<T, String>;
@@ -955,6 +959,83 @@ async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
     build_pack_core(&root, &input, true)
 }
 
+// ---------- 写作题库命令（独立模型，不污染阅读 ImportJob）----------
+#[tauri::command]
+async fn create_writing_job(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    util::ensure_app_dirs(&root)?;
+    let parsed: writing_store::CreateWritingJobInput = serde_json::from_value(input)
+        .map_err(|error| format!("create_writing_job_invalid_input:{}", error))?;
+    let job = writing_store::make_writing_job(parsed);
+    writing_store::save_writing_job(&root, &job)?;
+    Ok(serde_json::to_value(&job).map_err(|error| error.to_string())?)
+}
+
+#[tauri::command]
+async fn list_writing_jobs(filter: Option<Value>, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let parsed_filter = match filter {
+        Some(value) => Some(
+            serde_json::from_value::<writing_store::WritingJobFilter>(value)
+                .map_err(|error| format!("list_writing_jobs_invalid_filter:{}", error))?,
+        ),
+        None => None,
+    };
+    let jobs = writing_store::list_writing_jobs(&root, parsed_filter)?;
+    Ok(serde_json::to_value(&jobs).map_err(|error| error.to_string())?)
+}
+
+#[tauri::command]
+async fn get_writing_job(job_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let job = writing_store::load_writing_job(&root, &job_id)?;
+    Ok(serde_json::to_value(&job).map_err(|error| error.to_string())?)
+}
+
+#[tauri::command]
+async fn update_writing_job(job_id: String, patch: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let parsed: writing_store::WritingJobPatch = serde_json::from_value(patch)
+        .map_err(|error| format!("update_writing_job_invalid_patch:{}", error))?;
+    let job = writing_store::update_writing_job(&root, &job_id, |job| {
+        if let Some(title) = parsed.title {
+            job.title = title;
+        }
+        if let Some(task_type) = parsed.task_type {
+            let normalized = task_type.trim().to_lowercase();
+            if normalized == "task1" || normalized == "task2" {
+                job.task_type = normalized;
+            }
+        }
+        if let Some(exam_id) = parsed.exam_id {
+            job.exam_id = exam_id;
+        }
+        if let Some(prompt_text) = parsed.prompt_text {
+            job.prompt_text = prompt_text;
+        }
+        if let Some(suggested_word_count) = parsed.suggested_word_count {
+            job.suggested_word_count = suggested_word_count;
+        }
+        if let Some(status) = parsed.status {
+            job.status = status;
+        }
+    })?;
+    Ok(serde_json::to_value(&job).map_err(|error| error.to_string())?)
+}
+
+#[tauri::command]
+async fn delete_writing_job(job_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    writing_store::delete_writing_job(&root, &job_id)?;
+    Ok(json!({ "deleted": true, "jobId": job_id }))
+}
+
+#[tauri::command]
+async fn export_writing_library(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    export_writing_library_core(&root, &input)
+}
+
 #[tauri::command]
 async fn run_auto_pipeline(
     job_id: String,
@@ -1027,6 +1108,12 @@ pub fn run() {
             export_reading_assets,
             export_reading_js,
             export_nas_library,
+            export_writing_library,
+            create_writing_job,
+            list_writing_jobs,
+            get_writing_job,
+            update_writing_job,
+            delete_writing_job,
             build_pack
         ])
         .run(tauri::generate_context!())
@@ -7220,6 +7307,172 @@ Answers
     #[test]
     fn complex_docx_fixture_reaches_authoring_ir() {
         assert_complex_fixture_pipeline("complex-reading.docx", "rust-parser:docx:ooxml");
+    }
+
+    /// Regression test for the demanding DOCX fixture that marks structure ONLY
+    /// via run-level formatting (bold/centered/font-size) — no Heading styles,
+    /// no numbering, no tables. Verifies the parser now captures `runFormat`
+    /// and infers synthetic heading levels so passage sub-headings and the
+    /// centered passage title are recognized.
+    #[test]
+    fn demanding_docx_run_format_detects_bold_subheadings_and_title() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let output = env::temp_dir().join(format!(
+            "epic8-demanding-docx-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &parser_fixture("demanding-reading-passage-1.docx"),
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let _ = fs::remove_file(&output);
+
+        // Collect every block's text + runFormat + headingLevel.
+        let mut blocks: Vec<(String, Option<Value>, Option<u64>)> = Vec::new();
+        for page in doc.get("pages").and_then(Value::as_array).into_iter().flatten() {
+            for block in page.get("blocks").and_then(Value::as_array).into_iter().flatten() {
+                let text = block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let run_format = block
+                    .pointer("/layoutHints/runFormat")
+                    .cloned();
+                let heading_level = block
+                    .pointer("/layoutHints/headingLevel")
+                    .and_then(Value::as_u64);
+                blocks.push((text, run_format, heading_level));
+            }
+        }
+
+        // The centered, bold, largest-font passage title must be a heading.
+        let title = blocks
+            .iter()
+            .find(|(text, _, _)| text == "The history of lighting");
+        assert!(title.is_some(), "passage title block should be present");
+        let (_, title_fmt, title_hl) = title.unwrap();
+        let title_fmt = title_fmt.as_ref().expect("title must have runFormat");
+        assert_eq!(
+            title_fmt.get("bold").and_then(Value::as_bool),
+            Some(true),
+            "title must be bold"
+        );
+        assert_eq!(
+            title_fmt.get("centered").and_then(Value::as_bool),
+            Some(true),
+            "title must be centered"
+        );
+        assert_eq!(*title_hl, Some(2), "centered title should be heading level 2");
+
+        // Each bold sub-heading should be detected as a heading (level 3).
+        for subheading in ["Candlelight", "Oil lamps", "Gas lighting", "Electricity"] {
+            let found = blocks.iter().find(|(text, _, _)| text == subheading);
+            assert!(found.is_some(), "sub-heading {} should be present", subheading);
+            let (_, fmt, hl) = found.unwrap();
+            let fmt = fmt.as_ref().expect("sub-heading must have runFormat");
+            assert_eq!(
+                fmt.get("bold").and_then(Value::as_bool),
+                Some(true),
+                "sub-heading {} must be bold",
+                subheading
+            );
+            assert_eq!(
+                *hl, Some(3),
+                "sub-heading {} should be heading level 3",
+                subheading
+            );
+        }
+
+        // Body paragraphs must NOT be flagged as headings.
+        let body = blocks
+            .iter()
+            .find(|(text, _, _)| text.starts_with("We forget how painfully dark"));
+        assert!(body.is_some(), "a body paragraph should be present");
+        let (_, body_fmt, body_hl) = body.unwrap();
+        if let Some(fmt) = body_fmt.as_ref() {
+            assert_ne!(
+                fmt.get("bold").and_then(Value::as_bool),
+                Some(true),
+                "body paragraph must not be bold"
+            );
+        }
+        assert_eq!(*body_hl, None, "body paragraph must not be a heading");
+    }
+
+    /// Regression test for the demanding PDF fixture (2-column passage, A-H
+    /// option grid, mixed blank markers, no answer key). When the pdfium
+    /// library is available, verifies the parser yields REAL coordinates (not
+    /// the fabricated [72, *, 520, *] envelope) and that the 2-column passage
+    /// page is correctly split into left/right columns. Skips gracefully when
+    /// pdfium is not bundled (e.g. CI without the binary).
+    #[test]
+    fn demanding_pdf_pdfium_yields_real_coordinates_and_column_split() {
+        if crate::pdf_geometry::pdfium_library_path().is_none() {
+            // pdfium binary not available in this environment — skip.
+            return;
+        }
+        let mut job = test_job();
+        job.source_files = vec![test_source("pdf")];
+        let output = env::temp_dir().join(format!(
+            "epic8-demanding-pdf-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &parser_fixture("demanding-reading-passage-3.pdf"),
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let _ = fs::remove_file(&output);
+
+        // Provider must be pdfium (real coordinates), not the text-layer fallback.
+        let provider = doc
+            .pointer("/parser/provider")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert_eq!(
+            provider, "rust-parser:pdf:pdfium",
+            "pdfium backend should be used when the library is available"
+        );
+
+        // At least one block must escape the fabricated bbox envelope
+        // [72, *, 520, *] — i.e. have a real x1 > 520.5 or real x0 < 71.5.
+        let mut has_real_coord = false;
+        let mut page0_has_right_column = false;
+        for page in doc.get("pages").and_then(Value::as_array).into_iter().flatten() {
+            let page_index = page.get("pageIndex").and_then(Value::as_u64).unwrap_or(0);
+            for block in page.get("blocks").and_then(Value::as_array).into_iter().flatten() {
+                if let Some(bbox) = block.get("bbox").and_then(Value::as_array) {
+                    let x0 = bbox.first().and_then(Value::as_f64).unwrap_or(0.0);
+                    let x1 = bbox.get(2).and_then(Value::as_f64).unwrap_or(0.0);
+                    if x1 > 520.5 || x0 < 71.5 {
+                        has_real_coord = true;
+                    }
+                    // On the 2-column passage page, a right-column block has
+                    // x0 clearly past the gutter (> 300 on a 612pt page).
+                    if page_index == 1 && x0 > 300.0 {
+                        page0_has_right_column = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            has_real_coord,
+            "pdfium must produce real coordinates, not the fabricated envelope"
+        );
+        assert!(
+            page0_has_right_column,
+            "the 2-column passage page must contain right-column blocks (column split working)"
+        );
     }
 
     #[test]

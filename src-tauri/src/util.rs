@@ -47,11 +47,26 @@ pub(crate) fn safe_job_dir(root: &Path, job_id: &str) -> CommandResult<PathBuf> 
     Ok(job_dir(root, job_id))
 }
 
+pub(crate) fn writing_job_dir(root: &Path, job_id: &str) -> PathBuf {
+    let segment = if is_safe_path_segment(job_id) {
+        job_id
+    } else {
+        "__invalid_writing_job_id__"
+    };
+    root.join("writing-jobs").join(segment)
+}
+
+pub(crate) fn safe_writing_job_dir(root: &Path, job_id: &str) -> CommandResult<PathBuf> {
+    validate_path_segment("writing_job_id", job_id)?;
+    Ok(writing_job_dir(root, job_id))
+}
+
 pub(crate) fn ensure_app_dirs(root: &Path) -> CommandResult<()> {
     for relative in [
         "config",
         "config/secrets",
         "jobs",
+        "writing-jobs",
         "packs",
         "logs",
         "cache",
