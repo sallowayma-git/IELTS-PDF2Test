@@ -4,12 +4,6 @@
     "resources": [
       "../sidecars",
       "lib/pdfium-windows/pdfium.dll"
-    ],
-    "windows": {
-      "webviewInstallMode": {
-        "type": "offlineInstaller",
-        "silent": true
-      }
-    }
+    ]
   }
 }

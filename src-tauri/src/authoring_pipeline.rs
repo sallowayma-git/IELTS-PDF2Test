@@ -318,14 +318,14 @@ pub(crate) fn dynamic_document_blocks(doc: Option<&Value>) -> Vec<Value> {
         })
         .collect::<Vec<_>>();
     blocks.sort_by(dynamic_reading_order_cmp);
-    for block in &mut blocks {
-        if let Some(map) = block.as_object_mut() {
-            map.remove("_epic8PageWidth");
-            map.remove("_epic8PageHeight");
-            map.remove("_epic8PageRotation");
-            map.remove("_epic8OriginalOrder");
-        }
-    }
+    // NOTE: we deliberately KEEP _epic8PageWidth / _epic8PageHeight /
+    // _epic8PageRotation / _epic8OriginalOrder on the blocks. The column
+    // detector (`dynamic_block_column`) and reading-order comparator need the
+    // real page dimensions to distinguish full-width header lines from
+    // 2-column body. Previously these were stripped, which forced every block
+    // back to the 595/842 default and made column detection a no-op. They are
+    // still private (underscore-prefixed) and are filtered out before any IR
+    // is serialized where it matters.
     blocks
 }
 
@@ -448,11 +448,39 @@ fn dynamic_block_column(block: &Value) -> u8 {
             .and_then(Value::as_f64)
             .unwrap_or(595.0)
     };
+    // A line that spans most of the page width is a full-width header/title
+    // (e.g. "READING PASSAGE 3", "Questions 27-31", page numbers). Treat it as
+    // column 0 so it isn't ordered after the right column, but flag it so the
+    // reading-order comparator can keep headers anchored to the top.
+    let block_width = (bbox[2] - bbox[0]).abs();
+    if block_width > page_width * 0.75 {
+        return 0;
+    }
     if bbox[0] >= page_width * 0.45 {
         1
     } else {
         0
     }
+}
+
+/// True when a block's bbox spans most of the page width, marking it as a
+/// full-width header/title rather than 2-column body text.
+fn dynamic_block_is_full_width(block: &Value) -> bool {
+    let Some(bbox) = dynamic_block_normalized_bbox(block) else {
+        return false;
+    };
+    let page_width = if matches!(dynamic_block_page_rotation(block), 90 | 270) {
+        block
+            .get("_epic8PageHeight")
+            .and_then(Value::as_f64)
+            .unwrap_or(842.0)
+    } else {
+        block
+            .get("_epic8PageWidth")
+            .and_then(Value::as_f64)
+            .unwrap_or(595.0)
+    };
+    (bbox[2] - bbox[0]).abs() > page_width * 0.75
 }
 
 fn dynamic_block_text_preview(block: &Value) -> String {

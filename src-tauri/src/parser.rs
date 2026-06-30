@@ -149,6 +149,40 @@ fn markdownish_to_html(text: &str, block_type: &str) -> String {
     }
 }
 
+// --- pub(crate) re-exports so the pdfium geometry backend can reuse the same
+// block-shaping helpers without duplicating the heuristics. ---
+pub(crate) fn block_type_for_text_pub(text: &str) -> &'static str {
+    block_type_for_text(text)
+}
+
+pub(crate) fn role_hint_for_text_pub(text: &str) -> Option<&'static str> {
+    role_hint_for_text(text)
+}
+
+pub(crate) fn markdownish_to_html_pub(text: &str, block_type: &str) -> String {
+    markdownish_to_html(text, block_type)
+}
+
+pub(crate) fn stabilize_pdf_image_extraction_fields_pub(
+    extraction: &mut Value,
+    renderer_adapter: Option<&str>,
+    renderer_provider: Option<&str>,
+    renderer_version: Option<Value>,
+    dpi: Option<u64>,
+    failure_reason: Option<&str>,
+    requires_manual_review: Option<bool>,
+) {
+    stabilize_pdf_image_extraction_fields(
+        extraction,
+        renderer_adapter,
+        renderer_provider,
+        renderer_version,
+        dpi,
+        failure_reason,
+        requires_manual_review,
+    )
+}
+
 fn table_ir_to_html(table: &TableIr) -> String {
     let rows = (0..table.rows)
         .map(|row| {
@@ -436,6 +470,48 @@ fn parse_pdf_with_rust_text_extractor(
     output_path: &Path,
     mode: &str,
 ) -> CommandResult<Value> {
+    // Prefer the pdfium backend, which yields REAL per-character coordinates
+    // so multi-column detection and reading-order reconstruction actually
+    // work. Fall back to the text-layer extractor (no coordinates) only when
+    // the native pdfium library is unavailable or the PDF cannot be opened.
+    match crate::pdf_geometry::parse_pdf_with_pdfium(job, source, upload_path, output_path, mode) {
+        Ok(ir) => return Ok(ir),
+        Err(failure) if failure.starts_with("pdfium_library_unavailable") => {
+            // Library missing: fall through silently to the text-layer path.
+        }
+        Err(failure) if failure.starts_with("pdfium_bind") => {
+            // Library binding failed: fall through silently to the text-layer path.
+        }
+        Err(other) => {
+            // pdfium was loadable but the specific PDF failed. Record a
+            // warning and fall back, so a single corrupt PDF doesn't block
+            // the whole pipeline.
+            let mut fallback = parse_pdf_with_text_layer(job, source, upload_path, output_path, mode)?;
+            if let Some(parser) = fallback.get_mut("parser").and_then(Value::as_object_mut) {
+                let warnings = parser
+                    .entry("warnings".to_string())
+                    .or_insert_with(|| json!([]));
+                if let Some(items) = warnings.as_array_mut() {
+                    items.push(json!(format!("pdfium_backend_fell_back_to_text_layer:{}", other)));
+                }
+            }
+            return Ok(fallback);
+        }
+    }
+    parse_pdf_with_text_layer(job, source, upload_path, output_path, mode)
+}
+
+/// Text-layer-only PDF parser (no real coordinates). Retained as the fallback
+/// for environments where the native pdfium library is not available. Blocks
+/// carry a fabricated `bbox: [72, y0, 520, y0+36]` envelope; column detection
+/// (`dynamic_block_column`) therefore degrades to column 0 on this path.
+fn parse_pdf_with_text_layer(
+    job: &ImportJob,
+    source: &SourceFile,
+    upload_path: &Path,
+    output_path: &Path,
+    mode: &str,
+) -> CommandResult<Value> {
     let extracted_pages = pdf_extract::extract_text_by_pages(upload_path)
         .map_err(|error| format!("rust_pdf_extract_failed:{}", error))?;
     let mut warnings = Vec::<String>::new();
@@ -607,6 +683,19 @@ struct DocxParagraphMeta {
     abstract_numbering_id: Option<String>,
     style_heading_level: Option<u32>,
     section_columns: Option<DocxSectionColumns>,
+    // Run-level formatting captured from w:rPr. These are None when the run
+    // properties were absent; Some(false) when explicitly turned off (e.g.
+    // <w:b w:val="0"/>). Used to recognise passage titles / sub-headings in
+    // documents that have no Heading styles (a common export pattern).
+    is_bold: Option<bool>,
+    is_italic: Option<bool>,
+    max_font_size_half_pts: Option<u32>,
+    min_font_size_half_pts: Option<u32>,
+    justification: Option<String>,
+    has_page_break_before: Option<bool>,
+    /// Set by the parser after the paragraph text is known, so heading-level
+    /// inference can apply length/punctuation heuristics.
+    run_heading_level: Option<u32>,
 }
 
 impl DocxParagraphMeta {
@@ -618,12 +707,18 @@ impl DocxParagraphMeta {
         if let Some(level) = self.style_heading_level {
             return Some(level);
         }
-        let style = self.style_id.as_deref()?.to_ascii_lowercase();
-        style
-            .strip_prefix("heading")
-            .or_else(|| style.strip_prefix("标题"))
-            .and_then(|suffix| suffix.chars().find(|ch| ch.is_ascii_digit()))
-            .and_then(|ch| ch.to_digit(10))
+        // Derive a level from the paragraph style id (e.g. "Heading1" /
+        // "标题2") when present. If there is no style id at all, fall through
+        // to the run-format-derived level rather than returning early.
+        let from_style = self.style_id.as_deref().and_then(|raw_style| {
+            let style = raw_style.to_ascii_lowercase();
+            style
+                .strip_prefix("heading")
+                .or_else(|| style.strip_prefix("标题"))
+                .and_then(|suffix| suffix.chars().find(|ch| ch.is_ascii_digit()))
+                .and_then(|ch| ch.to_digit(10))
+        });
+        from_style.or(self.run_heading_level)
     }
 
     fn block_kind(&self) -> &'static str {
@@ -636,14 +731,58 @@ impl DocxParagraphMeta {
         }
     }
 
+    /// Infer a synthetic heading level from run formatting when there is no
+    /// Heading style and no list numbering. Only fires for short, bold,
+    /// period-less paragraphs — the signature of a passage sub-heading or
+    /// title in Normal-styled IELTS DOCX exports.
+    fn infer_run_heading_level(&self, text: &str) -> Option<u32> {
+        if self.style_heading_level.is_some() || self.is_list() {
+            return None;
+        }
+        let bold = self.is_bold.unwrap_or(false);
+        let trimmed = text.trim();
+        let count = trimmed.chars().count();
+        let ends_period = matches!(trimmed.chars().last(), Some('.') | Some('。'));
+        let centered = self
+            .justification
+            .as_deref()
+            .map(|value| value.eq_ignore_ascii_case("center"))
+            .unwrap_or(false);
+        if !bold || trimmed.is_empty() || count > 30 || ends_period {
+            return None;
+        }
+        // A bold, short, period-less paragraph with no Heading style is a
+        // passage sub-heading (level 3) or, when centered, the passage title
+        // (level 2). This rescues IELTS DOCX exports that mark structure only
+        // via run formatting rather than Heading styles.
+        if centered { Some(2) } else { Some(3) }
+    }
+
     fn layout_hints(&self) -> Option<Value> {
+        let has_run_format = self.is_bold.is_some()
+            || self.is_italic.is_some()
+            || self.max_font_size_half_pts.is_some()
+            || self.justification.is_some()
+            || self.has_page_break_before.unwrap_or(false);
         if self.style_id.is_none()
             && self.numbering_id.is_none()
             && self.numbering_level.is_none()
             && self.section_columns.is_none()
+            && !has_run_format
         {
             return None;
         }
+        let run_format = if has_run_format {
+            json!({
+                "bold": self.is_bold.unwrap_or(false),
+                "italic": self.is_italic.unwrap_or(false),
+                "fontSize": self.max_font_size_half_pts,
+                "centered": self.justification.as_deref().map(|value| value.eq_ignore_ascii_case("center")).unwrap_or(false),
+                "pageBreakBefore": self.has_page_break_before.unwrap_or(false)
+            })
+        } else {
+            Value::Null
+        };
         Some(json!({
             "source": "docx-ooxml-paragraph",
             "styleId": self.style_id,
@@ -668,7 +807,8 @@ impl DocxParagraphMeta {
                     "spaceTwips": columns.space_twips,
                     "equalWidth": columns.equal_width
                 }
-            })).unwrap_or(Value::Null)
+            })).unwrap_or(Value::Null),
+            "runFormat": run_format
         }))
     }
 }
@@ -964,6 +1104,15 @@ fn parse_docx_document_xml(
     let mut in_numbering_properties = false;
     let mut in_section_properties = false;
     let mut in_table_cell_properties = false;
+    // Run-level formatting tracking. w:rPr lives inside w:r and is distinct
+    // from w:pPr (paragraph properties). We accumulate bold/italic/font-size
+    // across runs so a paragraph is considered bold if ANY run is bold.
+    let mut in_run = false;
+    let mut in_run_properties = false;
+    let mut run_is_bold = false;
+    let mut run_is_italic = false;
+    let mut run_font_size: Option<u32> = None;
+    let mut pending_page_break = false;
 
     loop {
         match reader
@@ -999,6 +1148,36 @@ fn parse_docx_document_xml(
                     in_numbering_properties = true;
                 } else if is_word_tag(&name, b"sectPr") {
                     in_section_properties = true;
+                    // A sectPr inside a paragraph's pPr marks a page/section
+                    // break that precedes this paragraph's content visually.
+                    if in_paragraph_properties {
+                        pending_page_break = true;
+                    }
+                } else if is_word_tag(&name, b"r") {
+                    in_run = true;
+                    run_is_bold = false;
+                    run_is_italic = false;
+                    run_font_size = None;
+                } else if is_word_tag(&name, b"rPr") && in_run {
+                    in_run_properties = true;
+                } else if is_word_tag(&name, b"b")
+                    || is_word_tag(&name, b"bCs")
+                {
+                    if in_run_properties {
+                        run_is_bold = attr_value(&event, b"val")
+                            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+                            .unwrap_or(true);
+                    }
+                } else if is_word_tag(&name, b"i") || is_word_tag(&name, b"iCs") {
+                    if in_run_properties {
+                        run_is_italic = attr_value(&event, b"val")
+                            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+                            .unwrap_or(true);
+                    }
+                } else if is_word_tag(&name, b"sz") && in_run_properties {
+                    run_font_size = attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                } else if is_word_tag(&name, b"jc") && in_paragraph_properties {
+                    paragraph_meta.justification = attr_value(&event, b"val");
                 } else if is_word_tag(&name, b"pStyle") && in_paragraph_properties {
                     paragraph_meta.style_id = attr_value(&event, b"val");
                 } else if is_word_tag(&name, b"ilvl") && in_numbering_properties {
@@ -1033,6 +1212,24 @@ fn parse_docx_document_xml(
                         attr_value(&event, b"val").and_then(|value| value.parse::<u32>().ok());
                 } else if is_word_tag(&name, b"numId") && in_numbering_properties {
                     paragraph_meta.numbering_id = attr_value(&event, b"val");
+                } else if is_word_tag(&name, b"b") || is_word_tag(&name, b"bCs") {
+                    if in_run_properties {
+                        run_is_bold = attr_value(&event, b"val")
+                            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+                            .unwrap_or(true);
+                    }
+                } else if is_word_tag(&name, b"i") || is_word_tag(&name, b"iCs") {
+                    if in_run_properties {
+                        run_is_italic = attr_value(&event, b"val")
+                            .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+                            .unwrap_or(true);
+                    }
+                } else if is_word_tag(&name, b"sz") && in_run_properties {
+                    run_font_size = attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                } else if is_word_tag(&name, b"jc") && in_paragraph_properties {
+                    paragraph_meta.justification = attr_value(&event, b"val");
+                } else if is_word_tag(&name, b"br") || is_word_tag(&name, b"lastRenderedPageBreak") {
+                    // page break within a run
                 } else if is_word_tag(&name, b"cols") && in_section_properties {
                     let columns = DocxSectionColumns {
                         count: attr_value(&event, b"num").and_then(|value| value.parse().ok()),
@@ -1084,6 +1281,11 @@ fn parse_docx_document_xml(
                             resolved_meta.abstract_numbering_id = abstract_id;
                             resolved_meta.numbering_format = numbering_format;
                             resolved_meta.numbering_text = numbering_text;
+                            // Infer a synthetic heading level from run formatting
+                            // (bold/centered/short) when no Heading style applies.
+                            resolved_meta.run_heading_level =
+                                resolved_meta.infer_run_heading_level(&collapsed);
+                            resolved_meta.has_page_break_before = Some(pending_page_break);
                             blocks.push(DocxRawBlock {
                                 kind: resolved_meta.block_kind(),
                                 text: collapsed,
@@ -1093,6 +1295,37 @@ fn parse_docx_document_xml(
                         }
                     }
                     paragraph_text.clear();
+                    pending_page_break = false;
+                } else if is_word_tag(&name, b"r") {
+                    // Fold this run's formatting into the paragraph aggregate.
+                    if run_is_bold {
+                        paragraph_meta.is_bold = Some(true);
+                    } else if paragraph_meta.is_bold.is_none() {
+                        paragraph_meta.is_bold = Some(false);
+                    }
+                    if run_is_italic {
+                        paragraph_meta.is_italic = Some(true);
+                    } else if paragraph_meta.is_italic.is_none() {
+                        paragraph_meta.is_italic = Some(false);
+                    }
+                    if let Some(size) = run_font_size {
+                        paragraph_meta.max_font_size_half_pts = Some(
+                            paragraph_meta
+                                .max_font_size_half_pts
+                                .map(|existing| existing.max(size))
+                                .unwrap_or(size),
+                        );
+                        paragraph_meta.min_font_size_half_pts = Some(
+                            paragraph_meta
+                                .min_font_size_half_pts
+                                .map(|existing| existing.min(size))
+                                .unwrap_or(size),
+                        );
+                    }
+                    in_run = false;
+                    in_run_properties = false;
+                } else if is_word_tag(&name, b"rPr") {
+                    in_run_properties = false;
                 } else if is_word_tag(&name, b"tc") && in_table {
                     current_cell.text = collapse_whitespace(&cell_text);
                     row_cells.push(current_cell.clone());
@@ -1585,13 +1818,12 @@ pub(crate) fn render_pdf_pages_with_adapter(
                 )
             }
         }
-        "pdfium" => render_pdf_pages_unsupported(
+        "pdfium" => render_pdf_pages_with_pdfium_or_fallback(
             job_id,
             input_path,
             output_path,
+            asset_dir,
             prior_warnings,
-            "renderer_pdfium_unimplemented",
-            "PDFium page renderer is reserved but not bundled in this runtime; manual review required for scanned PDFs.",
         ),
         "poppler" => render_pdf_pages_unsupported(
             job_id,
@@ -1622,13 +1854,12 @@ pub(crate) fn render_pdf_pages_with_adapter(
             }
             #[cfg(target_os = "windows")]
             {
-                render_pdf_pages_unsupported(
+                render_pdf_pages_with_pdfium_or_fallback(
                     job_id,
                     input_path,
                     output_path,
+                    asset_dir,
                     prior_warnings,
-                    "renderer_windows_pdfium_unimplemented",
-                    "Windows PDF page rendering is not implemented in this runtime; use cloud PDF vision if available or manual transcription/review.",
                 )
             }
             #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
@@ -1642,6 +1873,46 @@ pub(crate) fn render_pdf_pages_with_adapter(
                     "PDF page rendering is unsupported on this platform; use cloud PDF vision if available or manual transcription/review.",
                 )
             }
+        }
+    }
+}
+
+/// Try the bundled pdfium page renderer; if the native library is missing or
+/// rendering fails, fall back to the unsupported stub so the caller still gets
+/// a well-formed `PdfImageExtractionV1` (with `requiresManualReview: true`).
+fn render_pdf_pages_with_pdfium_or_fallback(
+    job_id: &str,
+    input_path: &Path,
+    output_path: &Path,
+    asset_dir: &Path,
+    prior_warnings: Vec<String>,
+) -> CommandResult<Value> {
+    match crate::pdf_geometry::render_pdf_pages_with_pdfium(
+        job_id,
+        input_path,
+        output_path,
+        asset_dir,
+        prior_warnings.clone(),
+    ) {
+        Ok(extraction) => Ok(extraction),
+        Err(failure) => {
+            let reason = if failure.starts_with("pdfium_bind") {
+                "renderer_pdfium_library_unavailable"
+            } else {
+                "renderer_pdfium_failed"
+            };
+            let message = format!(
+                "PDFium page renderer could not be used ({}); falling back to manual review for scanned PDFs.",
+                failure
+            );
+            render_pdf_pages_unsupported(
+                job_id,
+                input_path,
+                output_path,
+                prior_warnings,
+                reason,
+                &message,
+            )
         }
     }
 }

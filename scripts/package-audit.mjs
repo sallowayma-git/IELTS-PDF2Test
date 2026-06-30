@@ -198,21 +198,32 @@ const forbiddenRuntimePatterns = [
   "tesseract",
   "tessdata",
   "ocr engine",
-  "pdfium",
 ];
+
+// pdfium (pdfium.dll / libpdfium.dylib / libpdfium.so) is the BUNDLED native
+// PDF backend — intentionally shipped as a Tauri resource so all PDF features
+// work on machines with no Python. It is allow-listed ONLY under the
+// lib/pdfium-<platform>/ resources path. Python/Node/tesseract stay forbidden.
+const PDFIUM_ALLOW_PATH = /(^|\/)lib\/pdfium-(windows|macos|linux)\/(pdfium\.dll|libpdfium\.dylib|libpdfium\.so)$/i;
+const PDFIUM_LIB_BASENAMES = new Set(["pdfium.dll", "libpdfium.dylib", "libpdfium.so"]);
 
 function forbiddenRuntimeReason(file) {
   const normalized = file.split(path.sep).join("/").toLowerCase();
   const base = path.basename(normalized);
 
+  // Allow-list the bundled pdfium binary in its resources folder.
+  if (PDFIUM_ALLOW_PATH.test(normalized) && PDFIUM_LIB_BASENAMES.has(base)) {
+    return null;
+  }
   if (normalized.includes("/node_modules/")) return "node_modules";
   if (normalized.includes("python.framework")) return "python framework";
   if (/(^|\/)(\.venv|venv)(\/|$)/.test(normalized)) return "python virtualenv";
   if (/(^|\/)tessdata(\/|$)/.test(normalized)) return "tesseract language data";
-  if (/(^|\/)pdfium(\/|$)/.test(normalized) || /^lib?pdfium(\.|$)/.test(base)) return "pdfium";
+  // Any pdfium binary OUTSIDE the allow-listed resources path is still forbidden.
+  if (/(^|\/)pdfium(\/|$)/.test(normalized) || /^(lib)?pdfium(\.|$)/.test(base)) return "pdfium (outside bundled resources path)";
   if (/(^|\/)ocr(engine|_engine)?(\.exe)?$/.test(normalized)) return "ocr engine";
   if (/^lib?tesseract(\.|$)/.test(base)) return "tesseract";
-  if (["node", "node.exe", "python", "python3", "python.exe", "py.exe", "tesseract", "tesseract.exe", "pdfium", "pdfium.dll"].includes(base)) {
+  if (["node", "node.exe", "python", "python3", "python.exe", "py.exe", "tesseract", "tesseract.exe"].includes(base)) {
     return base;
   }
   return null;
