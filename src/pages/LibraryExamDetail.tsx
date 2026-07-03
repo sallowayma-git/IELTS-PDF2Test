@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getLibraryExam, updateLibraryExamMeta } from "../api/tauriCommands";
 import { go } from "../app/router";
-import { libraryStatusLabel } from "../utils/displayLabels";
+import { libraryStatusLabel, normalizeLibraryStatus } from "../utils/displayLabels";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
 import type { LibraryExamDetail, LibraryStatus, LibrarySubject } from "../types";
 import type { ReadingAuthoringIr } from "../types";
@@ -9,6 +9,13 @@ import type { WritingJob } from "../types";
 
 const subjectLabel: Record<LibrarySubject, string> = { reading: "阅读", writing: "写作" };
 const statusOptions: LibraryStatus[] = ["draft", "needs_review", "ready", "exported"];
+
+function normalizeDetailStatus(detail: LibraryExamDetail): LibraryExamDetail {
+  const status = normalizeLibraryStatus(detail.summary.status) ?? "draft";
+  return status === detail.summary.status
+    ? detail
+    : { ...detail, summary: { ...detail.summary, status } };
+}
 
 /** 运行时类型守卫：判断 payload 是否为真正的 ReadingAuthoringIr（而非 ImportJob fallback）。 */
 function isReadingAuthoringIr(p: unknown): p is ReadingAuthoringIr {
@@ -38,11 +45,12 @@ export function LibraryExamDetail({ examId, refresh }: { examId: string; refresh
     setError(null);
     getLibraryExam(examId)
       .then((d) => {
-        setDetail(d);
-        if (d) {
-          setTitle(d.summary.title);
-          setStatus(d.summary.status);
-          setTags(d.summary.tags.join(", "));
+        const normalized = d ? normalizeDetailStatus(d) : null;
+        setDetail(normalized);
+        if (normalized) {
+          setTitle(normalized.summary.title);
+          setStatus(normalized.summary.status);
+          setTags(normalized.summary.tags.join(", "));
         }
       })
       .catch((e) => setError(String(e)))
@@ -60,7 +68,8 @@ export function LibraryExamDetail({ examId, refresh }: { examId: string; refresh
     try {
       const updated = await updateLibraryExamMeta(examId, patch);
       if (updated) {
-        setDetail({ summary: updated, payload: detail.payload });
+        const normalized = normalizeLibraryStatus(updated.status) ?? "draft";
+        setDetail({ summary: { ...updated, status: normalized }, payload: detail.payload });
         setEditing(false);
         refresh();
       } else {
@@ -79,6 +88,7 @@ export function LibraryExamDetail({ examId, refresh }: { examId: string; refresh
   );
 
   const summary = detail.summary;
+  const visualStatus = normalizeLibraryStatus(summary.status) ?? "draft";
   const payload = detail.payload;
   const isReading = summary.subject === "reading";
   const readingIr = isReadingAuthoringIr(payload) ? payload : null;
@@ -135,7 +145,7 @@ export function LibraryExamDetail({ examId, refresh }: { examId: string; refresh
                 <div><dt>学科</dt><dd>{subjectLabel[summary.subject]}</dd></div>
                 <div><dt>分类</dt><dd>{summary.category ?? "—"}</dd></div>
                 <div><dt>频次</dt><dd>{summary.frequency ?? "—"}</dd></div>
-                <div><dt>状态</dt><dd><span className={`status-pill status-${summary.status}`}>{libraryStatusLabel(summary.status)}</span></dd></div>
+                <div><dt>状态</dt><dd><span className={`status-pill status-${visualStatus}`}>{libraryStatusLabel(visualStatus)}</span></dd></div>
                 {summary.taskType ? <div><dt>任务类型</dt><dd>{summary.taskType}</dd></div> : null}
                 <div><dt>标签</dt><dd>{summary.tags.length ? summary.tags.join("、") : "—"}</dd></div>
                 <div><dt>错误/警告</dt><dd>{summary.issueErrors} / {summary.issueWarnings}</dd></div>

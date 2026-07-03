@@ -13,6 +13,7 @@
     "fetch:pdfium": "node scripts/fetch-pdfium.mjs",
     "e2e:ui-flow": "node sidecars/ui-flow-e2e/ui-flow-e2e.mjs",
     "test:pdf-regression": "node scripts/pdf-regression-sample.mjs",
+    "test:pdf-regression:smoke": "node scripts/pdf-regression-sample.mjs --smoke",
     "test:pdf-regression:sample30": "node scripts/pdf-regression-sample.mjs --sample 30",
     "test:live-pdf-regression": "node scripts/live-pdf-pipeline-regression.mjs",
     "audit:package": "node scripts/package-audit.mjs --platform macos",
@@ -22,8 +23,8 @@
     "repack:macos-dmg": "node scripts/repack-macos-dmg.mjs",
     "verify:release": "npm run verify:release:macos",
     "verify:release:macos": "npm run fetch:pdfium && npm run tauri -- build --bundles app,dmg --config src-tauri/tauri.macos.conf.json && npm run repack:macos-dmg && npm run audit:package:macos",
-    "verify:release:windows": "npm run fetch:pdfium && npm run tauri -- build --bundles nsis --config src-tauri/tauri.windows.conf.json && npm run audit:package:windows -- --config src-tauri/tauri.windows.conf.json",
-    "verify:release:windows:offline": "npm run fetch:pdfium && npm run tauri -- build --bundles nsis --config src-tauri/tauri.windows.offline.conf.json && npm run audit:package:windows -- --config src-tauri/tauri.windows.offline.conf.json"
+    "verify:release:windows": "npm run fetch:pdfium && npm run tauri -- build --bundles nsis --config src-tauri/tauri.windows.conf.json && npm run audit:package:windows -- src-tauri/tauri.windows.conf.json",
+    "verify:release:windows:offline": "npm run fetch:pdfium && npm run tauri -- build --bundles nsis --config src-tauri/tauri.windows.offline.conf.json && npm run audit:package:windows -- src-tauri/tauri.windows.offline.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",

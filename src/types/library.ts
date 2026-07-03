@@ -1,10 +1,11 @@
 // 题库管理（library）类型 —— 对应后端 lib.rs 中的 Library* 结构。
-// subject 区分阅读/写作；status 用统一枚举（draft|needs_review|ready|exported）。
+// 前端统一使用公开状态枚举；兼容旧/内部值时用 RawLibraryStatus 做归一化。
 
 export type LibrarySubject = "reading" | "writing";
 
 /** 题库统一状态枚举（映射自阅读 JobStatus 与写作 WritingJobStatus）。 */
 export type LibraryStatus = "draft" | "needs_review" | "ready" | "exported";
+export type RawLibraryStatus = LibraryStatus | "review_required" | "published";
 
 export interface LibraryFilter {
   subject?: LibrarySubject;

@@ -11,9 +11,15 @@ const ALLOWED_TAGS = new Set([
 ]);
 
 const ALLOWED_ATTRS = new Set([
-  "href", "src", "alt", "title", "width", "height", "colspan", "rowspan",
-  "class", "id", "style"
+  "href", "src", "alt", "title", "width", "height", "colspan", "rowspan"
 ]);
+
+const DROP_ENTIRE_TAGS = new Set([
+  "SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "LINK", "META", "NOSCRIPT", "TEMPLATE"
+]);
+
+const CONTROL_OR_SPACE = /[\u0000-\u0020\u007f]+/g;
+const SCHEME_PREFIX = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
 
 /** 净化一段 HTML，返回安全字符串。在浏览器环境用 DOMParser；非浏览器原样返回（后端已转义）。 */
 export function sanitizeHtml(html: string): string {
@@ -26,38 +32,58 @@ export function sanitizeHtml(html: string): string {
 }
 
 function clean(node: Element): void {
-  const children = Array.from(node.children);
-  for (const el of children) {
+  for (const child of Array.from(node.childNodes)) {
+    if (child.nodeType === Node.COMMENT_NODE) {
+      child.parentNode?.removeChild(child);
+      continue;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) continue;
+
+    const el = child as Element;
     const tag = el.tagName;
     if (!ALLOWED_TAGS.has(tag)) {
-      // 非 白名单标签：移除标签但保留子内容（避免 <script> 执行）。
-      // <script>/<style> 直接整块删（含内容）。
-      if (tag === "SCRIPT" || tag === "STYLE" || tag === "IFRAME" || tag === "OBJECT" || tag === "EMBED") {
+      if (DROP_ENTIRE_TAGS.has(tag)) {
         el.remove();
         continue;
       }
       const parent = el.parentNode;
       while (el.firstChild) parent?.insertBefore(el.firstChild, el);
       parent?.removeChild(el);
-      // 递归处理被提升的子节点。
       continue;
     }
-    // 删除危险属性：on* 事件处理器、javascript:/vbscript: 协议。
+
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase();
-      const value = attr.value.trim().toLowerCase();
-      if (name.startsWith("on")) {
+      if (name.startsWith("on") || !ALLOWED_ATTRS.has(name)) {
         el.removeAttribute(attr.name);
         continue;
       }
-      if (!ALLOWED_ATTRS.has(name)) {
-        el.removeAttribute(attr.name);
-        continue;
-      }
-      if ((name === "href" || name === "src") && (value.startsWith("javascript:") || value.startsWith("vbscript:") || value.startsWith("data:text/html"))) {
-        el.removeAttribute(attr.name);
+      if (name === "href" || name === "src") {
+        const safeValue = sanitizeUrlAttribute(name, attr.value);
+        if (!safeValue) {
+          el.removeAttribute(attr.name);
+        } else {
+          el.setAttribute(attr.name, safeValue);
+        }
       }
     }
     clean(el);
   }
+}
+
+function sanitizeUrlAttribute(name: "href" | "src", value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const protocolProbe = trimmed.replace(CONTROL_OR_SPACE, "");
+  if (!protocolProbe || protocolProbe.startsWith("//")) return null;
+  if (!SCHEME_PREFIX.test(protocolProbe)) return trimmed;
+
+  const scheme = protocolProbe.slice(0, protocolProbe.indexOf(":") + 1).toLowerCase();
+  if (name === "href") {
+    return scheme === "http:" || scheme === "https:" || scheme === "mailto:" || scheme === "tel:"
+      ? trimmed
+      : null;
+  }
+  return scheme === "http:" || scheme === "https:" ? trimmed : null;
 }

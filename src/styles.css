@@ -167,6 +167,9 @@ dd { margin: 0; }
 
 /* 题库管理界面 */
 .library-filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 18px 0; }
+.library-tabs { display: flex; gap: 8px; margin: 18px 0 0; border-bottom: 1px solid var(--line); }
+.library-tabs button { border: 0; background: transparent; padding: 10px 16px; color: var(--muted); font-weight: 700; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.library-tabs button.active { color: var(--ink); border-bottom-color: var(--accent); }
 .library-filters select, .library-filters .library-search { width: auto; min-width: 0; }
 .library-filters .library-search { flex: 1; min-width: 200px; }
 .library-overview { border: 1px solid var(--line); border-radius: 24px; background: rgba(255,250,240,.62); padding: 18px; margin: 22px 0; }

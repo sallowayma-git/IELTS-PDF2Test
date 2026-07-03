@@ -4,8 +4,8 @@ use crate::llm_profiles::load_profiles;
 use crate::llm_suggestions::load_llm_suggestions;
 use crate::source_review::source_review_status_for_job;
 use crate::util::{
-    ensure_app_dirs, ensure_job_dirs, file_type_from_name, hash_file_or_path, job_dir,
-    read_json_opt, sanitize_filename,
+    ensure_app_dirs, ensure_job_dirs, file_type_from_name, job_dir, read_json_opt,
+    sanitize_filename, stage_file_with_hash,
 };
 use crate::{
     app_root, CommandResult, CreateJobInput, ImportJob, JobDetail, JobFilter, JobMetaPatch,
@@ -161,10 +161,22 @@ pub(crate) async fn import_source_file_core(
         .and_then(|value| value.to_str())
         .unwrap_or("source.pdf")
         .to_string();
-    let (hash, size, bytes) = hash_file_or_path(&input)?;
+    let uploads_dir = dir.join("uploads");
+    let staging_name = format!(
+        ".staging-{}-{}",
+        Uuid::new_v4().simple(),
+        sanitize_filename(&original_name)
+    );
+    let staging_path = uploads_dir.join(&staging_name);
+    let (hash, size) = stage_file_with_hash(&input, &staging_path)?;
     let stored_name = format!("{}-{}", &hash[..8], sanitize_filename(&original_name));
-    let bytes = bytes.ok_or_else(|| format!("source_file_not_readable:{}", input.display()))?;
-    fs::write(dir.join("uploads").join(&stored_name), bytes).map_err(|error| error.to_string())?;
+    let final_path = uploads_dir.join(&stored_name);
+    if final_path.exists() {
+        let _ = fs::remove_file(&staging_path);
+    } else if let Err(error) = fs::rename(&staging_path, &final_path) {
+        let _ = fs::remove_file(&staging_path);
+        return Err(format!("stage_source_file:{}:{}", final_path.display(), error));
+    }
     let source = SourceFile {
         file_id: format!("file-{}", Uuid::new_v4().simple()),
         original_name,

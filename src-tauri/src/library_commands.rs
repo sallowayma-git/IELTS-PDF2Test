@@ -4,12 +4,15 @@
 //! DB 访问通过 db::open_connection(root) 打开瞬态连接（WAL 模式，桌面工具足够）。
 
 use crate::db::{
-    self, delete_exam, get_exam, get_stats, list_exams, open_connection, search_exams,
-    update_exam_meta, upsert_exam, upsert_exam_conn, ExamRecord,
+    self, ensure_library_item_for_exam, get_exam, get_stats, list_exams, open_connection,
+    restore_exam_from_library_item, restore_library_item, search_exams, soft_delete_library_item,
+    update_exam_meta, upsert_exam, upsert_exam_conn, upsert_library_item, ExamRecord,
+    LibraryItemRecord,
 };
 use crate::writing_store::{WritingJob, WritingJobStatus};
 use crate::{CommandResult, ImportJob, JobStatus, LibraryExamDetail, LibraryExamSummary, LibraryFilter, LibraryMetaPatch, LibraryStats};
 use chrono::{DateTime, Utc};
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
 use std::path::Path;
 
@@ -101,7 +104,12 @@ pub(crate) fn upsert_reading_job(root: &Path, job: &ImportJob) -> CommandResult<
         }
     };
     let record = exam_record_from_reading_job(job, payload);
-    upsert_exam(root, &record)
+    upsert_exam(root, &record)?;
+    // Phase 1：同步写正式主模型 library_items + revisions（尊重软删除：已软删除则不复活）。
+    if let Err(e) = upsert_library_item_from_exam(root, &record, "ReadingAuthoringIRV1") {
+        eprintln!("[library] upsert_library_item (reading) failed for {}: {}", job.job_id, e);
+    }
+    Ok(())
 }
 
 // ── 从 WritingJob 构造 ExamRecord ──────────────────────────────────────────
@@ -130,11 +138,65 @@ pub(crate) fn exam_record_from_writing_job(job: &WritingJob) -> ExamRecord {
 /// 双写钩子入口：写作 job 保存后调用。
 pub(crate) fn upsert_writing_job(root: &Path, job: &WritingJob) -> CommandResult<()> {
     let record = exam_record_from_writing_job(job);
-    upsert_exam(root, &record)
+    upsert_exam(root, &record)?;
+    // Phase 1：同步写正式主模型 library_items + revisions。
+    if let Err(e) = upsert_library_item_from_exam(root, &record, "WritingExamSourceV1") {
+        eprintln!("[library] upsert_library_item (writing) failed for {}: {}", job.job_id, e);
+    }
+    Ok(())
 }
 
 fn to_iso(dt: &DateTime<Utc>) -> String {
     dt.to_rfc3339()
+}
+
+// ── Phase 1：ExamRecord → LibraryItemRecord 转换 + 正式主模型双写 ───────────
+
+/// 旧 exams 状态 → 新 library_items 状态映射。
+/// draft→draft, needs_review→review_required, ready→ready, exported→published。
+fn to_library_item_status(exam_status: &str) -> &'static str {
+    match exam_status {
+        "draft" => "draft",
+        "needs_review" => "review_required",
+        "ready" => "ready",
+        "exported" => "published",
+        _ => "draft",
+    }
+}
+
+/// 把 ExamRecord 转成 LibraryItemRecord 并写入 library_items + revisions。
+/// 尊重软删除：若该 item 已被软删除（deleted_at 非空），跳过本次写入，避免「复活」。
+fn upsert_library_item_from_exam(
+    root: &Path,
+    exam: &ExamRecord,
+    schema_version: &str,
+) -> CommandResult<()> {
+    let conn = open_connection(root)?;
+    if is_library_item_soft_deleted(&conn, &exam.id) {
+        return Ok(()); // 已软删除，不复活
+    }
+    let content_type = if exam.subject == "writing" { "writing_task" } else { "reading_exam" };
+    let item = LibraryItemRecord {
+        id: exam.id.clone(),
+        subject: exam.subject.clone(),
+        content_type: content_type.to_string(),
+        title: exam.title.clone(),
+        category: exam.category.clone(),
+        difficulty: exam.frequency.clone(),
+        status: to_library_item_status(&exam.status).to_string(),
+        task_type: exam.task_type.clone(),
+        tags: exam.tags.clone(),
+        source_asset_id: exam.source_hash.clone(),
+        linked_ingest_job_id: Some(exam.id.clone()),
+        created_at: exam.created_at.clone(),
+        updated_at: exam.updated_at.clone(),
+        revision_payload_json: exam.payload_json.clone(),
+        schema_version: schema_version.to_string(),
+        created_from_job_id: Some(exam.id.clone()),
+        change_reason: Some("ingest_save".to_string()),
+    };
+    upsert_library_item(&conn, &item)?;
+    Ok(())
 }
 
 // ── core 实现（供 lib.rs 命令薄壳调用）─────────────────────────────────────
@@ -181,21 +243,39 @@ pub(crate) fn update_library_exam_meta_core(
 
 pub(crate) fn delete_library_exam_core(root: &Path, id: &str) -> CommandResult<bool> {
     let conn = open_connection(root)?;
-    let existed = delete_exam(&conn, id)?;
-    if existed {
-        // 同步删除源 job 文件目录，避免双写钩子把题目「复活」回 DB。
-        // 阅读与写作目录都尝试清理（哪个存在删哪个），失败记日志不阻断 DB 删除。
-        let reading_dir = crate::util::job_dir(root, id);
-        let writing_dir = crate::util::writing_job_dir(root, id);
-        for dir in [reading_dir, writing_dir] {
-            if dir.exists() {
-                if let Err(e) = std::fs::remove_dir_all(&dir) {
-                    eprintln!("[library] remove source dir failed for {}: {}", id, e);
-                }
-            }
-        }
+    // 删除入口统一落到 library_items 软删除；若历史数据尚未建 item，则先从旧 exams 回填一份。
+    // 旧 exams 行保留，活动查询通过 deleted_at 过滤，这样恢复只需清 deleted_at 即可回到活动列表。
+    if !ensure_library_item_for_exam(&conn, id)? {
+        return Ok(false);
     }
-    Ok(existed)
+    let soft_deleted = soft_delete_library_item(&conn, id)?;
+    Ok(soft_deleted)
+}
+
+pub(crate) fn restore_library_exam_core(root: &Path, id: &str) -> CommandResult<bool> {
+    let conn = open_connection(root)?;
+    let restored = restore_library_item(&conn, id)?;
+    if restored {
+        let _ = restore_exam_from_library_item(&conn, id)?;
+    }
+    Ok(restored)
+}
+
+pub(crate) fn list_trashed_exams_core(root: &Path) -> CommandResult<Vec<LibraryExamSummary>> {
+    let conn = open_connection(root)?;
+    crate::db::list_trashed_items(&conn)
+}
+
+/// 检查某 library_item 是否已被软删除（供双写钩子判断是否跳过复活）。
+fn is_library_item_soft_deleted(conn: &Connection, id: &str) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM library_items WHERE id=?1 AND deleted_at IS NOT NULL",
+        rusqlite::params![id],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|o| o.is_some())
+    .unwrap_or(false)
 }
 
 /// 把题库元数据编辑回写对应的 JSON 源文件（jobs/<id>/job.json 或 writing-jobs/<id>/writing-job.json）。
@@ -237,7 +317,11 @@ fn write_back_meta_to_source(
             job.tags = tags.clone();
         }
         if let Some(status) = &patch.status {
-            if let Some(mapped) = library_status_to_reading(status) {
+            // `exported` 是 Library 视图里 `Exported | Cleaned` 的合并态。
+            // 如果底层任务已经是 Cleaned，仅编辑元数据时不要把它降级回 Exported。
+            if status == "exported" && job.status == crate::JobStatus::Cleaned {
+                // Preserve Cleaned semantics.
+            } else if let Some(mapped) = library_status_to_reading(status) {
                 job.status = mapped;
             }
         }
@@ -499,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_library_exam_removes_source_and_prevents_revival() {
+    fn delete_library_exam_moves_to_trash_and_restore_brings_it_back() {
         let root = make_reading_appdata();
         migrate_existing_into_library(&root).unwrap();
 
@@ -507,15 +591,87 @@ mod tests {
         let removed = delete_library_exam_core(&root, "import-test-1").unwrap();
         assert!(removed);
 
-        // 源 job 目录应被同步删除（这是审查者 P1 的核心验证点）。
-        assert!(!crate::util::job_dir(&root, "import-test-1").exists(), "source job dir must be removed");
+        // 源 job 目录保留，后续任务仍可继续保存；真正隐藏依赖软删除标记。
+        assert!(crate::util::job_dir(&root, "import-test-1").exists(), "source job dir should stay on disk");
 
-        // DB 中应无该行。
+        // 活动查询应隐藏该行，回收站可见。
         let conn = crate::db::open_connection(&root).unwrap();
         assert!(crate::db::get_exam(&conn, "import-test-1").unwrap().is_none());
+        assert!(list_library_exams_core(&root, None).unwrap().is_empty(), "soft-deleted item must leave active list");
+        let trash = list_trashed_exams_core(&root).unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].id, "import-test-1");
+        assert_eq!(trash[0].status, "ready", "trash status must be normalized to public enum");
 
-        // 模拟「后续保存」：源文件已删，无东西可保存，自然不会复活。
-        // 额外验证：迁移的 prune 不会误删其他存活行（此处无其他行，仅验证不 panic）。
+        // 模拟「后续保存」：双写应尊重软删除态，不应把条目偷偷复活回活动列表。
+        let job: ImportJob = crate::util::read_json(&crate::util::job_dir(&root, "import-test-1").join("job.json")).unwrap();
+        crate::job_store::save_job(&root, &job).unwrap();
+        assert!(list_library_exams_core(&root, None).unwrap().is_empty(), "resave must not revive a trashed item");
+
+        // 恢复后回到活动列表。
+        assert!(restore_library_exam_core(&root, "import-test-1").unwrap());
+        let active = list_library_exams_core(&root, None).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, "import-test-1");
+        assert!(list_trashed_exams_core(&root).unwrap().is_empty());
+        cleanup(&root);
+    }
+
+    #[test]
+    fn restore_rehydrates_legacy_exam_row_deleted_by_old_flow() {
+        let root = make_reading_appdata();
+        migrate_existing_into_library(&root).unwrap();
+        assert!(delete_library_exam_core(&root, "import-test-1").unwrap());
+
+        // 模拟历史旧逻辑：软删 item 后又把旧 exams 行物理删掉。
+        {
+            let conn = crate::db::open_connection(&root).unwrap();
+            assert!(crate::db::delete_exam(&conn, "import-test-1").unwrap());
+        }
+        assert_eq!(list_trashed_exams_core(&root).unwrap().len(), 1);
+
+        // 恢复时应自动从 library_items/current revision 回填 exams，重新出现在活动列表。
+        assert!(restore_library_exam_core(&root, "import-test-1").unwrap());
+        let conn = crate::db::open_connection(&root).unwrap();
+        let detail = crate::db::get_exam(&conn, "import-test-1").unwrap().unwrap();
+        assert_eq!(detail.summary.id, "import-test-1");
+        assert_eq!(detail.summary.status, "ready");
+        cleanup(&root);
+    }
+
+    #[test]
+    fn update_meta_keeps_cleaned_reading_jobs_cleaned() {
+        let root = make_reading_appdata();
+        {
+            let mut job: ImportJob =
+                crate::util::read_json(&crate::util::job_dir(&root, "import-test-1").join("job.json"))
+                    .unwrap();
+            job.status = JobStatus::Cleaned;
+            crate::util::write_json(&crate::util::job_dir(&root, "import-test-1").join("job.json"), &job)
+                .unwrap();
+        }
+        migrate_existing_into_library(&root).unwrap();
+
+        let updated = update_library_exam_meta_core(
+            &root,
+            "import-test-1",
+            LibraryMetaPatch {
+                title: Some("Cleaned Title".into()),
+                status: Some("exported".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(updated.status, "exported");
+
+        let job: ImportJob =
+            crate::util::read_json(&crate::util::job_dir(&root, "import-test-1").join("job.json")).unwrap();
+        assert_eq!(
+            job.status,
+            JobStatus::Cleaned,
+            "editing exported metadata must not downgrade a cleaned reading job"
+        );
         cleanup(&root);
     }
 

@@ -9,13 +9,14 @@ const defaultTauriConfigPath = path.join(root, "src-tauri", "tauri.conf.json");
 const releaseRoot = path.join(root, "src-tauri", "target", "release");
 const bundleRoot = path.join(releaseRoot, "bundle");
 
-const usage = `Usage: node scripts/package-audit.mjs [--platform macos|windows] [--config <path>]
+const usage = `Usage: node scripts/package-audit.mjs [--platform macos|windows] [--config <path>] [config-path]
 
 Audits release package artifacts for forbidden bundled runtimes and emits a JSON manifest.
 
 Options:
   --platform <name>  Audit target platform. Defaults to the host platform.
   --config <path>    Tauri config or config override to merge over src-tauri/tauri.conf.json.
+  config-path        Positional config path fallback for npm run ... -- --config <path> on Windows.
   -h, --help         Show this help.
 `;
 
@@ -30,12 +31,22 @@ function parseArgs(argv) {
     platform: process.platform === "win32" ? "windows" : "macos",
     configPath: defaultTauriConfigPath,
   };
+  let configExplicitlySet = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === "--") continue;
     if (arg === "-h" || arg === "--help") {
       console.log(usage);
       process.exit(0);
+    }
+    if (!arg.startsWith("-")) {
+      if (configExplicitlySet) {
+        fail(`unexpected positional argument: ${arg}`, usage);
+      }
+      out.configPath = resolveCliPath(arg);
+      configExplicitlySet = true;
+      continue;
     }
     if (arg === "--platform") {
       out.platform = argv[++i];
@@ -47,10 +58,12 @@ function parseArgs(argv) {
     }
     if (arg === "--config") {
       out.configPath = resolveCliPath(argv[++i]);
+      configExplicitlySet = true;
       continue;
     }
     if (arg.startsWith("--config=")) {
       out.configPath = resolveCliPath(arg.slice("--config=".length));
+      configExplicitlySet = true;
       continue;
     }
     fail(`unknown argument: ${arg}`, usage);

@@ -249,3 +249,11 @@ export async function searchLibraryExams(query: string): Promise<LibraryExamSumm
 export async function getLibraryStats(): Promise<LibraryStats> {
   return command("get_library_stats");
 }
+
+export async function restoreLibraryExam(id: string): Promise<boolean> {
+  return command("restore_library_exam", { id });
+}
+
+export async function listTrashedExams(): Promise<LibraryExamSummary[]> {
+  return command("list_trashed_exams");
+}

@@ -11,6 +11,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const DEFAULT_BASE_URL = "http://127.0.0.1:1420";
 const CLEAR_TEXT_PDF = path.join(root, "fixtures", "parser", "complex-reading.pdf");
 const SCANNED_PDF = path.join(root, "fixtures", "parser", "no-text.pdf");
+const VITE_BIN = path.join(root, "node_modules", "vite", "bin", "vite.js");
+const APP_READY_TIMEOUT_MS = 60000;
+const DEFAULT_SELECTOR_TIMEOUT_MS = 30000;
 const SCANNED_MANUAL_TRANSCRIPTION = `READING PASSAGE 1
 Manual transcription passage for a scanned PDF. The author has checked the visual output against the source file.
 
@@ -23,6 +26,7 @@ Answers
 1 TRUE
 2 TRUE
 3 TRUE`;
+const DEV_PICKED_PATHS_KEY = "ielts-author-studio.dev-fallback-picked-paths.v1";
 
 function arg(name, fallback = undefined) {
   const index = process.argv.indexOf(name);
@@ -92,11 +96,18 @@ async function ensureVite(baseUrl, noStartServer) {
     // Start below unless explicitly disabled.
   }
   if (noStartServer) throw new Error(`Vite dev server is not reachable at ${baseUrl}`);
+  if (!fs.existsSync(VITE_BIN)) {
+    throw new Error(`Vite binary is missing at ${VITE_BIN}. Run npm install before e2e:ui-flow.`);
+  }
 
-  const proc = spawn(npmCommand(), ["run", "dev", "--", "--host", "127.0.0.1"], {
+  const proc = spawn(process.execPath, [VITE_BIN, "--host", "127.0.0.1"], {
     cwd: root,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, BROWSER: "none" }
+    env: { ...process.env, BROWSER: "none" },
+    windowsHide: true
+  });
+  proc.on("error", (error) => {
+    process.stderr.write(`[vite] spawn failed: ${error.message}\n`);
   });
   proc.stdout.on("data", (chunk) => process.stdout.write(`[vite] ${chunk}`));
   proc.stderr.on("data", (chunk) => process.stderr.write(`[vite] ${chunk}`));
@@ -109,10 +120,6 @@ async function ensureVite(baseUrl, noStartServer) {
     }
   }, { timeoutMs: 30000 });
   return { process: proc, started: true };
-}
-
-function npmCommand() {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
 async function freePort() {
@@ -259,10 +266,16 @@ function jsString(value) {
 
 async function navigate(cdp, url) {
   await cdp.send("Page.navigate", { url });
-  await waitFor(`page load ${url}`, async () => evaluate(cdp, "document.readyState === 'complete'"));
+  await waitFor(`page load ${url}`, async () => evaluate(cdp, `document.readyState !== "loading"
+    && Boolean(document.body)
+    && Boolean(document.getElementById("root"))`), { timeoutMs: 30000 });
+  await waitFor("app shell ready", async () => evaluate(cdp, `(() => {
+    const root = document.getElementById("root");
+    return Boolean(document.querySelector(".shell")) && Boolean(root?.textContent?.trim());
+  })()`), { timeoutMs: APP_READY_TIMEOUT_MS });
 }
 
-async function waitSelector(cdp, selector, timeoutMs = 15000) {
+async function waitSelector(cdp, selector, timeoutMs = DEFAULT_SELECTOR_TIMEOUT_MS) {
   await waitFor(`selector ${selector}`, async () => evaluate(cdp, `Boolean(document.querySelector(${jsString(selector)}))`), { timeoutMs });
 }
 
@@ -295,6 +308,14 @@ async function setValue(cdp, selector, value) {
 async function getText(cdp, selector) {
   await waitSelector(cdp, selector);
   return evaluate(cdp, `document.querySelector(${jsString(selector)})?.textContent ?? ""`);
+}
+
+async function waitForImportSelection(cdp) {
+  await waitFor("import source selection", async () => evaluate(cdp, `(() => {
+    const summary = document.querySelector("[data-testid='source-file-path']")?.textContent || "";
+    const button = document.querySelector("[data-testid='create-and-auto-process']");
+    return !summary.includes("尚未选择") && Boolean(button) && !button.disabled;
+  })()`), { timeoutMs: 10000 });
 }
 
 async function currentHash(cdp) {
@@ -372,6 +393,16 @@ async function markAuthoringVerified(cdp, jobId) {
         updatedAt: new Date().toISOString()
       };
     }
+    if (store.sourceReviews?.[${jsString(jobId)}]) {
+      store.sourceReviews[${jsString(jobId)}] = {
+        ...store.sourceReviews[${jsString(jobId)}],
+        required: false,
+        resolved: true,
+        stale: false,
+        resolvedAt: new Date().toISOString(),
+        note: store.sourceReviews[${jsString(jobId)}]?.note || "e2e verification helper"
+      };
+    }
     localStorage.setItem("ielts-author-studio.dev-fallback-store.v1", JSON.stringify(store));
     return { groupCount: groups.length, questionCount: questionOrder.length };
   })()`);
@@ -386,7 +417,16 @@ function assert(condition, message, details) {
 
 async function resetDevStore(cdp) {
   await evaluate(cdp, `localStorage.removeItem("ielts-author-studio.dev-fallback-store.v1");
-localStorage.removeItem("ielts-author-studio.dev-fallback-picked-paths.v1");`);
+localStorage.removeItem(${jsString(DEV_PICKED_PATHS_KEY)});`);
+}
+
+async function seedDevPickedPath(cdp, filePath) {
+  await evaluate(cdp, `localStorage.setItem(${jsString(DEV_PICKED_PATHS_KEY)}, JSON.stringify([${jsString(filePath)}]));`);
+}
+
+async function goHash(cdp, hash) {
+  await evaluate(cdp, `window.location.hash = ${jsString(hash)};`);
+  await waitFor(`hash ${hash}`, async () => (await currentHash(cdp)) === hash, { timeoutMs: 10000 });
 }
 
 async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
@@ -394,6 +434,11 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
   assert(verified.questionCount >= 1, "manual verification helper should verify at least one question", verified);
   await navigate(cdp, `${baseUrl}/#/jobs/${jobId}/groups`);
   await waitSelector(cdp, "[data-testid='group-editor']");
+  await click(cdp, "[data-testid='verify-all-groups']");
+  await waitFor("authoring verification persisted", async () => {
+    const next = await getStoreSummary(cdp, jobId);
+    return next?.job?.status !== "NeedsReview" && next?.sourceReview?.resolved !== false;
+  }, { timeoutMs: 10000 });
   await click(cdp, "[data-testid='validate-and-export']");
   await waitFor("route to export", async () => (await currentHash(cdp)).includes("/export"), { timeoutMs: 10000 });
   await waitSelector(cdp, "[data-testid='export-page']");
@@ -430,11 +475,12 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
 }
 
 async function runClearTextFlow(cdp, baseUrl) {
-  const url = `${baseUrl}/?epic8DevPickedPath=${encodeURIComponent(CLEAR_TEXT_PDF)}#/jobs/new`;
-  await navigate(cdp, url);
+  await navigate(cdp, `${baseUrl}/`);
   await resetDevStore(cdp);
-  await navigate(cdp, url);
+  await seedDevPickedPath(cdp, CLEAR_TEXT_PDF);
+  await goHash(cdp, "#/jobs/new");
   await click(cdp, "[data-testid='pick-source-file']");
+  await waitForImportSelection(cdp);
   await setValue(cdp, "[data-testid='job-title-input']", "UI E2E Clear Text");
   await click(cdp, "[data-testid='create-and-auto-process']");
   await waitFor("clear text route", async () => {
@@ -467,11 +513,12 @@ async function runClearTextFlow(cdp, baseUrl) {
 }
 
 async function runOcrSourceReviewFlow(cdp, baseUrl) {
-  const url = `${baseUrl}/?epic8DevPickedPath=${encodeURIComponent(SCANNED_PDF)}#/jobs/new`;
-  await navigate(cdp, url);
+  await navigate(cdp, `${baseUrl}/`);
   await resetDevStore(cdp);
-  await navigate(cdp, url);
+  await seedDevPickedPath(cdp, SCANNED_PDF);
+  await goHash(cdp, "#/jobs/new");
   await click(cdp, "[data-testid='pick-source-file']");
+  await waitForImportSelection(cdp);
   await setValue(cdp, "[data-testid='job-title-input']", "UI E2E Scanned PDF");
   await setValue(cdp, "[data-testid='parse-mode']", "ocr");
   await click(cdp, "[data-testid='create-and-auto-process']");

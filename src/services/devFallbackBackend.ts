@@ -61,6 +61,7 @@ type Store = {
   packs: PackBuildResult[];
   diagnostics: DiagnosticsSettings;
   writingJobs: WritingJob[];
+  trashedIds: string[];
 };
 
 export interface JobDetail {
@@ -76,6 +77,21 @@ export interface JobDetail {
 }
 
 const STORE_KEY = "ielts-author-studio.dev-fallback-store.v1";
+const MAX_IMPORT_FILE_BYTES = 128 * 1024 * 1024;
+
+function sourceFileTooLargeMessage(filePath: string, sizeBytes: number, maxBytes = MAX_IMPORT_FILE_BYTES): string {
+  return `source_file_too_large:max_bytes=${maxBytes}:size_bytes=${sizeBytes}:path=${filePath}`;
+}
+
+function estimateBase64Size(value: string): number {
+  if (!value) return 0;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
+}
+
+function isAbsoluteLocalPath(value: string): boolean {
+  return /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(value);
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -182,7 +198,8 @@ function initialStore(): Store {
     revisions: {},
     packs: [],
     diagnostics: { keepFullProcessArtifacts: false },
-    writingJobs: []
+    writingJobs: [],
+    trashedIds: []
   };
 }
 
@@ -1965,24 +1982,33 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const jobId = args.jobId as string;
       const filePath = (args.filePath as string) || "source.pdf";
       const role = (args.role as SourceFileRole) ?? "MainQuestion";
+      const textContent = typeof args.textContent === "string" ? args.textContent.trim() : "";
+      const binaryContentBase64 = typeof args.binaryContentBase64 === "string" ? args.binaryContentBase64 : "";
+      const declaredSizeBytes = Math.max(0, Number(args.sizeBytes ?? 0));
+      const inferredSizeBytes = Math.max(
+        declaredSizeBytes,
+        textContent ? new TextEncoder().encode(textContent).length : 0,
+        estimateBase64Size(binaryContentBase64)
+      );
+      if (inferredSizeBytes > MAX_IMPORT_FILE_BYTES) {
+        throw new Error(sourceFileTooLargeMessage(filePath, inferredSizeBytes));
+      }
       const source: SourceFile = {
         fileId: id("file"),
         originalName: filePath.split(/[\\/]/).pop() || filePath,
         storedName: `${Math.random().toString(36).slice(2, 8)}-${filePath.split(/[\\/]/).pop() || "source.pdf"}`,
         fileType: detectFileType(filePath),
         sha256: Math.random().toString(16).slice(2).padEnd(64, "0"),
-        sizeBytes: Number(args.sizeBytes ?? 0),
+        sizeBytes: declaredSizeBytes || inferredSizeBytes,
         role,
         importedAt: now()
       };
       const job = requireJob(store, jobId);
       updateJob(store, jobId, { sourceFiles: [...job.sourceFiles, source], status: "Working", currentStep: "DocumentReview" });
-      const textContent = typeof args.textContent === "string" ? args.textContent.trim() : "";
       if (textContent) {
         store.sourceTexts[jobId] = { ...(store.sourceTexts[jobId] ?? {}), [source.fileId]: textContent };
       }
-      const binaryContentBase64 = typeof args.binaryContentBase64 === "string" ? args.binaryContentBase64 : "";
-      const canUseLocalPath = filePath.startsWith("/") && (source.fileType === "pdf" || source.fileType === "docx");
+      const canUseLocalPath = isAbsoluteLocalPath(filePath) && (source.fileType === "pdf" || source.fileType === "docx");
       if (role === "MainQuestion" && (binaryContentBase64 || canUseLocalPath) && (source.fileType === "pdf" || source.fileType === "docx")) {
         store.documents[jobId] = await parseUploadedDocumentInDev({
           jobId,
@@ -2978,6 +3004,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "list_library_exams": {
       const filter = (args.filter ?? {}) as LibraryFilter;
       let list = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)];
+      // 排除已软删除项。
+      list = list.filter((e) => !store.trashedIds.includes(e.id));
       if (filter.subject) list = list.filter((e) => e.subject === filter.subject);
       if (filter.status) list = list.filter((e) => e.status === filter.status);
       if (filter.category) list = list.filter((e) => e.category === filter.category);
@@ -2989,6 +3017,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 
     case "get_library_exam": {
       const id = String(args.id ?? "");
+      if (store.trashedIds.includes(id)) return null as T;
       const reading = store.jobs.find((j) => j.jobId === id);
       if (reading) {
         const ir = store.authoring[id];
@@ -3033,20 +3062,36 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     }
 
     case "delete_library_exam": {
+      // Phase 1：软删除（置入 trashedIds），不物理删源 job，可恢复。
       const id = String(args.id ?? "");
-      const beforeR = store.jobs.length;
-      const beforeW = store.writingJobs.length;
-      store.jobs = store.jobs.filter((j) => j.jobId !== id);
-      store.writingJobs = store.writingJobs.filter((j) => j.jobId !== id);
-      const removed = store.jobs.length !== beforeR || store.writingJobs.length !== beforeW;
-      if (removed) save(store);
-      return removed as T;
+      if (!store.trashedIds.includes(id)) store.trashedIds.push(id);
+      save(store);
+      return true as T;
+    }
+
+    case "restore_library_exam": {
+      const id = String(args.id ?? "");
+      const before = store.trashedIds.length;
+      store.trashedIds = store.trashedIds.filter((t) => t !== id);
+      const restored = store.trashedIds.length !== before;
+      if (restored) save(store);
+      return restored as T;
+    }
+
+    case "list_trashed_exams": {
+      const trashed = [
+        ...store.jobs.filter((j) => store.trashedIds.includes(j.jobId)).map(readingSummary),
+        ...store.writingJobs.filter((j) => store.trashedIds.includes(j.jobId)).map(writingSummary)
+      ];
+      trashed.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return trashed as T;
     }
 
     case "search_library_exams": {
       const query = String(args.query ?? "").trim().toLowerCase();
       if (!query) return [] as T;
-      const all = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)];
+      const all = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)]
+        .filter((e) => !store.trashedIds.includes(e.id));
       const hits = all.filter(
         (e) =>
           e.title.toLowerCase().includes(query) ||
@@ -3058,7 +3103,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     }
 
     case "get_library_stats": {
-      const all = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)];
+      const all = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)]
+        .filter((e) => !store.trashedIds.includes(e.id));
       const by = (key: keyof LibraryExamSummary) => {
         const map: Record<string, number> = {};
         for (const e of all) {

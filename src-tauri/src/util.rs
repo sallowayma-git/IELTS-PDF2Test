@@ -1,11 +1,15 @@
 use crate::CommandResult;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{Seek, Write},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
 };
+
+pub(crate) const MAX_SOURCE_FILE_BYTES: u64 = 128 * 1024 * 1024;
+const FILE_IO_BUFFER_BYTES: usize = 64 * 1024;
 
 pub(crate) fn is_safe_path_segment(value: &str) -> bool {
     let value = value.trim();
@@ -110,14 +114,116 @@ pub(crate) fn sanitize_filename(name: &str) -> String {
         .to_string()
 }
 
+fn source_file_too_large_error(path: &Path, size_bytes: u64, max_bytes: u64) -> String {
+    format!(
+        "source_file_too_large:max_bytes={max_bytes}:size_bytes={size_bytes}:path={}",
+        path.display()
+    )
+}
+
+fn validate_source_file_size(path: &Path, size_bytes: u64, max_bytes: u64) -> CommandResult<()> {
+    if size_bytes > max_bytes {
+        Err(source_file_too_large_error(path, size_bytes, max_bytes))
+    } else {
+        Ok(())
+    }
+}
+
+fn read_file_with_hash_and_limit(
+    path: &Path,
+    max_bytes: u64,
+) -> CommandResult<(String, u64, Option<Vec<u8>>)> {
+    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err(format!("source_file_not_readable:{}", path.display()));
+    }
+    validate_source_file_size(path, metadata.len(), max_bytes)?;
+
+    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let capacity = usize::try_from(metadata.len()).unwrap_or(FILE_IO_BUFFER_BYTES);
+    let mut bytes = Vec::with_capacity(capacity);
+    let mut hasher = Sha256::new();
+    let mut total_read = 0u64;
+    let mut buffer = [0u8; FILE_IO_BUFFER_BYTES];
+
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        total_read += read as u64;
+        if total_read > max_bytes {
+            return Err(source_file_too_large_error(path, total_read, max_bytes));
+        }
+        hasher.update(&buffer[..read]);
+        bytes.extend_from_slice(&buffer[..read]);
+    }
+
+    Ok((format!("{:x}", hasher.finalize()), total_read, Some(bytes)))
+}
+
 pub(crate) fn hash_file_or_path(path: &Path) -> CommandResult<(String, u64, Option<Vec<u8>>)> {
     if path.exists() && path.is_file() {
-        let bytes = fs::read(path).map_err(|error| error.to_string())?;
-        let size = bytes.len() as u64;
-        Ok((crate::hash_bytes(&bytes), size, Some(bytes)))
+        read_file_with_hash_and_limit(path, MAX_SOURCE_FILE_BYTES)
     } else {
         Err(format!("source_file_not_readable:{}", path.display()))
     }
+}
+
+pub(crate) fn stage_file_with_hash(path: &Path, target: &Path) -> CommandResult<(String, u64)> {
+    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err(format!("source_file_not_readable:{}", path.display()));
+    }
+    validate_source_file_size(path, metadata.len(), MAX_SOURCE_FILE_BYTES)?;
+
+    if target.exists() {
+        return Err(format!("staged_source_target_exists:{}", target.display()));
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let result = (|| {
+        let mut reader = fs::File::open(path).map_err(|error| error.to_string())?;
+        let mut writer = fs::File::create(target)
+            .map_err(|error| format!("stage_source_file:{}:{}", target.display(), error))?;
+        let mut hasher = Sha256::new();
+        let mut total_read = 0u64;
+        let mut buffer = [0u8; FILE_IO_BUFFER_BYTES];
+
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .map_err(|error| format!("read_source_file:{}:{}", path.display(), error))?;
+            if read == 0 {
+                break;
+            }
+            total_read += read as u64;
+            if total_read > MAX_SOURCE_FILE_BYTES {
+                return Err(source_file_too_large_error(
+                    path,
+                    total_read,
+                    MAX_SOURCE_FILE_BYTES,
+                ));
+            }
+            hasher.update(&buffer[..read]);
+            writer
+                .write_all(&buffer[..read])
+                .map_err(|error| format!("stage_source_file:{}:{}", target.display(), error))?;
+        }
+
+        writer
+            .flush()
+            .map_err(|error| format!("stage_source_file:{}:{}", target.display(), error))?;
+        Ok((format!("{:x}", hasher.finalize()), total_read))
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(target);
+    }
+
+    result
 }
 
 pub(crate) fn ensure_job_dirs(path: &Path) -> CommandResult<()> {
@@ -292,4 +398,81 @@ pub(crate) fn append_text(path: &Path, value: &str) -> CommandResult<()> {
         .map_err(|error| format!("append_text:{}:{}", path.display(), error))?;
     file.write_all(value.as_bytes())
         .map_err(|error| format!("append_text:{}:{}", path.display(), error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hash_file_or_path, read_file_with_hash_and_limit, stage_file_with_hash};
+    use std::{
+        env, fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "ielts-author-studio-util-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn hash_file_or_path_returns_hash_and_bytes_for_small_file() {
+        let dir = temp_dir("hash-small");
+        let path = dir.join("sample.txt");
+        let expected = b"hello world";
+        fs::write(&path, expected).unwrap();
+
+        let (hash, size, bytes) = hash_file_or_path(&path).unwrap();
+
+        assert_eq!(hash, crate::hash_bytes(expected));
+        assert_eq!(size, expected.len() as u64);
+        assert_eq!(bytes.unwrap(), expected);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hash_file_or_path_rejects_oversized_file() {
+        let dir = temp_dir("hash-large");
+        let path = dir.join("sample.txt");
+        fs::write(&path, b"hello world").unwrap();
+
+        let error = read_file_with_hash_and_limit(&path, 4).unwrap_err();
+
+        assert!(error.contains("source_file_too_large"));
+        assert!(error.contains("max_bytes=4"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stage_file_with_hash_streams_and_cleans_up_partial_file() {
+        let dir = temp_dir("stage");
+        let source = dir.join("source.txt");
+        let staged = dir.join("staged.txt");
+        let expected = b"hello world";
+        fs::write(&source, expected).unwrap();
+
+        let (hash, size) = stage_file_with_hash(&source, &staged).unwrap();
+        assert_eq!(hash, crate::hash_bytes(expected));
+        assert_eq!(size, expected.len() as u64);
+        assert_eq!(fs::read(&staged).unwrap(), expected);
+
+        let oversized = dir.join("oversized.bin");
+        let partial = dir.join("partial.bin");
+        fs::write(&oversized, vec![b'x'; (super::MAX_SOURCE_FILE_BYTES + 1) as usize]).unwrap();
+
+        let error = stage_file_with_hash(&oversized, &partial).unwrap_err();
+        assert!(error.contains("source_file_too_large"));
+        assert!(!partial.exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
 }
