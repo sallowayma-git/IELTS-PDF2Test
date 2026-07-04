@@ -157,6 +157,7 @@ export interface SplitSectionEvidence {
   headingLevel?: number;
   numberingLevel?: number;
   numberingId?: string;
+  sectionColumnCount?: number;
 }
 
 export interface SplitContinuationEdge {

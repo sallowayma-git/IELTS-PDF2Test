@@ -454,8 +454,25 @@ function documentNeedsVisionTranscription(doc?: DocumentIr, requestedMode?: Pars
     || lowConfidenceBlockIds(doc).length > 0;
 }
 
+function layoutHintNumber(layoutHints: Record<string, unknown> | undefined, path: string[]): number | undefined {
+  let value: unknown = layoutHints;
+  for (const key of path) {
+    value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+  }
+  return typeof value === "number" ? value : undefined;
+}
+
 function flattenBlocks(doc?: DocumentIr): DocumentBlock[] {
-  type OrderedBlock = DocumentBlock & { pageIndex?: number; __pageWidth: number; __pageHeight: number; __pageRotation: number; __originalOrder: number };
+  type OrderedBlock = DocumentBlock & {
+    pageIndex?: number;
+    __pageWidth: number;
+    __pageHeight: number;
+    __pageRotation: number;
+    __originalOrder: number;
+    __layoutSection?: number;
+    __columnIndex?: number;
+    __sectionColumns?: number;
+  };
   return (doc?.pages.flatMap((page, pagePosition) => {
     const pageIndex = page.pageIndex ?? pagePosition + 1;
     const pageWidth = page.width ?? 595;
@@ -467,22 +484,50 @@ function flattenBlocks(doc?: DocumentIr): DocumentBlock[] {
       __pageWidth: pageWidth,
       __pageHeight: pageHeight,
       __pageRotation: pageRotation,
-      __originalOrder: blockPosition
+      __originalOrder: blockPosition,
+      __layoutSection:
+        typeof (block as DocumentBlock & { _epic8LayoutSection?: number })._epic8LayoutSection === "number"
+          ? (block as DocumentBlock & { _epic8LayoutSection?: number })._epic8LayoutSection
+          : layoutHintNumber(block.layoutHints, ["section", "index"]),
+      __columnIndex:
+        typeof (block as DocumentBlock & { _epic8ColumnIndex?: number })._epic8ColumnIndex === "number"
+          ? (block as DocumentBlock & { _epic8ColumnIndex?: number })._epic8ColumnIndex
+          : layoutHintNumber(block.layoutHints, ["section", "columns", "current"]),
+      __sectionColumns:
+        typeof (block as DocumentBlock & { _epic8SectionColumns?: number })._epic8SectionColumns === "number"
+          ? (block as DocumentBlock & { _epic8SectionColumns?: number })._epic8SectionColumns
+          : layoutHintNumber(block.layoutHints, ["section", "columns", "count"])
     } as OrderedBlock));
   }) ?? []).sort((left, right) => {
     const leftBox = normalizedBlockBbox(left) ?? [0, 0, 0, 0];
     const rightBox = normalizedBlockBbox(right) ?? [0, 0, 0, 0];
     const leftRole = left.roleHint === "answer" ? 3 : left.roleHint === "ignore" ? 4 : 0;
     const rightRole = right.roleHint === "answer" ? 3 : right.roleHint === "ignore" ? 4 : 0;
+    const leftSection = blockLayoutSectionIndex(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightSection = blockLayoutSectionIndex(right) ?? Number.MAX_SAFE_INTEGER;
     const leftColumn = blockColumn(left);
     const rightColumn = blockColumn(right);
+    const hasExplicitLayout = blockLayoutSectionIndex(left) !== undefined || blockLayoutSectionIndex(right) !== undefined;
     return ((left as OrderedBlock).pageIndex ?? 1) - ((right as OrderedBlock).pageIndex ?? 1)
       || leftRole - rightRole
+      || leftSection - rightSection
       || leftColumn - rightColumn
+      || (hasExplicitLayout || (normalizeRotation((left as OrderedBlock).__pageRotation ?? 0) === 0 && normalizeRotation((right as OrderedBlock).__pageRotation ?? 0) === 0)
+        ? (((left as OrderedBlock).__originalOrder ?? 0) - ((right as OrderedBlock).__originalOrder ?? 0))
+        : 0)
       || leftBox[1] - rightBox[1]
       || leftBox[0] - rightBox[0]
       || ((left as typeof left & { __originalOrder?: number }).__originalOrder ?? 0) - ((right as typeof right & { __originalOrder?: number }).__originalOrder ?? 0);
-  }).map(({ __pageWidth: _pageWidth, __pageHeight: _pageHeight, __pageRotation: _pageRotation, __originalOrder: _originalOrder, ...block }) => block as DocumentBlock);
+  }).map(({
+    __pageWidth: _pageWidth,
+    __pageHeight: _pageHeight,
+    __pageRotation: _pageRotation,
+    __originalOrder: _originalOrder,
+    __layoutSection: _layoutSection,
+    __columnIndex: _columnIndex,
+    __sectionColumns: _sectionColumns,
+    ...block
+  }) => block as DocumentBlock);
 }
 
 function blockText(block: DocumentBlock): string {
@@ -545,10 +590,39 @@ function isReadingPassageHeading(text: string): boolean {
   return text.trimStart().toUpperCase().startsWith("READING PASSAGE");
 }
 
+function isShortProsePassageBlock(block: DocumentBlock): boolean {
+  const normalized = blockText(block).replace(/\s+/g, " ").trim();
+  if (!normalized
+    || isQuestionBlock(block)
+    || isAnswerBlock(block)
+    || isReadingPassageHeading(normalized)
+    || isHeadingOptionLine(normalized)
+    || isHeadingMatchingInstructionLine(normalized)
+    || isHeadingMatchingAssignmentLine(normalized)
+    || isNonContentPlaceholderText(normalized)
+    || isQuestionOrInstructionLikeText(normalized)) {
+    return false;
+  }
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  const hasLowercase = /[a-z]/.test(normalized);
+  const hasProsePunctuation = normalized.includes(",")
+    || normalized.includes(";")
+    || /[.!?]$/.test(normalized);
+  const sectionColumns = blockSectionColumnCount(block) ?? 1;
+  return hasLowercase
+    && ((wordCount >= 6 && (normalized.length >= 28 || hasProsePunctuation))
+      || (sectionColumns > 1 && wordCount >= 5 && normalized.length >= 24));
+}
+
 function isSubstantivePassageBlock(block: DocumentBlock): boolean {
   const text = blockText(block);
-  return text.length >= 48
-    && (block.roleHint === "passage" || (!isQuestionBlock(block) && !isAnswerBlock(block) && !isReadingPassageHeading(text)));
+  if (block.roleHint === "passage") {
+    return !isQuestionBlock(block) && !isAnswerBlock(block) && !isNonContentPlaceholderText(text);
+  }
+  return (text.length >= 48 || isShortProsePassageBlock(block))
+    && !isQuestionBlock(block)
+    && !isAnswerBlock(block)
+    && !isReadingPassageHeading(text);
 }
 
 function hasOpeningQuestionRangePosition(blocks: DocumentBlock[], index: number): boolean {
@@ -641,18 +715,20 @@ function normalizeGroupRanges(candidates: SplitCandidates["questionGroupCandidat
 
 function detectGroupKind(text: string): GroupKind {
   const lower = text.toLowerCase();
+  const normalized = normalizedInstructionText(text);
   if (lower.includes("true") && lower.includes("false") && lower.includes("not given")) return "true_false_not_given";
   if (lower.includes("yes") && lower.includes("no") && lower.includes("not given")) return "yes_no_not_given";
   if (isMultiChoiceText(text)) return "multi_choice";
-  if (lower.includes("complete the table") || lower.includes("table below") || lower.includes("|") && lower.includes("complete")) return "table_completion";
-  if (lower.includes("complete the flow chart") || lower.includes("complete the flow-chart") || lower.includes("flow chart below") || lower.includes("flow-chart below") || lower.includes("label the diagram")) return "diagram_completion";
-  if (lower.includes("list of headings") || lower.includes("matching headings")) return "heading_matching";
+  if (lower.includes("complete the table") || lower.includes("table below") || lower.includes("complete the form") || lower.includes("form below") || lower.includes("|") && lower.includes("complete")) return "table_completion";
+  if (lower.includes("complete the flow chart") || lower.includes("complete the flow-chart") || lower.includes("flow chart below") || lower.includes("flow-chart below") || lower.includes("label the diagram") || lower.includes("diagram below") || lower.includes("label the map") || lower.includes("map below") || lower.includes("label the plan") || lower.includes("plan below") || lower.includes("process below")) return "diagram_completion";
+  if (lower.includes("list of headings") || lower.includes("matching headings") || lower.includes("correct heading for") && lower.includes("headings")) return "heading_matching";
   if (lower.includes("classify") || lower.includes("classification") || lower.includes("according to which")) return "classification";
-  if (lower.includes("which paragraph contains") || lower.includes("which section contains") || lower.includes("matching information")) return "matching_information";
+  if (lower.includes("which paragraph contains") || lower.includes("which section contains") || lower.includes("which paragraph mentions") || lower.includes("which section mentions") || lower.includes("which paragraph refers to") || lower.includes("which section refers to") || lower.includes("matching information")) return "matching_information";
   if (isSentenceEndingMatchingText(text)) return "matching";
-  if (isMatchingPromptText(normalizedInstructionText(text))) return "matching";
+  if (normalized.includes("write the correct letter") && hasLetterOptionSpan(normalized)) return "matching";
+  if (isMatchingPromptText(normalized)) return "matching";
   if (lower.includes("match") && lower.includes("letter")) return "matching";
-  if (lower.includes("complete the summary")) return "summary_completion";
+  if (lower.includes("complete the summary") || lower.includes("summary below")) return "summary_completion";
   if (isNotesCompletionText(text)) return "sentence_completion";
   if (isShortAnswerInstructionText(text)) return "short_answer";
   if (lower.includes("complete the sentence") || lower.includes("complete the sentences")) return "sentence_completion";
@@ -674,6 +750,25 @@ function isMultiChoiceText(text: string): boolean {
     || normalized.includes("choose three correct letters");
 }
 
+function hasLetterOptionSpan(normalized: string): boolean {
+  return [
+    "a-c",
+    "a-d",
+    "a-e",
+    "a-f",
+    "a-g",
+    "a-h",
+    "a-i",
+    "letters a-c",
+    "letters a-d",
+    "letters a-e",
+    "letters a-f",
+    "letters a-g",
+    "letters a-h",
+    "letters a-i"
+  ].some((marker) => normalized.includes(marker));
+}
+
 function hasSingleChoiceOptionRun(normalized: string): boolean {
   return ["a, b, c or d", "a, b, c, or d", "a, b or c", "a, b, c", "a-d", "a-c"]
     .some((marker) => normalized.includes(marker));
@@ -682,11 +777,16 @@ function hasSingleChoiceOptionRun(normalized: string): boolean {
 function isMatchingPromptText(normalized: string): boolean {
   return normalized.includes("which paragraph contains")
     || normalized.includes("which section contains")
+    || normalized.includes("which paragraph mentions")
+    || normalized.includes("which section mentions")
+    || normalized.includes("which paragraph refers to")
+    || normalized.includes("which section refers to")
     || normalized.includes("match each statement")
     || normalized.includes("match each person")
     || normalized.includes("match each opinion")
     || normalized.includes("match each sentence")
     || normalized.includes("match each with")
+    || normalized.includes("write the correct letter")
     || normalized.includes("look at the following")
     || normalized.includes("list of headings")
     || normalized.includes("correct heading for each");
@@ -966,7 +1066,28 @@ function classifyGroup(text: string, blockIds: string[]): NonNullable<SplitCandi
   return { kind, interaction, confidence: warnings.length ? 0.68 : 0.82, warnings, evidence: blockIds };
 }
 
+function blockLayoutSectionIndex(block: DocumentBlock): number | undefined {
+  const ordered = block as DocumentBlock & { __layoutSection?: number };
+  if (typeof ordered.__layoutSection === "number") return ordered.__layoutSection;
+  return layoutHintNumber(block.layoutHints, ["section", "index"]);
+}
+
+function blockLayoutColumnIndex(block: DocumentBlock): number | undefined {
+  const ordered = block as DocumentBlock & { __columnIndex?: number };
+  if (typeof ordered.__columnIndex === "number") return ordered.__columnIndex;
+  return layoutHintNumber(block.layoutHints, ["section", "columns", "current"]);
+}
+
+function blockSectionColumnCount(block: DocumentBlock): number | undefined {
+  const ordered = block as DocumentBlock & { __sectionColumns?: number };
+  if (typeof ordered.__sectionColumns === "number") return ordered.__sectionColumns;
+  return layoutHintNumber(block.layoutHints, ["section", "columns", "count"]);
+}
+
 function blockColumn(block: DocumentBlock): number {
+  const explicitColumn = blockLayoutColumnIndex(block);
+  if (typeof explicitColumn === "number") return explicitColumn;
+  if (blockSectionColumnCount(block) === 1) return 0;
   const box = normalizedBlockBbox(block);
   const ordered = block as DocumentBlock & { __pageWidth?: number; __pageHeight?: number; __pageRotation?: number };
   const pageWidth = [90, 270].includes(normalizeRotation(ordered.__pageRotation ?? 0)) ? ordered.__pageHeight ?? 842 : ordered.__pageWidth ?? 595;
@@ -1035,7 +1156,8 @@ function sectionEvidenceForBlocks(blocks: DocumentBlock[]): NonNullable<SplitCan
     tableMergedCellCount: block.table ? block.table.cells.filter((cell) => (cell.colSpan ?? 1) > 1 || Boolean(cell.verticalMerge)).length : undefined,
     headingLevel: hintNumber(block, ["headingLevel"]),
     numberingLevel: hintNumber(block, ["numbering", "level"]),
-    numberingId: hintString(block, ["numbering", "id"])
+    numberingId: hintString(block, ["numbering", "id"]),
+    sectionColumnCount: hintNumber(block, ["section", "columns", "count"])
   }));
 }
 
@@ -1101,6 +1223,264 @@ function inferPassageTitle(job: ImportJob, passageBlocks: DocumentBlock[]): stri
   return title ?? job.title;
 }
 
+function isHeadingOptionLine(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const lower = normalized.toLowerCase();
+  if (lower.includes("list of headings")) return true;
+  const first = lower.split(/\s+/)[0]?.replace(/^[).:;]+|[).:;]+$/g, "") ?? "";
+  return ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"].includes(first);
+}
+
+function isHeadingMatchingInstructionLine(text: string): boolean {
+  const lower = text.replace(/\s+/g, " ").trim().toLowerCase();
+  return lower.includes("choose the correct heading")
+    || lower.includes("list of headings")
+    || lower.includes("write the correct number")
+    || lower.includes("write the correct letter")
+    || lower.includes("in boxes")
+    || lower.includes("on your answer sheet")
+    || lower.includes("has six sections")
+    || lower.includes("has seven sections")
+    || lower.includes("has eight sections");
+}
+
+function isHeadingMatchingAssignmentLine(text: string): boolean {
+  const tokens = text.replace(/\s+/g, " ").trim().split(/\s+/).filter(Boolean);
+  let index = 0;
+  let assignments = 0;
+  while (index + 2 < tokens.length) {
+    const number = tokens[index]?.replace(/^[().:;,]+|[().:;,]+$/g, "") ?? "";
+    const label = tokens[index + 1]?.replace(/^[().:;,]+|[().:;,]+$/g, "").toLowerCase() ?? "";
+    const section = tokens[index + 2]?.replace(/^[().:;,]+|[().:;,]+$/g, "") ?? "";
+    if (/^\d+$/.test(number) && ["paragraph", "section", "part"].includes(label) && /^[A-Za-z]$/.test(section)) {
+      assignments += 1;
+      index += 3;
+      continue;
+    }
+    index += 1;
+  }
+  return assignments > 0;
+}
+
+function isQuestionOrInstructionLikeText(text: string): boolean {
+  const lower = text.replace(/\s+/g, " ").trim().toLowerCase();
+  return lower.includes("questions ")
+    || lower.includes("question ")
+    || lower.includes("choose ")
+    || lower.includes("label ")
+    || lower.includes("write ")
+    || lower.includes("complete ")
+    || lower.includes("which two")
+    || lower.includes("which three")
+    || lower.includes("answer sheet")
+    || lower.includes("______")
+    || lower.includes("_____");
+}
+
+function isNonContentPlaceholderText(text: string): boolean {
+  return text.replace(/\s+/g, " ").trim().replace(/^\[+|\]+$/g, "").toLowerCase().startsWith("no extractable text on page");
+}
+
+function isNonContentPlaceholderBlock(block: DocumentBlock): boolean {
+  return isNonContentPlaceholderText(blockText(block));
+}
+
+function letteredParagraphLabel(text: string): string | undefined {
+  const first = text.replace(/\s+/g, " ").trim().split(/\s+/)[0]?.replace(/^[().:;,]+|[().:;,]+$/g, "") ?? "";
+  return /^[A-Z]$/.test(first) ? first : undefined;
+}
+
+function standaloneLetterMarkerCount(text: string): number {
+  return text.replace(/\s+/g, " ").trim().split(/\s+/).filter((token) => /^[A-G]$/i.test(token.replace(/^[().:;,]+|[().:;,]+$/g, ""))).length;
+}
+
+function isSubstantiveLetteredArticleBlock(block: DocumentBlock, expectedLabel: string): boolean {
+  const text = blockText(block);
+  return letteredParagraphLabel(text) === expectedLabel
+    && standaloneLetterMarkerCount(text) <= 2
+    && isSubstantivePassageBlock(block);
+}
+
+function findLetteredArticleBlock(blocks: DocumentBlock[], start: number, expectedLabel: string, maxLookahead: number): number | undefined {
+  for (let index = start; index < Math.min(blocks.length, start + maxLookahead); index += 1) {
+    if (isSubstantiveLetteredArticleBlock(blocks[index], expectedLabel)) return index;
+  }
+  return undefined;
+}
+
+function hasLetteredArticleSequence(blocks: DocumentBlock[], firstIndex: number): boolean {
+  const firstLabel = letteredParagraphLabel(blockText(blocks[firstIndex]));
+  if (firstLabel !== "A" || !isSubstantiveLetteredArticleBlock(blocks[firstIndex], "A")) return false;
+  return findLetteredArticleBlock(blocks, firstIndex + 1, "B", 4) !== undefined;
+}
+
+function isLatePassageTailStart(blocks: DocumentBlock[], index: number): boolean {
+  const block = blocks[index];
+  if (!block) return false;
+  const text = blockText(block).replace(/\s+/g, " ").trim();
+  if (!text
+    || isQuestionBlock(block)
+    || isAnswerBlock(block)
+    || isHeadingOptionLine(text)
+    || isHeadingMatchingInstructionLine(text)
+    || isHeadingMatchingAssignmentLine(text)
+    || isNonContentPlaceholderText(text)) {
+    return false;
+  }
+  if (hasLetteredArticleSequence(blocks, index)) return true;
+  if (text.length > 120 || isQuestionOrInstructionLikeText(text) || hasNumberedInlineBlanks(text)) return false;
+  const firstArticleIndex = findLetteredArticleBlock(blocks, index + 1, "A", 3);
+  if (firstArticleIndex === undefined) return false;
+  if (firstArticleIndex > index + 1) {
+    const firstChar = [...text].find((ch) => !/\s/.test(ch));
+    const titleLike = Boolean(firstChar && /[A-Z]/.test(firstChar) && !/[.?!]$/.test(text));
+    if (!titleLike) return false;
+  }
+  return hasLetteredArticleSequence(blocks, firstArticleIndex);
+}
+
+function latePassageQuestionBlockCount(blocks: DocumentBlock[]): number {
+  for (let index = 1; index < blocks.length; index += 1) {
+    if (isLatePassageTailStart(blocks, index)) return Math.max(1, index);
+  }
+  return blocks.length;
+}
+
+function leadingQuestionNumber(text: string): number | undefined {
+  const first = text.replace(/\s+/g, " ").trim().split(/\s+/)[0];
+  if (!first) return undefined;
+  const trimmed = first.replace(/^[([]+/, "");
+  const match = trimmed.match(/^(\d{1,3})([).:;,\]]*)$/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function isExplicitQuestionContentBlock(block: DocumentBlock): boolean {
+  const text = blockText(block).replace(/\s+/g, " ").trim();
+  if (!text || isNonContentPlaceholderText(text)) return false;
+  return isQuestionBlock(block)
+    || isAnswerBlock(block)
+    || Boolean(detectQuestionHeadingRange(text))
+    || isQuestionOrInstructionLikeText(text)
+    || hasNumberedInlineBlanks(text)
+    || leadingQuestionNumber(text) !== undefined
+    || isHeadingOptionLine(text)
+    || isHeadingMatchingInstructionLine(text)
+    || isHeadingMatchingAssignmentLine(text);
+}
+
+function consecutiveSubstantivePassageBlocks(blocks: DocumentBlock[], start: number, maxLookahead: number): number {
+  let count = 0;
+  for (let index = start; index < Math.min(blocks.length, start + maxLookahead); index += 1) {
+    const block = blocks[index];
+    const text = blockText(block).replace(/\s+/g, " ").trim();
+    if (!text
+      || isNonContentPlaceholderText(text)
+      || isExplicitQuestionContentBlock(block)
+      || !isSubstantivePassageBlock(block)) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+function hasPriorQuestionContent(blocks: DocumentBlock[], index: number): boolean {
+  return blocks.slice(1, index).some(isExplicitQuestionContentBlock);
+}
+
+function hasLaterQuestionContent(blocks: DocumentBlock[], start: number): boolean {
+  return blocks.slice(start).some(isExplicitQuestionContentBlock);
+}
+
+function isPassageTailLayoutTransition(blocks: DocumentBlock[], index: number): boolean {
+  const current = blocks[index];
+  const previous = blocks[index - 1];
+  if (!current || !previous) return false;
+  return (current.pageIndex ?? 1) !== (previous.pageIndex ?? 1)
+    || blockLayoutSectionIndex(current) !== blockLayoutSectionIndex(previous)
+    || blockSectionColumnCount(current) !== blockSectionColumnCount(previous)
+    || blockColumn(current) !== blockColumn(previous);
+}
+
+function isPassageTailTitleText(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized
+    || isQuestionOrInstructionLikeText(normalized)
+    || isHeadingOptionLine(normalized)
+    || isHeadingMatchingInstructionLine(normalized)
+    || isHeadingMatchingAssignmentLine(normalized)
+    || leadingQuestionNumber(normalized) !== undefined
+    || /[.?!]$/.test(normalized)) {
+    return false;
+  }
+  const firstChar = [...normalized].find((ch) => !/\s/.test(ch));
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  return Boolean(firstChar && /[A-Z]/.test(firstChar) && wordCount >= 2 && wordCount <= 8);
+}
+
+function findProsePassageTailStart(blocks: DocumentBlock[]): number | undefined {
+  for (let index = 1; index < blocks.length; index += 1) {
+    if (!hasPriorQuestionContent(blocks, index)) continue;
+    const substantiveRun = consecutiveSubstantivePassageBlocks(blocks, index, 3);
+    const titleFollowedRun = isPassageTailTitleText(blockText(blocks[index]))
+      ? consecutiveSubstantivePassageBlocks(blocks, index + 1, 3)
+      : 0;
+    const runEnd = titleFollowedRun > 0 ? index + 1 + titleFollowedRun : index + substantiveRun;
+    if (hasLaterQuestionContent(blocks, runEnd)) continue;
+    if (substantiveRun >= 2) return index;
+    if (substantiveRun >= 1 && (blocks[index].roleHint === "passage" || isPassageTailLayoutTransition(blocks, index))) return index;
+    if (titleFollowedRun >= 2) return index;
+    if (titleFollowedRun >= 1
+      && (isPassageTailLayoutTransition(blocks, index)
+        || isPassageTailLayoutTransition(blocks, index + 1)
+        || blocks[index + 1]?.roleHint === "passage")) {
+      return index;
+    }
+  }
+  return undefined;
+}
+
+function genericPassageTailQuestionBlockCount(blocks: DocumentBlock[]): number {
+  const start = findProsePassageTailStart(blocks);
+  return start === undefined ? blocks.length : Math.max(1, start);
+}
+
+function isProbablePassageTailStart(blocks: DocumentBlock[], index: number): boolean {
+  const block = blocks[index];
+  if (!block) return false;
+  const text = blockText(block).replace(/\s+/g, " ").trim();
+  if (!text
+    || isQuestionBlock(block)
+    || isAnswerBlock(block)
+    || isHeadingOptionLine(text)
+    || isHeadingMatchingInstructionLine(text)
+    || isHeadingMatchingAssignmentLine(text)) {
+    return false;
+  }
+  if (isSubstantivePassageBlock(block)) return true;
+  return text.length >= 8 && blocks.slice(index + 1, index + 4).some(isSubstantivePassageBlock);
+}
+
+function headingMatchingQuestionBlockCount(blocks: DocumentBlock[]): number {
+  let sawHeadingList = false;
+  for (let index = 0; index < blocks.length; index += 1) {
+    const text = blockText(blocks[index]);
+    const lower = text.toLowerCase();
+    if (lower.includes("list of headings")) {
+      sawHeadingList = true;
+      continue;
+    }
+    if (!sawHeadingList || isHeadingOptionLine(text)) continue;
+    if (isProbablePassageTailStart(blocks, index)) return Math.max(1, index);
+  }
+  return blocks.length;
+}
+
+function questionBlockCountForGroup(kind: GroupKind, blocks: DocumentBlock[]): number {
+  const specific = kind === "heading_matching" ? headingMatchingQuestionBlockCount(blocks) : latePassageQuestionBlockCount(blocks);
+  return specific < blocks.length ? specific : genericPassageTailQuestionBlockCount(blocks);
+}
+
 function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandidates {
   const blocks = flattenBlocks(doc);
   if (!blocks.length) {
@@ -1121,22 +1501,23 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
   const firstAnswerIndex = blocks.findIndex(isAnswerBlock);
   const passageBlocks =
     firstConcreteQuestionIndex >= 0
-      ? blocks.filter((block, index) => index < firstConcreteQuestionIndex && !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
-      : blocks.filter((block) => !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore");
+      ? blocks.filter((block, index) => index < firstConcreteQuestionIndex && !isNonContentPlaceholderBlock(block) && !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
+      : blocks.filter((block) => !isNonContentPlaceholderBlock(block) && !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore");
+  const deferredPassageBlocks: DocumentBlock[] = [];
   const allUmbrellaBlocks = blocks.filter((_, index) => isUmbrellaQuestionBlock(blocks, index));
   const questionBlocks =
     firstConcreteQuestionIndex >= 0
       ? blocks
           .slice(firstConcreteQuestionIndex)
-          .filter((block) => !isAnswerBlock(block) && block.roleHint !== "ignore")
+          .filter((block) => !isNonContentPlaceholderBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
       : allUmbrellaBlocks.length
         ? allUmbrellaBlocks
         : firstQuestionIndex >= 0
           ? blocks
               .slice(firstQuestionIndex)
-              .filter((block) => !isAnswerBlock(block) && block.roleHint !== "ignore")
-          : blocks.filter(isQuestionBlock);
-  const answerBlocks = blocks.filter(isAnswerBlock);
+              .filter((block) => !isNonContentPlaceholderBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
+          : blocks.filter((block) => !isNonContentPlaceholderBlock(block) && isQuestionBlock(block));
+  const answerBlocks = blocks.filter((block) => !isNonContentPlaceholderBlock(block) && isAnswerBlock(block));
 
   const answerMap = answerBlocks.reduce<Record<string, AnswerValue>>((acc, block) => ({ ...acc, ...parseAnswerText(blockText(block)) }), {});
   const externalAnswerCandidates = answerSourceCandidates(job);
@@ -1168,7 +1549,13 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
         const candidateText = blockText(candidate);
         return candidateIndex > index && Boolean(detectQuestionHeadingRange(candidateText)) && !isKnownUmbrellaBlock(candidate, allUmbrellaBlocks);
       });
-      const included = nextHeadingIndex > -1 ? questionBlocks.slice(index, nextHeadingIndex) : questionBlocks.slice(index);
+      const rawIncluded = nextHeadingIndex > -1 ? questionBlocks.slice(index, nextHeadingIndex) : questionBlocks.slice(index);
+      const rawCombined = rawIncluded.map(blockText).join(" ");
+      const rawBlockIds = rawIncluded.map((item) => item.blockId);
+      const preliminaryClassification = classifyGroup(rawCombined, rawBlockIds);
+      const includedCount = questionBlockCountForGroup(preliminaryClassification.kind, rawIncluded);
+      const included = rawIncluded.slice(0, Math.max(1, Math.min(rawIncluded.length, includedCount)));
+      if (includedCount < rawIncluded.length) deferredPassageBlocks.push(...rawIncluded.slice(includedCount));
       const blockIds = included.map((item) => item.blockId);
       const combined = included.map(blockText).join(" ");
       const classification = classifyGroup(combined, blockIds);
@@ -1229,8 +1616,19 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
   }
   normalizeGroupRanges(questionGroupCandidates);
 
+  if (deferredPassageBlocks.length) {
+    const seen = new Set(passageBlocks.map((block) => block.blockId));
+    for (const block of deferredPassageBlocks) {
+      if (isNonContentPlaceholderBlock(block)) continue;
+      if (block.blockId && seen.has(block.blockId)) continue;
+      if (block.blockId) seen.add(block.blockId);
+      passageBlocks.push(block);
+    }
+  }
+  const filteredPassageBlocks = passageBlocks.filter((block) => !isNonContentPlaceholderBlock(block));
+
   const fallbackPassageRange = firstQuestionIndex > 0 ? blocks.slice(0, firstQuestionIndex).map((block) => block.blockId) : blocks.slice(0, Math.max(1, Math.min(3, blocks.length))).map((block) => block.blockId);
-  const passageRange = passageBlocks.length ? passageBlocks.map((block) => block.blockId) : fallbackPassageRange;
+  const passageRange = filteredPassageBlocks.length ? filteredPassageBlocks.map((block) => block.blockId) : fallbackPassageRange;
   const issues = [
     ...(questionGroupCandidates.length ? [] : ["未识别到题号范围，请手动切分。"]),
     ...(questionGroupCandidates.some((candidate) => candidate.requiresManualQuestionImport) ? ["仅识别到总题号范围，请导入或手动填写每道题题干。"] : []),
@@ -1240,7 +1638,7 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
 
   return {
     jobId,
-    passageCandidates: [{ range: passageRange, title: inferPassageTitle(job ?? { title: "Untitled Reading" } as ImportJob, passageBlocks), categoryHint: job?.category ?? "P1" }],
+    passageCandidates: [{ range: passageRange, title: inferPassageTitle(job ?? { title: "Untitled Reading" } as ImportJob, filteredPassageBlocks), categoryHint: job?.category ?? "P1" }],
     questionGroupCandidates,
     umbrellaQuestionRanges,
     answerKeyCandidates: [

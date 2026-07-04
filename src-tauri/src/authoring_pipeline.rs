@@ -364,6 +364,29 @@ fn dynamic_block_page_index(block: &Value) -> u64 {
     block.get("pageIndex").and_then(Value::as_u64).unwrap_or(1)
 }
 
+fn dynamic_block_layout_section_index(block: &Value) -> Option<u64> {
+    block
+        .get("_epic8LayoutSection")
+        .or_else(|| block.pointer("/layoutHints/section/index"))
+        .and_then(Value::as_u64)
+}
+
+fn dynamic_block_layout_column_index(block: &Value) -> Option<u8> {
+    block
+        .get("_epic8ColumnIndex")
+        .or_else(|| block.pointer("/layoutHints/section/columns/current"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())
+}
+
+fn dynamic_block_section_column_count_value(block: &Value) -> Option<u8> {
+    block
+        .get("_epic8SectionColumns")
+        .or_else(|| block.pointer("/layoutHints/section/columns/count"))
+        .and_then(Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())
+}
+
 fn dynamic_block_bbox(block: &Value) -> Option<[f64; 4]> {
     let values = block.get("bbox")?.as_array()?;
     if values.len() != 4 {
@@ -434,6 +457,12 @@ fn dynamic_block_normalized_bbox(block: &Value) -> Option<[f64; 4]> {
 }
 
 fn dynamic_block_column(block: &Value) -> u8 {
+    if let Some(column_index) = dynamic_block_layout_column_index(block) {
+        return column_index;
+    }
+    if dynamic_block_section_column_count_value(block) == Some(1) {
+        return 0;
+    }
     let Some(bbox) = dynamic_block_normalized_bbox(block) else {
         return 0;
     };
@@ -461,26 +490,6 @@ fn dynamic_block_column(block: &Value) -> u8 {
     } else {
         0
     }
-}
-
-/// True when a block's bbox spans most of the page width, marking it as a
-/// full-width header/title rather than 2-column body text.
-fn dynamic_block_is_full_width(block: &Value) -> bool {
-    let Some(bbox) = dynamic_block_normalized_bbox(block) else {
-        return false;
-    };
-    let page_width = if matches!(dynamic_block_page_rotation(block), 90 | 270) {
-        block
-            .get("_epic8PageHeight")
-            .and_then(Value::as_f64)
-            .unwrap_or(842.0)
-    } else {
-        block
-            .get("_epic8PageWidth")
-            .and_then(Value::as_f64)
-            .unwrap_or(595.0)
-    };
-    (bbox[2] - bbox[0]).abs() > page_width * 0.75
 }
 
 fn dynamic_block_text_preview(block: &Value) -> String {
@@ -595,15 +604,23 @@ fn dynamic_block_original_order(block: &Value) -> u64 {
 
 fn dynamic_reading_order_cmp(left: &Value, right: &Value) -> std::cmp::Ordering {
     use std::cmp::Ordering;
+    let left_section = dynamic_block_layout_section_index(left).unwrap_or(u64::MAX);
+    let right_section = dynamic_block_layout_section_index(right).unwrap_or(u64::MAX);
+    let has_explicit_layout = dynamic_block_layout_section_index(left).is_some()
+        || dynamic_block_layout_section_index(right).is_some();
 
     dynamic_block_page_index(left)
         .cmp(&dynamic_block_page_index(right))
         .then_with(|| {
             dynamic_block_order_role_rank(left).cmp(&dynamic_block_order_role_rank(right))
         })
+        .then_with(|| left_section.cmp(&right_section))
         .then_with(|| dynamic_block_column(left).cmp(&dynamic_block_column(right)))
         .then_with(|| {
-            if dynamic_block_page_rotation(left) == 0 && dynamic_block_page_rotation(right) == 0 {
+            if has_explicit_layout
+                || (dynamic_block_page_rotation(left) == 0
+                    && dynamic_block_page_rotation(right) == 0)
+            {
                 dynamic_block_original_order(left).cmp(&dynamic_block_original_order(right))
             } else {
                 Ordering::Equal
@@ -795,15 +812,50 @@ fn is_dynamic_reading_passage_heading(text: &str) -> bool {
         .starts_with("READING PASSAGE")
 }
 
-fn is_substantive_dynamic_passage_block(block: &Value) -> bool {
+fn is_dynamic_short_prose_passage_block(block: &Value) -> bool {
     let text = dynamic_block_text(block);
-    if text.len() < 48 {
+    let normalized = collapse_whitespace(&text);
+    if normalized.is_empty()
+        || is_dynamic_question_block(block)
+        || is_dynamic_answer_block(block)
+        || is_dynamic_reading_passage_heading(&normalized)
+        || is_dynamic_heading_option_line(&normalized)
+        || is_dynamic_heading_matching_instruction_line(&normalized)
+        || is_dynamic_heading_matching_assignment_line(&normalized)
+        || is_dynamic_non_content_placeholder_text(&normalized)
+        || is_dynamic_question_or_instruction_like_text(&normalized)
+    {
         return false;
     }
-    dynamic_block_role(block) == "passage"
-        || (!is_dynamic_question_block(block)
+    let word_count = normalized.split_whitespace().count();
+    let has_lowercase = normalized.chars().any(|ch| ch.is_ascii_lowercase());
+    let has_prose_punctuation = normalized.contains(',')
+        || normalized.contains(';')
+        || normalized.ends_with('.')
+        || normalized.ends_with('!')
+        || normalized.ends_with('?');
+    let section_columns = block
+        .pointer("/layoutHints/section/columns/count")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    has_lowercase
+        && ((word_count >= 6 && (normalized.len() >= 28 || has_prose_punctuation))
+            || (section_columns > 1 && word_count >= 5 && normalized.len() >= 24))
+}
+
+fn is_substantive_dynamic_passage_block(block: &Value) -> bool {
+    let text = dynamic_block_text(block);
+    if dynamic_block_role(block) == "passage" {
+        return !is_dynamic_question_block(block)
             && !is_dynamic_answer_block(block)
-            && !is_dynamic_reading_passage_heading(&text))
+            && !is_dynamic_non_content_placeholder_text(&text);
+    }
+    if text.len() < 48 && !is_dynamic_short_prose_passage_block(block) {
+        return false;
+    }
+    !is_dynamic_question_block(block)
+        && !is_dynamic_answer_block(block)
+        && !is_dynamic_reading_passage_heading(&text)
 }
 
 fn has_opening_dynamic_question_range_position(blocks: &[Value], index: usize) -> bool {
@@ -1061,6 +1113,7 @@ fn is_dynamic_answer_block(block: &Value) -> bool {
 
 fn detect_dynamic_group_kind(text: &str) -> &'static str {
     let lower = text.to_lowercase();
+    let normalized = normalized_dynamic_instruction_text(text);
     if lower.contains("true") && lower.contains("false") && lower.contains("not given") {
         "true_false_not_given"
     } else if lower.contains("yes") && lower.contains("no") && lower.contains("not given") {
@@ -1069,6 +1122,8 @@ fn detect_dynamic_group_kind(text: &str) -> &'static str {
         "multi_choice"
     } else if lower.contains("complete the table")
         || lower.contains("table below")
+        || lower.contains("complete the form")
+        || lower.contains("form below")
         || (lower.contains('|') && lower.contains("complete"))
     {
         "table_completion"
@@ -1077,9 +1132,18 @@ fn detect_dynamic_group_kind(text: &str) -> &'static str {
         || lower.contains("flow chart below")
         || lower.contains("flow-chart below")
         || lower.contains("label the diagram")
+        || lower.contains("diagram below")
+        || lower.contains("label the map")
+        || lower.contains("map below")
+        || lower.contains("label the plan")
+        || lower.contains("plan below")
+        || lower.contains("process below")
     {
         "diagram_completion"
-    } else if lower.contains("list of headings") || lower.contains("matching headings") {
+    } else if lower.contains("list of headings")
+        || lower.contains("matching headings")
+        || (lower.contains("correct heading for") && lower.contains("headings"))
+    {
         "heading_matching"
     } else if lower.contains("classify")
         || lower.contains("classification")
@@ -1088,16 +1152,24 @@ fn detect_dynamic_group_kind(text: &str) -> &'static str {
         "classification"
     } else if lower.contains("which paragraph contains")
         || lower.contains("which section contains")
+        || lower.contains("which paragraph mentions")
+        || lower.contains("which section mentions")
+        || lower.contains("which paragraph refers to")
+        || lower.contains("which section refers to")
         || lower.contains("matching information")
     {
         "matching_information"
     } else if is_dynamic_sentence_ending_matching_text(text) {
         "matching"
-    } else if is_dynamic_matching_prompt_text(&normalized_dynamic_instruction_text(text)) {
+    } else if normalized.contains("write the correct letter")
+        && has_dynamic_letter_option_span(&normalized)
+    {
+        "matching"
+    } else if is_dynamic_matching_prompt_text(&normalized) {
         "matching"
     } else if lower.contains("match") && lower.contains("letter") {
         "matching"
-    } else if lower.contains("complete the summary") {
+    } else if lower.contains("complete the summary") || lower.contains("summary below") {
         "summary_completion"
     } else if is_dynamic_notes_completion_text(text) {
         "sentence_completion"
@@ -1129,6 +1201,27 @@ fn is_dynamic_multi_choice_text(text: &str) -> bool {
         || normalized.contains("choose three correct letters")
 }
 
+fn has_dynamic_letter_option_span(normalized: &str) -> bool {
+    [
+        "a-c",
+        "a-d",
+        "a-e",
+        "a-f",
+        "a-g",
+        "a-h",
+        "a-i",
+        "letters a-c",
+        "letters a-d",
+        "letters a-e",
+        "letters a-f",
+        "letters a-g",
+        "letters a-h",
+        "letters a-i",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+}
+
 fn has_dynamic_single_choice_option_run(normalized: &str) -> bool {
     [
         "a, b, c or d",
@@ -1145,11 +1238,16 @@ fn has_dynamic_single_choice_option_run(normalized: &str) -> bool {
 fn is_dynamic_matching_prompt_text(normalized: &str) -> bool {
     normalized.contains("which paragraph contains")
         || normalized.contains("which section contains")
+        || normalized.contains("which paragraph mentions")
+        || normalized.contains("which section mentions")
+        || normalized.contains("which paragraph refers to")
+        || normalized.contains("which section refers to")
         || normalized.contains("match each statement")
         || normalized.contains("match each person")
         || normalized.contains("match each opinion")
         || normalized.contains("match each sentence")
         || normalized.contains("match each with")
+        || normalized.contains("write the correct letter")
         || normalized.contains("look at the following")
         || normalized.contains("list of headings")
         || normalized.contains("correct heading for each")
@@ -1685,6 +1783,7 @@ fn is_dynamic_question_or_instruction_like_text(text: &str) -> bool {
     lower.contains("questions ")
         || lower.contains("question ")
         || lower.contains("choose ")
+        || lower.contains("label ")
         || lower.contains("write ")
         || lower.contains("complete ")
         || lower.contains("which two")
@@ -1833,6 +1932,177 @@ fn dynamic_late_passage_question_block_count(blocks: &[Value]) -> usize {
     blocks.len()
 }
 
+fn dynamic_leading_question_number(text: &str) -> Option<u32> {
+    let normalized = collapse_whitespace(text);
+    let first = normalized.split_whitespace().next()?;
+    let trimmed = first.trim_matches(|ch: char| matches!(ch, '(' | '['));
+    let digits_end = trimmed
+        .char_indices()
+        .find_map(|(index, ch)| (!ch.is_ascii_digit()).then_some(index))
+        .unwrap_or(trimmed.len());
+    if digits_end == 0 || digits_end > 3 {
+        return None;
+    }
+    let value = trimmed[..digits_end].parse::<u32>().ok()?;
+    let suffix = trimmed[digits_end..]
+        .trim_matches(|ch: char| matches!(ch, '.' | ')' | ':' | ';' | ',' | ']'));
+    if suffix.is_empty() {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn is_dynamic_explicit_question_content_block(block: &Value) -> bool {
+    let text = collapse_whitespace(&dynamic_block_text(block));
+    if text.is_empty() || is_dynamic_non_content_placeholder_text(&text) {
+        return false;
+    }
+    is_dynamic_question_block(block)
+        || is_dynamic_answer_block(block)
+        || detect_dynamic_question_heading_range(&text).is_some()
+        || is_dynamic_question_or_instruction_like_text(&text)
+        || has_dynamic_numbered_inline_blanks(&text)
+        || dynamic_leading_question_number(&text).is_some()
+        || is_dynamic_heading_option_line(&text)
+        || is_dynamic_heading_matching_instruction_line(&text)
+        || is_dynamic_heading_matching_assignment_line(&text)
+}
+
+fn dynamic_consecutive_substantive_passage_blocks(
+    blocks: &[Value],
+    start: usize,
+    max_lookahead: usize,
+) -> usize {
+    let mut count = 0usize;
+    for block in blocks.iter().skip(start).take(max_lookahead) {
+        let text = collapse_whitespace(&dynamic_block_text(block));
+        if text.is_empty()
+            || is_dynamic_non_content_placeholder_text(&text)
+            || is_dynamic_explicit_question_content_block(block)
+            || !is_substantive_dynamic_passage_block(block)
+        {
+            break;
+        }
+        count += 1;
+    }
+    count
+}
+
+fn has_prior_dynamic_question_content(blocks: &[Value], index: usize) -> bool {
+    blocks
+        .iter()
+        .take(index)
+        .skip(1)
+        .any(is_dynamic_explicit_question_content_block)
+}
+
+fn has_later_dynamic_question_content(blocks: &[Value], start: usize) -> bool {
+    blocks
+        .iter()
+        .skip(start)
+        .any(is_dynamic_explicit_question_content_block)
+}
+
+fn is_dynamic_passage_tail_layout_transition(blocks: &[Value], index: usize) -> bool {
+    let Some(current) = blocks.get(index) else {
+        return false;
+    };
+    let Some(previous) = index.checked_sub(1).and_then(|prev| blocks.get(prev)) else {
+        return false;
+    };
+    dynamic_block_page_index(previous) != dynamic_block_page_index(current)
+        || dynamic_block_layout_section_index(previous)
+            != dynamic_block_layout_section_index(current)
+        || dynamic_block_section_column_count_value(previous)
+            != dynamic_block_section_column_count_value(current)
+        || dynamic_block_column(previous) != dynamic_block_column(current)
+}
+
+fn is_dynamic_passage_tail_title_text(text: &str) -> bool {
+    let normalized = collapse_whitespace(text);
+    if normalized.is_empty()
+        || is_dynamic_question_or_instruction_like_text(&normalized)
+        || is_dynamic_heading_option_line(&normalized)
+        || is_dynamic_heading_matching_instruction_line(&normalized)
+        || is_dynamic_heading_matching_assignment_line(&normalized)
+        || dynamic_leading_question_number(&normalized).is_some()
+        || normalized.ends_with('.')
+        || normalized.ends_with('?')
+        || normalized.ends_with('!')
+    {
+        return false;
+    }
+    let word_count = normalized.split_whitespace().count();
+    let first_char_uppercase = normalized
+        .chars()
+        .find(|ch| !ch.is_whitespace())
+        .map(|ch| ch.is_ascii_uppercase())
+        .unwrap_or(false);
+    first_char_uppercase && (2..=8).contains(&word_count)
+}
+
+fn find_dynamic_prose_passage_tail_start(blocks: &[Value]) -> Option<usize> {
+    for index in 1..blocks.len() {
+        if !has_prior_dynamic_question_content(blocks, index) {
+            continue;
+        }
+
+        let substantive_run = dynamic_consecutive_substantive_passage_blocks(blocks, index, 3);
+        let title_followed_run = if blocks
+            .get(index)
+            .map(|block| is_dynamic_passage_tail_title_text(&dynamic_block_text(block)))
+            .unwrap_or(false)
+        {
+            dynamic_consecutive_substantive_passage_blocks(blocks, index + 1, 3)
+        } else {
+            0
+        };
+
+        let run_end = if title_followed_run > 0 {
+            index + 1 + title_followed_run
+        } else {
+            index + substantive_run
+        };
+        if has_later_dynamic_question_content(blocks, run_end) {
+            continue;
+        }
+
+        if substantive_run >= 2 {
+            return Some(index);
+        }
+        if substantive_run >= 1
+            && (blocks
+                .get(index)
+                .map(|block| dynamic_block_role(block) == "passage")
+                .unwrap_or(false)
+                || is_dynamic_passage_tail_layout_transition(blocks, index))
+        {
+            return Some(index);
+        }
+        if title_followed_run >= 2 {
+            return Some(index);
+        }
+        if title_followed_run >= 1
+            && (is_dynamic_passage_tail_layout_transition(blocks, index)
+                || is_dynamic_passage_tail_layout_transition(blocks, index + 1)
+                || blocks
+                    .get(index + 1)
+                    .map(|block| dynamic_block_role(block) == "passage")
+                    .unwrap_or(false))
+        {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn dynamic_generic_passage_tail_question_block_count(blocks: &[Value]) -> usize {
+    find_dynamic_prose_passage_tail_start(blocks)
+        .map(|index| index.max(1))
+        .unwrap_or(blocks.len())
+}
+
 fn is_probable_dynamic_passage_tail_start(blocks: &[Value], index: usize) -> bool {
     let Some(block) = blocks.get(index) else {
         return false;
@@ -1878,10 +2148,15 @@ fn dynamic_heading_matching_question_block_count(blocks: &[Value]) -> usize {
 }
 
 fn dynamic_question_block_count_for_group(kind: &str, blocks: &[Value]) -> usize {
-    if kind == "heading_matching" {
+    let specific = if kind == "heading_matching" {
         dynamic_heading_matching_question_block_count(blocks)
     } else {
         dynamic_late_passage_question_block_count(blocks)
+    };
+    if specific < blocks.len() {
+        specific
+    } else {
+        dynamic_generic_passage_tail_question_block_count(blocks)
     }
 }
 
@@ -2853,4 +3128,526 @@ pub(crate) fn make_dynamic_authoring_ir(
         },
     }
     .to_value()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ImportJob, IssueCounts, JobStatus, WorkflowStep};
+    use chrono::Utc;
+    use serde_json::json;
+
+    fn test_job() -> ImportJob {
+        ImportJob {
+            job_id: "job-layout-test".to_string(),
+            title: "Mixed Layout Reading".to_string(),
+            status: JobStatus::Working,
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Vec::new(),
+            source_files: Vec::new(),
+            active_llm_profile_id: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            current_step: WorkflowStep::Split,
+            issue_counts: IssueCounts::default(),
+        }
+    }
+
+    fn layout_block(
+        block_id: &str,
+        text: &str,
+        bbox: [f64; 4],
+        section_index: u64,
+        column_count: u64,
+        column_index: u64,
+    ) -> Value {
+        layout_block_on_page(
+            block_id,
+            text,
+            bbox,
+            1,
+            section_index,
+            column_count,
+            column_index,
+        )
+    }
+
+    fn layout_block_on_page(
+        block_id: &str,
+        text: &str,
+        bbox: [f64; 4],
+        page_index: u64,
+        section_index: u64,
+        column_count: u64,
+        column_index: u64,
+    ) -> Value {
+        json!({
+            "blockId": block_id,
+            "blockType": "paragraph",
+            "text": text,
+            "html": format!("<p>{}</p>", text),
+            "bbox": bbox,
+            "pageIndex": page_index,
+            "layoutHints": {
+                "section": {
+                    "index": section_index,
+                    "columns": {
+                        "count": column_count,
+                        "current": column_index
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn detect_dynamic_group_kind_covers_form_map_and_letter_matching_variants() {
+        assert_eq!(
+            detect_dynamic_group_kind(
+                "Questions 11-13 Complete the form below. Choose NO MORE THAN TWO WORDS AND/OR A NUMBER for each answer."
+            ),
+            "table_completion"
+        );
+        assert_eq!(
+            detect_dynamic_group_kind(
+                "Questions 14-17 Label the map below. Choose NO MORE THAN TWO WORDS from the passage for each answer."
+            ),
+            "diagram_completion"
+        );
+        assert_eq!(
+            detect_dynamic_group_kind(
+                "Questions 18-21 Write the correct letter, A-H, in boxes 18-21 on your answer sheet."
+            ),
+            "matching"
+        );
+        assert_eq!(
+            detect_dynamic_group_kind(
+                "Questions 22-26 Which paragraph mentions the first successful experiment?"
+            ),
+            "matching_information"
+        );
+    }
+
+    #[test]
+    fn short_passage_intro_blocks_bare_umbrella_heading_misclassification() {
+        let blocks = vec![
+            layout_block(
+                "b001",
+                "READING PASSAGE 1",
+                [72.0, 760.0, 520.0, 792.0],
+                0,
+                1,
+                0,
+            ),
+            layout_block(
+                "b002",
+                "A brief introduction frames the debate.",
+                [72.0, 700.0, 320.0, 732.0],
+                0,
+                1,
+                0,
+            ),
+            json!({
+                "blockId": "b003",
+                "blockType": "paragraph",
+                "text": "Questions 1-13",
+                "html": "<p>Questions 1-13</p>",
+                "bbox": [72.0, 650.0, 220.0, 680.0],
+                "pageIndex": 1,
+                "roleHint": "question"
+            }),
+        ];
+
+        assert!(
+            is_substantive_dynamic_passage_block(&blocks[1]),
+            "short prose intro should count as substantive passage"
+        );
+        assert!(
+            !is_dynamic_umbrella_question_block(&blocks, 2),
+            "bare question range after a short intro passage should not be auto-promoted to umbrella"
+        );
+    }
+
+    #[test]
+    fn mixed_layout_sections_keep_passage_before_later_single_column_questions() {
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595.0,
+                "height": 842.0,
+                "blocks": [
+                    layout_block(
+                        "b001",
+                        "READING PASSAGE 1",
+                        [72.0, 760.0, 520.0, 792.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "b002",
+                        "The first half of the passage stays in the left column and should remain part of the original article text.",
+                        [72.0, 640.0, 250.0, 724.0],
+                        1,
+                        2,
+                        0
+                    ),
+                    layout_block(
+                        "b004",
+                        "Questions 1-2 Choose the correct letter, A-D.",
+                        [72.0, 220.0, 520.0, 252.0],
+                        2,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "b003",
+                        "The matching right column continues the same passage and must not be reordered after the later single-column questions.",
+                        [330.0, 642.0, 520.0, 720.0],
+                        1,
+                        2,
+                        1
+                    ),
+                    layout_block(
+                        "b005",
+                        "1 According to the writer, what changed first? A tools B trade C paper D law 2 Why did people adopt the method? A speed B cost C weather D design",
+                        [72.0, 140.0, 520.0, 210.0],
+                        2,
+                        1,
+                        0
+                    )
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let ordered_ids = dynamic_document_blocks(Some(&doc))
+            .iter()
+            .map(dynamic_block_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered_ids,
+            vec![
+                "b001".to_string(),
+                "b002".to_string(),
+                "b003".to_string(),
+                "b004".to_string(),
+                "b005".to_string()
+            ]
+        );
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let passage_range = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(passage_range, vec!["b001", "b002", "b003"]);
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/kindHint")
+                .and_then(Value::as_str),
+            Some("single_choice")
+        );
+    }
+
+    #[test]
+    fn prose_passage_tail_after_question_block_returns_to_passage_range() {
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595.0,
+                "height": 842.0,
+                "blocks": [
+                    layout_block(
+                        "p001",
+                        "READING PASSAGE 1",
+                        [72.0, 760.0, 520.0, 792.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p002",
+                        "The original article begins by tracing how early paper making moved between river towns and trade routes.",
+                        [72.0, 690.0, 520.0, 736.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q001",
+                        "Questions 1-3 Complete the summary below. Choose NO MORE THAN TWO WORDS from the passage for each answer.",
+                        [72.0, 520.0, 520.0, 566.0],
+                        1,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q002",
+                        "1 plant fibres 2 water power 3 trade routes",
+                        [72.0, 462.0, 420.0, 506.0],
+                        1,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p003",
+                        "Further Evidence",
+                        [72.0, 360.0, 260.0, 392.0],
+                        2,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p004",
+                        "Researchers later found that merchants carried the technique far earlier than royal workshops adopted it.",
+                        [72.0, 296.0, 520.0, 344.0],
+                        2,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p005",
+                        "These later paragraphs continue the source article and should be preserved inside the recovered passage text.",
+                        [72.0, 234.0, 520.0, 282.0],
+                        2,
+                        1,
+                        0
+                    )
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let passage_range = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(passage_range, vec!["p001", "p002", "p003", "p004", "p005"]);
+        let group_block_ids = split
+            .pointer("/questionGroupCandidates/0/blockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(group_block_ids, vec!["q001", "q002"]);
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/kindHint")
+                .and_then(Value::as_str),
+            Some("summary_completion")
+        );
+    }
+
+    #[test]
+    fn heading_matching_tail_with_resumed_prose_returns_to_passage_range() {
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595.0,
+                "height": 842.0,
+                "blocks": [
+                    layout_block(
+                        "p001",
+                        "READING PASSAGE 1",
+                        [72.0, 760.0, 520.0, 792.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p002",
+                        "The passage introduces several regions before the headings exercise appears below.",
+                        [72.0, 692.0, 520.0, 734.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q001",
+                        "Questions 14-18 Choose the correct heading for each section from the list of headings below.",
+                        [72.0, 548.0, 520.0, 592.0],
+                        1,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q002",
+                        "List of Headings i Early trade ii Mountain farming iii River transport iv Royal archives",
+                        [72.0, 472.0, 520.0, 532.0],
+                        1,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p003",
+                        "Article Continuation",
+                        [72.0, 372.0, 260.0, 404.0],
+                        2,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p004",
+                        "Section C describes how local traders adapted the technique to wet climates and longer journeys.",
+                        [72.0, 308.0, 520.0, 356.0],
+                        2,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p005",
+                        "Section D explains why written records expanded once production became reliable across the region.",
+                        [72.0, 244.0, 520.0, 292.0],
+                        2,
+                        1,
+                        0
+                    )
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let passage_range = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(passage_range, vec!["p001", "p002", "p003", "p004", "p005"]);
+        let group_block_ids = split
+            .pointer("/questionGroupCandidates/0/blockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(group_block_ids, vec!["q001", "q002"]);
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/kindHint")
+                .and_then(Value::as_str),
+            Some("heading_matching")
+        );
+    }
+
+    #[test]
+    fn cross_page_continuation_is_sorted_before_later_question_section() {
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [
+                {
+                    "pageIndex": 1,
+                    "width": 595.0,
+                    "height": 842.0,
+                    "blocks": [
+                        layout_block_on_page(
+                            "p001",
+                            "READING PASSAGE 1",
+                            [72.0, 760.0, 520.0, 792.0],
+                            1,
+                            0,
+                            1,
+                            0
+                        ),
+                        layout_block_on_page(
+                            "p002",
+                            "The first page introduces the topic and ends mid argument so the article must continue onto page two.",
+                            [72.0, 692.0, 520.0, 736.0],
+                            1,
+                            0,
+                            1,
+                            0
+                        )
+                    ]
+                },
+                {
+                    "pageIndex": 2,
+                    "width": 595.0,
+                    "height": 842.0,
+                    "blocks": [
+                        layout_block_on_page(
+                            "q001",
+                            "Questions 1-2 Choose the correct letter, A-D.",
+                            [72.0, 260.0, 520.0, 300.0],
+                            2,
+                            1,
+                            1,
+                            0
+                        ),
+                        layout_block_on_page(
+                            "p003",
+                            "The continuation on page two completes the source paragraph before any question prompt should begin.",
+                            [72.0, 660.0, 520.0, 708.0],
+                            2,
+                            0,
+                            1,
+                            0
+                        ),
+                        layout_block_on_page(
+                            "q002",
+                            "1 Which material spread first? A bark B fibre C wax D clay",
+                            [72.0, 188.0, 520.0, 244.0],
+                            2,
+                            1,
+                            1,
+                            0
+                        )
+                    ]
+                }
+            ],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let ordered_ids = dynamic_document_blocks(Some(&doc))
+            .iter()
+            .map(dynamic_block_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ordered_ids,
+            vec![
+                "p001".to_string(),
+                "p002".to_string(),
+                "p003".to_string(),
+                "q001".to_string(),
+                "q002".to_string()
+            ]
+        );
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let passage_range = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(passage_range, vec!["p001", "p002", "p003"]);
+    }
 }

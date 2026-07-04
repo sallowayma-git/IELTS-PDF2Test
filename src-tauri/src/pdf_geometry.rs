@@ -92,6 +92,24 @@ struct CharWithOrigin {
     y: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct LayoutSection {
+    index: usize,
+    y_top: f32,
+    y_bottom: f32,
+    column_count: u8,
+    split_x: Option<f32>,
+}
+
+#[derive(Clone, Debug)]
+struct BlockWithLayout {
+    text: String,
+    bbox: [f32; 4],
+    section_index: usize,
+    column_index: u8,
+    column_count: u8,
+}
+
 /// Parse a PDF into a `DocumentIRV1` JSON value with REAL per-line bounding
 /// boxes and REAL page dimensions. Each line (group of characters at the same
 /// y) becomes one document block carrying a true `bbox: [x0, y0, x1, y1]`.
@@ -140,24 +158,22 @@ pub(crate) fn parse_pdf_with_pdfium(
             continue;
         }
 
-        let lines = build_lines_from_chars(&chars);
-        // Group consecutive lines into paragraph-ish blocks when the vertical
-        // gap between them is small relative to the line height. This matches
-        // the granularity the text-layer `semantic_text_chunks` produces, so
-        // downstream segmentation behaves consistently.
-        let grouped = group_lines_into_blocks(&lines);
+        let grouped = build_blocks_from_chars(&chars);
 
         let blocks = grouped
             .iter()
             .enumerate()
-            .map(|(ordinal, (text, bbox))| {
-                let block = document_block_with_bbox(
+            .map(|(ordinal, layout_block)| {
+                let block = document_block_with_layout(
                     format!("b{:03}", block_counter),
-                    text,
+                    &layout_block.text,
                     page_number,
                     ordinal,
                     0.98,
-                    *bbox,
+                    layout_block.bbox,
+                    layout_block.section_index,
+                    layout_block.column_index,
+                    layout_block.column_count,
                 );
                 block_counter += 1;
                 block
@@ -232,61 +248,45 @@ fn collect_chars_with_origin(page: &PdfPage) -> Vec<CharWithOrigin> {
     chars
 }
 
-/// Group characters into lines by y-origin proximity, then into words by
-/// x-gap. Returns `(line_text, [x0, y0, x1, y1])` per line, where the bbox is
-/// the union of the line's character origins (a tight-envelope approximation
-/// suitable for column detection — only x-extent matters for that purpose).
-///
-/// IMPORTANT: characters are first partitioned into COLUMNS by x-gap, so that
-/// the left and right columns of a 2-column page never merge into one wide
-/// line (which would corrupt reading order and produce spans crossing the
-/// gutter). Full-width header lines are detected as their own single column.
-fn build_lines_from_chars(chars: &[CharWithOrigin]) -> Vec<(String, [f32; 4])> {
+fn estimate_y_tolerance(chars: &[CharWithOrigin]) -> f32 {
     if chars.is_empty() {
-        return Vec::new();
+        return 3.0;
     }
-
-    // Estimate a typical character height from the y-spread to use as the
-    // line-clustering tolerance.
     let mut ys: Vec<f32> = chars.iter().map(|c| c.y).collect();
     ys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let y_tol = {
-        let span = ys.last().unwrap_or(&0.0) - ys.first().unwrap_or(&0.0);
-        (span / 40.0).max(2.0).min(6.0)
-    };
+    let span = ys.last().unwrap_or(&0.0) - ys.first().unwrap_or(&0.0);
+    (span / 40.0).max(2.0).min(6.0)
+}
 
-    // Partition characters into columns by detecting the column GUTTER — a
-    // vertical band of the page with (near-)zero character density. We build
-    // a fine-grained x-histogram of character origins and look for the widest
-    // empty band that is narrower than a half-page but wider than a word
-    // space. Characters left of the gutter form column 0; right form column 1.
-    // If no such gutter exists, the page is single-column.
-    let x_min_global = chars.iter().map(|c| c.x).fold(f32::MAX, f32::min);
-    let x_max_global = chars.iter().map(|c| c.x).fold(f32::MIN, f32::max);
+fn detect_column_split_x(
+    chars: &[CharWithOrigin],
+    x_min_global: f32,
+    x_max_global: f32,
+) -> Option<f32> {
+    if chars.len() < 24 {
+        return None;
+    }
     let page_x_span = (x_max_global - x_min_global).max(1.0);
-    let bin_width = 4.0; // points per histogram bin
+    let bin_width = 4.0;
     let bin_count = ((page_x_span / bin_width).ceil() as usize).max(1);
     let mut histogram = vec![0u32; bin_count];
     for ch in chars {
         let idx = (((ch.x - x_min_global) / bin_width).floor() as usize).min(bin_count - 1);
         histogram[idx] += 1;
     }
-    // Find the longest run of near-empty bins in the MIDDLE 60% of the page
-    // (exclude the outer 20% on each side so margins don't count). A gutter
-    // must be at least ~4 bins wide (16pt) to qualify. Bins with ≤2 characters
-    // count as "near-empty" to tolerate stray page-numbers, punctuation, or
-    // justified-line overflow landing in the gutter.
     let lo = (bin_count as f32 * 0.2) as usize;
     let hi = (bin_count as f32 * 0.8) as usize;
+    if lo >= hi {
+        return None;
+    }
     let mut best_gutter_lo = 0usize;
     let mut best_gutter_len = 0usize;
     let mut run_lo = lo;
     let mut run_len = 0usize;
-    let mut i = lo;
-    while i < hi {
-        if histogram[i] <= 2 {
+    for index in lo..hi {
+        if histogram[index] <= 2 {
             if run_len == 0 {
-                run_lo = i;
+                run_lo = index;
             }
             run_len += 1;
             if run_len > best_gutter_len {
@@ -296,46 +296,213 @@ fn build_lines_from_chars(chars: &[CharWithOrigin]) -> Vec<(String, [f32; 4])> {
         } else {
             run_len = 0;
         }
-        i += 1;
     }
-    let min_gutter_bins = 4usize; // ~16pt
-    let column_split_x = if best_gutter_len >= min_gutter_bins {
-        // Split at the centre of the gutter band.
-        let gutter_mid_bin = best_gutter_lo + best_gutter_len / 2;
-        x_min_global + gutter_mid_bin as f32 * bin_width
-    } else {
-        // Single-column page: no split.
-        f32::MAX
-    };
-    // Threshold used only for the per-column line builder's awareness; the
-    // actual split is the explicit x boundary above.
-    let _column_gap_threshold = column_split_x;
-
-    // Assign characters to columns based on the detected gutter split. A
-    // character whose x-origin is left of `column_split_x` goes to column 0;
-    // right goes to column 1. When no gutter was found (column_split_x ==
-    // f32::MAX), everything lands in column 0 (single-column page).
-    let mut column_left: Vec<CharWithOrigin> = Vec::new();
-    let mut column_right: Vec<CharWithOrigin> = Vec::new();
-    for ch in chars {
-        if ch.x >= column_split_x {
-            column_right.push(*ch);
-        } else {
-            column_left.push(*ch);
+    let min_gutter_width = (page_x_span * 0.10).max(28.0);
+    let min_gutter_bins = ((min_gutter_width / bin_width).ceil() as usize).max(4);
+    if best_gutter_len < min_gutter_bins {
+        return None;
+    }
+    let gutter_mid_bin = best_gutter_lo + best_gutter_len / 2;
+    let split_x = x_min_global + gutter_mid_bin as f32 * bin_width;
+    let left_count = chars.iter().filter(|ch| ch.x < split_x).count();
+    let right_count = chars.len().saturating_sub(left_count);
+    let min_side_chars = ((chars.len() as f32 * 0.18).ceil() as usize).max(6);
+    if left_count < min_side_chars || right_count < min_side_chars {
+        return None;
+    }
+    let y_tol = estimate_y_tolerance(chars);
+    let mut sorted = chars.to_vec();
+    sorted.sort_by(|a, b| {
+        b.y.partial_cmp(&a.y)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    let mut rows: Vec<(f32, usize, bool, bool)> = Vec::new();
+    for ch in sorted {
+        let mut placed = false;
+        for row in rows.iter_mut().rev().take(4) {
+            if (ch.y - row.0).abs() <= y_tol {
+                row.0 = (row.0 * row.1 as f32 + ch.y) / (row.1 as f32 + 1.0);
+                row.1 += 1;
+                if ch.x < split_x {
+                    row.2 = true;
+                } else {
+                    row.3 = true;
+                }
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            rows.push((ch.y, 1, ch.x < split_x, ch.x >= split_x));
         }
     }
-    let columns: Vec<Vec<CharWithOrigin>> = if column_right.is_empty() {
-        vec![column_left]
-    } else {
-        vec![column_left, column_right]
-    };
+    let rows_with_both_sides = rows
+        .iter()
+        .filter(|(_, _, has_left, has_right)| *has_left && *has_right)
+        .count();
+    if rows.len() >= 2 && rows_with_both_sides * 3 >= rows.len() * 2 {
+        return None;
+    }
+    Some(split_x)
+}
 
-    // Build lines WITHIN each column (so left/right columns stay separate),
-    // then merge the per-column line lists. The reading-order comparator
-    // (`dynamic_reading_order_cmp`) re-sorts the final blocks by column then y.
-    let mut result: Vec<(String, [f32; 4])> = Vec::new();
-    for column in columns {
-        result.extend(build_lines_within_column(&column, y_tol));
+fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    #[derive(Clone, Copy)]
+    struct BandHint {
+        y_top: f32,
+        y_bottom: f32,
+        split_x: Option<f32>,
+        char_count: usize,
+    }
+
+    let x_min_global = chars.iter().map(|c| c.x).fold(f32::MAX, f32::min);
+    let x_max_global = chars.iter().map(|c| c.x).fold(f32::MIN, f32::max);
+    let y_min = chars.iter().map(|c| c.y).fold(f32::MAX, f32::min);
+    let y_max = chars.iter().map(|c| c.y).fold(f32::MIN, f32::max);
+    let y_span = (y_max - y_min).max(1.0);
+    let page_x_span = (x_max_global - x_min_global).max(1.0);
+    let band_height = (y_span / 10.0).clamp(56.0, 88.0);
+    let band_count = ((y_span / band_height).ceil() as usize).max(1);
+    let mut bands = Vec::with_capacity(band_count);
+
+    for band_index in 0..band_count {
+        let y_top = y_max - band_index as f32 * band_height;
+        let y_bottom = if band_index + 1 == band_count {
+            y_min - 0.5
+        } else {
+            y_top - band_height
+        };
+        let band_chars = chars
+            .iter()
+            .copied()
+            .filter(|ch| ch.y <= y_top && ch.y > y_bottom)
+            .collect::<Vec<_>>();
+        bands.push(BandHint {
+            y_top,
+            y_bottom,
+            split_x: detect_column_split_x(&band_chars, x_min_global, x_max_global),
+            char_count: band_chars.len(),
+        });
+    }
+
+    if bands.len() >= 3 {
+        for index in 1..bands.len() - 1 {
+            if bands[index].split_x.is_some() || bands[index].char_count > 24 {
+                continue;
+            }
+            let Some(prev_split) = bands[index - 1].split_x else {
+                continue;
+            };
+            let Some(next_split) = bands[index + 1].split_x else {
+                continue;
+            };
+            if (prev_split - next_split).abs() <= page_x_span * 0.08 {
+                bands[index].split_x = Some((prev_split + next_split) * 0.5);
+            }
+        }
+    }
+
+    let mut sections = Vec::new();
+    for band in bands.into_iter().filter(|band| band.char_count > 0) {
+        let band_column_count = if band.split_x.is_some() { 2 } else { 1 };
+        let can_merge = sections.last().is_some_and(|current: &LayoutSection| {
+            if current.column_count != band_column_count {
+                return false;
+            }
+            match (current.split_x, band.split_x) {
+                (Some(left), Some(right)) => (left - right).abs() <= page_x_span * 0.08,
+                (None, None) => true,
+                _ => false,
+            }
+        });
+        if can_merge {
+            if let Some(current) = sections.last_mut() {
+                current.y_bottom = band.y_bottom;
+                if let (Some(left), Some(right)) = (current.split_x, band.split_x) {
+                    current.split_x = Some((left + right) * 0.5);
+                }
+            }
+            continue;
+        }
+        sections.push(LayoutSection {
+            index: sections.len(),
+            y_top: band.y_top,
+            y_bottom: band.y_bottom,
+            column_count: band_column_count,
+            split_x: band.split_x,
+        });
+    }
+
+    if sections.is_empty() {
+        sections.push(LayoutSection {
+            index: 0,
+            y_top: y_max,
+            y_bottom: y_min - 0.5,
+            column_count: 1,
+            split_x: None,
+        });
+    }
+    sections
+}
+
+/// Build paragraph-ish blocks from page characters while honoring per-section
+/// layout changes such as "top half 2-column, bottom half single-column".
+fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let y_tol = estimate_y_tolerance(chars);
+    let sections = detect_layout_sections(chars);
+    let mut result = Vec::new();
+    for section in sections {
+        let section_chars = chars
+            .iter()
+            .copied()
+            .filter(|ch| ch.y <= section.y_top && ch.y >= section.y_bottom)
+            .collect::<Vec<_>>();
+        if section_chars.is_empty() {
+            continue;
+        }
+        if section.column_count == 1 {
+            let lines = build_lines_within_column(&section_chars, y_tol);
+            let grouped = group_lines_into_blocks(&lines);
+            result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
+                text,
+                bbox,
+                section_index: section.index,
+                column_index: 0,
+                column_count: 1,
+            }));
+            continue;
+        }
+        let split_x = section.split_x.unwrap_or(f32::MAX);
+        let mut column_left = Vec::new();
+        let mut column_right = Vec::new();
+        for ch in section_chars {
+            if ch.x >= split_x {
+                column_right.push(ch);
+            } else {
+                column_left.push(ch);
+            }
+        }
+        for (column_index, column_chars) in [(0u8, column_left), (1u8, column_right)] {
+            if column_chars.is_empty() {
+                continue;
+            }
+            let lines = build_lines_within_column(&column_chars, y_tol);
+            let grouped = group_lines_into_blocks(&lines);
+            result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
+                text,
+                bbox,
+                section_index: section.index,
+                column_index,
+                column_count: 2,
+            }));
+        }
     }
     result
 }
@@ -349,8 +516,7 @@ fn build_lines_within_column(chars: &[CharWithOrigin], y_tol: f32) -> Vec<(Strin
     // Cluster characters into lines by y-origin.
     let mut sorted = chars.to_vec();
     sorted.sort_by(|a, b| {
-        a.y
-            .partial_cmp(&b.y)
+        a.y.partial_cmp(&b.y)
             .unwrap_or(std::cmp::Ordering::Equal)
             .reverse() // top of page has larger y in PDF space
             .then(a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
@@ -382,11 +548,7 @@ fn build_lines_within_column(chars: &[CharWithOrigin], y_tol: f32) -> Vec<(Strin
 
     let mut result = Vec::new();
     for mut line in lines {
-        line.sort_by(|a, b| {
-            a.x
-                .partial_cmp(&b.x)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        line.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
 
         // Build words by splitting on horizontal gaps. The threshold is
         // derived from the MEDIAN consecutive-character advance (robust to the
@@ -442,24 +604,47 @@ fn build_lines_within_column(chars: &[CharWithOrigin], y_tol: f32) -> Vec<(Strin
 /// Merge consecutive lines into paragraph-ish blocks when the vertical gap
 /// between them is small (≤ 1.5× the previous line's height). Each emitted
 /// block carries the union bbox of its constituent lines.
+fn looks_like_hard_line_break(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_lowercase();
+    lower.starts_with("reading passage")
+        || lower.starts_with("questions ")
+        || lower.starts_with("question ")
+        || lower.starts_with("answers")
+        || lower.contains("answer key")
+}
+
 fn group_lines_into_blocks(lines: &[(String, [f32; 4])]) -> Vec<(String, [f32; 4])> {
     let mut groups: Vec<(String, [f32; 4])> = Vec::new();
     for (text, bbox) in lines {
-        let prev_height = groups
-            .last()
-            .map(|(_, prev_bbox)| (prev_bbox[3] - prev_bbox[1]).abs())
-            .unwrap_or(0.0);
-        let gap = groups
-            .last()
-            .map(|(_, prev_bbox)| (bbox[1] - prev_bbox[3]).abs())
-            .unwrap_or(0.0);
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
         let should_join = match groups.last() {
-            Some(_) => prev_height > 0.0 && gap <= prev_height * 1.5,
+            Some((prev_text, prev_bbox)) => {
+                let prev_height = (prev_bbox[3] - prev_bbox[1]).abs().max(1.0);
+                let current_height = (bbox[3] - bbox[1]).abs().max(1.0);
+                let gap = (prev_bbox[1] - bbox[3]).max(0.0);
+                let left_delta = (bbox[0] - prev_bbox[0]).abs();
+                let center_delta =
+                    (((bbox[0] + bbox[2]) * 0.5) - ((prev_bbox[0] + prev_bbox[2]) * 0.5)).abs();
+                let width_delta = ((bbox[2] - bbox[0]) - (prev_bbox[2] - prev_bbox[0])).abs();
+                gap <= prev_height.max(current_height) * 0.9
+                    && left_delta <= 28.0
+                    && center_delta <= 40.0
+                    && width_delta <= 80.0
+                    && !looks_like_hard_line_break(trimmed)
+                    && !prev_text.trim_end().ends_with(':')
+            }
             None => false,
         };
         if should_join {
             let (prev_text, prev_bbox) = groups.last().unwrap();
-            let merged_text = format!("{} {}", prev_text, text);
+            let merged_text = format!("{} {}", prev_text, trimmed);
             let merged_bbox = [
                 prev_bbox[0].min(bbox[0]),
                 prev_bbox[1].min(bbox[1]),
@@ -468,7 +653,7 @@ fn group_lines_into_blocks(lines: &[(String, [f32; 4])]) -> Vec<(String, [f32; 4
             ];
             *groups.last_mut().unwrap() = (merged_text, merged_bbox);
         } else {
-            groups.push((text.clone(), *bbox));
+            groups.push((trimmed.to_string(), *bbox));
         }
     }
     groups
@@ -503,6 +688,41 @@ fn document_block_with_bbox(
     block
 }
 
+fn document_block_with_layout(
+    block_id: String,
+    text: &str,
+    page_index: usize,
+    ordinal: usize,
+    confidence: f64,
+    bbox: [f32; 4],
+    section_index: usize,
+    column_index: u8,
+    column_count: u8,
+) -> Value {
+    let mut block = document_block_with_bbox(block_id, text, page_index, ordinal, confidence, bbox);
+    if let Some(obj) = block.as_object_mut() {
+        obj.insert("_epic8LayoutSection".to_string(), json!(section_index));
+        obj.insert("_epic8ColumnIndex".to_string(), json!(column_index));
+        obj.insert("_epic8SectionColumns".to_string(), json!(column_count));
+        let layout_hints = obj
+            .entry("layoutHints".to_string())
+            .or_insert_with(|| json!({}));
+        if let Some(layout_obj) = layout_hints.as_object_mut() {
+            layout_obj.insert(
+                "section".to_string(),
+                json!({
+                    "index": section_index,
+                    "columns": {
+                        "count": column_count,
+                        "current": column_index
+                    }
+                }),
+            );
+        }
+    }
+    block
+}
+
 /// Render every page of the PDF to a PNG (2× scale ≈ 144 DPI) for the
 /// vision/OCR rescue path. Emits a `PdfImageExtractionV1`-shaped value
 /// matching the contract `extract_pdf_images_for_vision` consumes.
@@ -525,9 +745,7 @@ pub(crate) fn render_pdf_pages_with_pdfium(
         .into_iter()
         .filter(|w| !w.trim().is_empty())
         .collect::<Vec<_>>();
-    warnings.push(
-        "used bundled pdfium page renderer for vision transcription input".to_string(),
-    );
+    warnings.push("used bundled pdfium page renderer for vision transcription input".to_string());
 
     let page_count = document.pages().len();
     let mut pages_json = Vec::<Value>::new();
@@ -628,6 +846,18 @@ pub(crate) fn render_pdf_pages_with_pdfium(
 mod tests {
     use super::*;
 
+    fn push_text_line(chars: &mut Vec<CharWithOrigin>, text: &str, x_start: f32, y: f32) {
+        let mut x = x_start;
+        for ch in text.chars() {
+            if ch == ' ' {
+                x += 8.0;
+                continue;
+            }
+            chars.push(CharWithOrigin { ch, x, y });
+            x += 4.8;
+        }
+    }
+
     #[test]
     fn pdfium_library_path_does_not_panic() {
         // Resolution must be safe to call even when no library is bundled.
@@ -636,9 +866,8 @@ mod tests {
 
     #[test]
     fn pdfium_parse_yields_real_bbox_when_library_present() {
-        let sample = Path::new(
-            r"D:\xwechat_files\wxid_zg93z3d7b4aq21_8fcc\msg\file\2026-06\PDF(1).pdf",
-        );
+        let sample =
+            Path::new(r"D:\xwechat_files\wxid_zg93z3d7b4aq21_8fcc\msg\file\2026-06\PDF(1).pdf");
         if !sample.exists() || bind_pdfium().is_err() {
             return; // sample or pdfium library not available in this environment
         }
@@ -661,5 +890,87 @@ mod tests {
             }
         }
         assert!(found_real, "expected at least one char with a real x coord");
+    }
+
+    #[test]
+    fn build_blocks_from_chars_preserves_mixed_column_sections() {
+        let mut chars = Vec::new();
+        push_text_line(
+            &mut chars,
+            "LEFT PASSAGE TEXT WITH CLEAR COLUMN SHAPE",
+            78.0,
+            760.0,
+        );
+        push_text_line(
+            &mut chars,
+            "LEFT PASSAGE LINE THAT CONTINUES NATURALLY",
+            78.0,
+            751.0,
+        );
+        push_text_line(
+            &mut chars,
+            "RIGHT PASSAGE TEXT WITH CLEAR COLUMN SHAPE",
+            336.0,
+            742.0,
+        );
+        push_text_line(
+            &mut chars,
+            "RIGHT PASSAGE LINE THAT CONTINUES NATURALLY",
+            336.0,
+            733.0,
+        );
+        push_text_line(
+            &mut chars,
+            "A LATER FULL WIDTH PARAGRAPH CONTINUES DOWN THE PAGE WITH DIFFERENT WORD SPACING",
+            82.0,
+            500.0,
+        );
+        push_text_line(
+            &mut chars,
+            "Readers then see one uninterrupted block instead of a forced two column split",
+            82.0,
+            491.0,
+        );
+
+        let blocks = build_blocks_from_chars(&chars);
+
+        assert!(
+            blocks
+                .iter()
+                .any(|block| block.column_count == 2 && block.column_index == 0),
+            "left column block should be detected"
+        );
+        assert!(
+            blocks
+                .iter()
+                .any(|block| block.column_count == 2 && block.column_index == 1),
+            "right column block should be detected"
+        );
+
+        let single_column_blocks = blocks
+            .iter()
+            .filter(|block| block.column_count == 1)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            single_column_blocks.len(),
+            1,
+            "bottom single-column section should remain a single block"
+        );
+        assert!(
+            single_column_blocks[0]
+                .text
+                .contains("FULL WIDTH PARAGRAPH CONTINUES"),
+            "single-column tail should survive as original passage text"
+        );
+        let max_two_column_section = blocks
+            .iter()
+            .filter(|block| block.column_count == 2)
+            .map(|block| block.section_index)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            single_column_blocks[0].section_index > max_two_column_section,
+            "single-column tail should be emitted after the earlier two-column section"
+        );
     }
 }
