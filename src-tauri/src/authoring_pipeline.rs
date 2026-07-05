@@ -2042,55 +2042,75 @@ fn is_dynamic_passage_tail_title_text(text: &str) -> bool {
     first_char_uppercase && (2..=8).contains(&word_count)
 }
 
+fn dynamic_prose_passage_run_end(blocks: &[Value], index: usize) -> Option<usize> {
+    let substantive_run = dynamic_consecutive_substantive_passage_blocks(blocks, index, 3);
+    let title_followed_run = if blocks
+        .get(index)
+        .map(|block| is_dynamic_passage_tail_title_text(&dynamic_block_text(block)))
+        .unwrap_or(false)
+    {
+        dynamic_consecutive_substantive_passage_blocks(blocks, index + 1, 3)
+    } else {
+        0
+    };
+
+    if substantive_run >= 2 {
+        return Some(index + substantive_run);
+    }
+    if substantive_run >= 1
+        && (blocks
+            .get(index)
+            .map(|block| dynamic_block_role(block) == "passage")
+            .unwrap_or(false)
+            || is_dynamic_passage_tail_layout_transition(blocks, index))
+    {
+        return Some(index + substantive_run);
+    }
+    if title_followed_run >= 2 {
+        return Some(index + 1 + title_followed_run);
+    }
+    if title_followed_run >= 1
+        && (is_dynamic_passage_tail_layout_transition(blocks, index)
+            || is_dynamic_passage_tail_layout_transition(blocks, index + 1)
+            || blocks
+                .get(index + 1)
+                .map(|block| dynamic_block_role(block) == "passage")
+                .unwrap_or(false))
+    {
+        return Some(index + 1 + title_followed_run);
+    }
+    None
+}
+
+fn collect_dynamic_interleaved_passage_runs(blocks: &[Value]) -> Vec<(usize, usize)> {
+    let mut runs = Vec::new();
+    let mut index = 1usize;
+    while index < blocks.len() {
+        if !has_prior_dynamic_question_content(blocks, index) {
+            index += 1;
+            continue;
+        }
+        let Some(run_end) = dynamic_prose_passage_run_end(blocks, index) else {
+            index += 1;
+            continue;
+        };
+        if has_later_dynamic_question_content(blocks, run_end) {
+            runs.push((index, run_end));
+        }
+        index = run_end.max(index + 1);
+    }
+    runs
+}
+
 fn find_dynamic_prose_passage_tail_start(blocks: &[Value]) -> Option<usize> {
     for index in 1..blocks.len() {
         if !has_prior_dynamic_question_content(blocks, index) {
             continue;
         }
-
-        let substantive_run = dynamic_consecutive_substantive_passage_blocks(blocks, index, 3);
-        let title_followed_run = if blocks
-            .get(index)
-            .map(|block| is_dynamic_passage_tail_title_text(&dynamic_block_text(block)))
-            .unwrap_or(false)
-        {
-            dynamic_consecutive_substantive_passage_blocks(blocks, index + 1, 3)
-        } else {
-            0
-        };
-
-        let run_end = if title_followed_run > 0 {
-            index + 1 + title_followed_run
-        } else {
-            index + substantive_run
-        };
-        if has_later_dynamic_question_content(blocks, run_end) {
+        let Some(run_end) = dynamic_prose_passage_run_end(blocks, index) else {
             continue;
-        }
-
-        if substantive_run >= 2 {
-            return Some(index);
-        }
-        if substantive_run >= 1
-            && (blocks
-                .get(index)
-                .map(|block| dynamic_block_role(block) == "passage")
-                .unwrap_or(false)
-                || is_dynamic_passage_tail_layout_transition(blocks, index))
-        {
-            return Some(index);
-        }
-        if title_followed_run >= 2 {
-            return Some(index);
-        }
-        if title_followed_run >= 1
-            && (is_dynamic_passage_tail_layout_transition(blocks, index)
-                || is_dynamic_passage_tail_layout_transition(blocks, index + 1)
-                || blocks
-                    .get(index + 1)
-                    .map(|block| dynamic_block_role(block) == "passage")
-                    .unwrap_or(false))
-        {
+        };
+        if !has_later_dynamic_question_content(blocks, run_end) {
             return Some(index);
         }
     }
@@ -2303,21 +2323,42 @@ pub(crate) fn make_dynamic_split_candidates(
             .map(|(candidate_index, _)| candidate_index)
             .unwrap_or(question_blocks.len());
         let raw_included = &question_blocks[index..next_heading];
-        let raw_combined = raw_included
+        let interleaved_passage_runs = collect_dynamic_interleaved_passage_runs(raw_included);
+        let mut defer_mask = vec![false; raw_included.len()];
+        for (run_start, run_end) in interleaved_passage_runs {
+            for raw_index in run_start..run_end.min(raw_included.len()) {
+                defer_mask[raw_index] = true;
+            }
+        }
+        let preliminary_blocks = raw_included
+            .iter()
+            .enumerate()
+            .filter_map(|(raw_index, block)| {
+                if defer_mask.get(raw_index).copied().unwrap_or(false) {
+                    deferred_passage_blocks.push(block.clone());
+                    None
+                } else {
+                    Some(block.clone())
+                }
+            })
+            .collect::<Vec<_>>();
+        let raw_combined = preliminary_blocks
             .iter()
             .map(dynamic_block_text)
             .collect::<Vec<_>>()
             .join(" ");
-        let raw_block_ids = raw_included
+        let raw_block_ids = preliminary_blocks
             .iter()
             .map(dynamic_block_id)
             .collect::<Vec<_>>();
         let preliminary_classification = classify_dynamic_group(&raw_combined, &raw_block_ids);
-        let included_count =
-            dynamic_question_block_count_for_group(&preliminary_classification.kind, raw_included);
-        let included = &raw_included[..included_count.min(raw_included.len()).max(1)];
-        if included_count < raw_included.len() {
-            deferred_passage_blocks.extend(raw_included[included_count..].iter().cloned());
+        let included_count = dynamic_question_block_count_for_group(
+            &preliminary_classification.kind,
+            &preliminary_blocks,
+        );
+        let included = &preliminary_blocks[..included_count.min(preliminary_blocks.len()).max(1)];
+        if included_count < preliminary_blocks.len() {
+            deferred_passage_blocks.extend(preliminary_blocks[included_count..].iter().cloned());
         }
         let combined = included
             .iter()
@@ -3546,6 +3587,202 @@ mod tests {
             .filter_map(Value::as_str)
             .collect::<Vec<_>>();
         assert_eq!(group_block_ids, vec!["q001", "q002"]);
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/kindHint")
+                .and_then(Value::as_str),
+            Some("heading_matching")
+        );
+    }
+
+    #[test]
+    fn summary_group_with_interleaved_passage_returns_middle_run_to_passage_range() {
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595.0,
+                "height": 842.0,
+                "blocks": [
+                    layout_block(
+                        "p001",
+                        "READING PASSAGE 1",
+                        [72.0, 760.0, 520.0, 792.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p002",
+                        "The article opens by explaining how paper spread across commercial routes before the exercise begins.",
+                        [72.0, 692.0, 520.0, 736.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q001",
+                        "Questions 1-4 Complete the summary below. Choose NO MORE THAN TWO WORDS from the passage for each answer.",
+                        [72.0, 560.0, 520.0, 604.0],
+                        1,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q002",
+                        "1 plant fibres 2 river towns",
+                        [72.0, 500.0, 360.0, 540.0],
+                        1,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p003",
+                        "Recovered Source Text",
+                        [72.0, 420.0, 250.0, 452.0],
+                        2,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p004",
+                        "Merchants then carried the process further inland before official workshops standardized production.",
+                        [72.0, 356.0, 520.0, 404.0],
+                        2,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q003",
+                        "3 inland markets 4 official workshops",
+                        [72.0, 278.0, 420.0, 326.0],
+                        3,
+                        1,
+                        0
+                    )
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let passage_range = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(passage_range, vec!["p001", "p002", "p003", "p004"]);
+        let group_block_ids = split
+            .pointer("/questionGroupCandidates/0/blockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(group_block_ids, vec!["q001", "q002", "q003"]);
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/kindHint")
+                .and_then(Value::as_str),
+            Some("summary_completion")
+        );
+    }
+
+    #[test]
+    fn heading_matching_group_with_interleaved_passage_returns_middle_run_to_passage_range() {
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595.0,
+                "height": 842.0,
+                "blocks": [
+                    layout_block(
+                        "p001",
+                        "READING PASSAGE 1",
+                        [72.0, 760.0, 520.0, 792.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p002",
+                        "The article introduces its main regions before the heading-matching exercise starts.",
+                        [72.0, 692.0, 520.0, 736.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q001",
+                        "Questions 14-17 Choose the correct heading for each section from the list of headings below.",
+                        [72.0, 560.0, 520.0, 604.0],
+                        1,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q002",
+                        "List of Headings i Trade routes ii Royal control iii Wet climates iv Written records",
+                        [72.0, 488.0, 520.0, 544.0],
+                        1,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p003",
+                        "Article Continuation",
+                        [72.0, 408.0, 250.0, 440.0],
+                        2,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p004",
+                        "A later passage section explains how traders adapted production methods to wetter climates and longer journeys.",
+                        [72.0, 344.0, 520.0, 392.0],
+                        2,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q003",
+                        "14 Section A 15 Section B 16 Section C 17 Section D",
+                        [72.0, 270.0, 420.0, 318.0],
+                        3,
+                        1,
+                        0
+                    )
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let passage_range = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(passage_range, vec!["p001", "p002", "p003", "p004"]);
+        let group_block_ids = split
+            .pointer("/questionGroupCandidates/0/blockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(group_block_ids, vec!["q001", "q002", "q003"]);
         assert_eq!(
             split
                 .pointer("/questionGroupCandidates/0/kindHint")

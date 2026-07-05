@@ -1418,24 +1418,50 @@ function isPassageTailTitleText(text: string): boolean {
   return Boolean(firstChar && /[A-Z]/.test(firstChar) && wordCount >= 2 && wordCount <= 8);
 }
 
+function prosePassageRunEnd(blocks: DocumentBlock[], index: number): number | undefined {
+  const substantiveRun = consecutiveSubstantivePassageBlocks(blocks, index, 3);
+  const titleFollowedRun = isPassageTailTitleText(blockText(blocks[index]))
+    ? consecutiveSubstantivePassageBlocks(blocks, index + 1, 3)
+    : 0;
+  if (substantiveRun >= 2) return index + substantiveRun;
+  if (substantiveRun >= 1 && (blocks[index].roleHint === "passage" || isPassageTailLayoutTransition(blocks, index))) {
+    return index + substantiveRun;
+  }
+  if (titleFollowedRun >= 2) return index + 1 + titleFollowedRun;
+  if (titleFollowedRun >= 1
+    && (isPassageTailLayoutTransition(blocks, index)
+      || isPassageTailLayoutTransition(blocks, index + 1)
+      || blocks[index + 1]?.roleHint === "passage")) {
+    return index + 1 + titleFollowedRun;
+  }
+  return undefined;
+}
+
+function collectInterleavedPassageRuns(blocks: DocumentBlock[]): Array<[number, number]> {
+  const runs: Array<[number, number]> = [];
+  let index = 1;
+  while (index < blocks.length) {
+    if (!hasPriorQuestionContent(blocks, index)) {
+      index += 1;
+      continue;
+    }
+    const runEnd = prosePassageRunEnd(blocks, index);
+    if (runEnd === undefined) {
+      index += 1;
+      continue;
+    }
+    if (hasLaterQuestionContent(blocks, runEnd)) runs.push([index, runEnd]);
+    index = Math.max(runEnd, index + 1);
+  }
+  return runs;
+}
+
 function findProsePassageTailStart(blocks: DocumentBlock[]): number | undefined {
   for (let index = 1; index < blocks.length; index += 1) {
     if (!hasPriorQuestionContent(blocks, index)) continue;
-    const substantiveRun = consecutiveSubstantivePassageBlocks(blocks, index, 3);
-    const titleFollowedRun = isPassageTailTitleText(blockText(blocks[index]))
-      ? consecutiveSubstantivePassageBlocks(blocks, index + 1, 3)
-      : 0;
-    const runEnd = titleFollowedRun > 0 ? index + 1 + titleFollowedRun : index + substantiveRun;
-    if (hasLaterQuestionContent(blocks, runEnd)) continue;
-    if (substantiveRun >= 2) return index;
-    if (substantiveRun >= 1 && (blocks[index].roleHint === "passage" || isPassageTailLayoutTransition(blocks, index))) return index;
-    if (titleFollowedRun >= 2) return index;
-    if (titleFollowedRun >= 1
-      && (isPassageTailLayoutTransition(blocks, index)
-        || isPassageTailLayoutTransition(blocks, index + 1)
-        || blocks[index + 1]?.roleHint === "passage")) {
-      return index;
-    }
+    const runEnd = prosePassageRunEnd(blocks, index);
+    if (runEnd === undefined) continue;
+    if (!hasLaterQuestionContent(blocks, runEnd)) return index;
   }
   return undefined;
 }
@@ -1550,12 +1576,26 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
         return candidateIndex > index && Boolean(detectQuestionHeadingRange(candidateText)) && !isKnownUmbrellaBlock(candidate, allUmbrellaBlocks);
       });
       const rawIncluded = nextHeadingIndex > -1 ? questionBlocks.slice(index, nextHeadingIndex) : questionBlocks.slice(index);
-      const rawCombined = rawIncluded.map(blockText).join(" ");
-      const rawBlockIds = rawIncluded.map((item) => item.blockId);
+      const interleavedPassageRuns = collectInterleavedPassageRuns(rawIncluded);
+      const deferMask = new Array(rawIncluded.length).fill(false);
+      for (const [runStart, runEnd] of interleavedPassageRuns) {
+        for (let rawIndex = runStart; rawIndex < Math.min(runEnd, rawIncluded.length); rawIndex += 1) {
+          deferMask[rawIndex] = true;
+        }
+      }
+      const preliminaryBlocks = rawIncluded.filter((block, rawIndex) => {
+        if (deferMask[rawIndex]) {
+          deferredPassageBlocks.push(block);
+          return false;
+        }
+        return true;
+      });
+      const rawCombined = preliminaryBlocks.map(blockText).join(" ");
+      const rawBlockIds = preliminaryBlocks.map((item) => item.blockId);
       const preliminaryClassification = classifyGroup(rawCombined, rawBlockIds);
-      const includedCount = questionBlockCountForGroup(preliminaryClassification.kind, rawIncluded);
-      const included = rawIncluded.slice(0, Math.max(1, Math.min(rawIncluded.length, includedCount)));
-      if (includedCount < rawIncluded.length) deferredPassageBlocks.push(...rawIncluded.slice(includedCount));
+      const includedCount = questionBlockCountForGroup(preliminaryClassification.kind, preliminaryBlocks);
+      const included = preliminaryBlocks.slice(0, Math.max(1, Math.min(preliminaryBlocks.length, includedCount)));
+      if (includedCount < preliminaryBlocks.length) deferredPassageBlocks.push(...preliminaryBlocks.slice(includedCount));
       const blockIds = included.map((item) => item.blockId);
       const combined = included.map(blockText).join(" ");
       const classification = classifyGroup(combined, blockIds);
