@@ -3201,6 +3201,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       });
       const version = input.version || now().replace(/[:TZ]/g, "-").slice(0, 19);
       const libraryRoot = input.exportDir ?? "local://exports/nas-library";
+      const readingExamsDir = libraryRoot;
       const runtimeFiles = [
         ...sources.map((source) => ({
           name: `${source.examId}.js`,
@@ -3229,7 +3230,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         examIds: sources.map((source) => source.examId),
         assetCount: sources.length,
         libraryRoot,
-        readingExamsDir: libraryRoot,
+        readingExamsDir,
         version,
         files: runtimeFiles,
         report: reportPayload,
@@ -3240,7 +3241,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           examIds: sources.map((source) => source.examId),
           version,
           outputDir: libraryRoot,
-          readingExamsDir: libraryRoot,
+          readingExamsDir,
           assetCount: sources.length,
           exportedAt: now()
         },
@@ -3413,7 +3414,12 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         };
       }
       const manifestJs = `window.__WRITING_EXAM_MANIFEST__ = ${JSON.stringify(manifestObj, null, 2)};\n`;
-      const files = tasks.map((task) => ({ name: `${task.taskType}.js`, content: buildWritingWrapper(task) }));
+      const libraryRoot = input.exportDir ?? "local://exports/nas-library";
+      const writingExamsDir = `${libraryRoot}/writing-exams`;
+      const files = tasks.map((task) => ({
+        name: `${task.taskType}.js`,
+        content: buildWritingWrapper(task)
+      }));
       files.push({ name: "manifest.js", content: manifestJs });
       for (const task of tasks) {
         task.status = "Exported";
@@ -3426,12 +3432,12 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         jobIds: tasks.map((t) => t.jobId),
         taskTypes: tasks.map((t) => t.taskType),
         assetCount: tasks.length,
-        libraryRoot: "local://exports/nas-library",
-        writingExamsDir: "local://exports/nas-library/writing-exams",
+        libraryRoot,
+        writingExamsDir,
         version,
         files,
         report: { status: "ok", version, generatedAt: now(), summary: { runtime: "nas-js-direct", writingTaskCount: tasks.length, manifestFileCount: 1 }, errors: [] },
-        exportSummary: { type: "writing-library", runtime: "nas-js-direct", jobIds, version, outputDir: "local://exports/nas-library", writingExamsDir: "local://exports/nas-library/writing-exams", assetCount: tasks.length, exportedAt: now() },
+        exportSummary: { type: "writing-library", runtime: "nas-js-direct", jobIds, version, outputDir: libraryRoot, writingExamsDir, assetCount: tasks.length, exportedAt: now() },
         cleanup: tasks.map((t) => ({ jobId: t.jobId, taskType: t.taskType, status: "Exported" }))
       } as T;
     }

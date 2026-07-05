@@ -7,7 +7,7 @@ use auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
 use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
 use export_artifacts::{build_manifest, build_wrapper, safe_exam_id};
-use export_nas_library::export_nas_library_core;
+use export_nas_library::{export_nas_library_core, nas_reading_exams_dir, normalize_nas_library_root};
 use export_pack::{build_pack_core, export_reading_assets_core, export_reading_js_core};
 use export_writing_library::export_writing_library_core;
 use llm_commands::{
@@ -590,9 +590,9 @@ fn export_nas_library_from_pdf_paths(paths: &[PathBuf], args: &[String]) -> Comm
         cli_option_value(args, "--export-dir").ok_or_else(|| "missing_export_dir".to_string())?;
     let version = cli_option_value(args, "--version")
         .unwrap_or_else(|| Utc::now().format("%Y.%m.%d-%H%M%S").to_string());
-    let library_root = PathBuf::from(export_dir);
+    let library_root = normalize_nas_library_root(&PathBuf::from(export_dir));
     fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
-    let reading_exams_dir = library_root.clone();
+    let reading_exams_dir = nas_reading_exams_dir(&library_root);
     fs::create_dir_all(&reading_exams_dir).map_err(|error| error.to_string())?;
 
     let mut seen_exam_ids = HashSet::new();
@@ -869,7 +869,9 @@ async fn choose_export_dir(app: AppHandle) -> CommandResult<Option<String>> {
 }
 
 #[tauri::command]
-async fn pick_pdf_folder_sources(app: AppHandle) -> CommandResult<Vec<job_commands::PickedSourcePath>> {
+async fn pick_pdf_folder_sources(
+    app: AppHandle,
+) -> CommandResult<Vec<job_commands::PickedSourcePath>> {
     job_commands::pick_pdf_folder_sources_core(app).await
 }
 
@@ -1221,20 +1223,21 @@ async fn list_library_exams(
     app: AppHandle,
 ) -> CommandResult<Vec<LibraryExamSummary>> {
     let root = app_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || library_commands::list_library_exams_core(&root, filter))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::list_library_exams_core(&root, filter)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-async fn get_library_exam(
-    id: String,
-    app: AppHandle,
-) -> CommandResult<Option<LibraryExamDetail>> {
+async fn get_library_exam(id: String, app: AppHandle) -> CommandResult<Option<LibraryExamDetail>> {
     let root = app_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || library_commands::get_library_exam_core(&root, &id))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::get_library_exam_core(&root, &id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1244,17 +1247,21 @@ async fn update_library_exam_meta(
     app: AppHandle,
 ) -> CommandResult<Option<LibraryExamSummary>> {
     let root = app_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || library_commands::update_library_exam_meta_core(&root, &id, patch))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::update_library_exam_meta_core(&root, &id, patch)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 async fn delete_library_exam(id: String, app: AppHandle) -> CommandResult<bool> {
     let root = app_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || library_commands::delete_library_exam_core(&root, &id))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::delete_library_exam_core(&root, &id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1263,9 +1270,11 @@ async fn search_library_exams(
     app: AppHandle,
 ) -> CommandResult<Vec<LibraryExamSummary>> {
     let root = app_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || library_commands::search_library_exams_core(&root, &query))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::search_library_exams_core(&root, &query)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1279,9 +1288,11 @@ async fn get_library_stats(app: AppHandle) -> CommandResult<LibraryStats> {
 #[tauri::command]
 async fn restore_library_exam(id: String, app: AppHandle) -> CommandResult<bool> {
     let root = app_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || library_commands::restore_library_exam_core(&root, &id))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::restore_library_exam_core(&root, &id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1381,7 +1392,7 @@ mod tests {
     use crate::environment::{command_probe, environment_preflight_report};
     use crate::export_artifacts::{build_manifest, build_wrapper, safe_exam_id};
     use crate::export_nas_library::{
-        publish_nas_library_from_source_tree, write_source_payload_file,
+        nas_reading_exams_dir, publish_nas_library_from_source_tree, write_source_payload_file,
     };
     use crate::job_store::{load_job, make_job, save_job, update_job};
     use crate::llm_profiles::{
@@ -3827,13 +3838,10 @@ Answers
         let ir = parse_source_document(&job, &source, &fixture, &output, "auto")
             .expect("no-text PDF fixture should parse through Rust PDF extractor");
 
-        assert!(
-            matches!(
-                ir.pointer("/parser/provider").and_then(Value::as_str),
-                Some("rust-parser:pdf:pdf-extract")
-                    | Some("python-parser-sidecar:pdf:pypdf")
-            )
-        );
+        assert!(matches!(
+            ir.pointer("/parser/provider").and_then(Value::as_str),
+            Some("rust-parser:pdf:pdf-extract") | Some("python-parser-sidecar:pdf:pypdf")
+        ));
         assert!(parser_warnings(Some(&ir))
             .iter()
             .any(|warning| warning.contains("no extractable text")));
@@ -7016,8 +7024,10 @@ Answers
             Some("nas-library")
         );
         assert_eq!(result.get("assetCount").and_then(Value::as_u64), Some(1));
-        let reading_exams_dir = library_root.clone();
-        assert!(library_root.join(format!("{}.js", expected_exam_id)).exists());
+        let reading_exams_dir = nas_reading_exams_dir(&library_root);
+        assert!(reading_exams_dir
+            .join(format!("{}.js", expected_exam_id))
+            .exists());
         assert!(reading_exams_dir.join("manifest.js").exists());
         assert!(!library_root.join("publish").join("library.db").exists());
         assert!(!library_root.join("source").exists());
@@ -7313,7 +7323,7 @@ Answers
         assert!(handled);
         assert!(!library_root.join("source").exists());
         assert!(!library_root.join("publish").join("library.db").exists());
-        let reading_exams_dir = library_root.clone();
+        let reading_exams_dir = nas_reading_exams_dir(&library_root);
         assert!(reading_exams_dir.join("manifest.js").exists());
         let exam_files = fs::read_dir(&reading_exams_dir)
             .unwrap()
@@ -7491,8 +7501,7 @@ Answers
             assert!(
                 matches!(
                     actual_provider,
-                    Some("rust-parser:pdf:pdf-extract")
-                        | Some("python-parser-sidecar:pdf:pypdf")
+                    Some("rust-parser:pdf:pdf-extract") | Some("python-parser-sidecar:pdf:pypdf")
                 ),
                 "unexpected PDF provider for {}: {:?}",
                 file_name,
@@ -7503,7 +7512,12 @@ Answers
         }
         let warnings = parser_warnings(Some(&doc));
         if actual_provider == Some("python-parser-sidecar:pdf:pypdf") {
-            assert_eq!(warnings.len(), 1, "unexpected PDF fallback warnings: {:?}", warnings);
+            assert_eq!(
+                warnings.len(),
+                1,
+                "unexpected PDF fallback warnings: {:?}",
+                warnings
+            );
             assert!(
                 warnings[0].starts_with("rust pdf-extract failed; used Python parser fallback:"),
                 "unexpected PDF fallback warning: {:?}",
@@ -7606,17 +7620,25 @@ Answers
 
         // Collect every block's text + runFormat + headingLevel.
         let mut blocks: Vec<(String, Option<Value>, Option<u64>)> = Vec::new();
-        for page in doc.get("pages").and_then(Value::as_array).into_iter().flatten() {
-            for block in page.get("blocks").and_then(Value::as_array).into_iter().flatten() {
+        for page in doc
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            for block in page
+                .get("blocks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 let text = block
                     .get("text")
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .trim()
                     .to_string();
-                let run_format = block
-                    .pointer("/layoutHints/runFormat")
-                    .cloned();
+                let run_format = block.pointer("/layoutHints/runFormat").cloned();
                 let heading_level = block
                     .pointer("/layoutHints/headingLevel")
                     .and_then(Value::as_u64);
@@ -7641,12 +7663,20 @@ Answers
             Some(true),
             "title must be centered"
         );
-        assert_eq!(*title_hl, Some(2), "centered title should be heading level 2");
+        assert_eq!(
+            *title_hl,
+            Some(2),
+            "centered title should be heading level 2"
+        );
 
         // Each bold sub-heading should be detected as a heading (level 3).
         for subheading in ["Candlelight", "Oil lamps", "Gas lighting", "Electricity"] {
             let found = blocks.iter().find(|(text, _, _)| text == subheading);
-            assert!(found.is_some(), "sub-heading {} should be present", subheading);
+            assert!(
+                found.is_some(),
+                "sub-heading {} should be present",
+                subheading
+            );
             let (_, fmt, hl) = found.unwrap();
             let fmt = fmt.as_ref().expect("sub-heading must have runFormat");
             assert_eq!(
@@ -7656,7 +7686,8 @@ Answers
                 subheading
             );
             assert_eq!(
-                *hl, Some(3),
+                *hl,
+                Some(3),
                 "sub-heading {} should be heading level 3",
                 subheading
             );
@@ -7720,9 +7751,19 @@ Answers
         // [72, *, 520, *] — i.e. have a real x1 > 520.5 or real x0 < 71.5.
         let mut has_real_coord = false;
         let mut page0_has_right_column = false;
-        for page in doc.get("pages").and_then(Value::as_array).into_iter().flatten() {
+        for page in doc
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let page_index = page.get("pageIndex").and_then(Value::as_u64).unwrap_or(0);
-            for block in page.get("blocks").and_then(Value::as_array).into_iter().flatten() {
+            for block in page
+                .get("blocks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 if let Some(bbox) = block.get("bbox").and_then(Value::as_array) {
                     let x0 = bbox.first().and_then(Value::as_f64).unwrap_or(0.0);
                     let x1 = bbox.get(2).and_then(Value::as_f64).unwrap_or(0.0);
@@ -8376,8 +8417,7 @@ Answers
             assert!(
                 matches!(
                     doc.pointer("/parser/provider").and_then(Value::as_str),
-                    Some("rust-parser:pdf:pdf-extract")
-                        | Some("python-parser-sidecar:pdf:pypdf")
+                    Some("rust-parser:pdf:pdf-extract") | Some("python-parser-sidecar:pdf:pypdf")
                 ),
                 "{} should parse through either the Rust PDF path or the Python PDF fallback",
                 sample.display()

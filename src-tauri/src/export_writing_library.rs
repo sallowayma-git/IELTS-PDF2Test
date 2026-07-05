@@ -11,7 +11,8 @@
 //!   - wrapper register key 也是 taskType
 //!   - 无 runtime gate（写作无 passage/answerKey，仅校验 promptText 非空 + taskType 合法）
 
-use crate::util::{read_json, validate_path_segment, write_text, safe_writing_job_dir};
+use crate::export_nas_library::{nas_writing_exams_dir, normalize_nas_library_root};
+use crate::util::{read_json, safe_writing_job_dir, validate_path_segment, write_text};
 use crate::writing_store::{writing_source, WritingJob, WritingJobStatus};
 use crate::CommandResult;
 use chrono::Utc;
@@ -43,10 +44,7 @@ fn build_writing_manifest(sources: &[Value]) -> CommandResult<String> {
             .get("taskType")
             .and_then(Value::as_str)
             .unwrap_or("task1");
-        let exam_id = source
-            .get("examId")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let exam_id = source.get("examId").and_then(Value::as_str).unwrap_or("");
         manifest.insert(
             task_type.to_string(),
             json!({
@@ -60,8 +58,7 @@ fn build_writing_manifest(sources: &[Value]) -> CommandResult<String> {
     }
     Ok(format!(
         "window.__WRITING_EXAM_MANIFEST__ = {};\n",
-        serde_json::to_string_pretty(&Value::Object(manifest))
-            .map_err(|error| error.to_string())?
+        serde_json::to_string_pretty(&Value::Object(manifest)).map_err(|error| error.to_string())?
     ))
 }
 
@@ -74,10 +71,7 @@ fn validate_writing_job_for_export(job: &WritingJob) -> CommandResult<()> {
         ));
     }
     if job.prompt_text.trim().is_empty() {
-        return Err(format!(
-            "writing_export_prompt_empty:{}",
-            job.job_id
-        ));
+        return Err(format!("writing_export_prompt_empty:{}", job.job_id));
     }
     Ok(())
 }
@@ -108,7 +102,8 @@ fn write_writing_library_files(
 
     for job_id in job_ids {
         validate_path_segment("writing_job_id", job_id)?;
-        let job: WritingJob = read_json(&safe_writing_job_dir(root, job_id)?.join("writing-job.json"))?;
+        let job: WritingJob =
+            read_json(&safe_writing_job_dir(root, job_id)?.join("writing-job.json"))?;
         validate_writing_job_for_export(&job)?;
         if !seen_task_types.insert(job.task_type.clone()) {
             return Err(format!(
@@ -175,8 +170,8 @@ pub(crate) fn export_writing_library_core(root: &Path, input: &Value) -> Command
     } else {
         std::path::PathBuf::from(export_dir)
     };
-    // 写作输出到 writing-exams 子目录，与 reading-exams 平级
-    let writing_exams_dir = library_root.join("writing-exams");
+    let library_root = normalize_nas_library_root(&library_root);
+    let writing_exams_dir = nas_writing_exams_dir(&library_root);
 
     let write_result = write_writing_library_files(root, &job_ids, &writing_exams_dir)?;
     let asset_count = write_result.files.len();
@@ -243,4 +238,71 @@ pub(crate) fn export_writing_library_core(root: &Path, input: &Value) -> Command
         },
         "cleanup": cleanup
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::writing_store::{save_writing_job, WritingJob};
+    use chrono::Utc;
+    use std::{fs, path::PathBuf};
+    use uuid::Uuid;
+
+    fn temp_root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "pdf2test-writing-export-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn make_job(task_type: &str, exam_id: &str, prompt_text: &str) -> WritingJob {
+        let now = Utc::now();
+        WritingJob {
+            job_id: format!("writing-{task_type}-fixture"),
+            title: format!("Fixture {task_type}"),
+            task_type: task_type.to_string(),
+            exam_id: exam_id.to_string(),
+            prompt_text: prompt_text.to_string(),
+            suggested_word_count: if task_type == "task2" { 250 } else { 150 },
+            status: WritingJobStatus::ExportReady,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn export_writing_library_core_writes_writing_exams_subdir() {
+        let root = temp_root();
+        let task1 = make_job("task1", "wt-task1-fixture", "Task 1 prompt");
+        let task2 = make_job("task2", "wt-task2-fixture", "Task 2 prompt");
+        save_writing_job(&root, &task1).unwrap();
+        save_writing_job(&root, &task2).unwrap();
+
+        let library_root = root.join("nas-library");
+        let writing_exams_dir = nas_writing_exams_dir(&library_root);
+        let input = json!({
+            "jobIds": [task1.job_id, task2.job_id],
+            "exportDir": library_root.to_string_lossy()
+        });
+
+        let result = export_writing_library_core(&root, &input).unwrap();
+
+        assert!(writing_exams_dir.join("manifest.js").exists());
+        assert!(writing_exams_dir.join("task1.js").exists());
+        assert!(writing_exams_dir.join("task2.js").exists());
+        assert_eq!(
+            result.pointer("/writingExamsDir").and_then(Value::as_str),
+            Some(writing_exams_dir.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            result
+                .pointer("/exportSummary/writingExamsDir")
+                .and_then(Value::as_str),
+            Some(writing_exams_dir.to_string_lossy().as_ref())
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

@@ -440,7 +440,7 @@ export function ExportPage({
                   <p>版本：<code>{writingResult.version}</code></p>
                   <p>输出目录：<code>{writingResult.writingExamsDir}</code></p>
                   <p>文件：{writingResult.files.map((f) => f.name).join("、")}</p>
-                  <small>把 {writingResult.writingExamsDir} 下的 manifest.js + task1.js + task2.js 放进 NAS 学生端 publish/assets/generated/writing-exams/ 即可被识别。</small>
+                  <small>学生端会直接读取这里的 <code>writing-exams</code> 子目录，不需要再手动搬运文件。</small>
                 </div>
               ) : null}
             </>
@@ -463,7 +463,8 @@ export function ExportPage({
           {mode === "nas-library" && nasResult?.version ? (
             <div className="warning-box">
               <strong>NAS 版本</strong>
-              <p>将 manifest 与题目脚本直接写入所选数据目录，供 NAS 学生端直接消费。</p>
+              <p>阅读题库已平铺写入所选目录，学生端直接选择这个目录即可读取 <code>manifest.js</code> 与题目脚本。</p>
+              {nasResult.readingExamsDir ? <p><code>{nasResult.readingExamsDir}</code></p> : null}
               <code>{nasResult.version}</code>
             </div>
           ) : null}

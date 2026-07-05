@@ -25,6 +25,8 @@ const LIBRARY_NEXT_DB_FILE_NAME: &str = "library.next.db";
 const LIBRARY_VERSION_FILE_NAME: &str = "library.version.json";
 const LIBRARY_SHA_FILE_NAME: &str = "library.db.sha256";
 const REPORT_FILE_NAME: &str = "report.json";
+const PUBLISH_DIR_NAME: &str = "publish";
+const WRITING_EXAMS_DIR_NAME: &str = "writing-exams";
 
 #[derive(Debug, Clone)]
 struct SourceAssetRecord {
@@ -134,6 +136,43 @@ fn to_rel_string(root: &Path, path: &Path) -> String {
         .ok()
         .map(|value| normalize_slashes(&value.to_string_lossy()))
         .unwrap_or_else(|| normalize_slashes(&path.to_string_lossy()))
+}
+
+pub(crate) fn normalize_nas_library_root(library_root: &Path) -> PathBuf {
+    if library_root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case(PUBLISH_DIR_NAME))
+        .unwrap_or(false)
+    {
+        library_root
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| library_root.to_path_buf())
+    } else {
+        library_root.to_path_buf()
+    }
+}
+
+pub(crate) fn nas_publish_dir(library_root: &Path) -> PathBuf {
+    if library_root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case(PUBLISH_DIR_NAME))
+        .unwrap_or(false)
+    {
+        library_root.to_path_buf()
+    } else {
+        library_root.join(PUBLISH_DIR_NAME)
+    }
+}
+
+pub(crate) fn nas_reading_exams_dir(library_root: &Path) -> PathBuf {
+    normalize_nas_library_root(library_root)
+}
+
+pub(crate) fn nas_writing_exams_dir(library_root: &Path) -> PathBuf {
+    normalize_nas_library_root(library_root).join(WRITING_EXAMS_DIR_NAME)
 }
 
 fn list_source_files(source_dir: &Path) -> CommandResult<Vec<PathBuf>> {
@@ -1083,9 +1122,10 @@ pub(crate) fn publish_nas_library_from_source_tree(
     library_root: &Path,
     version: Option<&str>,
 ) -> CommandResult<Value> {
-    fs::create_dir_all(library_root).map_err(|error| error.to_string())?;
+    let library_root = normalize_nas_library_root(library_root);
+    fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
     let source_dir = library_root.join("source");
-    let publish_dir = library_root.join("publish");
+    let publish_dir = nas_publish_dir(&library_root);
     fs::create_dir_all(&source_dir).map_err(|error| error.to_string())?;
     fs::create_dir_all(&publish_dir).map_err(|error| error.to_string())?;
 
@@ -1102,7 +1142,7 @@ pub(crate) fn publish_nas_library_from_source_tree(
 
     let previous = load_existing_snapshot(&library_db_path)?;
     let (state, version_meta, diff) =
-        build_library_from_source_tree(library_root, &source_dir, &version, &previous)?;
+        build_library_from_source_tree(&library_root, &source_dir, &version, &previous)?;
     let source_file_count = list_source_files(&source_dir)?.len();
     let has_errors = !state.errors.is_empty();
 
@@ -1186,8 +1226,9 @@ pub(crate) fn export_nas_library_core(
     } else {
         PathBuf::from(export_dir)
     };
+    let library_root = normalize_nas_library_root(&library_root);
     fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
-    let reading_exams_dir = library_root.clone();
+    let reading_exams_dir = nas_reading_exams_dir(&library_root);
 
     let requested_version = input.get("version").and_then(Value::as_str).map(str::trim);
     let version = requested_version
