@@ -7748,6 +7748,104 @@ Answers
     }
 
     #[test]
+    fn demanding_pdf_split_keeps_cross_page_passage_before_question_pages() {
+        if crate::pdf_geometry::pdfium_library_path().is_none() {
+            return;
+        }
+        let mut job = test_job();
+        job.source_files = vec![test_source("pdf")];
+        let output = env::temp_dir().join(format!(
+            "epic8-demanding-pdf-split-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &parser_fixture("demanding-reading-passage-3.pdf"),
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let _ = fs::remove_file(&output);
+
+        assert_eq!(
+            doc.pointer("/parser/provider").and_then(Value::as_str),
+            Some("rust-parser:pdf:pdfium"),
+            "cross-page regression should run against the pdfium path"
+        );
+
+        let blocks = dynamic_document_blocks(Some(&doc));
+        let lookup_block = |block_id: &str| {
+            blocks
+                .iter()
+                .find(|block| block.get("blockId").and_then(Value::as_str) == Some(block_id))
+        };
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+
+        let passage_ids = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        let passage_pages = passage_ids
+            .iter()
+            .filter_map(|block_id| {
+                lookup_block(block_id)
+                    .and_then(|block| block.get("pageIndex").and_then(Value::as_u64))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            passage_pages.contains(&2),
+            "passage range should retain at least one continuation block from page 2"
+        );
+        assert_eq!(
+            passage_pages.iter().copied().max(),
+            Some(2),
+            "passage recovery should stop before question-only page 3"
+        );
+
+        let passage_text = passage_ids
+            .iter()
+            .filter_map(|block_id| lookup_block(block_id))
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            passage_text.to_lowercase().contains("household artefacts")
+                || passage_text.to_lowercase().contains("critical awareness"),
+            "recovered passage text should include page 2 continuation prose"
+        );
+
+        let first_group_ids = split
+            .pointer("/questionGroupCandidates/0/blockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        let first_group_pages = first_group_ids
+            .iter()
+            .filter_map(|block_id| {
+                lookup_block(block_id)
+                    .and_then(|block| block.get("pageIndex").and_then(Value::as_u64))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            first_group_pages.iter().copied().min(),
+            Some(3),
+            "first concrete question group should begin on page 3 after the cross-page passage"
+        );
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/questionRange/0")
+                .and_then(Value::as_u64),
+            Some(27)
+        );
+    }
+
+    #[test]
     fn docx_ooxml_parser_preserves_table_ir_for_split_evidence() {
         let mut job = test_job();
         job.source_files = vec![test_source("docx")];

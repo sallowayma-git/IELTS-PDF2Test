@@ -94,7 +94,6 @@ struct CharWithOrigin {
 
 #[derive(Clone, Copy, Debug)]
 struct LayoutSection {
-    index: usize,
     y_top: f32,
     y_bottom: f32,
     column_count: u8,
@@ -258,6 +257,125 @@ fn estimate_y_tolerance(chars: &[CharWithOrigin]) -> f32 {
     (span / 40.0).max(2.0).min(6.0)
 }
 
+fn build_raw_rows(chars: &[CharWithOrigin], y_tol: f32) -> Vec<Vec<CharWithOrigin>> {
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let mut sorted = chars.to_vec();
+    sorted.sort_by(|a, b| {
+        a.y.partial_cmp(&b.y)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .reverse()
+            .then(a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
+    });
+
+    let mut rows: Vec<Vec<CharWithOrigin>> = Vec::new();
+    for ch in sorted {
+        let mut placed = false;
+        for row in rows.iter_mut().rev().take(3) {
+            let row_y = row.iter().map(|c| c.y).sum::<f32>() / row.len() as f32;
+            if (ch.y - row_y).abs() <= y_tol {
+                row.push(ch);
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            rows.push(vec![ch]);
+        }
+    }
+
+    rows.sort_by(|a, b| {
+        let ay = a.iter().map(|c| c.y).sum::<f32>() / a.len() as f32;
+        let by = b.iter().map(|c| c.y).sum::<f32>() / b.len() as f32;
+        by.partial_cmp(&ay).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for row in &mut rows {
+        row.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    rows
+}
+
+fn line_word_gap_threshold(line: &[CharWithOrigin]) -> f32 {
+    let mut advances: Vec<f32> = Vec::new();
+    for window in line.windows(2) {
+        let delta = window[1].x - window[0].x;
+        if delta > 0.0 {
+            advances.push(delta);
+        }
+    }
+    let median_advance = if advances.len() >= 3 {
+        advances.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        advances[advances.len() / 2]
+    } else {
+        let x_min = line.iter().map(|c| c.x).fold(f32::MAX, f32::min);
+        let x_max = line.iter().map(|c| c.x).fold(f32::MIN, f32::max);
+        ((x_max - x_min) / line.len().max(1) as f32).max(3.0)
+    };
+    (median_advance * 2.5).max(4.0)
+}
+
+fn line_bbox(line: &[CharWithOrigin], y_tol: f32) -> [f32; 4] {
+    let x0 = line.iter().map(|c| c.x).fold(f32::MAX, f32::min);
+    let x1 = line.iter().map(|c| c.x).fold(f32::MIN, f32::max);
+    let y0 = line.iter().map(|c| c.y).fold(f32::MAX, f32::min);
+    let y1 = line.iter().map(|c| c.y).fold(f32::MIN, f32::max);
+    let pad = y_tol * 0.7;
+    [x0, y0 - pad, x1, y1 + pad]
+}
+
+fn line_split_gap(line: &[CharWithOrigin], split_x: f32) -> Option<f32> {
+    let left = line.iter().rev().find(|ch| ch.x < split_x)?;
+    let right = line.iter().find(|ch| ch.x >= split_x)?;
+    Some((right.x - left.x).max(0.0))
+}
+
+fn is_full_width_banner_row(
+    line: &[CharWithOrigin],
+    split_x: f32,
+    x_min_global: f32,
+    x_max_global: f32,
+) -> bool {
+    if line.len() < 4 {
+        return false;
+    }
+    let page_x_span = (x_max_global - x_min_global).max(1.0);
+    let left_count = line.iter().filter(|ch| ch.x < split_x).count();
+    let right_count = line.len().saturating_sub(left_count);
+    if left_count > 0 && right_count > 0 {
+        let split_gap = line_split_gap(line, split_x).unwrap_or(page_x_span);
+        let max_continuous_gap = line_word_gap_threshold(line).max(page_x_span * 0.035);
+        return split_gap <= max_continuous_gap.max(14.0);
+    }
+
+    let bbox = line_bbox(line, estimate_y_tolerance(line));
+    let width = bbox[2] - bbox[0];
+    let center = (bbox[0] + bbox[2]) * 0.5;
+    let center_diff = (center - split_x).abs();
+    center_diff <= page_x_span * 0.07
+        && width >= page_x_span * 0.10
+        && width <= page_x_span * 0.42
+        && bbox[0] >= split_x - page_x_span * 0.24
+        && bbox[2] <= split_x + page_x_span * 0.24
+}
+
+fn band_looks_like_full_width_banner(
+    chars: &[CharWithOrigin],
+    split_x: f32,
+    x_min_global: f32,
+    x_max_global: f32,
+) -> bool {
+    let rows = build_raw_rows(chars, estimate_y_tolerance(chars));
+    if rows.is_empty() || rows.len() > 3 {
+        return false;
+    }
+    let banner_rows = rows
+        .iter()
+        .filter(|row| is_full_width_banner_row(row, split_x, x_min_global, x_max_global))
+        .count();
+    banner_rows * 2 >= rows.len()
+}
+
 fn detect_column_split_x(
     chars: &[CharWithOrigin],
     x_min_global: f32,
@@ -400,8 +518,21 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
             let Some(next_split) = bands[index + 1].split_x else {
                 continue;
             };
-            if (prev_split - next_split).abs() <= page_x_span * 0.08 {
-                bands[index].split_x = Some((prev_split + next_split) * 0.5);
+            let candidate_split = (prev_split + next_split) * 0.5;
+            let band_chars = chars
+                .iter()
+                .copied()
+                .filter(|ch| ch.y <= bands[index].y_top && ch.y > bands[index].y_bottom)
+                .collect::<Vec<_>>();
+            if (prev_split - next_split).abs() <= page_x_span * 0.08
+                && !band_looks_like_full_width_banner(
+                    &band_chars,
+                    candidate_split,
+                    x_min_global,
+                    x_max_global,
+                )
+            {
+                bands[index].split_x = Some(candidate_split);
             }
         }
     }
@@ -429,7 +560,6 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
             continue;
         }
         sections.push(LayoutSection {
-            index: sections.len(),
             y_top: band.y_top,
             y_bottom: band.y_bottom,
             column_count: band_column_count,
@@ -439,7 +569,6 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
 
     if sections.is_empty() {
         sections.push(LayoutSection {
-            index: 0,
             y_top: y_max,
             y_bottom: y_min - 0.5,
             column_count: 1,
@@ -458,6 +587,7 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
     let y_tol = estimate_y_tolerance(chars);
     let sections = detect_layout_sections(chars);
     let mut result = Vec::new();
+    let mut emitted_section_index = 0usize;
     for section in sections {
         let section_chars = chars
             .iter()
@@ -468,40 +598,72 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
             continue;
         }
         if section.column_count == 1 {
-            let lines = build_lines_within_column(&section_chars, y_tol);
+            let lines = build_lines_within_column_refined(&section_chars, y_tol);
             let grouped = group_lines_into_blocks(&lines);
             result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
                 text,
                 bbox,
-                section_index: section.index,
+                section_index: emitted_section_index,
                 column_index: 0,
                 column_count: 1,
             }));
+            emitted_section_index += 1;
             continue;
         }
         let split_x = section.split_x.unwrap_or(f32::MAX);
-        let mut column_left = Vec::new();
-        let mut column_right = Vec::new();
-        for ch in section_chars {
-            if ch.x >= split_x {
-                column_right.push(ch);
-            } else {
-                column_left.push(ch);
+        let section_x_min = section_chars.iter().map(|c| c.x).fold(f32::MAX, f32::min);
+        let section_x_max = section_chars.iter().map(|c| c.x).fold(f32::MIN, f32::max);
+        let rows = build_raw_rows(&section_chars, y_tol);
+        let mut segments: Vec<(bool, Vec<CharWithOrigin>)> = Vec::new();
+        for row in rows {
+            let is_banner = is_full_width_banner_row(&row, split_x, section_x_min, section_x_max);
+            match segments.last_mut() {
+                Some((current_banner, segment_chars)) if *current_banner == is_banner => {
+                    segment_chars.extend(row);
+                }
+                _ => segments.push((is_banner, row)),
             }
         }
-        for (column_index, column_chars) in [(0u8, column_left), (1u8, column_right)] {
-            if column_chars.is_empty() {
+
+        for (is_banner, segment_chars) in segments {
+            if is_banner {
+                let lines = build_lines_within_column_refined(&segment_chars, y_tol);
+                let grouped = group_lines_into_blocks(&lines);
+                result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
+                    text,
+                    bbox,
+                    section_index: emitted_section_index,
+                    column_index: 0,
+                    column_count: 1,
+                }));
+                emitted_section_index += 1;
                 continue;
             }
-            let lines = build_lines_within_column(&column_chars, y_tol);
-            let grouped = group_lines_into_blocks(&lines);
-            result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
-                text,
-                bbox,
-                section_index: section.index,
-                column_index,
-                column_count: 2,
-            }));
+
+            let mut column_left = Vec::new();
+            let mut column_right = Vec::new();
+            for ch in segment_chars {
+                if ch.x >= split_x {
+                    column_right.push(ch);
+                } else {
+                    column_left.push(ch);
+                }
+            }
+            for (column_index, column_chars) in [(0u8, column_left), (1u8, column_right)] {
+                if column_chars.is_empty() {
+                    continue;
+                }
+                let lines = build_lines_within_column_refined(&column_chars, y_tol);
+                let grouped = group_lines_into_blocks(&lines);
+                result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
+                    text,
+                    bbox,
+                    section_index: emitted_section_index,
+                    column_index,
+                    column_count: 2,
+                }));
+            }
+            emitted_section_index += 1;
         }
     }
     result
@@ -509,47 +671,15 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
 
 /// Build lines from a single column's characters (already x-isolated from
 /// other columns). Clusters by y-origin proximity, then splits into words.
+#[allow(dead_code)]
 fn build_lines_within_column(chars: &[CharWithOrigin], y_tol: f32) -> Vec<(String, [f32; 4])> {
     if chars.is_empty() {
         return Vec::new();
     }
-    // Cluster characters into lines by y-origin.
-    let mut sorted = chars.to_vec();
-    sorted.sort_by(|a, b| {
-        a.y.partial_cmp(&b.y)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .reverse() // top of page has larger y in PDF space
-            .then(a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
-    });
-
-    let mut lines: Vec<Vec<CharWithOrigin>> = Vec::new();
-    for ch in sorted {
-        let mut placed = false;
-        for line in lines.iter_mut().rev().take(3) {
-            let line_y = line.iter().map(|c| c.y).sum::<f32>() / line.len() as f32;
-            if (ch.y - line_y).abs() <= y_tol {
-                line.push(ch);
-                placed = true;
-                break;
-            }
-        }
-        if !placed {
-            lines.push(vec![ch]);
-        }
-    }
-
-    // Sort lines top-to-bottom (descending y), then within each line sort
-    // left-to-right (ascending x).
-    lines.sort_by(|a, b| {
-        let ay = a.iter().map(|c| c.y).sum::<f32>() / a.len() as f32;
-        let by = b.iter().map(|c| c.y).sum::<f32>() / b.len() as f32;
-        by.partial_cmp(&ay).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    let lines = build_raw_rows(chars, y_tol);
 
     let mut result = Vec::new();
-    for mut line in lines {
-        line.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
-
+    for line in lines {
         // Build words by splitting on horizontal gaps. The threshold is
         // derived from the MEDIAN consecutive-character advance (robust to the
         // occasional wide letter-spacing of centered titles), then scaled so
@@ -597,6 +727,35 @@ fn build_lines_within_column(chars: &[CharWithOrigin], y_tol: f32) -> Vec<(Strin
         // height (origin points sit on the baseline).
         let pad = y_tol * 0.7;
         result.push((text, [x0, y0 - pad, x1, y1 + pad]));
+    }
+    result
+}
+
+fn build_lines_within_column_refined(
+    chars: &[CharWithOrigin],
+    y_tol: f32,
+) -> Vec<(String, [f32; 4])> {
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let lines = build_raw_rows(chars, y_tol);
+    let mut result = Vec::new();
+    for line in lines {
+        let gap_threshold = line_word_gap_threshold(&line);
+        let mut words: Vec<String> = Vec::new();
+        let mut prev_x: Option<f32> = None;
+        for ch in &line {
+            let start_new = match prev_x {
+                Some(px) => ch.x - px > gap_threshold,
+                None => true,
+            };
+            if start_new {
+                words.push(String::new());
+            }
+            words.last_mut().unwrap().push(ch.ch);
+            prev_x = Some(ch.x);
+        }
+        result.push((words.join(" "), line_bbox(&line, y_tol)));
     }
     result
 }
@@ -971,6 +1130,104 @@ mod tests {
         assert!(
             single_column_blocks[0].section_index > max_two_column_section,
             "single-column tail should be emitted after the earlier two-column section"
+        );
+    }
+
+    #[test]
+    fn build_blocks_from_chars_preserves_centered_banner_inside_two_column_flow() {
+        let mut chars = Vec::new();
+        push_text_line(
+            &mut chars,
+            "LEFT COLUMN INTRODUCES THE FIRST IDEA",
+            78.0,
+            760.0,
+        );
+        push_text_line(
+            &mut chars,
+            "RIGHT COLUMN ADDS SUPPORTING DETAIL",
+            336.0,
+            756.0,
+        );
+        push_text_line(
+            &mut chars,
+            "LEFT COLUMN CONTINUES THE ARGUMENT",
+            78.0,
+            752.0,
+        );
+        push_text_line(
+            &mut chars,
+            "RIGHT COLUMN CONTINUES THE ARGUMENT",
+            336.0,
+            748.0,
+        );
+        push_text_line(&mut chars, "FURTHER EVIDENCE FROM JAPAN", 238.0, 744.0);
+        push_text_line(
+            &mut chars,
+            "LEFT COLUMN RESUMES BELOW THE BANNER",
+            78.0,
+            736.0,
+        );
+        push_text_line(
+            &mut chars,
+            "RIGHT COLUMN RESUMES BELOW THE BANNER",
+            336.0,
+            732.0,
+        );
+        push_text_line(
+            &mut chars,
+            "LEFT COLUMN CLOSES WITH A FINAL CLAIM",
+            78.0,
+            728.0,
+        );
+        push_text_line(
+            &mut chars,
+            "RIGHT COLUMN CLOSES WITH A FINAL CLAIM",
+            336.0,
+            724.0,
+        );
+
+        let blocks = build_blocks_from_chars(&chars);
+        let debug_blocks = blocks
+            .iter()
+            .map(|block| {
+                format!(
+                    "[section={} col={}/{} text={}]",
+                    block.section_index, block.column_index, block.column_count, block.text
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let banner_index = blocks
+            .iter()
+            .position(|block| {
+                block.column_count == 1 && block.text.contains("FURTHER EVIDENCE FROM JAPAN")
+            })
+            .expect("centered banner should remain a single-column block");
+
+        assert_eq!(
+            blocks[banner_index].text, "FURTHER EVIDENCE FROM JAPAN",
+            "banner text should not be split into separate column fragments"
+        );
+        assert!(
+            banner_index >= 2,
+            "banner should appear after the opening two-column blocks: {}",
+            debug_blocks
+        );
+        assert!(
+            blocks
+                .iter()
+                .skip(banner_index + 1)
+                .any(|block| block.column_count == 2 && block.column_index == 0),
+            "left column should continue after the centered banner: {}",
+            debug_blocks
+        );
+        assert!(
+            blocks
+                .iter()
+                .skip(banner_index + 1)
+                .any(|block| block.column_count == 2 && block.column_index == 1),
+            "right column should continue after the centered banner: {}",
+            debug_blocks
         );
     }
 }
