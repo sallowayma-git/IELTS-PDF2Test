@@ -31,7 +31,7 @@ body {
 .sidebar { border-right: 1px solid var(--line); padding: 18px; background: rgba(255, 250, 240, 0.74); backdrop-filter: blur(18px); display: flex; flex-direction: column; gap: 18px; position: sticky; top: 0; height: 100vh; }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .brand { display: flex; align-items: center; gap: 12px; border: 0; background: transparent; color: var(--ink); text-align: left; padding: 0; }
-.brand-mark { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; color: #fffaf0; background: var(--ink); font-family: var(--font-display); font-weight: 750; }
+.brand-mark { width: 48px; height: 48px; display: block; object-fit: contain; flex: 0 0 auto; }
 .brand-copy { min-width: 0; }
 .brand strong, .brand small { display: block; }
 .brand small { color: var(--muted); margin-top: 2px; }

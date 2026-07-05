@@ -3,6 +3,7 @@ import type { ImportJob } from "../types";
 import type { RouteState } from "../app/router";
 import { go } from "../app/router";
 import { StatusPill } from "./StatusPill";
+import wonderLogo from "../assets/wonder-ielts-logo-square.png";
 
 // 导航结构：4 个一级入口。工作台 / 题库管理 / 设置 为无子项的一级；
 // 「转化工具」为可展开分组，收录原有一次工具的 4 个页面。
@@ -94,7 +95,7 @@ export function AppShell({ route, activeJob, children }: { route: RouteState; ac
       <aside className="sidebar">
         <div className="sidebar-header">
           <button className="brand" onClick={() => go("/dashboard")}>
-            <span className="brand-mark">IA</span>
+            <img className="brand-mark" src={wonderLogo} alt="Wonder IELTS" />
             <span className="brand-copy">
               <strong>IELTS Author</strong>
               <small>Epic 8 Studio</small>
