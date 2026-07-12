@@ -92,12 +92,23 @@ struct CharWithOrigin {
     y: f32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct LayoutSection {
     y_top: f32,
     y_bottom: f32,
     column_count: u8,
-    split_x: Option<f32>,
+    /// Column separators (x coords). For 2 columns: one gutter; for 3
+    /// columns: two gutters. Empty for single-column sections. The first
+    /// element doubles as the legacy `split_x` used by banner heuristics.
+    gutters: Vec<f32>,
+}
+
+impl LayoutSection {
+    /// Legacy single split_x (first gutter), for backward-compatible banner
+    /// heuristics. Returns `f32::MAX` when there are no gutters.
+    fn split_x(&self) -> f32 {
+        self.gutters.first().copied().unwrap_or(f32::MAX)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +138,13 @@ pub(crate) fn parse_pdf_with_pdfium(
     let mut warnings = Vec::<String>::new();
     let mut block_counter = 1usize;
     let mut pages = Vec::<Value>::new();
+    // Cross-page section continuation state: when the previous page ended mid
+    // multi-column passage text and the next page opens with the SAME column
+    // structure, we keep counting the global section index so the reading-order
+    // comparator treats the two pages as one continuous multi-column flow.
+    // `prev_page_last_section` holds (column_count, gutters, global_section_no)
+    // of the previous page's last section.
+    let mut prev_page_last_section: Option<(u8, Vec<f32>, usize)> = None;
 
     for (page_index, page) in document.pages().iter().enumerate() {
         let page_number = page_index + 1;
@@ -154,15 +172,31 @@ pub(crate) fn parse_pdf_with_pdfium(
                 )]
             }));
             block_counter += 1;
+            prev_page_last_section = None;
             continue;
         }
 
         let grouped = build_blocks_from_chars(&chars);
 
+        // Determine this page's section structure so we can decide whether the
+        // opening section continues the previous page's flow.
+        let page_sections = detect_layout_sections(&chars);
+        let (section_offset, continues_previous) = cross_page_section_continuation(
+            &page_sections,
+            &grouped,
+            prev_page_last_section.as_ref(),
+        );
+
         let blocks = grouped
             .iter()
             .enumerate()
             .map(|(ordinal, layout_block)| {
+                let adjusted_section = layout_block.section_index + section_offset;
+                let global_section = if continues_previous {
+                    Some(adjusted_section)
+                } else {
+                    None
+                };
                 let block = document_block_with_layout(
                     format!("b{:03}", block_counter),
                     &layout_block.text,
@@ -170,14 +204,29 @@ pub(crate) fn parse_pdf_with_pdfium(
                     ordinal,
                     0.98,
                     layout_block.bbox,
-                    layout_block.section_index,
+                    adjusted_section,
                     layout_block.column_index,
                     layout_block.column_count,
+                    global_section,
                 );
                 block_counter += 1;
                 block
             })
             .collect::<Vec<_>>();
+
+        // Update the cross-page continuation state for the next page: record
+        // this page's last section (column structure + its global section
+        // number). When this page continued the previous one, the last section
+        // keeps the shared global counter; otherwise it starts a new range at
+        // `section_offset + page_section_count - 1`.
+        if let Some(last_section) = page_sections.last() {
+            let last_global = section_offset + page_sections.len().saturating_sub(1);
+            prev_page_last_section = Some((
+                last_section.column_count,
+                last_section.gutters.clone(),
+                last_global,
+            ));
+        }
 
         pages.push(json!({
             "pageIndex": page_number,
@@ -366,9 +415,15 @@ fn band_looks_like_full_width_banner(
     x_max_global: f32,
 ) -> bool {
     let rows = build_raw_rows(chars, estimate_y_tolerance(chars));
-    if rows.is_empty() || rows.len() > 3 {
+    if rows.is_empty() {
         return false;
     }
+    // Previously this hard-capped at <= 3 rows, which made multi-line centered
+    // banners (e.g. 4-6 line figure captions or section titles spanning a
+    // gutter) fail. Now judge by the banner-row RATIO: a band is a banner band
+    // when at least half of its rows look full-width. A guard against a very
+    // long band that just happens to be all prose is the row-level check
+    // inside `is_full_width_banner_row` (centered + narrow width).
     let banner_rows = rows
         .iter()
         .filter(|row| is_full_width_banner_row(row, split_x, x_min_global, x_max_global))
@@ -455,25 +510,103 @@ fn detect_column_split_x(
             rows.push((ch.y, 1, ch.x < split_x, ch.x >= split_x));
         }
     }
-    let rows_with_both_sides = rows
-        .iter()
-        .filter(|(_, _, has_left, has_right)| *has_left && *has_right)
-        .count();
-    if rows.len() >= 2 && rows_with_both_sides * 3 >= rows.len() * 2 {
+    // Reject the candidate gutter when too many rows straddle split_x with
+    // only a SMALL gap at that x — that pattern means split_x is an
+    // intra-line word gap, not a column separator. But rows that straddle
+    // split_x with a LARGE gap (a real column gutter crossing one line, which
+    // happens in 3-column layouts where each row naturally spans the first
+    // gutter) are fine and must NOT cause rejection. This generalises the
+    // old "rows_with_both_sides * 3 >= rows.len() * 2" heuristic, which
+    // incorrectly rejected 3-column layouts.
+    let mut straddle_with_small_gap = 0usize;
+    let small_gap_threshold = page_x_span * 0.035;
+    for row in &rows {
+        let has_left = row.2;
+        let has_right = row.3;
+        if !(has_left && has_right) {
+            continue;
+        }
+        // Reconstruct this row's chars (sorted by x) to measure the gap at
+        // split_x. line_split_gap assumes an x-sorted line.
+        let mut row_chars: Vec<CharWithOrigin> = chars
+            .iter()
+            .copied()
+            .filter(|ch| (ch.y - row.0).abs() <= y_tol)
+            .collect();
+        row_chars.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+        let gap_at_split = line_split_gap(&row_chars, split_x).unwrap_or(page_x_span);
+        if gap_at_split <= small_gap_threshold.max(14.0) {
+            straddle_with_small_gap += 1;
+        }
+    }
+    if rows.len() >= 2 && straddle_with_small_gap * 3 >= rows.len() * 2 {
         return None;
     }
     Some(split_x)
+}
+
+/// Detect ALL column gutters on a character set by recursively finding the
+/// deepest histogram valley, then re-running the search on the left and right
+/// sub-ranges. Returns a sorted list of gutter x-coordinates. Empty = single
+/// column; length 1 = two columns; length 2 = three columns.
+///
+/// The recursion stops when a sub-range has too few characters or the found
+/// gutter falls outside the central 20%-80% band of that sub-range (i.e. the
+/// sub-range is a single column).
+fn detect_column_gutters(
+    chars: &[CharWithOrigin],
+    x_min: f32,
+    x_max: f32,
+) -> Vec<f32> {
+    // A single text row does not contain enough vertical evidence to
+    // distinguish real column gutters from ordinary word spacing. Let the
+    // surrounding layout section provide the column hint for sparse edge
+    // bands instead of manufacturing gutters from one line.
+    if build_raw_rows(chars, estimate_y_tolerance(chars)).len() < 2 {
+        return Vec::new();
+    }
+    let mut gutters = Vec::new();
+    detect_column_gutters_recursive(chars, x_min, x_max, &mut gutters, 0);
+    gutters.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    gutters.dedup_by(|a, b| (*a - *b).abs() < 4.0);
+    gutters
+}
+
+fn detect_column_gutters_recursive(
+    chars: &[CharWithOrigin],
+    x_min: f32,
+    x_max: f32,
+    gutters: &mut Vec<f32>,
+    depth: u8,
+) {
+    // Cap recursion: at most 2 gutters => 3 columns.
+    if depth >= 2 || gutters.len() >= 2 || chars.len() < 24 {
+        return;
+    }
+    let Some(split_x) = detect_column_split_x(chars, x_min, x_max) else {
+        return;
+    };
+    gutters.push(split_x);
+    // Recurse into left and right sub-ranges relative to this gutter.
+    let left: Vec<CharWithOrigin> = chars.iter().copied().filter(|ch| ch.x < split_x).collect();
+    let right: Vec<CharWithOrigin> = chars.iter().copied().filter(|ch| ch.x >= split_x).collect();
+    if !left.is_empty() && gutters.len() < 2 {
+        detect_column_gutters_recursive(&left, x_min, split_x, gutters, depth + 1);
+    }
+    if !right.is_empty() && gutters.len() < 2 {
+        detect_column_gutters_recursive(&right, split_x, x_max, gutters, depth + 1);
+    }
 }
 
 fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
     if chars.is_empty() {
         return Vec::new();
     }
-    #[derive(Clone, Copy)]
+    #[derive(Clone)]
     struct BandHint {
         y_top: f32,
         y_bottom: f32,
-        split_x: Option<f32>,
+        gutters: Vec<f32>,
         char_count: usize,
     }
 
@@ -502,59 +635,118 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
         bands.push(BandHint {
             y_top,
             y_bottom,
-            split_x: detect_column_split_x(&band_chars, x_min_global, x_max_global),
+            gutters: detect_column_gutters(&band_chars, x_min_global, x_max_global),
             char_count: band_chars.len(),
         });
     }
 
+    // Fill thin empty bands between two bands that agree on their gutters, so a
+    // brief density valley doesn't split a continuous multi-column region in
+    // half. Only fills when the surrounding gutters match (same column count
+    // and close gutter x), and the band itself doesn't look like a full-width
+    // banner crossing the gutter.
     if bands.len() >= 3 {
         for index in 1..bands.len() - 1 {
-            if bands[index].split_x.is_some() || bands[index].char_count > 24 {
+            if !bands[index].gutters.is_empty() || bands[index].char_count > 24 {
                 continue;
             }
-            let Some(prev_split) = bands[index - 1].split_x else {
+            let prev = &bands[index - 1];
+            let next = &bands[index + 1];
+            if prev.gutters.len() != next.gutters.len() || prev.gutters.is_empty() {
                 continue;
-            };
-            let Some(next_split) = bands[index + 1].split_x else {
+            }
+            let gutters_close = prev
+                .gutters
+                .iter()
+                .zip(next.gutters.iter())
+                .all(|(l, r)| (l - r).abs() <= page_x_span * 0.08);
+            if !gutters_close {
                 continue;
-            };
-            let candidate_split = (prev_split + next_split) * 0.5;
+            }
+            let candidate_gutters: Vec<f32> = prev
+                .gutters
+                .iter()
+                .zip(next.gutters.iter())
+                .map(|(l, r)| (l + r) * 0.5)
+                .collect();
             let band_chars = chars
                 .iter()
                 .copied()
                 .filter(|ch| ch.y <= bands[index].y_top && ch.y > bands[index].y_bottom)
                 .collect::<Vec<_>>();
-            if (prev_split - next_split).abs() <= page_x_span * 0.08
-                && !band_looks_like_full_width_banner(
+            let looks_like_banner = candidate_gutters.first().is_some_and(|&split_x| {
+                band_looks_like_full_width_banner(
                     &band_chars,
-                    candidate_split,
+                    split_x,
                     x_min_global,
                     x_max_global,
                 )
-            {
-                bands[index].split_x = Some(candidate_split);
+            });
+            if !looks_like_banner {
+                bands[index].gutters = candidate_gutters;
+            }
+        }
+    }
+
+    // A section can end (or begin) with one sparse row that falls across the
+    // fixed band boundary. Reuse the adjacent multi-column layout when that
+    // row is not a centered/full-width banner; otherwise it would be treated
+    // as a new single-column section or have word gaps mistaken for gutters.
+    if bands.len() >= 2 {
+        for index in [0usize, bands.len() - 1] {
+            if !bands[index].gutters.is_empty() {
+                continue;
+            }
+            let band_chars = chars
+                .iter()
+                .copied()
+                .filter(|ch| ch.y <= bands[index].y_top && ch.y > bands[index].y_bottom)
+                .collect::<Vec<_>>();
+            if build_raw_rows(&band_chars, estimate_y_tolerance(&band_chars)).len() > 1 {
+                continue;
+            }
+            let neighbor_index = if index == 0 { 1 } else { bands.len() - 2 };
+            let neighbor = &bands[neighbor_index];
+            if neighbor.gutters.is_empty() {
+                continue;
+            }
+            let Some(&split_x) = neighbor.gutters.first() else {
+                continue;
+            };
+            if !band_looks_like_full_width_banner(
+                &band_chars,
+                split_x,
+                x_min_global,
+                x_max_global,
+            ) {
+                bands[index].gutters = neighbor.gutters.clone();
             }
         }
     }
 
     let mut sections = Vec::new();
     for band in bands.into_iter().filter(|band| band.char_count > 0) {
-        let band_column_count = if band.split_x.is_some() { 2 } else { 1 };
+        let band_column_count = (band.gutters.len() + 1) as u8;
         let can_merge = sections.last().is_some_and(|current: &LayoutSection| {
             if current.column_count != band_column_count {
                 return false;
             }
-            match (current.split_x, band.split_x) {
-                (Some(left), Some(right)) => (left - right).abs() <= page_x_span * 0.08,
-                (None, None) => true,
-                _ => false,
+            if current.gutters.len() != band.gutters.len() {
+                return false;
             }
+            current
+                .gutters
+                .iter()
+                .zip(band.gutters.iter())
+                .all(|(l, r)| (l - r).abs() <= page_x_span * 0.08)
         });
         if can_merge {
             if let Some(current) = sections.last_mut() {
                 current.y_bottom = band.y_bottom;
-                if let (Some(left), Some(right)) = (current.split_x, band.split_x) {
-                    current.split_x = Some((left + right) * 0.5);
+                for (current_gutter, band_gutter) in
+                    current.gutters.iter_mut().zip(band.gutters.iter())
+                {
+                    *current_gutter = (*current_gutter + band_gutter) * 0.5;
                 }
             }
             continue;
@@ -563,7 +755,7 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
             y_top: band.y_top,
             y_bottom: band.y_bottom,
             column_count: band_column_count,
-            split_x: band.split_x,
+            gutters: band.gutters,
         });
     }
 
@@ -572,10 +764,68 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
             y_top: y_max,
             y_bottom: y_min - 0.5,
             column_count: 1,
-            split_x: None,
+            gutters: Vec::new(),
         });
     }
     sections
+}
+
+/// Decide whether the current page's opening section continues the previous
+/// page's last section, so multi-column passage text that flows across pages
+/// stays in one continuous reading order instead of restarting at section 0.
+///
+/// Returns `(section_index_offset, continues_previous)`. When the page does
+/// NOT continue, both are 0/false (the page's sections number from 0 as
+/// before). When it DOES continue, `section_index_offset` rewrites this page's
+/// section indices so the opening section shares the previous page's last
+/// section number, and `continues_previous` is true so `_epic8GlobalSection`
+/// gets emitted for downstream reading-order continuity.
+fn cross_page_section_continuation(
+    page_sections: &[LayoutSection],
+    blocks: &[BlockWithLayout],
+    prev_page_last_section: Option<&(u8, Vec<f32>, usize)>,
+) -> (usize, bool) {
+    let Some((prev_columns, prev_gutters, prev_last_global)) = prev_page_last_section else {
+        return (0, false);
+    };
+    let prev_last_global = *prev_last_global;
+    let Some(first_section) = page_sections.first() else {
+        return (0, false);
+    };
+    if first_section.column_count != *prev_columns {
+        return (0, false);
+    }
+    if first_section.gutters.len() != prev_gutters.len() {
+        return (0, false);
+    }
+    // Gutters must be roughly at the same x for the columns to be the same flow.
+    let all_x = first_section
+        .gutters
+        .iter()
+        .chain(prev_gutters.iter())
+        .copied();
+    let span = all_x.clone().fold(f32::MIN, f32::max) - all_x.fold(f32::MAX, f32::min);
+    let span = span.max(1.0);
+    let gutters_match = first_section
+        .gutters
+        .iter()
+        .zip(prev_gutters.iter())
+        .all(|(l, r)| (l - r).abs() <= span * 0.08);
+    if !gutters_match {
+        return (0, false);
+    }
+    // Don't continue if the page opens with a section heading (READING PASSAGE,
+    // Questions N-M) — that signals a new logical block, not a continuation.
+    let opens_with_section_heading = blocks
+        .first()
+        .map(|block| looks_like_hard_line_break(&block.text))
+        .unwrap_or(false);
+    if opens_with_section_heading {
+        return (0, false);
+    }
+    // Rewrite this page's section 0 to equal the previous page's last section
+    // number, so the two pages share a continuous section flow.
+    (prev_last_global, true)
 }
 
 /// Build paragraph-ish blocks from page characters while honoring per-section
@@ -610,7 +860,10 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
             emitted_section_index += 1;
             continue;
         }
-        let split_x = section.split_x.unwrap_or(f32::MAX);
+        // Multi-column section. Use the first gutter for the banner heuristic
+        // (a full-width banner crosses every gutter, so checking the leftmost
+        // one is sufficient and keeps backward-compatible behaviour).
+        let split_x = section.split_x();
         let section_x_min = section_chars.iter().map(|c| c.x).fold(f32::MAX, f32::min);
         let section_x_max = section_chars.iter().map(|c| c.x).fold(f32::MIN, f32::max);
         let rows = build_raw_rows(&section_chars, y_tol);
@@ -640,16 +893,25 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
                 continue;
             }
 
-            let mut column_left = Vec::new();
-            let mut column_right = Vec::new();
+            // Split the segment into N column buckets by the section gutters.
+            // For a 2-column section this is equivalent to the old left/right
+            // hard-coded split; for 3 columns it yields left/middle/right.
+            let column_count = section.column_count;
+            let mut columns: Vec<Vec<CharWithOrigin>> = (0..column_count).map(|_| Vec::new()).collect();
             for ch in segment_chars {
-                if ch.x >= split_x {
-                    column_right.push(ch);
+                let column_index = section
+                    .gutters
+                    .iter()
+                    .filter(|gutter| ch.x >= **gutter)
+                    .count() as u8;
+                let bucket = column_index as usize;
+                if bucket < columns.len() {
+                    columns[bucket].push(ch);
                 } else {
-                    column_left.push(ch);
+                    columns.last_mut().unwrap().push(ch);
                 }
             }
-            for (column_index, column_chars) in [(0u8, column_left), (1u8, column_right)] {
+            for (column_index, column_chars) in columns.into_iter().enumerate() {
                 if column_chars.is_empty() {
                     continue;
                 }
@@ -659,8 +921,8 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
                     text,
                     bbox,
                     section_index: emitted_section_index,
-                    column_index,
-                    column_count: 2,
+                    column_index: column_index as u8,
+                    column_count,
                 }));
             }
             emitted_section_index += 1;
@@ -777,45 +1039,119 @@ fn looks_like_hard_line_break(text: &str) -> bool {
 }
 
 fn group_lines_into_blocks(lines: &[(String, [f32; 4])]) -> Vec<(String, [f32; 4])> {
-    let mut groups: Vec<(String, [f32; 4])> = Vec::new();
+    // Track per-group running stats so the merge thresholds can adapt to the
+    // paragraph being built (e.g. wider/justified paragraphs, indented first
+    // lines) instead of using fixed pixel constants that fail on real-world
+    // typography.
+    #[derive(Clone)]
+    struct GroupStats {
+        text: String,
+        bbox: [f32; 4],
+        line_lefts: Vec<f32>,
+        line_widths: Vec<f32>,
+        line_rights: Vec<f32>,
+        line_heights: Vec<f32>,
+    }
+
+    impl GroupStats {
+        fn new(text: String, bbox: [f32; 4]) -> Self {
+            let height = (bbox[3] - bbox[1]).abs().max(1.0);
+            let width = (bbox[2] - bbox[0]).abs().max(1.0);
+            GroupStats {
+                text,
+                bbox,
+                line_lefts: vec![bbox[0]],
+                line_widths: vec![width],
+                line_rights: vec![bbox[2]],
+                line_heights: vec![height],
+            }
+        }
+
+        fn mean_left(&self) -> f32 {
+            if self.line_lefts.is_empty() {
+                return 0.0;
+            }
+            self.line_lefts.iter().sum::<f32>() / self.line_lefts.len() as f32
+        }
+
+        fn mean_height(&self) -> f32 {
+            if self.line_heights.is_empty() {
+                return 12.0;
+            }
+            self.line_heights.iter().sum::<f32>() / self.line_heights.len() as f32
+        }
+
+        fn mean_width(&self) -> f32 {
+            if self.line_widths.is_empty() {
+                return 0.0;
+            }
+            self.line_widths.iter().sum::<f32>() / self.line_widths.len() as f32
+        }
+
+        fn push_line(&mut self, text: &str, bbox: [f32; 4]) {
+            self.text = format!("{} {}", self.text, text);
+            self.bbox = [
+                self.bbox[0].min(bbox[0]),
+                self.bbox[1].min(bbox[1]),
+                self.bbox[2].max(bbox[2]),
+                self.bbox[3].max(bbox[3]),
+            ];
+            self.line_lefts.push(bbox[0]);
+            self.line_widths.push((bbox[2] - bbox[0]).abs().max(1.0));
+            self.line_rights.push(bbox[2]);
+            self.line_heights.push((bbox[3] - bbox[1]).abs().max(1.0));
+        }
+    }
+
+    let mut groups: Vec<GroupStats> = Vec::new();
     for (text, bbox) in lines {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let should_join = match groups.last() {
-            Some((prev_text, prev_bbox)) => {
-                let prev_height = (prev_bbox[3] - prev_bbox[1]).abs().max(1.0);
-                let current_height = (bbox[3] - bbox[1]).abs().max(1.0);
-                let gap = (prev_bbox[1] - bbox[3]).max(0.0);
-                let left_delta = (bbox[0] - prev_bbox[0]).abs();
+        let should_join = match groups.last_mut() {
+            Some(prev) => {
+                let prev_height = prev.mean_height();
+                let current_height = ((bbox[3] - bbox[1]).abs()).max(1.0);
+                let gap = (prev.bbox[1] - bbox[3]).max(0.0);
+                let left_delta = (bbox[0] - prev.bbox[0]).abs();
                 let center_delta =
-                    (((bbox[0] + bbox[2]) * 0.5) - ((prev_bbox[0] + prev_bbox[2]) * 0.5)).abs();
-                let width_delta = ((bbox[2] - bbox[0]) - (prev_bbox[2] - prev_bbox[0])).abs();
-                gap <= prev_height.max(current_height) * 0.9
-                    && left_delta <= 28.0
-                    && center_delta <= 40.0
-                    && width_delta <= 80.0
+                    (((bbox[0] + bbox[2]) * 0.5) - ((prev.bbox[0] + prev.bbox[2]) * 0.5)).abs();
+                let width_delta = ((bbox[2] - bbox[0]) - prev.mean_width()).abs();
+                // Adaptive thresholds: scale by the paragraph's running mean
+                // height/width so larger fonts and wider justified columns
+                // tolerate larger deltas. Floor by the original constants so
+                // small-font text still merges tightly.
+                let gap_tol = prev_height.max(current_height) * 0.9;
+                let left_tol = (prev_height * 2.3).max(28.0);
+                let center_tol = (prev_height * 3.3).max(40.0);
+                let width_tol = (prev.mean_width() * 0.5).max(80.0);
+                // First-line indent detection: a line that starts clearly to
+                // the right of the paragraph's mean left edge signals a new
+                // paragraph (classic indented first line). ~2 character widths
+                // of indent is enough to be confident.
+                let char_width = (prev_height * 0.45).max(2.0);
+                let indented = bbox[0] > prev.mean_left() + char_width * 2.0;
+                !indented
+                    && gap <= gap_tol
+                    && left_delta <= left_tol
+                    && center_delta <= center_tol
+                    && width_delta <= width_tol
                     && !looks_like_hard_line_break(trimmed)
-                    && !prev_text.trim_end().ends_with(':')
+                    && !prev.text.trim_end().ends_with(':')
             }
             None => false,
         };
         if should_join {
-            let (prev_text, prev_bbox) = groups.last().unwrap();
-            let merged_text = format!("{} {}", prev_text, trimmed);
-            let merged_bbox = [
-                prev_bbox[0].min(bbox[0]),
-                prev_bbox[1].min(bbox[1]),
-                prev_bbox[2].max(bbox[2]),
-                prev_bbox[3].max(bbox[3]),
-            ];
-            *groups.last_mut().unwrap() = (merged_text, merged_bbox);
+            groups.last_mut().unwrap().push_line(trimmed, *bbox);
         } else {
-            groups.push((trimmed.to_string(), *bbox));
+            groups.push(GroupStats::new(trimmed.to_string(), *bbox));
         }
     }
     groups
+        .into_iter()
+        .map(|stats| (stats.text, stats.bbox))
+        .collect()
 }
 
 /// Build a DocumentIRV1 block carrying a REAL bounding box (no fabricated
@@ -857,12 +1193,16 @@ fn document_block_with_layout(
     section_index: usize,
     column_index: u8,
     column_count: u8,
+    global_section: Option<usize>,
 ) -> Value {
     let mut block = document_block_with_bbox(block_id, text, page_index, ordinal, confidence, bbox);
     if let Some(obj) = block.as_object_mut() {
         obj.insert("_epic8LayoutSection".to_string(), json!(section_index));
         obj.insert("_epic8ColumnIndex".to_string(), json!(column_index));
         obj.insert("_epic8SectionColumns".to_string(), json!(column_count));
+        if let Some(global) = global_section {
+            obj.insert("_epic8GlobalSection".to_string(), json!(global));
+        }
         let layout_hints = obj
             .entry("layoutHints".to_string())
             .or_insert_with(|| json!({}));
@@ -1228,6 +1568,228 @@ mod tests {
                 .any(|block| block.column_count == 2 && block.column_index == 1),
             "right column should continue after the centered banner: {}",
             debug_blocks
+        );
+    }
+
+    #[test]
+    fn detect_column_gutters_finds_three_columns() {
+        // Three non-overlapping columns separated by two gutters around x=185
+        // and x=350.
+        // Each column needs enough characters for the recursive gutter detector
+        // to satisfy its per-side minimum (>=24 chars per sub-range).
+        let mut chars = Vec::new();
+        let ys = [760.0, 751.0, 742.0, 733.0, 724.0, 715.0, 706.0, 697.0];
+        // Left column
+        for (i, y) in ys.iter().enumerate() {
+            push_text_line(&mut chars, &format!("LEFT COLUMN LINE {}", i + 1), 60.0, *y);
+        }
+        // Middle column
+        for (i, y) in ys.iter().enumerate() {
+            push_text_line(&mut chars, &format!("MIDDLE COLUMN LINE {}", i + 1), 220.0, *y);
+        }
+        // Right column
+        for (i, y) in ys.iter().enumerate() {
+            push_text_line(&mut chars, &format!("RIGHT COLUMN LINE {}", i + 1), 380.0, *y);
+        }
+
+        let x_min = chars.iter().map(|c| c.x).fold(f32::MAX, f32::min);
+        let x_max = chars.iter().map(|c| c.x).fold(f32::MIN, f32::max);
+        let gutters = detect_column_gutters(&chars, x_min, x_max);
+
+        assert_eq!(
+            gutters.len(),
+            2,
+            "expected two gutters for a 3-column layout, got {:?}",
+            gutters
+        );
+        // First gutter should sit between left and middle column (~x=185).
+        assert!(
+            gutters[0] > 180.0 && gutters[0] < 240.0,
+            "first gutter should be near x=200, got {}",
+            gutters[0]
+        );
+        // Second gutter should sit between middle and right column (~x=350).
+        assert!(
+            gutters[1] > 300.0 && gutters[1] < 360.0,
+            "second gutter should be near x=340, got {}",
+            gutters[1]
+        );
+    }
+
+    #[test]
+    fn build_blocks_from_chars_preserves_three_column_sections() {
+        let mut chars = Vec::new();
+        let ys = [760.0, 751.0, 742.0, 733.0, 724.0, 715.0, 706.0, 697.0];
+        for y in ys.iter() {
+            push_text_line(&mut chars, "LEFT COL LINE TEXT", 60.0, *y);
+            push_text_line(&mut chars, "MIDDLE COL LINE TEXT", 220.0, *y);
+            push_text_line(&mut chars, "RIGHT COL LINE TEXT", 380.0, *y);
+        }
+
+        let blocks = build_blocks_from_chars(&chars);
+        let column_indices: std::collections::HashSet<u8> = blocks
+            .iter()
+            .filter(|block| block.column_count == 3)
+            .map(|block| block.column_index)
+            .collect();
+        assert!(
+            column_indices.contains(&0)
+                && column_indices.contains(&1)
+                && column_indices.contains(&2),
+            "expected all three column indices in a 3-column section, got blocks: {:?}",
+            blocks
+                .iter()
+                .map(|block| format!(
+                    "[section={} col={}/{:?} text={}]",
+                    block.section_index, block.column_index, block.column_count, block.text
+                ))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            blocks.iter().any(|block| block.column_count == 3),
+            "expected at least one 3-column section block"
+        );
+    }
+
+    #[test]
+    fn build_blocks_from_chars_preserves_single_column_then_two_column_layout() {
+        // Top: single-column full-width paragraph. Bottom: two-column flow.
+        // This is the reverse of the existing mixed-column test and guards
+        // against the layout switch being missed when it goes 1 -> 2.
+        let mut chars = Vec::new();
+        // Several full-width lines at the top so the single-column section has
+        // enough density to be detected as its own section.
+        for (i, y) in [760.0, 751.0, 742.0, 733.0].iter().enumerate() {
+            push_text_line(
+                &mut chars,
+                &format!("FULL WIDTH INTRODUCTORY PARAGRAPH LINE NUMBER {} SPANS THE WHOLE PAGE", i + 1),
+                78.0,
+                *y,
+            );
+        }
+        // Now switch to two columns lower down (a large y-gap separates them so
+        // the layout detector sees two distinct bands).
+        for y in [500.0, 491.0, 482.0, 473.0].iter() {
+            push_text_line(&mut chars, "LEFT COLUMN PASSAGE TEXT LINE", 78.0, *y);
+            push_text_line(&mut chars, "RIGHT COLUMN PASSAGE TEXT LINE", 336.0, *y);
+        }
+
+        let blocks = build_blocks_from_chars(&chars);
+        let single_column_blocks: Vec<_> = blocks
+            .iter()
+            .filter(|block| block.column_count == 1)
+            .collect();
+        let two_column_blocks: Vec<_> = blocks
+            .iter()
+            .filter(|block| block.column_count == 2)
+            .collect();
+
+        assert!(
+            !single_column_blocks.is_empty(),
+            "expected a leading single-column section"
+        );
+        assert!(
+            !two_column_blocks.is_empty(),
+            "expected a trailing two-column section, got blocks: {:?}",
+            blocks
+                .iter()
+                .map(|block| format!(
+                    "[section={} col={}/{:?} text={}]",
+                    block.section_index, block.column_index, block.column_count, block.text
+                ))
+                .collect::<Vec<_>>()
+        );
+        // The single-column section must come BEFORE the two-column section
+        // (lower section_index) so reading order is preserved.
+        let max_single_section = single_column_blocks
+            .iter()
+            .map(|block| block.section_index)
+            .max()
+            .unwrap_or(0);
+        let min_two_section = two_column_blocks
+            .iter()
+            .map(|block| block.section_index)
+            .min()
+            .unwrap_or(0);
+        assert!(
+            min_two_section > max_single_section,
+            "two-column section should come after the single-column intro"
+        );
+        assert!(
+            two_column_blocks
+                .iter()
+                .any(|block| block.column_index == 0),
+            "left column should be present in the two-column section"
+        );
+        assert!(
+            two_column_blocks
+                .iter()
+                .any(|block| block.column_index == 1),
+            "right column should be present in the two-column section"
+        );
+    }
+
+    #[test]
+    fn group_lines_into_blocks_respects_first_line_indent() {
+        // Two paragraphs in a single column. The second paragraph's first line
+        // is indented by ~3 character widths; it should NOT be merged into the
+        // first paragraph.
+        let mut chars = Vec::new();
+        // Paragraph 1 (left edge x=80)
+        push_text_line(&mut chars, "FIRST PARAGRAPH LINE ONE", 80.0, 760.0);
+        push_text_line(&mut chars, "FIRST PARAGRAPH LINE TWO", 80.0, 751.0);
+        // Paragraph 2 first line indented to x=100 (>2 char widths of indent)
+        push_text_line(&mut chars, "SECOND PARAGRAPH OPENS HERE", 100.0, 742.0);
+        push_text_line(&mut chars, "SECOND PARAGRAPH LINE TWO", 80.0, 733.0);
+
+        let blocks = build_blocks_from_chars(&chars);
+        // We expect at least 2 distinct paragraph blocks (one per paragraph).
+        assert!(
+            blocks.len() >= 2,
+            "expected the indented paragraph to be split into its own block, got {} blocks: {:?}",
+            blocks.len(),
+            blocks
+                .iter()
+                .map(|block| block.text.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            blocks.iter().any(|block| block.text.contains("SECOND PARAGRAPH OPENS")),
+            "the indented opening line should belong to a block containing the second paragraph"
+        );
+    }
+
+    #[test]
+    fn band_looks_like_full_width_banner_accepts_multi_row_banner() {
+        // A 5-row centered banner crossing a gutter at x=300. Previously the
+        // <=3 row cap would reject this; the ratio-based check should accept.
+        let mut chars = Vec::new();
+        for (i, text) in [
+            "FIGURE ONE CAPTION LINE",
+            "WITH A SECOND LINE OF DETAIL",
+            "AND A THIRD LINE OF CLARITY",
+            "FOLLOWED BY A FOURTH LINE",
+            "AND A FIFTH FINAL LINE",
+        ]
+        .iter()
+        .enumerate()
+        {
+            // Center each line around x=180 (narrow + centered).
+            let line_width = text.len() as f32 * 4.8;
+            let x_start = 300.0 - line_width * 0.5;
+            push_text_line(&mut chars, text, x_start, 760.0 - i as f32 * 9.0);
+        }
+
+        let rows = build_raw_rows(&chars, estimate_y_tolerance(&chars));
+        assert!(
+            rows.len() > 3,
+            "test setup should have >3 banner rows, got {}",
+            rows.len()
+        );
+        let result = band_looks_like_full_width_banner(&chars, 300.0, 60.0, 540.0);
+        assert!(
+            result,
+            "a 5-row centered banner should be detected as a full-width banner band"
         );
     }
 }

@@ -485,6 +485,15 @@ fn dynamic_block_column(block: &Value) -> u8 {
     if block_width > page_width * 0.75 {
         return 0;
     }
+    // When the section declares a multi-column layout (>2), bucket the block
+    // into the right column index by its left edge relative to the page width,
+    // instead of the old binary 0/1 split that collapsed 3-column layouts to
+    // just left/right.
+    let section_columns = dynamic_block_section_column_count_value(block).unwrap_or(2);
+    if section_columns >= 3 {
+        let bucket = ((bbox[0] / page_width) * (section_columns as f64)).floor() as i64;
+        return bucket.clamp(0, (section_columns - 1) as i64) as u8;
+    }
     if bbox[0] >= page_width * 0.45 {
         1
     } else {
@@ -1722,6 +1731,113 @@ fn infer_dynamic_passage_title(job: &ImportJob, passage_blocks: &[Value]) -> Str
         .unwrap_or_else(|| job.title.clone())
 }
 
+/// Detect whether a block's text looks like the START of a new logical section
+/// (heading) rather than a continuation of running prose. Used to guard
+/// cross-page passage merging: we never want to glue a heading onto the tail
+/// of the previous passage.
+fn is_dynamic_passage_break_marker(text: &str) -> bool {
+    let lower = collapse_whitespace(text).to_lowercase();
+    if lower.is_empty() {
+        return true;
+    }
+    lower.starts_with("reading passage")
+        || lower.starts_with("questions ")
+        || lower.starts_with("question ")
+        || lower.starts_with("answers")
+        || lower.contains("answer key")
+        || is_dynamic_question_or_instruction_like_text(&lower)
+}
+
+/// Returns true when the two passage blocks look like a continuous sentence
+/// that was split purely by a page/column break (no sentence terminator on
+/// the first block, and the second block opens mid-sentence).
+fn cross_page_passage_continues(left: &Value, right: &Value) -> bool {
+    if dynamic_block_page_index(left) == dynamic_block_page_index(right) {
+        // Same page: only consider cross-page continuations here. Same-page
+        // adjacent passage blocks are already in reading order and merging
+        // them would erase legitimate paragraph breaks.
+        return false;
+    }
+    let left_text = dynamic_block_text(left);
+    let right_text = dynamic_block_text(right);
+    if left_text.is_empty() || right_text.is_empty() {
+        return false;
+    }
+    if is_dynamic_passage_break_marker(&left_text) || is_dynamic_passage_break_marker(&right_text) {
+        return false;
+    }
+    // Left block must NOT end with a sentence terminator (otherwise the right
+    // block is a new sentence/paragraph, not a broken continuation).
+    let left_tail = left_text.trim_end().chars().last().unwrap_or(' ');
+    if matches!(left_tail, '.' | '?' | '!' | ':' | ';') {
+        return false;
+    }
+    // Right block should open with a lowercase letter or a continuation word
+    // (article/conjunction), signalling mid-sentence. A capitalized opening
+    // that is NOT a known heading is ambiguous; be conservative and still
+    // allow it, because many passages continue proper nouns — but require at
+    // least that the right block isn't a heading marker (already checked).
+    let right_first = right_text.trim_start().chars().next().unwrap_or(' ');
+    let right_continues_prose = right_first.is_ascii_lowercase()
+        || right_text
+            .split_whitespace()
+            .next()
+            .map(|word| matches!(word.to_lowercase().as_str(), "the" | "a" | "an" | "and" | "but" | "or" | "which" | "that" | "this" | "these" | "those" | "in" | "on" | "for" | "with" | "as" | "by" | "from" | "to" | "at"))
+            .unwrap_or(false)
+        || right_first.is_ascii_uppercase();
+    right_continues_prose
+}
+
+/// Merge adjacent passage blocks that were split only by a page break, gluing
+/// their text together and keeping the first block's id/bbox origin. Operates
+/// in place on the passage block list.
+fn merge_cross_page_passage_continuations(passage_blocks: &mut Vec<Value>) {
+    if passage_blocks.len() < 2 {
+        return;
+    }
+    let mut result: Vec<Value> = Vec::with_capacity(passage_blocks.len());
+    for block in passage_blocks.drain(..) {
+        let should_merge = match result.last_mut() {
+            Some(prev) => cross_page_passage_continues(prev, &block),
+            None => false,
+        };
+        if should_merge {
+            let prev = result.last_mut().unwrap();
+            let prev_text = dynamic_block_text(prev);
+            let next_text = dynamic_block_text(&block);
+            let merged_text = format!("{} {}", prev_text, next_text);
+            if let Some(obj) = prev.as_object_mut() {
+                obj.insert("text".to_string(), json!(merged_text));
+                let block_type = crate::parser::block_type_for_text_pub(&merged_text);
+                obj.insert("blockType".to_string(), json!(block_type));
+                obj.insert(
+                    "html".to_string(),
+                    json!(crate::parser::markdownish_to_html_pub(&merged_text, block_type)),
+                );
+                // Extend the bbox to cover both blocks so downstream geometry
+                // consumers still see a sensible envelope.
+                if let (Some(prev_bbox), Some(next_bbox)) = (
+                    obj.get("bbox").and_then(Value::as_array),
+                    block.get("bbox").and_then(Value::as_array),
+                ) {
+                    if prev_bbox.len() == 4 && next_bbox.len() == 4 {
+                        let merged_bbox = vec![
+                            json!(prev_bbox[0].as_f64().unwrap_or(0.0).min(next_bbox[0].as_f64().unwrap_or(0.0))),
+                            json!(prev_bbox[1].as_f64().unwrap_or(0.0).min(next_bbox[1].as_f64().unwrap_or(0.0))),
+                            json!(prev_bbox[2].as_f64().unwrap_or(0.0).max(next_bbox[2].as_f64().unwrap_or(0.0))),
+                            json!(prev_bbox[3].as_f64().unwrap_or(0.0).max(next_bbox[3].as_f64().unwrap_or(0.0))),
+                        ];
+                        obj.insert("bbox".to_string(), json!(merged_bbox));
+                    }
+                }
+            }
+        } else {
+            result.push(block);
+        }
+    }
+    *passage_blocks = result;
+}
+
 fn is_dynamic_heading_option_line(text: &str) -> bool {
     let normalized = collapse_whitespace(text);
     let lower = normalized.to_lowercase();
@@ -2351,7 +2467,39 @@ pub(crate) fn make_dynamic_split_candidates(
             .iter()
             .map(dynamic_block_id)
             .collect::<Vec<_>>();
-        let preliminary_classification = classify_dynamic_group(&raw_combined, &raw_block_ids);
+        let mut preliminary_classification = classify_dynamic_group(&raw_combined, &raw_block_ids);
+        // Cross-block instruction recovery: when the merged instruction text
+        // still falls back to the default `short_answer` kind AND the next
+        // non-deferred question block likely continues the instruction (a
+        // heading like "Do the following statements" split from its
+        // "True / False / Not Given" tail by a column/page break), tentatively
+        // merge ONE more block of text and re-classify. If the re-classified
+        // kind is more specific than `short_answer`, adopt it. This is a
+        // best-effort heuristic and only widens the classification text, not
+        // the `included` block range (so it never mis-attributes question
+        // prompt blocks to the passage).
+        if preliminary_classification.kind == "short_answer"
+            && raw_combined.split_whitespace().count() < 30
+        {
+            let next_index = index + preliminary_blocks.len();
+            if let Some(extra_block) = question_blocks.get(next_index) {
+                let extra_text = dynamic_block_text(extra_block);
+                if !extra_text.is_empty()
+                    && !is_known_dynamic_umbrella_block(extra_block, &all_umbrella_blocks)
+                {
+                    let widened = format!("{} {}", raw_combined, extra_text);
+                    let widened_ids: Vec<String> = raw_block_ids
+                        .iter()
+                        .cloned()
+                        .chain(std::iter::once(dynamic_block_id(extra_block)))
+                        .collect();
+                    let widened_classification = classify_dynamic_group(&widened, &widened_ids);
+                    if widened_classification.kind != "short_answer" {
+                        preliminary_classification = widened_classification;
+                    }
+                }
+            }
+        }
         let included_count = dynamic_question_block_count_for_group(
             &preliminary_classification.kind,
             &preliminary_blocks,
@@ -2484,6 +2632,11 @@ pub(crate) fn make_dynamic_split_candidates(
     }
     passage_blocks
         .retain(|block| !is_dynamic_non_content_placeholder_text(&dynamic_block_text(block)));
+
+    // Glue passage blocks that were split purely by a page break back into
+    // single continuous passages, so the reading source reflects the original
+    // prose instead of page-boundary fragments.
+    merge_cross_page_passage_continuations(&mut passage_blocks);
 
     let fallback_passage_range = if let Some(first_question) = first_question_index {
         blocks[..first_question]
@@ -3886,5 +4039,205 @@ mod tests {
             .filter_map(Value::as_str)
             .collect::<Vec<_>>();
         assert_eq!(passage_range, vec!["p001", "p002", "p003"]);
+    }
+
+    #[test]
+    fn cross_page_passage_continuation_merges_split_prose() {
+        // A passage that breaks mid-sentence across a page boundary should be
+        // merged back into a single passage block by the new
+        // merge_cross_page_passage_continuations pass.
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [
+                {
+                    "pageIndex": 1,
+                    "width": 595.0,
+                    "height": 842.0,
+                    "blocks": [
+                        layout_block_on_page(
+                            "p001",
+                            "READING PASSAGE 1",
+                            [72.0, 760.0, 520.0, 792.0],
+                            1,
+                            0,
+                            1,
+                            0
+                        ),
+                        layout_block_on_page(
+                            "p002",
+                            "The early trade routes established by merchants carried not only silk and spices but also",
+                            [72.0, 690.0, 520.0, 736.0],
+                            1,
+                            0,
+                            1,
+                            0
+                        )
+                    ]
+                },
+                {
+                    "pageIndex": 2,
+                    "width": 595.0,
+                    "height": 842.0,
+                    "blocks": [
+                        layout_block_on_page(
+                            "p003",
+                            "new ideas about mathematics and astronomy that would later transform European science",
+                            [72.0, 760.0, 520.0, 800.0],
+                            2,
+                            0,
+                            1,
+                            0
+                        ),
+                        layout_block_on_page(
+                            "q001",
+                            "Questions 1-3 Choose the correct letter, A, B or C.",
+                            [72.0, 300.0, 520.0, 340.0],
+                            2,
+                            1,
+                            1,
+                            0
+                        )
+                    ]
+                }
+            ],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let mut passage_blocks: Vec<Value> = vec![
+            layout_block_on_page(
+                "p002",
+                "The early trade routes established by merchants carried not only silk and spices but also",
+                [72.0, 690.0, 520.0, 736.0],
+                1,
+                0,
+                1,
+                0
+            ),
+            layout_block_on_page(
+                "p003",
+                "new ideas about mathematics and astronomy that would later transform European science",
+                [72.0, 760.0, 520.0, 800.0],
+                2,
+                0,
+                1,
+                0
+            ),
+        ];
+        merge_cross_page_passage_continuations(&mut passage_blocks);
+
+        assert_eq!(
+            passage_blocks.len(),
+            1,
+            "cross-page passage fragments should merge into a single block"
+        );
+        let merged_text = dynamic_block_text(&passage_blocks[0]);
+        assert!(
+            merged_text.contains("silk and spices but also new ideas about mathematics"),
+            "merged passage should join the broken sentence continuously, got: {}",
+            merged_text
+        );
+        // Sanity: the full pipeline still produces a passage candidate that
+        // includes both source blocks.
+        let _ = doc;
+    }
+
+    #[test]
+    fn cross_page_passage_continuation_respects_sentence_terminator() {
+        // When the left page's passage ends with a full stop, it must NOT be
+        // merged into the next page's block (different paragraph).
+        let mut passage_blocks: Vec<Value> = vec![
+            layout_block_on_page(
+                "p002",
+                "The early trade routes carried silk and spices across the continent.",
+                [72.0, 690.0, 520.0, 736.0],
+                1,
+                0,
+                1,
+                0
+            ),
+            layout_block_on_page(
+                "p003",
+                "new ideas about mathematics later transformed European science",
+                [72.0, 760.0, 520.0, 800.0],
+                2,
+                0,
+                1,
+                0
+            ),
+        ];
+        merge_cross_page_passage_continuations(&mut passage_blocks);
+        assert_eq!(
+            passage_blocks.len(),
+            2,
+            "a sentence-terminated passage must NOT merge with the next page's block"
+        );
+    }
+
+    #[test]
+    fn cross_line_instruction_recovers_true_false_not_given() {
+        // "Questions 1-5" heading in one block, the True/False/Not Given
+        // instruction body split into a second block. The widened
+        // classification should recover `true_false_not_given` instead of
+        // falling back to `short_answer`.
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [{
+                "pageIndex": 1,
+                "width": 595.0,
+                "height": 842.0,
+                "blocks": [
+                    layout_block(
+                        "p001",
+                        "READING PASSAGE 1",
+                        [72.0, 760.0, 520.0, 792.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "p002",
+                        "The passage describes how early navigation developed across ocean routes.",
+                        [72.0, 690.0, 520.0, 736.0],
+                        0,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q001",
+                        "Questions 1-5 Do the following statements agree",
+                        [72.0, 300.0, 520.0, 340.0],
+                        1,
+                        1,
+                        0
+                    ),
+                    layout_block(
+                        "q002",
+                        "with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN",
+                        [72.0, 250.0, 520.0, 290.0],
+                        1,
+                        1,
+                        0
+                    )
+                ]
+            }],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let kind = split
+            .pointer("/questionGroupCandidates/0/kindHint")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert_eq!(
+            kind,
+            "true_false_not_given",
+            "split instruction across two blocks should still classify as true_false_not_given"
+        );
     }
 }

@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "check": "tsc --noEmit",
+    "clean": "node scripts/clean-generated.mjs",
+    "clean:deep": "node scripts/clean-generated.mjs --deep",
     "fetch:pdfium": "node scripts/fetch-pdfium.mjs",
     "e2e:ui-flow": "node sidecars/ui-flow-e2e/ui-flow-e2e.mjs",
     "test:pdf-regression": "node scripts/pdf-regression-sample.mjs",
