@@ -354,19 +354,19 @@ async function markAuthoringVerified(cdp, jobId) {
     const store = JSON.parse(raw);
     const ir = store.authoring?.[${jsString(jobId)}];
     if (!ir) throw new Error("authoring_ir_missing");
-    const groups = ir.groups.map((group) => ({
+    const groups = ir.groups.map((group, groupIndex) => ({
       ...group,
       verified: true,
-      questions: group.questions.map((question) => ({
+      questions: group.questions.map((question, questionIndex) => ({
         ...question,
         verified: true,
         requiresManualQuestionImport: false,
         prompt: question.prompt?.startsWith("Manual import required") ? \`Verified prompt for question \${question.displayNumber}\` : question.prompt,
-        answer: question.answer || "TRUE"
+        answer: groupIndex === 0 && questionIndex === 0 ? "" : question.answer || "TRUE"
       })),
       requiresManualQuestionImport: false
     }));
-    const answerKey = Object.fromEntries(groups.flatMap((group) => group.questions.map((question) => [question.id, question.answer || "TRUE"])));
+    const answerKey = Object.fromEntries(groups.flatMap((group) => group.questions.map((question) => [question.id, question.answer])));
     const questionOrder = groups.flatMap((group) => group.questions.map((question) => question.id));
     const questionDisplayMap = Object.fromEntries(groups.flatMap((group) => group.questions.map((question) => [question.id, question.displayNumber])));
     const nextIr = {
@@ -404,7 +404,8 @@ async function markAuthoringVerified(cdp, jobId) {
       };
     }
     localStorage.setItem("ielts-author-studio.dev-fallback-store.v1", JSON.stringify(store));
-    return { groupCount: groups.length, questionCount: questionOrder.length };
+    const emptyAnswerCount = groups.flatMap((group) => group.questions).filter((question) => !String(question.answer ?? "").trim()).length;
+    return { groupCount: groups.length, questionCount: questionOrder.length, emptyAnswerCount };
   })()`);
 }
 
@@ -429,9 +430,10 @@ async function goHash(cdp, hash) {
   await waitFor(`hash ${hash}`, async () => (await currentHash(cdp)) === hash, { timeoutMs: 10000 });
 }
 
-async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
+async function completeReviewPreviewExport(cdp, baseUrl, jobId) {
   const verified = await markAuthoringVerified(cdp, jobId);
   assert(verified.questionCount >= 1, "manual verification helper should verify at least one question", verified);
+  assert(verified.emptyAnswerCount === 1, "strict export fixture should retain one optional unanswered question", verified);
   await navigate(cdp, `${baseUrl}/#/jobs/${jobId}/groups`);
   await waitSelector(cdp, "[data-testid='group-editor']");
   await click(cdp, "[data-testid='verify-all-groups']");
@@ -440,9 +442,11 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
     return next?.job?.status !== "NeedsReview" && next?.sourceReview?.resolved !== false;
   }, { timeoutMs: 10000 });
   await click(cdp, "[data-testid='validate-and-export']");
-  await waitFor("route to export", async () => (await currentHash(cdp)).includes("/export"), { timeoutMs: 10000 });
+  await waitFor("route to publish center", async () => (await currentHash(cdp)).includes("/packs"), { timeoutMs: 10000 });
   await waitSelector(cdp, "[data-testid='export-page']");
-  await waitFor("export files rendered", async () => {
+  await waitSelector(cdp, "[data-testid='export-job-checkbox']");
+  await click(cdp, "[data-testid='generate-export']");
+  await waitFor("NAS files rendered", async () => {
     const exportError = await evaluate(cdp, `document.querySelector("[data-testid='export-error']")?.innerText || ""`);
     if (exportError) {
       const exportIssues = await evaluate(cdp, `document.querySelector("[data-testid='export-issue-list']")?.innerText || ""`);
@@ -454,23 +458,14 @@ async function completeReviewPreviewExportPack(cdp, baseUrl, jobId) {
   const exportedFileCount = await evaluate(cdp, `document.querySelectorAll("[data-testid='export-file']").length`);
   const afterExport = await getStoreSummary(cdp, jobId);
   assert(["Exported", "Cleaned"].includes(afterExport.job.status), "export should advance job to exported/cleaned state", afterExport.job);
-  await navigate(cdp, `${baseUrl}/#/packs`);
-  await waitSelector(cdp, "[data-testid='pack-builder']");
-  await waitSelector(cdp, "[data-testid='pack-job-checkbox']");
-  await click(cdp, "[data-testid='pack-job-checkbox']");
-  await click(cdp, "[data-testid='build-pack']");
-  await waitFor("pack result rendered", async () => {
-    const text = await getText(cdp, "[data-testid='pack-result']");
-    const store = await evaluate(cdp, `JSON.parse(localStorage.getItem("ielts-author-studio.dev-fallback-store.v1") || "{}")`);
-    return text.includes("输出路径") && Boolean(store.packs?.[0]?.packId);
-  }, { timeoutMs: 10000 });
-  const packResultText = await getText(cdp, "[data-testid='pack-result']");
-  const packStore = await evaluate(cdp, `JSON.parse(localStorage.getItem("ielts-author-studio.dev-fallback-store.v1") || "{}").packs?.[0] ?? null`);
+  await waitSelector(cdp, "[data-testid='nas-export-result']");
+  const nasResultText = await getText(cdp, "[data-testid='nas-export-result']");
+  assert(nasResultText.includes("NAS 版本"), "batch publish center should publish selected jobs to NAS", { nasResultText });
   return {
     finalStatus: afterExport.job.status,
     runtimeMode: afterExport.validationReport?.runtime?.mode ?? "unknown",
     exportedFileCount,
-    packBuilt: packResultText.includes("输出路径") && Boolean(packStore?.packId)
+    nasPublished: true
   };
 }
 
@@ -498,9 +493,9 @@ async function runClearTextFlow(cdp, baseUrl) {
   assert(!summary.validationReport || summary.validationReport.passed, "clear text preview validation should either be minimized or already pass after preview warmup", summary.validationReport);
   assert(!summary.pipelineReport, "clear text minimized state should not persist pipeline report", summary.pipelineReport);
   await waitSelector(cdp, "[data-testid='group-editor']");
-  const completion = await completeReviewPreviewExportPack(cdp, baseUrl, summary.job.jobId);
+  const completion = await completeReviewPreviewExport(cdp, baseUrl, summary.job.jobId);
   return {
-    name: "clear-text-review-preview-export-pack",
+    name: "clear-text-review-preview-export-nas",
     jobId: summary.job.jobId,
     initialStatus: summary.job.status,
     initialStep: summary.job.currentStep,
@@ -508,7 +503,48 @@ async function runClearTextFlow(cdp, baseUrl) {
     groupCount: summary.authoringIr.groups.length,
     runtimeMode: completion.runtimeMode,
     exportedFileCount: completion.exportedFileCount,
-    packBuilt: completion.packBuilt
+    nasPublished: completion.nasPublished
+  };
+}
+
+async function runForcedExportFlow(cdp, baseUrl) {
+  await navigate(cdp, `${baseUrl}/`);
+  await resetDevStore(cdp);
+  await seedDevPickedPath(cdp, CLEAR_TEXT_PDF);
+  await goHash(cdp, "#/jobs/new");
+  await click(cdp, "[data-testid='pick-source-file']");
+  await waitForImportSelection(cdp);
+  await setValue(cdp, "[data-testid='job-title-input']", "UI E2E Forced Export");
+  await click(cdp, "[data-testid='create-and-auto-process']");
+  await waitFor("forced export editor route", async () => isEditorRoute(await currentHash(cdp)), { timeoutMs: 20000 });
+  await waitSelector(cdp, "[data-testid='group-editor']");
+
+  const summary = await getStoreSummary(cdp);
+  assert(summary?.job?.jobId, "forced export flow did not create a job", summary);
+  await click(cdp, "[data-testid='validate-and-export']");
+  await waitFor("forced publish route", async () => (await currentHash(cdp)).includes("/packs"), { timeoutMs: 10000 });
+  await waitSelector(cdp, "[data-testid='export-page']");
+  await click(cdp, "[data-testid='generate-export']");
+  await waitSelector(cdp, "[data-testid='force-export']");
+  const blockingText = await getText(cdp, "[data-testid='export-error']");
+  assert(blockingText.includes("导出前还有项目需要确认"), "strict export should expose blocking diagnostics before override", { blockingText });
+
+  await click(cdp, "[data-testid='force-export']");
+  await waitSelector(cdp, "[data-testid='export-override-result']");
+  await waitFor("forced export files", async () => {
+    const count = await evaluate(cdp, `document.querySelectorAll("[data-testid='export-file']").length`);
+    return count >= 2;
+  }, { timeoutMs: 10000 });
+  const overrideText = await getText(cdp, "[data-testid='export-override-result']");
+  const afterExport = await getStoreSummary(cdp, summary.job.jobId);
+  assert(overrideText.includes("忽略检查并完成导出"), "force export should disclose the override result", { overrideText });
+  assert(["Exported", "Cleaned"].includes(afterExport.job.status), "force export should complete the job", afterExport.job);
+
+  return {
+    name: "strict-block-then-force-export",
+    jobId: summary.job.jobId,
+    finalStatus: afterExport.job.status,
+    overrideDisclosed: true
   };
 }
 
@@ -565,9 +601,9 @@ async function runOcrSourceReviewFlow(cdp, baseUrl) {
   assert(afterBuild.authoringIr?.groups?.length >= 1, "manual transcription flow should produce AuthoringIR groups", afterBuild.authoringIr);
   assert(!afterBuild.documentIr, "manual transcription flow should minimize DocumentIR after AuthoringIR is built", afterBuild.documentIr);
   assert(!afterBuild.split, "manual transcription flow should minimize split candidates after AuthoringIR is built", afterBuild.split);
-  const completion = await completeReviewPreviewExportPack(cdp, baseUrl, afterBuild.job.jobId);
+  const completion = await completeReviewPreviewExport(cdp, baseUrl, afterBuild.job.jobId);
   return {
-    name: "ocr-manual-transcription-review-preview-export-pack",
+    name: "ocr-manual-transcription-review-preview-export-nas",
     jobId: summary.job.jobId,
     initialStatus: summary.job.status,
     initialStep: summary.job.currentStep,
@@ -578,7 +614,7 @@ async function runOcrSourceReviewFlow(cdp, baseUrl) {
     finalStatus: completion.finalStatus,
     runtimeMode: completion.runtimeMode,
     exportedFileCount: completion.exportedFileCount,
-    packBuilt: completion.packBuilt
+    nasPublished: completion.nasPublished
   };
 }
 
@@ -595,6 +631,7 @@ async function main() {
   const results = [];
   try {
     results.push(await runClearTextFlow(page.cdp, baseUrl));
+    results.push(await runForcedExportFlow(page.cdp, baseUrl));
     results.push(await runOcrSourceReviewFlow(page.cdp, baseUrl));
     const report = {
       schemaVersion: "Epic8UiFlowE2eReportV1",

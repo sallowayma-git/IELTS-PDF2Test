@@ -1,7 +1,6 @@
 import type {
   AnswerValue,
   AuthoringPatch,
-  BuildPackInput,
   DocumentBlock,
   DocumentIr,
   ExportNasLibraryInput,
@@ -9,6 +8,7 @@ import type {
   ExportResult,
   GroupKind,
   ImportJob,
+  IgnoredValidationIssue,
   JsExportResult,
   NasExportResult,
   JobFilter,
@@ -18,7 +18,6 @@ import type {
   LlmTestResult,
   EnvironmentPreflightReport,
   AutoPipelineReport,
-  PackBuildResult,
   ParseOptions,
   PreviewAssets,
   ReadingAuthoringIr,
@@ -28,6 +27,7 @@ import type {
   SourceReview,
   SplitCandidates,
   ValidationIssue,
+  ValidationPolicy,
   ValidationReport,
   WritingJob,
   CreateWritingJobInput,
@@ -58,7 +58,6 @@ type Store = {
   suggestions: Record<string, LlmSuggestion[]>;
   pipelineReports: Record<string, AutoPipelineReport>;
   revisions: Record<string, Array<Record<string, unknown>>>;
-  packs: PackBuildResult[];
   diagnostics: DiagnosticsSettings;
   writingJobs: WritingJob[];
   trashedIds: string[];
@@ -196,7 +195,6 @@ function initialStore(): Store {
     suggestions: {},
     pipelineReports: {},
     revisions: {},
-    packs: [],
     diagnostics: { keepFullProcessArtifacts: false },
     writingJobs: [],
     trashedIds: []
@@ -1904,8 +1902,8 @@ function buildVisionTranscriptionAuditIssue(
 
 function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): ValidationReport {
   const issues: ValidationIssue[] = [];
-  const add = (layer: ValidationIssue["layer"], path: string, message: string, fixHint?: string) => {
-    issues.push({ issueId: id("issue"), severity: "error", layer, path, message, fixHint });
+  const add = (layer: ValidationIssue["layer"], path: string, message: string, fixHint?: string, severity: ValidationIssue["severity"] = "error") => {
+    issues.push({ issueId: id("issue"), severity, layer, path, message, fixHint });
   };
 
   if (!ir) {
@@ -1920,8 +1918,8 @@ function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): Validati
       }
       for (const question of group.questions) {
         if (!question.interaction?.type) add("AuthoringIR", `$.groups.${group.groupId}.${question.id}`, "题目缺少作答方式。");
-        if (!question.answer || (Array.isArray(question.answer) && !question.answer.length)) {
-          add("AuthoringIR", `$.answerKey.${question.id}`, "每道题导出前都需要答案。");
+        if (answerIsEmpty(question.answer)) {
+          add("AuthoringIR", `$.answerKey.${question.id}`, "题目未设置答案；该题将作为未评分题导出。", undefined, "warning");
         }
         if (question.requiresManualQuestionImport && !question.verified) {
           add("AuthoringIR", `$.groups.${group.groupId}.${question.id}.prompt`, "发布前需要从源文档补齐题干并确认。");
@@ -1931,7 +1929,7 @@ function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): Validati
 
     const source = toReadingExamSource(ir);
     if (source.schemaVersion !== "ReadingExamSourceV1") add("ReadingExamSourceV1", "$.schemaVersion", "导出数据版本不正确。");
-    if (!source.answerKey || !Object.keys(source.answerKey).length) add("ReadingExamSourceV1", "$.answerKey", "答案不能为空。");
+    if (!source.answerKey || !Object.keys(source.answerKey).length) add("ReadingExamSourceV1", "$.answerKey", "当前没有标准答案；所有题目将作为未评分题导出。", undefined, "warning");
 
     for (const group of source.questionGroups) {
       for (const qid of group.questionIds) {
@@ -1947,10 +1945,12 @@ function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): Validati
   const layers = layerNames.map((layer) => ({
     layer,
     issueCount: issues.filter((issue) => issue.layer === layer).length,
-    passed: issues.every((issue) => issue.layer !== layer)
+    errorCount: issues.filter((issue) => issue.layer === layer && issue.severity === "error").length,
+    warningCount: issues.filter((issue) => issue.layer === layer && issue.severity === "warning").length,
+    passed: issues.every((issue) => issue.layer !== layer || issue.severity !== "error")
   }));
 
-  return { jobId, passed: issues.length === 0, layers, issues, generatedAt: now() };
+  return { jobId, passed: issues.every((issue) => issue.severity !== "error"), layers, issues, generatedAt: now() };
 }
 
 function answerIsEmpty(answer: AnswerValue | undefined): boolean {
@@ -1961,7 +1961,6 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
   let needsReview = 0;
   let total = 0;
   let verified = 0;
-  let emptyAnswers = 0;
   const groups = ir.groups.map((group) => {
     let groupTotal = 0;
     let groupVerified = 0;
@@ -1971,10 +1970,6 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
       if (question.verified) {
         verified += 1;
         groupVerified += 1;
-      }
-      if (answerIsEmpty(question.answer)) {
-        emptyAnswers += 1;
-        needsReview += 1;
       }
       if (question.confidence < 0.85 && !question.verified) needsReview += 1;
       return question;
@@ -1991,7 +1986,7 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
       ...refreshAuthoringDerivedFields({ ...ir, groups }),
       audit: {
         ...ir.audit,
-        humanVerified: total > 0 && total === verified && emptyAnswers === 0,
+        humanVerified: total > 0 && total === verified,
         updatedAt: now()
       }
     },
@@ -2000,14 +1995,13 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
 }
 
 function publishReadinessReport(store: Store, jobId: string, ir: ReadingAuthoringIr, report: ValidationReport): ValidationReport {
-  const job = requireJob(store, jobId);
+  requireJob(store, jobId);
   const issues: ValidationIssue[] = [...report.issues];
   const add = (path: string, message: string) => issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path, message });
   const humanVerified = ir.audit.humanVerified === true;
-  if (job.status === "NeedsReview") add("$.job.status", "任务仍需审核；请完成所有人工确认后再发布。");
   issues.push(...sourceReviewIssues(sourceReviewStatus(store, jobId)));
   if (!humanVerified) {
-    add("$.audit.humanVerified", "所有题目和答案都需要人工确认后才能发布。");
+    add("$.audit.humanVerified", "所有题目都需要人工确认后才能发布。");
   }
   for (const group of ir.groups) {
     if (group.confidence < 0.85 && !group.verified) add(`$.groups.${group.groupId}.verified`, "低置信题组需要人工确认后才能发布。");
@@ -2016,7 +2010,6 @@ function publishReadinessReport(store: Store, jobId: string, ir: ReadingAuthorin
     }
     if (group.requiresManualQuestionImport && !group.verified) add(`$.groups.${group.groupId}.questions`, "仅有总题号范围，发布前需要手动补齐具体题干。");
     for (const question of group.questions) {
-      if (answerIsEmpty(question.answer)) add(`$.answerKey.${question.id}`, "题目答案为空；请填写或确认答案后再发布。");
       if (question.confidence < 0.85 && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.verified`, "低置信题目需要人工确认后才能发布。");
       if (question.requiresManualQuestionImport && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.prompt`, "发布前需要从源文档补齐题干并确认。");
     }
@@ -2024,12 +2017,14 @@ function publishReadinessReport(store: Store, jobId: string, ir: ReadingAuthorin
   const layerNames: ValidationIssue["layer"][] = ["AuthoringIR", "ReadingExamSourceV1", "DomProtocol", "RuntimePreview"];
   return {
     ...report,
-    passed: issues.length === 0,
+    passed: issues.every((issue) => issue.severity !== "error"),
     issues,
     layers: layerNames.map((layer) => ({
       layer,
       issueCount: issues.filter((issue) => issue.layer === layer).length,
-      passed: issues.every((issue) => issue.layer !== layer)
+      errorCount: issues.filter((issue) => issue.layer === layer && issue.severity === "error").length,
+      warningCount: issues.filter((issue) => issue.layer === layer && issue.severity === "warning").length,
+      passed: issues.every((issue) => issue.layer !== layer || issue.severity !== "error")
     })),
     generatedAt: now()
   };
@@ -2148,8 +2143,9 @@ function controlsFor(html: string, qid: string): Array<Record<string, string>> {
 }
 
 function score(source: ReturnType<typeof toReadingExamSource>, collected: Record<string, AnswerValue>): { total: number; correct: number; percent: number } {
-  const total = source.questionOrder.length;
-  const correct = source.questionOrder.filter((qid) => normalizeAnswer(collected[qid]) === normalizeAnswer(source.answerKey[qid])).length;
+  const scoredQuestionIds = source.questionOrder.filter((qid) => !answerIsEmpty(source.answerKey[qid]));
+  const total = scoredQuestionIds.length;
+  const correct = scoredQuestionIds.filter((qid) => normalizeAnswer(collected[qid]) === normalizeAnswer(source.answerKey[qid])).length;
   return { total, correct, percent: total ? Math.round((correct / total) * 10000) / 100 : 0 };
 }
 
@@ -2191,6 +2187,7 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
         continue;
       }
       const answer = source.answerKey[qid];
+      if (answerIsEmpty(answer)) continue;
       const first = controls[0];
       const type = (first.type || "text").toLowerCase();
       if (type === "radio" || type === "checkbox") {
@@ -2208,7 +2205,7 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
 
   const scoreInfo = score(source, collected);
   const wrongAnswers = { ...source.answerKey };
-  const firstQid = source.questionOrder[0];
+  const firstQid = source.questionOrder.find((qid) => !answerIsEmpty(source.answerKey[qid]));
   if (firstQid) wrongAnswers[firstQid] = Array.isArray(wrongAnswers[firstQid]) ? ["__wrong__"] : `${wrongAnswers[firstQid] ?? ""}__wrong__`;
   const wrongScoreInfo = score(source, wrongAnswers);
   if (scoreInfo.total > 0 && scoreInfo.percent !== 100) add("runtime.scoreInfo", `正确答案检查应为 100%，当前为 ${scoreInfo.percent}%。`);
@@ -2244,42 +2241,17 @@ function mergeValidationReports(base: ValidationReport, sidecar: ValidationRepor
   return {
     ...base,
     runtime: sidecar.runtime ?? base.runtime,
-    passed: issues.length === 0,
+    passed: issues.every((issue) => issue.severity !== "error"),
     issues,
     layers: layerNames.map((layer) => ({
       layer,
       issueCount: issues.filter((issue) => issue.layer === layer).length,
-      passed: issues.every((issue) => issue.layer !== layer)
+      errorCount: issues.filter((issue) => issue.layer === layer && issue.severity === "error").length,
+      warningCount: issues.filter((issue) => issue.layer === layer && issue.severity === "warning").length,
+      passed: issues.every((issue) => issue.layer !== layer || issue.severity !== "error")
     })),
     generatedAt: now()
   };
-}
-
-function packManifest(input: BuildPackInput, sources: ReturnType<typeof toReadingExamSource>[]) {
-  return {
-    schemaVersion: "ReadingExamPackV1",
-    packId: input.packId,
-    version: input.version,
-    institution: input.institution,
-    description: input.description,
-    validFrom: input.validFrom ?? null,
-    validTo: input.validTo ?? null,
-    generatedAt: now(),
-    assetsRoot: "reading-exams",
-    exams: sources.map((source, index) => ({
-      order: index + 1,
-      examId: source.examId,
-      title: source.meta.title,
-      category: source.meta.category,
-      frequency: source.meta.frequency,
-      script: `reading-exams/${source.examId}.js`
-    }))
-  };
-}
-
-function estimateStoredZipSize(entries: Array<{ path: string; content: string }>): number {
-  // Dev fallback does not write files; this mirrors the Rust stored-zip envelope closely enough for UI smoke tests.
-  return entries.reduce((total, entry) => total + entry.path.length * 2 + entry.content.length + 128, 22);
 }
 
 function cleanupDevArtifacts(store: Store, jobId: string, exportSummary: unknown): Record<string, unknown> {
@@ -2319,6 +2291,39 @@ function minimizeDevProcessArtifacts(store: Store, jobId: string): void {
   delete store.validation[jobId];
   delete store.previews[jobId];
   delete store.pipelineReports[jobId];
+}
+
+function normalizeValidationPolicy(value: unknown): ValidationPolicy {
+  return value === "force" ? "force" : "strict";
+}
+
+function blockingIssueCount(report: ValidationReport): number {
+  return report.issues.filter((issue) => issue.severity === "error").length;
+}
+
+function enforceValidationPolicy(report: ValidationReport, policy: ValidationPolicy, prefix: string, jobId?: string): number {
+  const blockingCount = blockingIssueCount(report);
+  if (policy === "strict" && blockingCount > 0) {
+    const suffix = jobId ? `:${jobId}` : "";
+    throw new Error(`${prefix}${suffix}:${report.issues.map((issue) => issue.message).join(";")}`);
+  }
+  return blockingCount;
+}
+
+function ignoredValidationIssues(report: ValidationReport, policy: ValidationPolicy, jobId: string): IgnoredValidationIssue[] {
+  if (policy !== "force") return [];
+  return report.issues
+    .filter((issue) => issue.severity === "error")
+    .map((issue) => ({ ...issue, jobId }));
+}
+
+function validationExportMeta(policy: ValidationPolicy, ignoredIssues: IgnoredValidationIssue[]) {
+  return {
+    validationPolicy: policy,
+    validationOverridden: policy === "force" && ignoredIssues.length > 0,
+    ignoredIssueCount: ignoredIssues.length,
+    ignoredIssues
+  };
 }
 
 function recordGroupLlmReview(
@@ -3079,6 +3084,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 
     case "export_reading_assets": {
       const jobId = args.jobId as string;
+      const validationPolicy = normalizeValidationPolicy(args.validationPolicy);
       const ir = store.authoring[jobId];
       if (!ir) throw new Error("authoring_ir_missing");
       const source = toReadingExamSource(ir);
@@ -3096,14 +3102,12 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
       const readiness = publishReadinessReport(store, jobId, ir, report);
       store.validation[jobId] = readiness;
-      if (!report.passed) {
+      const ignoredIssueCount = blockingIssueCount(readiness);
+      if (validationPolicy === "strict" && ignoredIssueCount > 0) {
         save(store);
-        throw new Error(`export_validation_failed:${report.issues.map((issue) => issue.message).join(";")}`);
+        enforceValidationPolicy(readiness, validationPolicy, "export_validation_failed");
       }
-      if (!readiness.passed) {
-        save(store);
-        throw new Error(`export_validation_failed:${readiness.issues.map((issue) => issue.message).join(";")}`);
-      }
+      const validationMeta = validationExportMeta(validationPolicy, ignoredValidationIssues(readiness, validationPolicy, jobId));
       const result: ExportResult = {
         examId: source.examId,
         files: [
@@ -3113,7 +3117,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           { name: "preview.html", content: previewHtml(source) }
         ],
         outputDir: "local://exports",
-        exportSummary: { type: "reading-assets", examId: source.examId, exportedAt: now() }
+        ...validationMeta,
+        exportSummary: { type: "reading-assets", examId: source.examId, ...validationMeta, exportedAt: now() }
       };
       updateJob(store, jobId, { status: "Exported", currentStep: "Export" });
       result.cleanup = cleanupDevArtifacts(store, jobId, result.exportSummary);
@@ -3124,6 +3129,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "export_reading_js": {
       const input = args.input as ExportReadingJsInput;
       if (!input?.jobIds?.length) throw new Error("js_export_requires_at_least_one_job");
+      const validationPolicy = normalizeValidationPolicy(input.validationPolicy);
+      const ignoredIssues: IgnoredValidationIssue[] = [];
       const sources = input.jobIds.map((jobId) => {
         const ir = store.authoring[jobId];
         if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
@@ -3142,10 +3149,11 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
         const readiness = publishReadinessReport(store, jobId, ir, report);
         store.validation[jobId] = readiness;
-        if (!report.passed) throw new Error(`js_export_validation_failed:${jobId}:${report.issues.map((issue) => issue.message).join(";")}`);
-        if (!readiness.passed) throw new Error(`js_export_validation_failed:${jobId}:${readiness.issues.map((issue) => issue.message).join(";")}`);
+        enforceValidationPolicy(readiness, validationPolicy, "js_export_validation_failed", jobId);
+        ignoredIssues.push(...ignoredValidationIssues(readiness, validationPolicy, jobId));
         return source;
       });
+      const validationMeta = validationExportMeta(validationPolicy, ignoredIssues);
       const files = sources.map((source) => ({ name: `${source.examId}.js`, content: buildWrapper(source) }));
       const manifest = { name: "manifest.js", content: buildManifest(sources) };
       const result: JsExportResult = {
@@ -3154,11 +3162,13 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         jobIds: [...input.jobIds],
         files: [...files, manifest],
         outputDir: input.exportDir ?? "local://exports",
+        ...validationMeta,
         exportSummary: {
           type: "reading-js",
           mode: input.jobIds.length > 1 ? "batch" : "single",
           examIds: sources.map((source) => source.examId),
           jobIds: [...input.jobIds],
+          ...validationMeta,
           exportedAt: now()
         },
         cleanup: input.jobIds.map((jobId) => {
@@ -3177,6 +3187,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "export_nas_library": {
       const input = args.input as ExportNasLibraryInput;
       if (!input?.jobIds?.length) throw new Error("nas_export_requires_at_least_one_job");
+      const validationPolicy = normalizeValidationPolicy(input.validationPolicy);
+      const ignoredIssues: IgnoredValidationIssue[] = [];
       const sources = input.jobIds.map((jobId) => {
         const ir = store.authoring[jobId];
         if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
@@ -3195,10 +3207,11 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
         const readiness = publishReadinessReport(store, jobId, ir, report);
         store.validation[jobId] = readiness;
-        if (!report.passed) throw new Error(`nas_export_validation_failed:${jobId}:${report.issues.map((issue) => issue.message).join(";")}`);
-        if (!readiness.passed) throw new Error(`nas_export_validation_failed:${jobId}:${readiness.issues.map((issue) => issue.message).join(";")}`);
+        enforceValidationPolicy(readiness, validationPolicy, "nas_export_validation_failed", jobId);
+        ignoredIssues.push(...ignoredValidationIssues(readiness, validationPolicy, jobId));
         return source;
       });
+      const validationMeta = validationExportMeta(validationPolicy, ignoredIssues);
       const version = input.version || now().replace(/[:TZ]/g, "-").slice(0, 19);
       const libraryRoot = input.exportDir ?? "local://exports/nas-library";
       const readingExamsDir = libraryRoot;
@@ -3232,6 +3245,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         libraryRoot,
         readingExamsDir,
         version,
+        ...validationMeta,
         files: runtimeFiles,
         report: reportPayload,
         exportSummary: {
@@ -3243,6 +3257,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           outputDir: libraryRoot,
           readingExamsDir,
           assetCount: sources.length,
+          ...validationMeta,
           exportedAt: now()
         },
         cleanup: input.jobIds.map((jobId) => {
@@ -3256,53 +3271,6 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           });
         })
       };
-      save(store);
-      return result as T;
-    }
-
-    case "build_pack": {
-      const input = args.input as BuildPackInput;
-      const sources = input.jobIds.map((jobId) => {
-        const ir = store.authoring[jobId];
-        if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
-        const source = toReadingExamSource(ir);
-        const assets = store.previews[jobId] ?? {
-          examId: source.examId,
-          manifestPath: `local://${jobId}/preview/manifest.js`,
-          scriptPath: `local://${jobId}/preview/${source.examId}.js`,
-          previewUrl: `local-preview://${source.examId}`,
-          source,
-          wrapperJs: buildWrapper(source),
-          manifestJs: buildManifest([source]),
-          runtimeHtml: previewHtml(source)
-        };
-        store.previews[jobId] = assets;
-        const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
-        const readiness = publishReadinessReport(store, jobId, ir, report);
-        store.validation[jobId] = readiness;
-        if (!report.passed) throw new Error(`pack_validation_failed:${jobId}:${report.issues.map((issue) => issue.message).join(";")}`);
-        if (!readiness.passed) throw new Error(`pack_validation_failed:${jobId}:${readiness.issues.map((issue) => issue.message).join(";")}`);
-        return source;
-      });
-      const manifest = packManifest(input, sources);
-      const entries = [
-        { path: "pack.json", content: JSON.stringify(manifest, null, 2) },
-        { path: "reading-exams/manifest.js", content: buildManifest(sources) },
-        ...sources.map((source) => ({ path: `reading-exams/${source.examId}.js`, content: buildWrapper(source) }))
-      ];
-      const result: PackBuildResult = {
-        packId: input.packId,
-        outputPath: `local://packs/${input.packId}.zip`,
-        files: entries.map((entry) => entry.path),
-        zipSizeBytes: estimateStoredZipSize(entries),
-        entryCount: entries.length,
-        manifest,
-        exportSummary: { type: "pack", packId: input.packId, outputPath: `local://packs/${input.packId}.zip`, exportedAt: now() },
-        createdAt: manifest.generatedAt
-      };
-      store.packs.unshift(result);
-      input.jobIds.forEach((jobId) => updateJob(store, jobId, { status: "Exported", currentStep: "Pack" }));
-      result.cleanup = input.jobIds.map((jobId) => cleanupDevArtifacts(store, jobId, result.exportSummary));
       save(store);
       return result as T;
     }

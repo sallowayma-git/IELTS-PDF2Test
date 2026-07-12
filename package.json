@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Epic 8 Tauri authoring studio for IELTS reading import, review, preview, and pack export.",
+  "description": "Epic 8 Tauri authoring studio for IELTS reading import, review, preview, and NAS publishing.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

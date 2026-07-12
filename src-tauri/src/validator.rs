@@ -261,10 +261,10 @@ pub(crate) fn validate_reading_source_contract(source: &Value) -> Vec<Value> {
         .cloned()
         .unwrap_or_default();
     if answer_key.is_empty() {
-        issues.push(json_issue(
+        issues.push(json_warning(
             "ReadingExamSourceV1",
             "$.answerKey",
-            "answerKey cannot be empty",
+            "answerKey is empty; unanswered questions will be exported without scoring data",
         ));
     }
 
@@ -312,10 +312,13 @@ pub(crate) fn validate_reading_source_contract(source: &Value) -> Vec<Value> {
         {
             covered.insert(qid.to_string());
             if !answer_key.contains_key(qid) {
-                issues.push(json_issue(
+                issues.push(json_warning(
                     "ReadingExamSourceV1",
                     &format!("$.answerKey.{}", qid),
-                    &format!("{} is missing from answerKey", qid),
+                    &format!(
+                        "{} is missing from answerKey and will be exported without scoring data",
+                        qid
+                    ),
                 ));
             }
             if !has_collectible_control(html, qid) {
@@ -411,7 +414,15 @@ pub(crate) fn validate_reading_source_contract(source: &Value) -> Vec<Value> {
 }
 
 pub(crate) fn json_issue(layer: &str, path: &str, message: &str) -> Value {
-    json!({"issueId": format!("issue-{}", Uuid::new_v4().simple()), "severity":"error", "layer":layer, "path":path, "message":message, "fixHint": null})
+    json_issue_with_severity("error", layer, path, message)
+}
+
+pub(crate) fn json_warning(layer: &str, path: &str, message: &str) -> Value {
+    json_issue_with_severity("warning", layer, path, message)
+}
+
+fn json_issue_with_severity(severity: &str, layer: &str, path: &str, message: &str) -> Value {
+    json!({"issueId": format!("issue-{}", Uuid::new_v4().simple()), "severity":severity, "layer":layer, "path":path, "message":message, "fixHint": null})
 }
 
 pub(crate) fn is_error_issue(issue: &Value) -> bool {

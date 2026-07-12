@@ -4,7 +4,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{Read, Seek, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -28,11 +28,6 @@ pub(crate) fn validate_path_segment(kind: &str, value: &str) -> CommandResult<()
     } else {
         Err(format!("invalid_{}_path_segment:{}", kind, value))
     }
-}
-
-pub(crate) fn safe_path_segment<'a>(kind: &str, value: &'a str) -> CommandResult<&'a str> {
-    validate_path_segment(kind, value)?;
-    Ok(value)
 }
 
 pub(crate) fn job_dir(root: &Path, job_id: &str) -> PathBuf {
@@ -71,7 +66,6 @@ pub(crate) fn ensure_app_dirs(root: &Path) -> CommandResult<()> {
         "config/secrets",
         "jobs",
         "writing-jobs",
-        "packs",
         "logs",
         "cache",
         "cache/parser",
@@ -282,109 +276,6 @@ pub(crate) fn remove_dir_if_exists(path: &Path) -> CommandResult<()> {
             .map_err(|error| format!("remove_dir:{}:{}", path.display(), error))?;
     }
     Ok(())
-}
-
-fn crc32(bytes: &[u8]) -> u32 {
-    let mut crc = 0xffff_ffffu32;
-    for byte in bytes {
-        crc ^= *byte as u32;
-        for _ in 0..8 {
-            let mask = 0u32.wrapping_sub(crc & 1);
-            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
-        }
-    }
-    !crc
-}
-
-fn zip_safe_path(path: &str) -> CommandResult<String> {
-    let normalized = path.replace('\\', "/");
-    if normalized.is_empty()
-        || normalized.starts_with('/')
-        || normalized.contains("../")
-        || normalized == ".."
-    {
-        return Err(format!("unsafe_zip_entry_path:{}", path));
-    }
-    Ok(normalized)
-}
-
-fn write_u16_le(writer: &mut fs::File, value: u16) -> CommandResult<()> {
-    writer
-        .write_all(&value.to_le_bytes())
-        .map_err(|error| error.to_string())
-}
-
-fn write_u32_le(writer: &mut fs::File, value: u32) -> CommandResult<()> {
-    writer
-        .write_all(&value.to_le_bytes())
-        .map_err(|error| error.to_string())
-}
-
-pub(crate) fn write_zip(path: &Path, entries: &[(String, Vec<u8>)]) -> CommandResult<u64> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-
-    let mut file = fs::File::create(path)
-        .map_err(|error| format!("create_zip:{}:{}", path.display(), error))?;
-    let mut central = Vec::new();
-
-    for (entry_path, content) in entries {
-        let safe_path = zip_safe_path(entry_path)?;
-        let name = safe_path.as_bytes();
-        let offset = file.stream_position().map_err(|error| error.to_string())? as u32;
-        let crc = crc32(content);
-        let size = content.len() as u32;
-
-        write_u32_le(&mut file, 0x0403_4b50)?;
-        write_u16_le(&mut file, 20)?;
-        write_u16_le(&mut file, 0)?;
-        write_u16_le(&mut file, 0)?;
-        write_u16_le(&mut file, 0)?;
-        write_u16_le(&mut file, 33)?;
-        write_u32_le(&mut file, crc)?;
-        write_u32_le(&mut file, size)?;
-        write_u32_le(&mut file, size)?;
-        write_u16_le(&mut file, name.len() as u16)?;
-        write_u16_le(&mut file, 0)?;
-        file.write_all(name).map_err(|error| error.to_string())?;
-        file.write_all(content).map_err(|error| error.to_string())?;
-
-        central.extend_from_slice(&0x0201_4b50u32.to_le_bytes());
-        central.extend_from_slice(&20u16.to_le_bytes());
-        central.extend_from_slice(&20u16.to_le_bytes());
-        central.extend_from_slice(&0u16.to_le_bytes());
-        central.extend_from_slice(&0u16.to_le_bytes());
-        central.extend_from_slice(&0u16.to_le_bytes());
-        central.extend_from_slice(&33u16.to_le_bytes());
-        central.extend_from_slice(&crc.to_le_bytes());
-        central.extend_from_slice(&size.to_le_bytes());
-        central.extend_from_slice(&size.to_le_bytes());
-        central.extend_from_slice(&(name.len() as u16).to_le_bytes());
-        central.extend_from_slice(&0u16.to_le_bytes());
-        central.extend_from_slice(&0u16.to_le_bytes());
-        central.extend_from_slice(&0u16.to_le_bytes());
-        central.extend_from_slice(&0u16.to_le_bytes());
-        central.extend_from_slice(&0u32.to_le_bytes());
-        central.extend_from_slice(&offset.to_le_bytes());
-        central.extend_from_slice(name);
-    }
-
-    let central_offset = file.stream_position().map_err(|error| error.to_string())? as u32;
-    file.write_all(&central)
-        .map_err(|error| error.to_string())?;
-    write_u32_le(&mut file, 0x0605_4b50)?;
-    write_u16_le(&mut file, 0)?;
-    write_u16_le(&mut file, 0)?;
-    write_u16_le(&mut file, entries.len() as u16)?;
-    write_u16_le(&mut file, entries.len() as u16)?;
-    write_u32_le(&mut file, central.len() as u32)?;
-    write_u32_le(&mut file, central_offset)?;
-    write_u16_le(&mut file, 0)?;
-    file.flush().map_err(|error| error.to_string())?;
-    file.metadata()
-        .map(|metadata| metadata.len())
-        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn append_text(path: &Path, value: &str) -> CommandResult<()> {

@@ -207,7 +207,13 @@ export function toReadingExamSource(ir: ReadingAuthoringIr): ReadingExamSourceV1
       leadHtml: group.instruction.map((item) => `<p>${escapeHtml(item)}</p>`).join(""),
       allowOptionReuse: group.allowOptionReuse
     })),
-    answerKey: ir.answerKey,
+    answerKey: Object.fromEntries(
+      Object.entries(ir.answerKey).filter(([, answer]) =>
+        Array.isArray(answer)
+          ? answer.some((item) => String(item).trim())
+          : Boolean(String(answer ?? "").trim())
+      )
+    ),
     sourceRefs: {
       primaryHtml: `author-imports/${ir.jobId}/intermediate.html`,
       primaryProvider: "author_web",

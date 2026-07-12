@@ -1,3 +1,5 @@
+import type { ImportJob, WorkflowStep } from "../types";
+
 export type RouteName =
   | "dashboard"
   | "jobs"
@@ -42,4 +44,19 @@ export function parseRoute(hash = window.location.hash): RouteState {
 
 export function go(path: string): void {
   window.location.hash = path;
+}
+
+const workflowStepPath: Record<WorkflowStep, string> = {
+  Upload: "document",
+  DocumentReview: "document",
+  Split: "preview",
+  Authoring: "preview",
+  LlmReview: "preview",
+  Preview: "preview",
+  Export: "export",
+  Pack: "export"
+};
+
+export function jobResumePath(job: Pick<ImportJob, "jobId" | "currentStep">): string {
+  return `/jobs/${job.jobId}/${workflowStepPath[job.currentStep]}`;
 }

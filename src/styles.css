@@ -107,11 +107,11 @@ p { color: var(--muted); }
 .metric:last-child { border-right: 0; }
 .metric span { display: block; color: var(--muted); font-size: 13px; }
 .metric strong { display: block; font-size: 34px; margin-top: 8px; }
-.two-column, .review-grid, .editor-grid, .llm-grid, .preview-grid, .export-grid, .pack-grid, .settings-grid, .split-grid, .wizard-grid { display: grid; gap: 18px; }
+.two-column, .review-grid, .editor-grid, .llm-grid, .preview-grid, .export-grid, .settings-grid, .split-grid, .wizard-grid { display: grid; gap: 18px; }
 .two-column { grid-template-columns: minmax(0, 1fr) 360px; }
 .review-grid { grid-template-columns: 360px minmax(0, 1fr) 380px; }
 .editor-grid { grid-template-columns: 240px minmax(0, 1fr) 420px; }
-.llm-grid, .pack-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 320px; }
+.llm-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 320px; }
 .settings-grid { grid-template-columns: minmax(460px, 1.35fr) minmax(320px, .9fr) 340px; align-items: start; }
 .preview-grid { grid-template-columns: minmax(0, 1fr) 360px; }
 .export-grid, .split-grid, .wizard-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -299,7 +299,6 @@ textarea { min-height: 120px; resize: vertical; }
 .compare-columns div { border: 1px solid rgba(255,255,255,.5); border-radius: 14px; padding: 10px; background: rgba(255,255,255,.28); }
 .compare-columns span, .compare-columns small { display: block; }
 .compare-columns span { font-weight: 800; color: var(--ink); margin-bottom: 6px; }
-.merged-pack-grid { margin-top: 18px; }
 
 .preview-workspace { display: grid; gap: 18px; }
 .preview-topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
@@ -410,7 +409,7 @@ textarea { min-height: 120px; resize: vertical; }
   .brand-copy, .nav-label, .sidebar-toggle { display: block; }
   .primary-nav { display: flex; }
   .sidebar-note { display: none; }
-  .review-grid, .editor-grid, .llm-grid, .preview-grid, .export-grid, .pack-grid, .settings-grid, .split-grid, .wizard-grid, .two-column, .settings-studio, .preview-two-pane, .question-workbench, .group-meta-grid, .question-detail-grid { grid-template-columns: 1fr; }
+  .review-grid, .editor-grid, .llm-grid, .preview-grid, .export-grid, .settings-grid, .split-grid, .wizard-grid, .two-column, .settings-studio, .preview-two-pane, .question-workbench, .group-meta-grid, .question-detail-grid { grid-template-columns: 1fr; }
   .metric-row { grid-template-columns: repeat(3, 1fr); }
   .compare-columns { grid-template-columns: 1fr; }
   .comparison-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

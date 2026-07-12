@@ -234,16 +234,19 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
             </span>
             <button className="ghost small" data-testid="pick-answer-file" onClick={pickAnswer}>选择答案文件</button>
           </div>
-          <label>识别方式<select data-testid="parse-mode" value={parseMode} onChange={(event) => setParseMode(event.target.value as typeof parseMode)}><option value="auto">自动</option><option value="text">读取文字</option><option value="ocr">识别扫描件文字</option></select></label>
           {autoReport ? <details data-testid="auto-pipeline-report"><summary>自动处理结果</summary>{renderAutoReport(autoReport)}</details> : null}
         </section>
         <section className="form-section">
           <span className="step-number">02</span>
-          <h3>基础信息</h3>
-          <label>标题<input data-testid="job-title-input" value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-          <label>Passage 分类<select data-testid="category-select" value={category} onChange={(event) => setCategory(event.target.value as PassageCategory)}><option>P1</option><option>P2</option><option>P3</option></select></label>
-          <label>难度<select data-testid="frequency-select" value={frequency} onChange={(event) => setFrequency(event.target.value as Frequency)}><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
-          <label>标签<input data-testid="tags-input" value={tags} onChange={(event) => setTags(event.target.value)} /></label>
+          <h3>题稿信息</h3>
+          <label>标题（可选）<input data-testid="job-title-input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="默认使用文件名" /></label>
+          <details>
+            <summary>高级设置</summary>
+            <label>Passage 分类<select data-testid="category-select" value={category} onChange={(event) => setCategory(event.target.value as PassageCategory)}><option>P1</option><option>P2</option><option>P3</option></select></label>
+            <label>难度<select data-testid="frequency-select" value={frequency} onChange={(event) => setFrequency(event.target.value as Frequency)}><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+            <label>标签<input data-testid="tags-input" value={tags} onChange={(event) => setTags(event.target.value)} /></label>
+            <label>识别方式<select data-testid="parse-mode" value={parseMode} onChange={(event) => setParseMode(event.target.value as typeof parseMode)}><option value="auto">自动</option><option value="text">读取文字</option><option value="ocr">识别扫描件文字</option></select></label>
+          </details>
         </section>
         <section className="form-section contrast">
           <span className="step-number">03</span>

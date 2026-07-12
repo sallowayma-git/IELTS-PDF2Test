@@ -1,6 +1,7 @@
 use crate::{
     cleanup::{cleanup_transient_job_artifacts, minimize_process_artifacts_after_authoring},
     export_artifacts::{build_manifest, build_wrapper},
+    export_pack::ExportValidationOptions,
     job_store::update_job,
     reading_source::reading_source,
     runtime_validation::{publish_readiness_gate, validate_for_runtime_gate},
@@ -57,6 +58,8 @@ struct WrittenSourceFile {
 struct NasDirectWriteResult {
     files: Vec<WrittenSourceFile>,
     manifest_js: String,
+    validation_overridden: bool,
+    ignored_issues: Vec<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -854,20 +857,25 @@ fn write_selected_nas_direct_files(
     job_ids: &[String],
     reading_exams_dir: &Path,
     require_static_runtime_gate: bool,
+    options: ExportValidationOptions,
 ) -> CommandResult<NasDirectWriteResult> {
     let mut files = Vec::with_capacity(job_ids.len());
     let mut seen_exam_ids = HashSet::new();
+    let mut validation_overridden = false;
+    let mut ignored_issues = Vec::new();
 
     for job_id in job_ids {
         validate_path_segment("job_id", job_id)?;
         let ir: Value = read_json(&job_dir(root, job_id).join("authoring-ir.json"))?;
         let report = validate_for_runtime_gate(root, job_id, &ir, require_static_runtime_gate)?;
         let report = publish_readiness_gate(root, job_id, &ir, report)?;
-        if !report
-            .get("passed")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
+        write_json(
+            &job_dir(root, job_id).join("validation-report.json"),
+            &report,
+        )?;
+        validation_overridden |= options.validation_overridden(&report);
+        ignored_issues.extend(options.ignored_issues(job_id, &report));
+        if options.should_block(&report) {
             let _ = minimize_process_artifacts_after_authoring(
                 root,
                 job_id,
@@ -911,7 +919,12 @@ fn write_selected_nas_direct_files(
         )?;
     }
     write_text(&reading_exams_dir.join("manifest.js"), &manifest_js)?;
-    Ok(NasDirectWriteResult { files, manifest_js })
+    Ok(NasDirectWriteResult {
+        files,
+        manifest_js,
+        validation_overridden,
+        ignored_issues,
+    })
 }
 
 pub(crate) fn copy_pdf_into_source_tree(
@@ -1206,6 +1219,7 @@ pub(crate) fn export_nas_library_core(
     input: &Value,
     require_static_runtime_gate: bool,
 ) -> CommandResult<Value> {
+    let options = ExportValidationOptions::from_input(input)?;
     let job_ids = input
         .get("jobIds")
         .and_then(Value::as_array)
@@ -1241,9 +1255,16 @@ pub(crate) fn export_nas_library_core(
         &job_ids,
         &reading_exams_dir,
         require_static_runtime_gate,
+        options,
     )?;
-    let written_sources = write_result.files;
+    let NasDirectWriteResult {
+        files: written_sources,
+        manifest_js,
+        validation_overridden,
+        ignored_issues,
+    } = write_result;
     let asset_count = written_sources.len();
+    let ignored_issue_count = ignored_issues.len() as u64;
     let report = json!({
         "status": "ok",
         "version": version.clone(),
@@ -1252,7 +1273,10 @@ pub(crate) fn export_nas_library_core(
             "runtime": "nas-js-direct",
             "readingExamFileCount": asset_count,
             "manifestFileCount": 1,
-            "assetCount": asset_count
+            "assetCount": asset_count,
+            "validationPolicy": options.policy_name(),
+            "validationOverridden": validation_overridden,
+            "ignoredIssueCount": ignored_issue_count
         },
         "errors": []
     });
@@ -1271,6 +1295,10 @@ pub(crate) fn export_nas_library_core(
                 "runtime": "nas-js-direct",
                 "version": version,
                 "outputDir": library_root.to_string_lossy(),
+                "validationPolicy": options.policy_name(),
+                "validationOverridden": validation_overridden,
+                "ignoredIssueCount": ignored_issue_count,
+                "ignoredIssues": ignored_issues.clone(),
                 "exportedAt": Utc::now().to_rfc3339()
             }),
         )?);
@@ -1282,7 +1310,7 @@ pub(crate) fn export_nas_library_core(
         .collect::<Vec<_>>();
     files.push(json!({
         "name": "manifest.js",
-        "content": write_result.manifest_js
+        "content": manifest_js
     }));
 
     Ok(json!({
@@ -1295,6 +1323,10 @@ pub(crate) fn export_nas_library_core(
         "version": version.clone(),
         "files": files,
         "report": report,
+        "validationPolicy": options.policy_name(),
+        "validationOverridden": validation_overridden,
+        "ignoredIssueCount": ignored_issue_count,
+        "ignoredIssues": ignored_issues.clone(),
         "exportSummary": {
             "type": "nas-library",
             "runtime": "nas-js-direct",
@@ -1303,6 +1335,10 @@ pub(crate) fn export_nas_library_core(
             "outputDir": library_root.to_string_lossy(),
             "readingExamsDir": reading_exams_dir.to_string_lossy(),
             "assetCount": asset_count,
+            "validationPolicy": options.policy_name(),
+            "validationOverridden": validation_overridden,
+            "ignoredIssueCount": ignored_issue_count,
+            "ignoredIssues": ignored_issues,
             "exportedAt": Utc::now().to_rfc3339()
         },
         "cleanup": cleanup

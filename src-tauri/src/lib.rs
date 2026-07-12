@@ -8,7 +8,11 @@ use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
 use export_artifacts::{build_manifest, build_wrapper, safe_exam_id};
 use export_nas_library::{export_nas_library_core, nas_reading_exams_dir, normalize_nas_library_root};
-use export_pack::{build_pack_core, export_reading_assets_core, export_reading_js_core};
+use export_pack::{
+    export_reading_assets_with_options_core, export_reading_js_core, ExportValidationOptions,
+};
+#[cfg(test)]
+use export_pack::export_reading_assets_core;
 use export_writing_library::export_writing_library_core;
 use llm_commands::{
     apply_llm_suggestion_core, delete_llm_profile_core, llm_run_group_core, save_llm_profile_core,
@@ -32,6 +36,8 @@ mod authoring_review;
 mod authoring_validation;
 mod auto_pipeline;
 mod cleanup;
+#[cfg(test)]
+mod cross_repo_contract_fixture;
 mod db;
 mod diagnostics;
 mod environment;
@@ -1090,10 +1096,12 @@ async fn run_preview_e2e(job_id: String, app: AppHandle) -> CommandResult<Value>
 async fn export_reading_assets(
     job_id: String,
     export_dir: String,
+    validation_policy: Option<String>,
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    export_reading_assets_core(&root, &job_id, &export_dir, true)
+    let options = ExportValidationOptions::from_policy(validation_policy.as_deref())?;
+    export_reading_assets_with_options_core(&root, &job_id, &export_dir, true, options)
 }
 
 #[tauri::command]
@@ -1106,12 +1114,6 @@ async fn export_reading_js(input: Value, app: AppHandle) -> CommandResult<Value>
 async fn export_nas_library(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     export_nas_library_core(&root, &input, true)
-}
-
-#[tauri::command]
-async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
-    let root = app_root(&app)?;
-    build_pack_core(&root, &input, true)
 }
 
 // ---------- 写作题库命令（独立模型，不污染阅读 ImportJob）----------
@@ -1359,7 +1361,6 @@ pub fn run() {
             get_writing_job,
             update_writing_job,
             delete_writing_job,
-            build_pack,
             list_library_exams,
             get_library_exam,
             update_library_exam_meta,
@@ -1711,10 +1712,37 @@ mod tests {
         refresh_authoring_review_state(ir);
     }
 
+    fn clear_all_authoring_answers(ir: &mut Value) -> Vec<String> {
+        let mut question_ids = Vec::new();
+        if let Some(groups) = ir.get_mut("groups").and_then(Value::as_array_mut) {
+            for question in groups.iter_mut().flat_map(|group| {
+                group
+                    .get_mut("questions")
+                    .and_then(Value::as_array_mut)
+                    .into_iter()
+                    .flatten()
+            }) {
+                if let Some(qid) = question.get("id").and_then(Value::as_str) {
+                    question_ids.push(qid.to_string());
+                }
+                if let Some(obj) = question.as_object_mut() {
+                    obj.insert("answer".to_string(), Value::String(String::new()));
+                }
+            }
+        }
+        let needs_review = refresh_authoring_review_state(ir);
+        assert_eq!(needs_review, 0, "empty answers must not require review");
+        let answer_key = crate::reading_source::answer_key_from_authoring(ir);
+        ir.as_object_mut()
+            .unwrap()
+            .insert("answerKey".to_string(), answer_key);
+        question_ids
+    }
+
     #[test]
     fn unsafe_path_segments_are_rejected() {
         assert!(is_safe_path_segment("import-20260531120000-abcdef12"));
-        assert!(is_safe_path_segment("pack.fixture-01"));
+        assert!(is_safe_path_segment("exam.fixture-01"));
 
         for value in [
             "",
@@ -1775,28 +1803,6 @@ mod tests {
         assert!(safe_exam_id(&source).is_err());
         assert!(build_wrapper(&source).is_err());
         assert!(build_manifest(&[source]).is_err());
-    }
-
-    #[test]
-    fn build_pack_core_rejects_unsafe_pack_and_job_ids_before_paths() {
-        let root = temp_test_root();
-        ensure_app_dirs(&root).unwrap();
-
-        let unsafe_pack = json!({
-            "packId": "../pack",
-            "jobIds": ["missing-job"]
-        });
-        let pack_error = build_pack_core(&root, &unsafe_pack, false).unwrap_err();
-        assert!(pack_error.contains("invalid_pack_id_path_segment"));
-
-        let unsafe_job = json!({
-            "packId": "pack-safe",
-            "jobIds": ["../job"]
-        });
-        let job_error = build_pack_core(&root, &unsafe_job, false).unwrap_err();
-        assert!(job_error.contains("invalid_job_id_path_segment"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -2539,7 +2545,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_review_issues_block_empty_answers() {
+    fn publish_review_issues_require_low_confidence_verification() {
         let job = test_job();
         let doc = sample_document_ir(&job, "auto");
         let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
@@ -3262,13 +3268,20 @@ Answers
     }
 
     #[test]
-    fn rust_contract_validator_rejects_missing_answer_key_coverage() {
+    fn rust_contract_validator_warns_for_missing_answer_key_coverage() {
         let mut source = contract_fixture_source();
         source["answerKey"].as_object_mut().unwrap().remove("q2");
 
-        let messages = contract_messages(&source);
+        let issues = validator::validate_reading_source_contract(&source);
+        let warning = issues
+            .iter()
+            .find(|issue| {
+                issue.get("path").and_then(Value::as_str) == Some("$.answerKey.q2")
+            })
+            .expect("missing answer warning");
 
-        assert!(messages.contains("q2 is missing from answerKey"));
+        assert_eq!(warning.get("severity").and_then(Value::as_str), Some("warning"));
+        assert!(!validator::has_error_issues(&issues));
     }
 
     #[test]
@@ -6850,6 +6863,18 @@ Answers
 
         let exam_id = result.get("examId").and_then(Value::as_str).unwrap();
         assert_eq!(exam_id, expected_exam_id);
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("strict")
+        );
+        assert_eq!(
+            result.get("validationOverridden").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            result.get("ignoredIssueCount").and_then(Value::as_u64),
+            Some(0)
+        );
         assert!(out_dir.join(format!("{}.json", exam_id)).exists());
         assert!(out_dir.join(format!("{}.js", exam_id)).exists());
         assert!(out_dir.join("manifest.js").exists());
@@ -6877,6 +6902,231 @@ Answers
         assert!(!job_path.join("validation-report.json").exists());
         assert!(!job_path.join("publish-readiness-report.json").exists());
         assert!(!job_path.join("preview").exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn strict_export_allows_missing_answers_and_ignores_historical_needs_review_status() {
+        let root = temp_test_root();
+        let (job, mut ir) = make_publishable_fixture(&root);
+        let missing_question_ids = clear_all_authoring_answers(&mut ir);
+        assert!(!missing_question_ids.is_empty());
+        assert_eq!(
+            ir.pointer("/audit/humanVerified").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(ir
+            .get("answerKey")
+            .and_then(Value::as_object)
+            .map(serde_json::Map::is_empty)
+            .unwrap_or(false));
+        assert!(!authoring_review_issues(&ir).iter().any(|issue| {
+            issue
+                .get("path")
+                .and_then(Value::as_str)
+                .is_some_and(|path| path.starts_with("$.answerKey"))
+        }));
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+        update_job(&root, &job.job_id, |saved| {
+            saved.status = JobStatus::NeedsReview;
+        })
+        .unwrap();
+
+        let static_report = validate_authoring(&job.job_id, Some(&ir));
+        assert_eq!(
+            static_report.get("passed").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(static_report
+            .get("issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|issue| {
+                issue.get("severity").and_then(Value::as_str) == Some("warning")
+                    && issue
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .is_some_and(|path| path.starts_with("$.answerKey"))
+            }));
+
+        let out_dir = root.join("missing-answer-export");
+        let result = export_reading_assets_core(
+            &root,
+            &job.job_id,
+            out_dir.to_string_lossy().as_ref(),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("strict")
+        );
+        assert_eq!(
+            result.get("validationOverridden").and_then(Value::as_bool),
+            Some(false)
+        );
+        let report: Value = read_json(&out_dir.join("validation-report.json")).unwrap();
+        assert_eq!(report.get("passed").and_then(Value::as_bool), Some(true));
+        assert!(report
+            .get("issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .all(|issue| issue.get("severity").and_then(Value::as_str) != Some("error")));
+        let exam_id = result.get("examId").and_then(Value::as_str).unwrap();
+        let source: Value = read_json(&out_dir.join(format!("{}.json", exam_id))).unwrap();
+        assert!(source
+            .get("answerKey")
+            .and_then(Value::as_object)
+            .map(serde_json::Map::is_empty)
+            .unwrap_or(false));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn force_export_bypasses_publish_validation_and_records_override() {
+        let root = temp_test_root();
+        let (job, mut ir) = make_publishable_fixture(&root);
+        ir.pointer_mut("/audit/humanVerified")
+            .map(|value| *value = json!(false));
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+        let out_dir = root.join("forced-export");
+        let options = ExportValidationOptions::from_policy(Some("force")).unwrap();
+
+        let result = export_reading_assets_with_options_core(
+            &root,
+            &job.job_id,
+            out_dir.to_string_lossy().as_ref(),
+            true,
+            options,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("force")
+        );
+        assert_eq!(
+            result.get("validationOverridden").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(result
+            .get("ignoredIssueCount")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count > 0));
+        let ignored_issues = result
+            .get("ignoredIssues")
+            .and_then(Value::as_array)
+            .expect("force export ignored issues");
+        assert!(ignored_issues.iter().any(|issue| {
+            issue.get("jobId").and_then(Value::as_str) == Some(job.job_id.as_str())
+                && issue.get("severity").and_then(Value::as_str) == Some("error")
+                && issue.get("path").and_then(Value::as_str)
+                    == Some("$.audit.humanVerified")
+                && issue.get("issueId").and_then(Value::as_str).is_some()
+                && issue.get("message").and_then(Value::as_str).is_some()
+        }));
+        assert_eq!(
+            result
+                .pointer("/exportSummary/validationOverridden")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        let report: Value = read_json(&out_dir.join("validation-report.json")).unwrap();
+        assert_eq!(report.get("passed").and_then(Value::as_bool), Some(false));
+        assert!(report
+            .get("issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|issue| issue.get("path").and_then(Value::as_str)
+                == Some("$.audit.humanVerified")));
+        let project: Value =
+            read_json(&job_dir(&root, &job.job_id).join("authoring-project.json")).unwrap();
+        assert!(project
+            .pointer("/exportSummary/ignoredIssues")
+            .and_then(Value::as_array)
+            .is_some_and(|issues| !issues.is_empty()));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn force_policy_is_honored_by_js_and_nas_exports() {
+        let root = temp_test_root();
+        let (js_job, mut js_ir) = make_publishable_fixture(&root);
+        let (nas_job, mut nas_ir) = make_publishable_fixture(&root);
+        for (job_id, ir) in [
+            (js_job.job_id.as_str(), &mut js_ir),
+            (nas_job.job_id.as_str(), &mut nas_ir),
+        ] {
+            ir["audit"]["humanVerified"] = json!(false);
+            write_json(&job_dir(&root, job_id).join("authoring-ir.json"), ir).unwrap();
+        }
+
+        let js_result = export_reading_js_core(
+            &root,
+            &json!({
+                "jobIds": [js_job.job_id],
+                "exportDir": root.join("forced-js").to_string_lossy(),
+                "validationPolicy": "force"
+            }),
+            true,
+        )
+        .unwrap();
+        let nas_result = export_nas_library_core(
+            &root,
+            &json!({
+                "jobIds": [nas_job.job_id],
+                "exportDir": root.join("forced-nas").to_string_lossy(),
+                "validationPolicy": "force"
+            }),
+            true,
+        )
+        .unwrap();
+        for result in [&js_result, &nas_result] {
+            assert_eq!(
+                result.get("validationPolicy").and_then(Value::as_str),
+                Some("force")
+            );
+            assert_eq!(
+                result.get("validationOverridden").and_then(Value::as_bool),
+                Some(true)
+            );
+            assert!(result
+                .get("ignoredIssues")
+                .and_then(Value::as_array)
+                .is_some_and(|issues| !issues.is_empty()));
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn force_export_does_not_bypass_unsafe_exam_id() {
+        let root = temp_test_root();
+        let (job, mut ir) = make_publishable_fixture(&root);
+        ir["exam"]["examId"] = json!("../unsafe-exam");
+        ir["audit"]["humanVerified"] = json!(false);
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+        let out_dir = root.join("unsafe-forced-export");
+        let options = ExportValidationOptions::from_policy(Some("force")).unwrap();
+
+        let error = export_reading_assets_with_options_core(
+            &root,
+            &job.job_id,
+            out_dir.to_string_lossy().as_ref(),
+            true,
+            options,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("invalid_exam_id_path_segment"));
+        assert!(!out_dir.exists());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6934,6 +7184,10 @@ Answers
         let result = export_reading_js_core(&root, &input, true).unwrap();
 
         assert_eq!(result.get("mode").and_then(Value::as_str), Some("single"));
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("strict")
+        );
         assert_eq!(
             result
                 .get("examIds")
@@ -7024,6 +7278,10 @@ Answers
             Some("nas-library")
         );
         assert_eq!(result.get("assetCount").and_then(Value::as_u64), Some(1));
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("strict")
+        );
         let reading_exams_dir = nas_reading_exams_dir(&library_root);
         assert!(reading_exams_dir
             .join(format!("{}.js", expected_exam_id))
@@ -7339,106 +7597,6 @@ Answers
         assert!(manifest.contains("__READING_EXAM_MANIFEST__"));
 
         let _ = fs::remove_dir_all(library_root.parent().unwrap_or_else(|| Path::new("/tmp")));
-    }
-
-    #[test]
-    fn build_pack_core_writes_zip_after_static_runtime_gate() {
-        let root = temp_test_root();
-        let (job, ir) = make_publishable_fixture(&root);
-        let expected_exam_id = ir
-            .pointer("/exam/examId")
-            .and_then(Value::as_str)
-            .unwrap()
-            .to_string();
-        let input = json!({
-            "packId": "pack-fixture",
-            "version": "0.1.0",
-            "institution": "internal",
-            "description": "fixture",
-            "jobIds": [job.job_id]
-        });
-
-        let result = build_pack_core(&root, &input, true).unwrap();
-
-        let output_path = PathBuf::from(result.get("outputPath").and_then(Value::as_str).unwrap());
-        assert!(output_path.exists());
-        assert!(output_path.metadata().unwrap().len() > 0);
-        assert_eq!(result.get("entryCount").and_then(Value::as_u64), Some(3));
-        assert_eq!(
-            result
-                .pointer("/manifest/exams/0/examId")
-                .and_then(Value::as_str),
-            Some(expected_exam_id.as_str())
-        );
-        assert_eq!(
-            load_job(&root, &job.job_id).unwrap().status,
-            JobStatus::Cleaned
-        );
-        assert_eq!(
-            result
-                .pointer("/cleanup/0/cleaned")
-                .and_then(Value::as_bool),
-            Some(true)
-        );
-        assert!(root
-            .join("packs")
-            .join("pack-fixture")
-            .join("pack.json")
-            .exists());
-        assert!(root
-            .join("packs")
-            .join("pack-fixture")
-            .join("reading-exams")
-            .join("manifest.js")
-            .exists());
-        assert!(root
-            .join("packs")
-            .join("pack-fixture")
-            .join("reading-exams")
-            .join(format!("{}.js", expected_exam_id))
-            .exists());
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn build_pack_publish_gate_failure_writes_no_pack_or_cleanup() {
-        let root = temp_test_root();
-        let (job, mut ir) = make_publishable_fixture(&root);
-        if let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) {
-            audit.insert("humanVerified".to_string(), json!(false));
-        }
-        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
-        let input = json!({
-            "packId": "blocked-pack",
-            "version": "0.1.0",
-            "institution": "internal",
-            "description": "blocked",
-            "jobIds": [job.job_id]
-        });
-
-        let error = build_pack_core(&root, &input, true).unwrap_err();
-
-        assert!(error.contains("pack_validation_failed"));
-        assert!(error.contains("$.audit.humanVerified"));
-        assert!(!root.join("packs").join("blocked-pack.zip").exists());
-        assert!(!root
-            .join("packs")
-            .join("blocked-pack")
-            .join("pack.json")
-            .exists());
-        let job_path = job_dir(&root, &job.job_id);
-        assert!(!job_path.join("cleanup-summary.json").exists());
-        assert!(job_path.join("authoring-project.json").exists());
-        assert!(!job_path.join("document-ir.json").exists());
-        assert!(!job_path.join("split-candidates.json").exists());
-        assert!(!job_path.join("publish-readiness-report.json").exists());
-        assert_eq!(
-            load_job(&root, &job.job_id).unwrap().status,
-            JobStatus::Working
-        );
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

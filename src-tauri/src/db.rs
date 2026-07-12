@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS publish_records (
     id              TEXT PRIMARY KEY,
     library_item_id TEXT NOT NULL REFERENCES library_items(id),
     revision_id     TEXT NOT NULL REFERENCES library_item_revisions(id),
-    publish_type    TEXT NOT NULL,               -- single_js|batch_js|nas_library|pack|writing_library
+    publish_type    TEXT NOT NULL,               -- single_js|batch_js|nas_library|writing_library
     target          TEXT,
     output_path     TEXT,
     status          TEXT NOT NULL,               -- success|failed

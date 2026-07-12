@@ -1,6 +1,5 @@
 import type {
   AuthoringPatch,
-  BuildPackInput,
   CreateJobInput,
   DocumentIr,
   ExportNasLibraryInput,
@@ -19,7 +18,6 @@ import type {
   ManualTranscriptionInput,
   VisionTranscriptionInput,
   AutoPipelineReport,
-  PackBuildResult,
   ParseOptions,
   PreviewAssets,
   ReadingAuthoringIr,
@@ -184,8 +182,8 @@ export async function runCloudReview(jobId: string, input?: { profileId?: string
   return command("run_cloud_review", { jobId, input });
 }
 
-export async function exportReadingAssets(jobId: string, exportDir = "local://exports"): Promise<ExportResult> {
-  return command("export_reading_assets", { jobId, exportDir });
+export async function exportReadingAssets(jobId: string, exportDir = "local://exports", validationPolicy: "strict" | "force" = "strict"): Promise<ExportResult> {
+  return command("export_reading_assets", { jobId, exportDir, validationPolicy });
 }
 
 export async function exportReadingJs(input: ExportReadingJsInput): Promise<JsExportResult> {
@@ -194,10 +192,6 @@ export async function exportReadingJs(input: ExportReadingJsInput): Promise<JsEx
 
 export async function exportNasLibrary(input: ExportNasLibraryInput): Promise<NasExportResult> {
   return command("export_nas_library", { input });
-}
-
-export async function buildPack(input: BuildPackInput): Promise<PackBuildResult> {
-  return command("build_pack", { input });
 }
 
 // ---------- 写作题库命令 ----------

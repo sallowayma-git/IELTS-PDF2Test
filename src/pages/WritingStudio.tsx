@@ -7,6 +7,7 @@ import {
 } from "../api/tauriCommands";
 import { StatusPill } from "../components/StatusPill";
 import { go } from "../app/router";
+import { setPublishIntent } from "../utils/publishIntent";
 import type { WritingJob, WritingJobStatus, WritingTaskType } from "../types";
 
 const TASK_DEFAULTS: Record<WritingTaskType, { suggested: number; label: string }> = {
@@ -136,7 +137,10 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
           <p>创作完成后到导出页选择两个任务打包下发。</p>
         </div>
         <div className="hero-actions">
-          <button className="primary" onClick={() => go("/packs")}>前往导出</button>
+          <button className="primary" onClick={() => {
+            setPublishIntent({ mode: "writing-library" });
+            go("/packs");
+          }}>前往导出</button>
         </div>
       </div>
 

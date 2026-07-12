@@ -24,7 +24,7 @@ const navEntries: NavEntry[] = [
       { label: "导题任务", short: "任务", path: "/jobs", match: "jobs" },
       { label: "新建导题", short: "新建", path: "/jobs/new", match: "new" },
       { label: "写作题创作", short: "写作", path: "/writing", match: "writing" },
-      { label: "导出/组卷", short: "导出", path: "/packs", match: "packs" }
+      { label: "题库发布", short: "发布", path: "/packs", match: "packs" }
     ]
   },
   { kind: "leaf", label: "题库管理", short: "题库", path: "/library", match: "library" },

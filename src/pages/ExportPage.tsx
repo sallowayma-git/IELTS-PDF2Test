@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../api/desktopDialogs";
-import { buildPack, exportNasLibrary, exportReadingAssets, exportReadingJs, exportWritingLibrary, listWritingJobs } from "../api/tauriCommands";
+import { exportNasLibrary, exportReadingAssets, exportReadingJs, exportWritingLibrary, listWritingJobs } from "../api/tauriCommands";
 import { StatusPill } from "../components/StatusPill";
-import type { ExportResult, ImportJob, JsExportResult, NasExportResult, PackBuildResult, ValidationIssue, WritingExportResult, WritingJob } from "../types";
+import type { ExportResult, ImportJob, JsExportResult, NasExportResult, ValidationIssue, ValidationPolicy, WritingExportResult, WritingJob } from "../types";
 import { validationIssueDisplay } from "../utils/displayLabels";
+import { takePublishIntent } from "../utils/publishIntent";
 
 type ExportMode = "single-js" | "batch-js" | "full-assets" | "nas-library" | "writing-library";
 
-const EXPORTABLE_STATUSES = new Set(["DraftSaved", "ExportReady", "Exported", "Cleaned"]);
-const PACKABLE_STATUSES = new Set(["ExportReady", "Exported", "Cleaned"]);
-const EXPORT_INTENT_KEY_PREFIX = "ielts-author-studio.export-intent.";
+const EXPORTABLE_STATUSES = new Set(["Working", "NeedsReview", "DraftSaved", "ExportReady", "Exported", "Cleaned"]);
+const DEFAULT_NAS_STATUSES = new Set(["DraftSaved", "ExportReady", "Exported", "Cleaned"]);
 
 interface ExportDiagnostics {
   title: string;
   issues: ValidationIssue[];
   guidance: string[];
+  canForce: boolean;
 }
 
 function parseValidationPayload(message: string): { issues?: ValidationIssue[] } | undefined {
@@ -30,12 +31,12 @@ function parseValidationPayload(message: string): { issues?: ValidationIssue[] }
 
 function plainExportGuidance(message: string): string[] {
   const guidance = [
-    /answer is empty|答案为空|答案不能为空/i.test(message) ? "仍有题目缺少答案，请在题稿编辑页补齐后再导出。" : "",
+    /answer is empty|答案为空|答案不能为空/i.test(message) ? "部分题目没有答案；答案为可选项，不会单独阻止导出。" : "",
     /human verified|人工确认|NeedsReview|待审核/i.test(message) ? "题目或题组还没有完成确认，请在题稿编辑页完成确认。" : "",
     /source review|parser warning|low-confidence parsed block|源文档/i.test(message) ? "源文档识别结果仍需确认，请回到源文档审核页处理。" : "",
     /cloudComparison|云端/i.test(message) ? "云端整卷对照仍有差异，请在题稿编辑页核对云端/本地差异。" : ""
   ].filter(Boolean);
-  return guidance.length ? guidance : ["导出前检查没有通过，请回到题稿编辑页完成缺失答案和人工确认。"];
+  return guidance.length ? guidance : ["导出前检查没有通过。你可以返回编辑，也可以忽略内容检查继续导出。"];
 }
 
 function buildExportDiagnostics(caught: unknown): ExportDiagnostics {
@@ -45,7 +46,8 @@ function buildExportDiagnostics(caught: unknown): ExportDiagnostics {
     return {
       title: message.includes("validation_failed") ? "导出前还有项目需要确认" : "导出没有完成",
       issues: [],
-      guidance: message.includes("validation_failed") ? plainExportGuidance(message) : [message]
+      guidance: message.includes("validation_failed") ? plainExportGuidance(message) : [message],
+      canForce: message.includes("validation_failed")
     };
   }
 
@@ -54,7 +56,7 @@ function buildExportDiagnostics(caught: unknown): ExportDiagnostics {
   const verification = issues.filter((issue) => issue.path.includes(".verified") || issue.path.includes("$.audit.humanVerified") || issue.path.includes("$.job.status"));
   const cloud = issues.filter((issue) => issue.path.includes("cloudComparison"));
   const guidance = [
-    answerEmpty.length ? `${answerEmpty.length} 道题仍缺少答案，请在题稿编辑页补齐。` : "",
+    answerEmpty.length ? `${answerEmpty.length} 道题未设置答案；仍可导出，之后可继续补充。` : "",
     sourceReview.length ? "源文件识别结果仍需确认；如果是图片页 PDF，请核对视觉补全内容后确认。" : "",
     verification.length ? "题组或题目还没有人工确认；可在题稿编辑页逐题确认，或确认当前题组。" : "",
     cloud.length ? "云端整卷对照发现差异；本地稿未被覆盖，请核对题型、填空位置和答案。" : ""
@@ -63,7 +65,8 @@ function buildExportDiagnostics(caught: unknown): ExportDiagnostics {
   return {
     title: "导出前还有项目需要确认",
     issues,
-    guidance: guidance.length ? guidance : ["请根据下方校验项完成确认后再次导出。"]
+    guidance: guidance.length ? guidance : ["请根据下方校验项完成确认，或忽略内容检查继续导出。"],
+    canForce: true
   };
 }
 
@@ -76,25 +79,15 @@ export function ExportPage({
   jobs: ImportJob[];
   refresh: () => void;
 }) {
-  const [mode, setMode] = useState<ExportMode>(jobId ? "single-js" : "batch-js");
+  const [mode, setMode] = useState<ExportMode>(jobId ? "single-js" : "nas-library");
   const [singleResult, setSingleResult] = useState<ExportResult | undefined>();
   const [jsResult, setJsResult] = useState<JsExportResult | undefined>();
   const [nasResult, setNasResult] = useState<NasExportResult | undefined>();
   const [exportDir, setExportDir] = useState<string>("local://exports");
   const [selected, setSelected] = useState<string[]>(jobId ? [jobId] : []);
-  const [packSelected, setPackSelected] = useState<string[]>([]);
-  const [packId, setPackId] = useState("pack-20260617-basic");
-  const [packVersion, setPackVersion] = useState("0.1.0");
-  const [packInstitution, setPackInstitution] = useState("internal");
-  const [packDescription, setPackDescription] = useState("IELTS Author Studio generated pack");
-  const [packValidFrom, setPackValidFrom] = useState("");
-  const [packValidTo, setPackValidTo] = useState("");
-  const [packResult, setPackResult] = useState<PackBuildResult | undefined>();
-  const [packError, setPackError] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [diagnostics, setDiagnostics] = useState<ExportDiagnostics | undefined>();
   const [running, setRunning] = useState(false);
-  const [packRunning, setPackRunning] = useState(false);
 
   // ---------- 写作导出状态 ----------
   const [writingJobs, setWritingJobs] = useState<WritingJob[]>([]);
@@ -106,24 +99,17 @@ export function ExportPage({
     () => jobs.filter((job) => EXPORTABLE_STATUSES.has(job.status)),
     [jobs]
   );
-  const packable = useMemo(
-    () => jobs.filter((job) => PACKABLE_STATUSES.has(job.status)),
-    [jobs]
-  );
   const focusedJobId = jobId ?? exportable[0]?.jobId ?? "";
   const canRunSingle = Boolean(focusedJobId);
 
   useEffect(() => {
-    setMode(jobId ? "single-js" : "batch-js");
+    setMode(jobId ? "single-js" : "nas-library");
     setSelected(jobId ? [jobId] : []);
-    setPackSelected([]);
     setError(undefined);
     setSingleResult(undefined);
     setJsResult(undefined);
     setNasResult(undefined);
     setDiagnostics(undefined);
-    setPackResult(undefined);
-    setPackError(undefined);
   }, [jobId]);
 
   useEffect(() => {
@@ -133,25 +119,20 @@ export function ExportPage({
       setSelected((current) => {
         const allowed = new Set(exportable.map((job) => job.jobId));
         const next = current.filter((id) => allowed.has(id));
-        return next.length ? next : exportable.map((job) => job.jobId).slice(0, 1);
+        if (next.length) return next;
+        const ready = exportable.filter((job) => DEFAULT_NAS_STATUSES.has(job.status)).map((job) => job.jobId);
+        return ready.length ? ready : exportable.map((job) => job.jobId);
       });
     }
 
-    setPackSelected((current) => {
-      const allowed = new Set(packable.map((job) => job.jobId));
-      const next = current.filter((id) => allowed.has(id));
-      if (next.length) return next;
-      if (jobId && allowed.has(jobId)) return [jobId];
-      return [];
-    });
-  }, [jobId, exportable, packable]);
+  }, [jobId, exportable]);
 
   async function chooseDir() {
     const selectedDir = await chooseExportDirectory();
     if (selectedDir) setExportDir(selectedDir);
   }
 
-  async function run(nextMode: ExportMode = mode, nextSelected: string[] = selected) {
+  async function run(nextMode: ExportMode = mode, nextSelected: string[] = selected, validationPolicy: ValidationPolicy = "strict") {
     setRunning(true);
     setError(undefined);
     setSingleResult(undefined);
@@ -161,14 +142,14 @@ export function ExportPage({
     try {
       if (nextMode === "full-assets") {
         if (!focusedJobId) throw new Error("no_export_focus_job");
-        setSingleResult(await exportReadingAssets(focusedJobId, exportDir));
+        setSingleResult(await exportReadingAssets(focusedJobId, exportDir, validationPolicy));
       } else if (nextMode === "nas-library") {
-        setNasResult(await exportNasLibrary({ jobIds: nextSelected, exportDir }));
+        setNasResult(await exportNasLibrary({ jobIds: nextSelected, exportDir, validationPolicy }));
       } else if (nextMode === "single-js") {
         if (!focusedJobId) throw new Error("no_export_focus_job");
-        setJsResult(await exportReadingJs({ jobIds: [focusedJobId], exportDir }));
+        setJsResult(await exportReadingJs({ jobIds: [focusedJobId], exportDir, validationPolicy }));
       } else {
-        setJsResult(await exportReadingJs({ jobIds: nextSelected, exportDir }));
+        setJsResult(await exportReadingJs({ jobIds: nextSelected, exportDir, validationPolicy }));
       }
       refresh();
     } catch (caught) {
@@ -180,36 +161,15 @@ export function ExportPage({
     }
   }
 
-  async function runPack() {
-    setPackRunning(true);
-    setPackError(undefined);
-    try {
-      setPackResult(await buildPack({
-        packId,
-        version: packVersion,
-        institution: packInstitution,
-        description: packDescription,
-        validFrom: packValidFrom || undefined,
-        validTo: packValidTo || undefined,
-        jobIds: packSelected
-      }));
-      refresh();
-    } catch (caught) {
-      setPackError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setPackRunning(false);
-    }
-  }
-
   useEffect(() => {
-    if (!jobId) return;
-    const key = `${EXPORT_INTENT_KEY_PREFIX}${jobId}`;
-    const intent = window.sessionStorage.getItem(key);
-    if (intent !== "single-js") return;
-    window.sessionStorage.removeItem(key);
-    setMode("single-js");
-    setSelected([jobId]);
-    void run("single-js", [jobId]);
+    if (jobId) return;
+    const intent = takePublishIntent();
+    if (!intent) return;
+    setMode(intent.mode);
+    const intentJobId = intent.mode === "nas-library" ? intent.jobId : undefined;
+    if (intentJobId) {
+      setSelected((current) => current.includes(intentJobId) ? current : [intentJobId, ...current]);
+    }
   }, [jobId]);
 
   // 加载写作任务列表（写作导出模式用）
@@ -218,10 +178,11 @@ export function ExportPage({
     void listWritingJobs().then((list) => {
       setWritingJobs(list);
       setWritingSelected((current) => {
-        if (current.length) return current;
-        // 默认预选一个 task1 + 一个 task2
-        const task1 = list.find((j) => j.taskType === "task1");
-        const task2 = list.find((j) => j.taskType === "task2");
+        const exportableList = list.filter((j) => j.status === "ExportReady" || j.status === "Exported");
+        const currentExportable = current.filter((id) => exportableList.some((job) => job.jobId === id));
+        if (currentExportable.length) return currentExportable;
+        const task1 = exportableList.find((j) => j.taskType === "task1");
+        const task2 = exportableList.find((j) => j.taskType === "task2");
         return [task1?.jobId, task2?.jobId].filter(Boolean) as string[];
       });
     }).catch(() => setWritingJobs([]));
@@ -231,11 +192,11 @@ export function ExportPage({
     () => writingJobs.filter((j) => j.status === "ExportReady" || j.status === "Exported"),
     [writingJobs]
   );
-  const writingTask1 = writingExportable.find((j) => j.taskType === "task1");
-  const writingTask2 = writingExportable.find((j) => j.taskType === "task2");
-  const canExportWriting = Boolean(writingTask1) && Boolean(writingTask2)
-    && writingSelected.length === 2
-    && new Set(writingSelected).size === 2;
+  const selectedWritingJobs = writingSelected
+    .map((id) => writingExportable.find((job) => job.jobId === id))
+    .filter((job): job is WritingJob => Boolean(job));
+  const canExportWriting = selectedWritingJobs.length === 2
+    && new Set(selectedWritingJobs.map((job) => job.taskType)).size === 2;
 
   async function runWritingExport() {
     setWritingRunning(true);
@@ -253,7 +214,11 @@ export function ExportPage({
   }
 
   const previewText =
-    mode === "full-assets"
+    mode === "writing-library"
+      ? writingResult
+        ? `写作题库 ${writingResult.version}\n${writingResult.writingExamsDir}`
+        : "尚未导出写作题库。"
+      : mode === "full-assets"
       ? singleResult?.files.find((file) => file.name.endsWith(".js") && file.name !== "manifest.js")
           ?.content.slice(0, 900) ?? "尚未生成导出脚本。"
       : mode === "nas-library"
@@ -263,7 +228,9 @@ export function ExportPage({
           ?.content.slice(0, 900) ?? "尚未生成题目脚本。";
 
   const resultFiles =
-    mode === "full-assets"
+    mode === "writing-library"
+      ? undefined
+      : mode === "full-assets"
       ? singleResult?.files
       : mode === "nas-library"
         ? nasResult?.files
@@ -287,37 +254,43 @@ export function ExportPage({
         ? Boolean(nasResult?.cleanup?.every((item) => item.cleaned))
         : Boolean(jsResult?.cleanup?.every((item) => item.cleaned));
 
+  const activeReadingResult = mode === "full-assets" ? singleResult : mode === "nas-library" ? nasResult : jsResult;
+  const validationOverridden = activeReadingResult?.validationOverridden === true;
+  const ignoredIssueCount = activeReadingResult?.ignoredIssueCount ?? 0;
+
   return (
     <section className="page-enter" data-testid="export-page">
       <div className="section-heading spread">
         <div>
-          <p className="eyebrow">发布</p>
-          <h2>导出与组卷</h2>
+          <p className="eyebrow">发布中心</p>
+          <h2>{jobId ? "导出题目" : mode === "writing-library" ? "发布写作题库" : "发布到 NAS 题库"}</h2>
         </div>
         <div className="button-row">
-          <button className="ghost" data-testid="choose-export-dir" onClick={chooseDir}>选择导出目录</button>
-          <button
-            className="primary"
-            data-testid="generate-export"
-            disabled={running || (!canRunSingle && (mode === "single-js" || mode === "full-assets")) || ((mode === "batch-js" || mode === "nas-library") && !selected.length)}
-            onClick={() => void run()}
-          >
-            {running
-              ? "正在导出..."
-              : mode === "full-assets"
-              ? "导出完整文件"
-              : mode === "batch-js"
-                ? "批量导出 JS"
-                : mode === "nas-library"
-                  ? "发布 NAS 题库"
-                  : "导出当前题目 JS"}
-          </button>
+          <button className="ghost" data-testid="choose-export-dir" onClick={chooseDir}>{mode === "nas-library" ? "选择 NAS 目录" : "选择导出目录"}</button>
+          {mode !== "writing-library" ? (
+            <button
+              className="primary"
+              data-testid="generate-export"
+              disabled={running || (!canRunSingle && (mode === "single-js" || mode === "full-assets")) || ((mode === "batch-js" || mode === "nas-library") && !selected.length)}
+              onClick={() => void run()}
+            >
+              {running
+                ? "正在导出..."
+                : mode === "full-assets"
+                ? "导出完整文件"
+                : mode === "batch-js"
+                  ? "批量导出 JS"
+                  : mode === "nas-library"
+                    ? `发布 ${selected.length} 道题到 NAS`
+                    : "导出当前题目 JS"}
+            </button>
+          ) : null}
         </div>
       </div>
       <div className="export-grid">
         <section className="form-section">
-          <h3>导出方式</h3>
-          {!jobId ? <p className="muted-inline">当前页面已经合并了批量导出和 Pack 组卷。单题导出仍可从具体题目进入。</p> : null}
+          <h3>{jobId ? "导出方式" : "发布方式"}</h3>
+          {!jobId ? <p className="muted-inline">批量发布默认写入 NAS 题库目录；其他导出格式可按需切换。</p> : null}
           <div className="button-row">
             {jobId ? (
               <button
@@ -329,6 +302,15 @@ export function ExportPage({
                 }}
               >
                 当前题目 JS
+              </button>
+            ) : null}
+            {!jobId ? (
+              <button
+                className={mode === "nas-library" ? "primary" : "ghost"}
+                data-testid="mode-nas-library"
+                onClick={() => setMode("nas-library")}
+              >
+                NAS 题库
               </button>
             ) : null}
             <button
@@ -347,13 +329,15 @@ export function ExportPage({
                 完整导出
               </button>
             ) : null}
-            <button
-              className={mode === "nas-library" ? "primary" : "ghost"}
-              data-testid="mode-nas-library"
-              onClick={() => setMode("nas-library")}
-            >
-              NAS 题库
-            </button>
+            {jobId ? (
+              <button
+                className={mode === "nas-library" ? "primary" : "ghost"}
+                data-testid="mode-nas-library"
+                onClick={() => setMode("nas-library")}
+              >
+                NAS 题库
+              </button>
+            ) : null}
             <button
               className={mode === "writing-library" ? "primary" : "ghost"}
               data-testid="mode-writing-library"
@@ -370,7 +354,14 @@ export function ExportPage({
           </div>
           {mode === "batch-js" || mode === "nas-library" ? (
             <>
-              <h3>{mode === "nas-library" ? "选择纳入题库的题目" : "选择题目"}</h3>
+              <div className="spread">
+                <h3>{mode === "nas-library" ? `本次发布清单（${selected.length} 道）` : `选择题目（${selected.length} 道）`}</h3>
+                <div className="button-row">
+                  <button className="ghost small" type="button" onClick={() => setSelected(exportable.map((job) => job.jobId))}>全选</button>
+                  <button className="ghost small" type="button" onClick={() => setSelected([])}>清空</button>
+                </div>
+              </div>
+              {mode === "nas-library" ? <p className="muted-inline">发布会按当前清单生成 NAS 的 <code>manifest.js</code>，未勾选题目不会写入本次清单。</p> : null}
               {exportable.map((job) => (
                 <label className="pick-row" key={job.jobId}>
                   <input
@@ -406,11 +397,12 @@ export function ExportPage({
                     checked={writingSelected.includes(job.jobId)}
                     onChange={(event) =>
                       setWritingSelected((current) => {
-                        const next = event.target.checked
-                          ? (current.includes(job.jobId) ? current : [...current, job.jobId])
-                          : current.filter((id) => id !== job.jobId);
-                        // 最多选两个，且应覆盖 task1+task2
-                        return next.slice(-2);
+                        if (!event.target.checked) return current.filter((id) => id !== job.jobId);
+                        const withoutSameTask = current.filter((id) => {
+                          const selectedJob = writingExportable.find((item) => item.jobId === id);
+                          return selectedJob?.taskType !== job.taskType;
+                        });
+                        return [...withoutSameTask, job.jobId].slice(-2);
                       })
                     }
                   />
@@ -450,6 +442,18 @@ export function ExportPage({
               <strong>{error}</strong>
               {diagnostics?.guidance.map((item) => <p key={item}>{item}</p>)}
               {diagnostics?.issues.length ? <small>共 {diagnostics.issues.length} 个校验项；下方列出前 8 个。</small> : null}
+              {diagnostics?.canForce ? (
+                <div className="button-row">
+                  <button className="danger" data-testid="force-export" disabled={running} onClick={() => void run(mode, selected, "force")}>忽略全部检查并继续导出</button>
+                  <small>只忽略内容与审核门禁；文件、路径或数据无法生成时仍会停止。</small>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {validationOverridden ? (
+            <div className="warning-box" data-testid="export-override-result">
+              <strong>已按要求忽略检查并完成导出</strong>
+              <p>本次保留了 {ignoredIssueCount} 个校验项，后续仍可回到题稿继续补充。</p>
             </div>
           ) : null}
           {cleanupMessage ? (
@@ -461,7 +465,7 @@ export function ExportPage({
             </p>
           ) : null}
           {mode === "nas-library" && nasResult?.version ? (
-            <div className="warning-box">
+            <div className="warning-box" data-testid="nas-export-result">
               <strong>NAS 版本</strong>
               <p>阅读题库已平铺写入所选目录，学生端直接选择这个目录即可读取 <code>manifest.js</code> 与题目脚本。</p>
               {nasResult.readingExamsDir ? <p><code>{nasResult.readingExamsDir}</code></p> : null}
@@ -499,59 +503,6 @@ export function ExportPage({
         </aside>
       </div>
 
-      <div className="pack-grid merged-pack-grid" data-testid="pack-builder">
-        <section className="form-section">
-          <div className="spread">
-            <h3>发布包题目</h3>
-            <button className="primary" data-testid="build-pack" disabled={packRunning || !packSelected.length} onClick={() => void runPack()}>
-              {packRunning ? "正在生成..." : "生成发布包"}
-            </button>
-          </div>
-          <p className="muted-inline">Pack 已并入当前发布中心，用于一次打包多份已发布就绪的题目。</p>
-          {packable.map((job) => (
-            <label className="pick-row" key={job.jobId}>
-              <input
-                type="checkbox"
-                data-testid="pack-job-checkbox"
-                checked={packSelected.includes(job.jobId)}
-                onChange={(event) =>
-                  setPackSelected((current) =>
-                    event.target.checked
-                      ? current.includes(job.jobId)
-                        ? current
-                        : [...current, job.jobId]
-                      : current.filter((id) => id !== job.jobId)
-                  )
-                }
-              />
-              <span>{job.title}</span>
-              <StatusPill status={job.status} />
-            </label>
-          ))}
-          {!packable.length ? <p className="empty">当前没有可打包的题目。</p> : null}
-        </section>
-        <section className="form-section contrast">
-          <h3>发布包设置</h3>
-          <label>packId<input value={packId} onChange={(event) => setPackId(event.target.value)} /></label>
-          <label>version<input value={packVersion} onChange={(event) => setPackVersion(event.target.value)} /></label>
-          <label>institution<input value={packInstitution} onChange={(event) => setPackInstitution(event.target.value)} /></label>
-          <label>validFrom<input type="date" value={packValidFrom} onChange={(event) => setPackValidFrom(event.target.value)} /></label>
-          <label>validTo<input type="date" value={packValidTo} onChange={(event) => setPackValidTo(event.target.value)} /></label>
-          <label>description<textarea value={packDescription} onChange={(event) => setPackDescription(event.target.value)} /></label>
-        </section>
-        <aside className="inspector">
-          <p className="eyebrow">发布包结果</p>
-          <h3>{packResult?.packId ?? "未生成"}</h3>
-          {packError ? <p className="error-text" data-testid="pack-error">{packError}</p> : null}
-          {packResult ? (
-            <dl data-testid="pack-result">
-              <dt>输出路径</dt><dd>{packResult.outputPath}</dd>
-              <dt>文件数量</dt><dd>{packResult.files.length}</dd>
-              <dt>压缩包大小</dt><dd>{packResult.zipSizeBytes ?? "未记录"}</dd>
-            </dl>
-          ) : <p className="empty" data-testid="pack-result">尚未生成发布包。</p>}
-        </aside>
-      </div>
     </section>
   );
 }

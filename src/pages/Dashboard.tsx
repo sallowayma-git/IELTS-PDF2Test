@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { StatusPill } from "../components/StatusPill";
-import { go } from "../app/router";
+import { go, jobResumePath } from "../app/router";
 import { getLibraryStats } from "../api/tauriCommands";
 import { libraryStatusLabel } from "../utils/displayLabels";
 import type { ImportJob, JobStatus, LibraryStats } from "../types";
@@ -66,7 +66,7 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
           </div>
           <div className="job-table">
             {jobs.slice(0, 8).map((job) => (
-              <button className="job-row" key={job.jobId} onClick={() => go(`/jobs/${job.jobId}/document`)}>
+              <button className="job-row" key={job.jobId} onClick={() => go(jobResumePath(job))}>
                 <span>
                   <strong>{job.title}</strong>
                   <small>{job.jobId}</small>
@@ -85,9 +85,9 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
           <ol className="check-list">
             <li>选择本地 PDF、DOCX、TXT 或 MD 文件</li>
             <li>核对解析结果，必要时补充人工转录</li>
-            <li>确认题组、题型和答案</li>
-            <li>编辑可编辑题稿并完成预览校验</li>
-            <li>导出单题文件或加入 Pack</li>
+            <li>仅在识别有风险时确认源文档</li>
+            <li>核对并编辑题组；答案可稍后补充</li>
+            <li>直接导出，或加入批量发布</li>
           </ol>
         </aside>
       </div>

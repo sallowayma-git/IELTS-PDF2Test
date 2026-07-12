@@ -1,4 +1,4 @@
-use crate::html_escape;
+use crate::{authoring_review::answer_is_empty, html_escape};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -392,13 +392,10 @@ pub(crate) fn answer_key_from_authoring(authoring: &Value) -> Value {
             if let Some(questions) = group.get("questions").and_then(Value::as_array) {
                 for question in questions {
                     if let Some(qid) = question.get("id").and_then(Value::as_str) {
-                        map.insert(
-                            qid.to_string(),
-                            question
-                                .get("answer")
-                                .cloned()
-                                .unwrap_or(Value::String(String::new())),
-                        );
+                        let answer = question.get("answer");
+                        if !answer_is_empty(answer) {
+                            map.insert(qid.to_string(), answer.cloned().unwrap_or(Value::Null));
+                        }
                     }
                 }
             }

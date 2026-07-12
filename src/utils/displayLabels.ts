@@ -38,7 +38,7 @@ export const workflowStepLabels: Record<WorkflowStep, string> = {
   LlmReview: "后台识别复核",
   Preview: "预览与编辑",
   Export: "导出",
-  Pack: "组卷"
+  Pack: "发布"
 };
 
 export const validationLayerLabels: Record<ValidationLayer, string> = {
@@ -94,8 +94,8 @@ function issueAreaLabel(issue: ValidationIssue): string {
 function issueMessageLabel(issue: ValidationIssue): string {
   const message = issue.message;
   if (message.includes("Job is still marked NeedsReview")) return "任务仍处于待审核状态，请完成需要确认的项目后再导出。";
-  if (message.includes("All questions and answers must be human verified")) return "所有题目和答案都需要人工确认后才能发布。";
-  if (message.includes("Question answer is empty")) return "题目答案为空，请补齐或确认答案后再发布。";
+  if (message.includes("All questions must be human verified") || message.includes("All questions and answers must be human verified")) return "所有题目都需要人工确认后才能发布。";
+  if (message.includes("Question answer is empty") || message.includes("missing from answerKey") || message.includes("answerKey is empty")) return "题目未设置答案，将作为未评分题导出。";
   if (message.includes("Low-confidence question requires human verification")) return "低置信题目需要人工确认。";
   if (message.includes("Low-confidence group requires human verification")) return "低置信题组需要人工确认。";
   if (message.includes("Low-confidence parsed block requires source review")) return "源文档中有低置信识别内容，需要先确认源文档。";
@@ -112,7 +112,9 @@ export function validationIssueDisplay(issue: ValidationIssue): { title: string;
   const detail = issueMessageLabel(issue);
   const action = issue.fixHint || (
     area.includes("答案")
-      ? "在题稿编辑页补齐答案，并确认该题。"
+      ? issue.severity === "error"
+        ? "可返回题稿补充答案，或使用忽略检查继续导出。"
+        : "答案为可选项，可在之后继续补充。"
       : area.includes("源文档")
         ? "回到源文档审核页确认扫描页、低置信块或视觉补全文本。"
         : area.includes("云端")

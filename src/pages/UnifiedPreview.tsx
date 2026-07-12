@@ -9,9 +9,9 @@ import {
 } from "../api/tauriCommands";
 import { go } from "../app/router";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
+import { setPublishIntent } from "../utils/publishIntent";
 import type { AutoPipelineReport, GroupKind, QuestionDraft, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
 
-const EXPORT_INTENT_KEY_PREFIX = "ielts-author-studio.export-intent.";
 const CLOUD_REVIEW_PENDING_KEY_PREFIX = "ielts-author-studio.cloud-review.";
 const CLOUD_REVIEW_FAILED_KEY_PREFIX = "ielts-author-studio.cloud-review.failed.";
 const CLOUD_REVIEW_QUEUE_STORAGE_KEY = "ielts-author-studio.cloud-review.queue";
@@ -599,7 +599,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     }
   }
 
-  async function directExport() {
+  async function openPublishCenter() {
     if (!ir) return;
     setSaving(true);
     setRuntimeError(undefined);
@@ -607,9 +607,9 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       const saved = await updateAuthoringIr(jobId, { ir });
       setIr(saved);
       startBackgroundArtifacts(jobId);
-      window.sessionStorage.setItem(`${EXPORT_INTENT_KEY_PREFIX}${jobId}`, "single-js");
+      setPublishIntent({ mode: "nas-library", jobId });
       refresh();
-      go(`/jobs/${jobId}/export`);
+      go("/packs");
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -633,9 +633,9 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
             <span className="cloud-indicator-dot" aria-hidden="true" />
             <small>{cloudLabel}</small>
           </div>
-          <button className="ghost" data-testid="verify-all-groups" onClick={() => void verifyAllGroups()} disabled={saving}>全部核对</button>
+          <button className="ghost" data-testid="verify-all-groups" onClick={() => void verifyAllGroups()} disabled={saving}>全部标记已核对</button>
           <button className="ghost" onClick={() => void saveDraft()} disabled={saving}>{saving ? "正在保存..." : "保存"}</button>
-          <button className="primary" data-testid="validate-and-export" onClick={() => void directExport()} disabled={saving}>导出</button>
+          <button className="primary" data-testid="validate-and-export" onClick={() => void openPublishCenter()} disabled={saving}>保存并前往发布</button>
         </div>
       </header>
 
@@ -782,7 +782,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                 <aside className="question-list-pane">
                   <div className="question-list-head">
                     <strong>题目列表</strong>
-                    <small>左侧选题，右侧细改；列表中可直接快改答案。</small>
+                    <small>左侧选题，右侧细改；答案可选填。</small>
                   </div>
                   <div className="question-list-scroll">
                     {activeGroup.questions.map((question) => {
@@ -802,7 +802,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                             <p>{promptPreview(question.prompt)}</p>
                           </button>
                           <label className="question-quick-answer">
-                            快改答案
+                            答案（可选）
                             <input
                               value={answerText(question)}
                               onChange={(event) => updateQuestionAnswer(activeGroup.groupId, question.id, event.target.value)}
@@ -859,7 +859,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
 
                       <div className="question-detail-grid">
                         <label>
-                          标准答案
+                          答案（可选）
                           <input
                             value={answerText(activeQuestion)}
                             onChange={(event) => updateQuestionAnswer(activeGroup.groupId, activeQuestion.id, event.target.value)}
@@ -874,7 +874,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                               verified: event.target.checked
                             }))}
                           />
-                          已核对题干与答案
+                          已核对本题
                         </label>
                       </div>
                     </div>

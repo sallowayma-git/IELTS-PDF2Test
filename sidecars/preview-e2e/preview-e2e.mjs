@@ -35,6 +35,17 @@ function normalizeAnswer(value) {
   return decodeHtml(String(value ?? '')).trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function hasNonEmptyAnswer(value) {
+  if (Array.isArray(value)) return value.some((item) => hasNonEmptyAnswer(item));
+  return normalizeAnswer(value) !== '';
+}
+
+function scoredQuestionIds(source) {
+  const answerKey = source.answerKey ?? {};
+  const order = source.questionOrder ?? Object.keys(answerKey);
+  return order.filter((qid) => Object.prototype.hasOwnProperty.call(answerKey, qid) && hasNonEmptyAnswer(answerKey[qid]));
+}
+
 function attrs(tag) {
   const result = {};
   const pattern = /([:\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
@@ -90,13 +101,13 @@ function collectWithAnswers(source, answers, issues) {
 
       const first = controls[0].attrs;
       const type = (first.type || first.class || first.tag || 'text').toLowerCase();
-      if (type.includes('radio')) {
+      if (hasNonEmptyAnswer(answer) && type.includes('radio')) {
         const values = controls.map((control) => control.attrs.value).filter(Boolean);
         if (!values.some((value) => normalizeAnswer(value) === normalizeAnswer(answer))) {
           issues.push(issue(`$.questionGroups.${group.groupId}.bodyHtml`, `Radio answer for ${qid} is not present in its option values.`));
         }
       }
-      if (type.includes('checkbox')) {
+      if (hasNonEmptyAnswer(answer) && type.includes('checkbox')) {
         const expected = Array.isArray(answer) ? answer : [answer];
         const values = controls.map((control) => control.attrs.value).filter(Boolean).map(normalizeAnswer);
         for (const item of expected) {
@@ -112,7 +123,7 @@ function collectWithAnswers(source, answers, issues) {
 }
 
 function score(source, collected) {
-  const order = source.questionOrder ?? Object.keys(source.answerKey ?? {});
+  const order = scoredQuestionIds(source);
   let correct = 0;
   for (const qid of order) {
     if (normalizeAnswer(collected[qid]) === normalizeAnswer(source.answerKey?.[qid])) correct += 1;
@@ -126,7 +137,7 @@ function score(source, collected) {
 
 function wrongAnswers(source) {
   const wrong = { ...(source.answerKey ?? {}) };
-  const firstQid = (source.questionOrder ?? Object.keys(wrong))[0];
+  const firstQid = scoredQuestionIds(source)[0];
   if (!firstQid) return wrong;
   const current = wrong[firstQid];
   wrong[firstQid] = Array.isArray(current) ? ['__wrong__'] : `${current ?? ''}__wrong__`;
@@ -205,11 +216,6 @@ function validateRuntimeContractSimulator({ previewDir, examId, jobId }) {
       issues.push(issue('$.questionOrder', 'Runtime preview has no questions to render.'));
     }
 
-    const missingAnswer = order.filter((qid) => !(qid in (source.answerKey ?? {})));
-    for (const qid of missingAnswer) {
-      issues.push(issue(`$.answerKey.${qid}`, `Runtime answer key is missing ${qid}.`));
-    }
-
     runtime.collectedAnswers = collectWithAnswers(source, source.answerKey ?? {}, issues);
     runtime.scoreInfo = score(source, runtime.collectedAnswers);
     runtime.wrongScoreInfo = score(source, collectWithAnswers(source, wrongAnswers(source), []));
@@ -255,6 +261,12 @@ def normalize(value):
     return " ".join(str(value if value is not None else "").strip().lower().split())
 
 
+def has_non_empty_answer(value):
+    if isinstance(value, list):
+        return any(has_non_empty_answer(item) for item in value)
+    return normalize(value) != ""
+
+
 def parse_score_text(text):
     match = re.search(r"(\d+)\s*/\s*(\d+)", str(text or ""))
     if not match:
@@ -284,6 +296,7 @@ async def run(payload):
 
     answer_key = source.get("answerKey") if isinstance(source.get("answerKey"), dict) else {}
     order = source.get("questionOrder") if isinstance(source.get("questionOrder"), list) else list(answer_key.keys())
+    scored_order = [qid for qid in order if qid in answer_key and has_non_empty_answer(answer_key.get(qid))]
     display_map = source.get("questionDisplayMap") if isinstance(source.get("questionDisplayMap"), dict) else {}
     display_to_qid = {str(v).strip(): k for k, v in display_map.items() if str(v).strip()}
 
@@ -408,8 +421,9 @@ async def run(payload):
 
         async def fill_answers(answer_map):
             for qid in order:
-                result = await apply_answer(qid, answer_map.get(qid, ""))
-                if not result.get("ok"):
+                raw_value = answer_map.get(qid, "")
+                result = await apply_answer(qid, raw_value)
+                if not result.get("ok") and (has_non_empty_answer(raw_value) or result.get("mode") == "missing"):
                     runtime["warnings"].append(f"answer_fill_partial:{qid}:{result.get('mode')}")
             await page.wait_for_timeout(120)
 
@@ -450,48 +464,45 @@ async def run(payload):
         runtime["collectedAnswers"] = collected
 
         correct_count = 0
-        for qid in order:
+        for qid in scored_order:
             if normalize(collected.get(qid, "")) == normalize(answer_key.get(qid, "")):
                 correct_count += 1
-        total = len(order)
-        if correct_count == 0 and isinstance(correct_payload.get("line"), str):
-            parsed_correct, parsed_total, parsed_percent = parse_score_text(correct_payload.get("line"))
-            runtime["scoreInfo"] = {"total": parsed_total, "correct": parsed_correct, "percent": parsed_percent}
-        else:
-            runtime["scoreInfo"] = {
-                "total": total,
-                "correct": correct_count,
-                "percent": round((correct_count / total) * 100, 2) if total else 0,
-            }
-
-        await page.goto(url, wait_until="load")
-        await page.wait_for_selector("#question-groups .unified-group", timeout=30000)
-        await page.wait_for_selector("#submit-btn", timeout=30000)
-
-        wrong_answers = dict(answer_key)
-        first_qid = order[0]
-        first_value = wrong_answers.get(first_qid, "")
-        wrong_answers[first_qid] = ["__wrong__"] if isinstance(first_value, list) else f"{first_value}__wrong__"
-
-        await fill_answers(wrong_answers)
-        wrong_payload = await submit_and_collect("wrong")
-
-        wrong_collected = {}
-        for row in wrong_payload.get("rows", []):
-            qid = label_to_qid(row.get("label", ""), display_to_qid)
-            if qid:
-                wrong_collected[qid] = row.get("user", "")
-
-        wrong_correct_count = 0
-        for qid in order:
-            if normalize(wrong_collected.get(qid, "")) == normalize(answer_key.get(qid, "")):
-                wrong_correct_count += 1
-
-        runtime["wrongScoreInfo"] = {
+        total = len(scored_order)
+        runtime["scoreInfo"] = {
             "total": total,
-            "correct": wrong_correct_count,
-            "percent": round((wrong_correct_count / total) * 100, 2) if total else 0,
+            "correct": correct_count,
+            "percent": round((correct_count / total) * 100, 2) if total else 0,
         }
+
+        if scored_order:
+            await page.goto(url, wait_until="load")
+            await page.wait_for_selector("#question-groups .unified-group", timeout=30000)
+            await page.wait_for_selector("#submit-btn", timeout=30000)
+
+            wrong_answers = dict(answer_key)
+            first_qid = scored_order[0]
+            first_value = wrong_answers.get(first_qid, "")
+            wrong_answers[first_qid] = ["__wrong__"] if isinstance(first_value, list) else f"{first_value}__wrong__"
+
+            await fill_answers(wrong_answers)
+            wrong_payload = await submit_and_collect("wrong")
+
+            wrong_collected = {}
+            for row in wrong_payload.get("rows", []):
+                qid = label_to_qid(row.get("label", ""), display_to_qid)
+                if qid:
+                    wrong_collected[qid] = row.get("user", "")
+
+            wrong_correct_count = 0
+            for qid in scored_order:
+                if normalize(wrong_collected.get(qid, "")) == normalize(answer_key.get(qid, "")):
+                    wrong_correct_count += 1
+
+            runtime["wrongScoreInfo"] = {
+                "total": total,
+                "correct": wrong_correct_count,
+                "percent": round((wrong_correct_count / total) * 100, 2) if total else 0,
+            }
 
         await context.close()
         await browser.close()
