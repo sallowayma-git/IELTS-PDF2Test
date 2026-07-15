@@ -134,12 +134,12 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
         <div>
           <p className="eyebrow">写作题库创作</p>
           <h2>手输 Task 1 / Task 2 题目，导出为 NAS 端可识别的写作题库</h2>
-          <p>创作完成后到导出页选择两个任务打包下发。</p>
+          <p>创作完成后到 NAS 导出页选择 Task 1 与 Task 2，并发布到学生端题库目录。</p>
         </div>
         <div className="hero-actions">
           <button className="primary" onClick={() => {
             setPublishIntent({ mode: "writing-library" });
-            go("/packs");
+            go("/export");
           }}>前往导出</button>
         </div>
       </div>

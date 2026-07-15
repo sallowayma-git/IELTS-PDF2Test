@@ -9,7 +9,6 @@ import {
 } from "../api/tauriCommands";
 import { go } from "../app/router";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
-import { setPublishIntent } from "../utils/publishIntent";
 import type { AutoPipelineReport, GroupKind, QuestionDraft, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
 
 const CLOUD_REVIEW_PENDING_KEY_PREFIX = "ielts-author-studio.cloud-review.";
@@ -607,9 +606,8 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       const saved = await updateAuthoringIr(jobId, { ir });
       setIr(saved);
       startBackgroundArtifacts(jobId);
-      setPublishIntent({ mode: "nas-library", jobId });
       refresh();
-      go("/packs");
+      go(`/jobs/${jobId}/export`);
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
     } finally {

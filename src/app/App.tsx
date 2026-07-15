@@ -54,7 +54,7 @@ export function App() {
     }
     if (route.jobId && route.name === "preview") return <UnifiedPreview jobId={route.jobId} {...common} />;
     if (route.jobId && route.name === "export") return <ExportPage jobId={route.jobId} jobs={jobs} {...common} />;
-    if (route.name === "packs") return <ExportPage jobs={jobs} {...common} />;
+    if (route.name === "export") return <ExportPage jobs={jobs} {...common} />;
     if (route.name === "writing") return <WritingStudio {...common} />;
     if (route.name === "library") return <LibraryPage {...common} />;
     if (route.name === "libraryExam" && route.examId) return <LibraryExamDetail examId={route.examId} {...common} />;

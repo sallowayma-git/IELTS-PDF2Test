@@ -1,15 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../api/desktopDialogs";
-import { exportNasLibrary, exportReadingAssets, exportReadingJs, exportWritingLibrary, listWritingJobs } from "../api/tauriCommands";
+import { exportNasLibrary, exportWritingLibrary, listWritingJobs } from "../api/tauriCommands";
 import { StatusPill } from "../components/StatusPill";
-import type { ExportResult, ImportJob, JsExportResult, NasExportResult, ValidationIssue, ValidationPolicy, WritingExportResult, WritingJob } from "../types";
+import type { ImportJob, NasExportResult, ValidationIssue, ValidationPolicy, WritingExportResult, WritingJob } from "../types";
 import { validationIssueDisplay } from "../utils/displayLabels";
 import { takePublishIntent } from "../utils/publishIntent";
 
-type ExportMode = "single-js" | "batch-js" | "full-assets" | "nas-library" | "writing-library";
+type ExportMode = "nas-library" | "writing-library";
 
 const EXPORTABLE_STATUSES = new Set(["Working", "NeedsReview", "DraftSaved", "ExportReady", "Exported", "Cleaned"]);
 const DEFAULT_NAS_STATUSES = new Set(["DraftSaved", "ExportReady", "Exported", "Cleaned"]);
+const NAS_EXPORT_DIR_KEY = "ielts-author-studio.confirmed-nas-export-dir.v1";
+
+function isLocalPlaceholder(path: string): boolean {
+  return path.trim().toLowerCase().startsWith("local://");
+}
+
+function restoredNasDirectory(): string {
+  const stored = window.localStorage.getItem(NAS_EXPORT_DIR_KEY)?.trim() ?? "";
+  return stored && !isLocalPlaceholder(stored) ? stored : "";
+}
 
 interface ExportDiagnostics {
   title: string;
@@ -79,11 +89,9 @@ export function ExportPage({
   jobs: ImportJob[];
   refresh: () => void;
 }) {
-  const [mode, setMode] = useState<ExportMode>(jobId ? "single-js" : "nas-library");
-  const [singleResult, setSingleResult] = useState<ExportResult | undefined>();
-  const [jsResult, setJsResult] = useState<JsExportResult | undefined>();
+  const [mode, setMode] = useState<ExportMode>("nas-library");
   const [nasResult, setNasResult] = useState<NasExportResult | undefined>();
-  const [exportDir, setExportDir] = useState<string>("local://exports");
+  const [exportDir, setExportDir] = useState<string>(restoredNasDirectory);
   const [selected, setSelected] = useState<string[]>(jobId ? [jobId] : []);
   const [error, setError] = useState<string | undefined>();
   const [diagnostics, setDiagnostics] = useState<ExportDiagnostics | undefined>();
@@ -99,15 +107,12 @@ export function ExportPage({
     () => jobs.filter((job) => EXPORTABLE_STATUSES.has(job.status)),
     [jobs]
   );
-  const focusedJobId = jobId ?? exportable[0]?.jobId ?? "";
-  const canRunSingle = Boolean(focusedJobId);
+  const hasConfirmedExportDir = Boolean(exportDir.trim()) && !isLocalPlaceholder(exportDir);
 
   useEffect(() => {
-    setMode(jobId ? "single-js" : "nas-library");
+    setMode("nas-library");
     setSelected(jobId ? [jobId] : []);
     setError(undefined);
-    setSingleResult(undefined);
-    setJsResult(undefined);
     setNasResult(undefined);
     setDiagnostics(undefined);
   }, [jobId]);
@@ -129,28 +134,38 @@ export function ExportPage({
 
   async function chooseDir() {
     const selectedDir = await chooseExportDirectory();
-    if (selectedDir) setExportDir(selectedDir);
+    if (!selectedDir) return;
+    if (isLocalPlaceholder(selectedDir)) {
+      const title = "当前环境无法选择真实 NAS 目录";
+      setError(title);
+      setDiagnostics({
+        title,
+        issues: [],
+        guidance: ["请在桌面应用中选择 NAS 挂载目录或共享盘目录后再发布。"],
+        canForce: false
+      });
+      return;
+    }
+    setExportDir(selectedDir);
+    window.localStorage.setItem(NAS_EXPORT_DIR_KEY, selectedDir);
+    setError(undefined);
+    setDiagnostics(undefined);
   }
 
-  async function run(nextMode: ExportMode = mode, nextSelected: string[] = selected, validationPolicy: ValidationPolicy = "strict") {
+  function switchMode(nextMode: ExportMode) {
+    setMode(nextMode);
+    setError(undefined);
+    setDiagnostics(undefined);
+  }
+
+  async function run(validationPolicy: ValidationPolicy = "strict") {
+    if (!hasConfirmedExportDir) return;
     setRunning(true);
     setError(undefined);
-    setSingleResult(undefined);
-    setJsResult(undefined);
     setNasResult(undefined);
     setDiagnostics(undefined);
     try {
-      if (nextMode === "full-assets") {
-        if (!focusedJobId) throw new Error("no_export_focus_job");
-        setSingleResult(await exportReadingAssets(focusedJobId, exportDir, validationPolicy));
-      } else if (nextMode === "nas-library") {
-        setNasResult(await exportNasLibrary({ jobIds: nextSelected, exportDir, validationPolicy }));
-      } else if (nextMode === "single-js") {
-        if (!focusedJobId) throw new Error("no_export_focus_job");
-        setJsResult(await exportReadingJs({ jobIds: [focusedJobId], exportDir, validationPolicy }));
-      } else {
-        setJsResult(await exportReadingJs({ jobIds: nextSelected, exportDir, validationPolicy }));
-      }
+      setNasResult(await exportNasLibrary({ jobIds: selected, exportDir, validationPolicy }));
       refresh();
     } catch (caught) {
       const nextDiagnostics = buildExportDiagnostics(caught);
@@ -199,6 +214,7 @@ export function ExportPage({
     && new Set(selectedWritingJobs.map((job) => job.taskType)).size === 2;
 
   async function runWritingExport() {
+    if (!hasConfirmedExportDir) return;
     setWritingRunning(true);
     setError(undefined);
     setWritingResult(undefined);
@@ -218,155 +234,104 @@ export function ExportPage({
       ? writingResult
         ? `写作题库 ${writingResult.version}\n${writingResult.writingExamsDir}`
         : "尚未导出写作题库。"
-      : mode === "full-assets"
-      ? singleResult?.files.find((file) => file.name.endsWith(".js") && file.name !== "manifest.js")
-          ?.content.slice(0, 900) ?? "尚未生成导出脚本。"
-      : mode === "nas-library"
-        ? nasResult?.files.find((file) => file.name.endsWith(".js") && file.name !== "manifest.js")
-            ?.content.slice(0, 900) ?? "尚未生成 NAS 题库脚本。"
-      : jsResult?.files.find((file) => file.name.endsWith(".js") && file.name !== "manifest.js")
-          ?.content.slice(0, 900) ?? "尚未生成题目脚本。";
+      : nasResult?.files.find((file) => file.name.endsWith(".js") && file.name !== "manifest.js")
+          ?.content.slice(0, 900) ?? "尚未生成 NAS 题库脚本。";
 
-  const resultFiles =
-    mode === "writing-library"
-      ? undefined
-      : mode === "full-assets"
-      ? singleResult?.files
-      : mode === "nas-library"
-        ? nasResult?.files
-        : jsResult?.files;
+  const resultFiles = mode === "writing-library" ? writingResult?.files : nasResult?.files;
 
-  const cleanupMessage =
-    mode === "full-assets"
-      ? singleResult?.cleanup?.message
-      : mode === "nas-library"
-        ? nasResult?.cleanup?.length
-          ? "已完成 NAS 发布，并清理对应任务的过程文件。"
-          : undefined
-        : jsResult?.cleanup?.length
-          ? "已完成导出，并清理对应任务的过程文件。"
-          : undefined;
+  const cleanupMessage = mode === "nas-library" && nasResult?.cleanup?.length
+    ? "已完成 NAS 发布，并清理对应任务的过程文件。"
+    : undefined;
 
-  const cleanupSuccess =
-    mode === "full-assets"
-      ? Boolean(singleResult?.cleanup?.cleaned)
-      : mode === "nas-library"
-        ? Boolean(nasResult?.cleanup?.every((item) => item.cleaned))
-        : Boolean(jsResult?.cleanup?.every((item) => item.cleaned));
+  const cleanupSuccess = Boolean(nasResult?.cleanup?.every((item) => item.cleaned));
 
-  const activeReadingResult = mode === "full-assets" ? singleResult : mode === "nas-library" ? nasResult : jsResult;
+  const activeReadingResult = mode === "nas-library" ? nasResult : undefined;
   const validationOverridden = activeReadingResult?.validationOverridden === true;
   const ignoredIssueCount = activeReadingResult?.ignoredIssueCount ?? 0;
+  const uiBusy = running || writingRunning;
 
   return (
     <section className="page-enter" data-testid="export-page">
       <div className="section-heading spread">
         <div>
-          <p className="eyebrow">发布中心</p>
-          <h2>{jobId ? "导出题目" : mode === "writing-library" ? "发布写作题库" : "发布到 NAS 题库"}</h2>
+          <p className="eyebrow">NAS 导出</p>
+          <h2>{mode === "writing-library" ? "发布写作题库" : "发布阅读题库到 NAS"}</h2>
         </div>
         <div className="button-row">
-          <button className="ghost" data-testid="choose-export-dir" onClick={chooseDir}>{mode === "nas-library" ? "选择 NAS 目录" : "选择导出目录"}</button>
+          <button className="ghost" data-testid="choose-export-dir" disabled={uiBusy} onClick={chooseDir}>选择 NAS 目录</button>
           {mode !== "writing-library" ? (
-            <button
-              className="primary"
-              data-testid="generate-export"
-              disabled={running || (!canRunSingle && (mode === "single-js" || mode === "full-assets")) || ((mode === "batch-js" || mode === "nas-library") && !selected.length)}
-              onClick={() => void run()}
-            >
-              {running
-                ? "正在导出..."
-                : mode === "full-assets"
-                ? "导出完整文件"
-                : mode === "batch-js"
-                  ? "批量导出 JS"
-                  : mode === "nas-library"
-                    ? `发布 ${selected.length} 道题到 NAS`
-                    : "导出当前题目 JS"}
-            </button>
+            <>
+              <button
+                className="primary"
+                data-testid="generate-export"
+                disabled={running || !selected.length || !hasConfirmedExportDir}
+                onClick={() => void run("strict")}
+              >
+                {running ? "正在发布..." : `发布 ${selected.length} 道题到 NAS`}
+              </button>
+              <button
+                className="ghost"
+                data-testid="force-export"
+                disabled={running || !selected.length || !hasConfirmedExportDir}
+                onClick={() => void run("force")}
+              >
+                忽略内容检查并发布
+              </button>
+            </>
           ) : null}
         </div>
       </div>
       <div className="export-grid">
         <section className="form-section">
-          <h3>{jobId ? "导出方式" : "发布方式"}</h3>
-          {!jobId ? <p className="muted-inline">批量发布默认写入 NAS 题库目录；其他导出格式可按需切换。</p> : null}
+          <h3>发布内容</h3>
+          <p className="muted-inline">
+            {mode === "nas-library"
+              ? "阅读题统一发布到 NAS 题库目录；再次发布会更新同名题目，并保留目录中未选中的旧题。"
+              : "写作题库会发布到同一 NAS 根目录下的 writing-exams 子目录。"}
+          </p>
+          {mode === "nas-library" ? <p className="muted-inline">“忽略内容检查并发布”只跳过题稿与审核门禁；目录、写入和数据生成错误仍会停止。</p> : null}
           <div className="button-row">
-            {jobId ? (
-              <button
-                className={mode === "single-js" ? "primary" : "ghost"}
-                data-testid="mode-single-js"
-                onClick={() => {
-                  setMode("single-js");
-                  setSelected([jobId]);
-                }}
-              >
-                当前题目 JS
-              </button>
-            ) : null}
+            <button
+              className={mode === "nas-library" ? "primary" : "ghost"}
+              data-testid="mode-nas-library"
+              disabled={uiBusy}
+              onClick={() => switchMode("nas-library")}
+            >
+              阅读题库
+            </button>
             {!jobId ? (
               <button
-                className={mode === "nas-library" ? "primary" : "ghost"}
-                data-testid="mode-nas-library"
-                onClick={() => setMode("nas-library")}
+                className={mode === "writing-library" ? "primary" : "ghost"}
+                data-testid="mode-writing-library"
+                disabled={uiBusy}
+                onClick={() => switchMode("writing-library")}
               >
-                NAS 题库
+                写作题库
               </button>
             ) : null}
-            <button
-              className={mode === "batch-js" ? "primary" : "ghost"}
-              data-testid="mode-batch-js"
-              onClick={() => setMode("batch-js")}
-            >
-              批量导出 JS
-            </button>
-            {jobId ? (
-              <button
-                className={mode === "full-assets" ? "primary" : "ghost"}
-                data-testid="mode-full-assets"
-                onClick={() => setMode("full-assets")}
-              >
-                完整导出
-              </button>
-            ) : null}
-            {jobId ? (
-              <button
-                className={mode === "nas-library" ? "primary" : "ghost"}
-                data-testid="mode-nas-library"
-                onClick={() => setMode("nas-library")}
-              >
-                NAS 题库
-              </button>
-            ) : null}
-            <button
-              className={mode === "writing-library" ? "primary" : "ghost"}
-              data-testid="mode-writing-library"
-              onClick={() => setMode("writing-library")}
-            >
-              写作题库
-            </button>
           </div>
           <div className="path-picker">
             <span>
-              <strong>导出目录</strong>
-              <small>{exportDir}</small>
+              <strong>NAS 题库目录</strong>
+              <small>{hasConfirmedExportDir ? exportDir : "尚未选择；发布前必须选择学生端可访问的共享目录"}</small>
             </span>
           </div>
-          {mode === "batch-js" || mode === "nas-library" ? (
+          {mode === "nas-library" ? (
             <>
               <div className="spread">
-                <h3>{mode === "nas-library" ? `本次发布清单（${selected.length} 道）` : `选择题目（${selected.length} 道）`}</h3>
+                <h3>{`本次更新（${selected.length} 道）`}</h3>
                 <div className="button-row">
-                  <button className="ghost small" type="button" onClick={() => setSelected(exportable.map((job) => job.jobId))}>全选</button>
-                  <button className="ghost small" type="button" onClick={() => setSelected([])}>清空</button>
+                  <button className="ghost small" type="button" disabled={uiBusy} onClick={() => setSelected(exportable.map((job) => job.jobId))}>全选</button>
+                  <button className="ghost small" type="button" disabled={uiBusy} onClick={() => setSelected([])}>清空</button>
                 </div>
               </div>
-              {mode === "nas-library" ? <p className="muted-inline">发布会按当前清单生成 NAS 的 <code>manifest.js</code>，未勾选题目不会写入本次清单。</p> : null}
+              <p className="muted-inline">未勾选题目不会被修改，也不会从现有 <code>manifest.js</code> 中移除。</p>
               {exportable.map((job) => (
                 <label className="pick-row" key={job.jobId}>
                   <input
                     type="checkbox"
                     data-testid="export-job-checkbox"
+                    disabled={uiBusy}
                     checked={selected.includes(job.jobId)}
                     onChange={(event) =>
                       setSelected((current) =>
@@ -394,6 +359,7 @@ export function ExportPage({
                   <input
                     type="checkbox"
                     data-testid="writing-job-checkbox"
+                    disabled={uiBusy}
                     checked={writingSelected.includes(job.jobId)}
                     onChange={(event) =>
                       setWritingSelected((current) => {
@@ -420,7 +386,7 @@ export function ExportPage({
                 <button
                   className="primary"
                   data-testid="export-writing-library"
-                  disabled={writingRunning || !canExportWriting}
+                  disabled={writingRunning || !canExportWriting || !hasConfirmedExportDir}
                   onClick={() => void runWritingExport()}
                 >
                   {writingRunning ? "正在导出写作题库..." : "导出写作题库"}
@@ -442,12 +408,7 @@ export function ExportPage({
               <strong>{error}</strong>
               {diagnostics?.guidance.map((item) => <p key={item}>{item}</p>)}
               {diagnostics?.issues.length ? <small>共 {diagnostics.issues.length} 个校验项；下方列出前 8 个。</small> : null}
-              {diagnostics?.canForce ? (
-                <div className="button-row">
-                  <button className="danger" data-testid="force-export" disabled={running} onClick={() => void run(mode, selected, "force")}>忽略全部检查并继续导出</button>
-                  <small>只忽略内容与审核门禁；文件、路径或数据无法生成时仍会停止。</small>
-                </div>
-              ) : null}
+              {diagnostics?.canForce ? <small>可使用页面顶部的“忽略内容检查并发布”；文件、路径或数据无法生成时仍会停止。</small> : null}
             </div>
           ) : null}
           {validationOverridden ? (
@@ -467,7 +428,8 @@ export function ExportPage({
           {mode === "nas-library" && nasResult?.version ? (
             <div className="warning-box" data-testid="nas-export-result">
               <strong>NAS 版本</strong>
-              <p>阅读题库已平铺写入所选目录，学生端直接选择这个目录即可读取 <code>manifest.js</code> 与题目脚本。</p>
+              <p>阅读题库已更新到所选共享目录；学生端可从这里读取 <code>manifest.js</code> 与题目脚本。</p>
+              <p>本次更新 {nasResult.assetCount} 道，当前目录共 {nasResult.manifestAssetCount ?? nasResult.assetCount} 道。</p>
               {nasResult.readingExamsDir ? <p><code>{nasResult.readingExamsDir}</code></p> : null}
               <code>{nasResult.version}</code>
             </div>
@@ -498,7 +460,7 @@ export function ExportPage({
         </section>
         <aside className="inspector">
           <p className="eyebrow">导出预览</p>
-          <h3>{mode === "batch-js" ? "批量题目脚本" : mode === "nas-library" ? "NAS 题库脚本" : "题目脚本"}</h3>
+          <h3>{mode === "nas-library" ? "NAS 题库脚本" : "写作题库"}</h3>
           <pre>{previewText}</pre>
         </aside>
       </div>

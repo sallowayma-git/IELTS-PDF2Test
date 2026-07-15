@@ -6,13 +6,16 @@ use authoring_commands::{
 use auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
 use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
-use export_artifacts::{build_manifest, build_wrapper, safe_exam_id};
-use export_nas_library::{export_nas_library_core, nas_reading_exams_dir, normalize_nas_library_root};
-use export_pack::{
-    export_reading_assets_with_options_core, export_reading_js_core, ExportValidationOptions,
+use export_artifacts::{build_wrapper, safe_exam_id};
+use export_nas_library::{
+    export_nas_library_core, nas_reading_exams_dir, resolve_real_nas_library_root,
+    write_nas_reading_sources,
 };
 #[cfg(test)]
 use export_pack::export_reading_assets_core;
+use export_pack::{
+    export_reading_assets_with_options_core, export_reading_js_core, ExportValidationOptions,
+};
 use export_writing_library::export_writing_library_core;
 use llm_commands::{
     apply_llm_suggestion_core, delete_llm_profile_core, llm_run_group_core, save_llm_profile_core,
@@ -596,10 +599,9 @@ fn export_nas_library_from_pdf_paths(paths: &[PathBuf], args: &[String]) -> Comm
         cli_option_value(args, "--export-dir").ok_or_else(|| "missing_export_dir".to_string())?;
     let version = cli_option_value(args, "--version")
         .unwrap_or_else(|| Utc::now().format("%Y.%m.%d-%H%M%S").to_string());
-    let library_root = normalize_nas_library_root(&PathBuf::from(export_dir));
+    let library_root = resolve_real_nas_library_root(&export_dir)?;
     fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
     let reading_exams_dir = nas_reading_exams_dir(&library_root);
-    fs::create_dir_all(&reading_exams_dir).map_err(|error| error.to_string())?;
 
     let mut seen_exam_ids = HashSet::new();
     let mut source_entries = Vec::with_capacity(paths.len());
@@ -621,11 +623,8 @@ fn export_nas_library_from_pdf_paths(paths: &[PathBuf], args: &[String]) -> Comm
         .iter()
         .map(|(_, _, source, _)| source.clone())
         .collect::<Vec<_>>();
-    let manifest_js = build_manifest(&sources)?;
-    for (_, exam_id, _, wrapper_js) in &source_entries {
-        util::write_text(&reading_exams_dir.join(format!("{exam_id}.js")), wrapper_js)?;
-    }
-    util::write_text(&reading_exams_dir.join("manifest.js"), &manifest_js)?;
+    let (manifest_js, manifest_asset_count) =
+        write_nas_reading_sources(&reading_exams_dir, &sources)?;
     let exam_ids = source_entries
         .iter()
         .map(|(_, exam_id, _, _)| exam_id.clone())
@@ -653,6 +652,7 @@ fn export_nas_library_from_pdf_paths(paths: &[PathBuf], args: &[String]) -> Comm
         "examId": exam_ids.first().cloned().unwrap_or_default(),
         "examIds": exam_ids,
         "assetCount": source_entries.len(),
+        "manifestAssetCount": manifest_asset_count,
         "files": files,
         "readingSource": sources.first().cloned().unwrap_or(Value::Null),
         "readingSources": sources,
@@ -3275,12 +3275,13 @@ Answers
         let issues = validator::validate_reading_source_contract(&source);
         let warning = issues
             .iter()
-            .find(|issue| {
-                issue.get("path").and_then(Value::as_str) == Some("$.answerKey.q2")
-            })
+            .find(|issue| issue.get("path").and_then(Value::as_str) == Some("$.answerKey.q2"))
             .expect("missing answer warning");
 
-        assert_eq!(warning.get("severity").and_then(Value::as_str), Some("warning"));
+        assert_eq!(
+            warning.get("severity").and_then(Value::as_str),
+            Some("warning")
+        );
         assert!(!validator::has_error_issues(&issues));
     }
 
@@ -7025,8 +7026,7 @@ Answers
         assert!(ignored_issues.iter().any(|issue| {
             issue.get("jobId").and_then(Value::as_str) == Some(job.job_id.as_str())
                 && issue.get("severity").and_then(Value::as_str) == Some("error")
-                && issue.get("path").and_then(Value::as_str)
-                    == Some("$.audit.humanVerified")
+                && issue.get("path").and_then(Value::as_str) == Some("$.audit.humanVerified")
                 && issue.get("issueId").and_then(Value::as_str).is_some()
                 && issue.get("message").and_then(Value::as_str).is_some()
         }));
@@ -7043,8 +7043,9 @@ Answers
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .any(|issue| issue.get("path").and_then(Value::as_str)
-                == Some("$.audit.humanVerified")));
+            .any(
+                |issue| issue.get("path").and_then(Value::as_str) == Some("$.audit.humanVerified")
+            ));
         let project: Value =
             read_json(&job_dir(&root, &job.job_id).join("authoring-project.json")).unwrap();
         assert!(project
@@ -7600,6 +7601,58 @@ Answers
     }
 
     #[test]
+    fn consecutive_nas_cli_subset_exports_merge_existing_manifest() {
+        let test_root = temp_test_root();
+        let library_root = test_root.join("nas-cli-library");
+        let export_args = vec![
+            "--export-dir".to_string(),
+            library_root.to_string_lossy().to_string(),
+            "--version".to_string(),
+            "2026.07.16-cli-merge".to_string(),
+        ];
+        let first_fixture = parser_fixture("complex-reading.pdf");
+        let second_fixture = parser_fixture("demanding-reading-passage-3.pdf");
+
+        let first = export_nas_library_from_pdf_paths(&[first_fixture], &export_args).unwrap();
+        let first_exam_id = first
+            .get("examId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            first.get("manifestAssetCount").and_then(Value::as_u64),
+            Some(1)
+        );
+
+        let second = export_nas_library_from_pdf_paths(&[second_fixture], &export_args).unwrap();
+        let second_exam_id = second
+            .get("examId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        assert_ne!(first_exam_id, second_exam_id);
+        assert_eq!(
+            second
+                .get("manifestAssetCount")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+
+        let reading_exams_dir = nas_reading_exams_dir(&library_root);
+        let manifest = fs::read_to_string(reading_exams_dir.join("manifest.js")).unwrap();
+        assert!(manifest.contains(&first_exam_id));
+        assert!(manifest.contains(&second_exam_id));
+        assert!(reading_exams_dir
+            .join(format!("{first_exam_id}.js"))
+            .exists());
+        assert!(reading_exams_dir
+            .join(format!("{second_exam_id}.js"))
+            .exists());
+
+        let _ = fs::remove_dir_all(test_root);
+    }
+
+    #[test]
     fn cleanup_respects_diagnostics_artifact_retention() {
         let root = temp_test_root();
         let (job, _) = make_publishable_fixture(&root);
@@ -7803,6 +7856,15 @@ Answers
                 blocks.push((text, run_format, heading_level));
             }
         }
+
+        let opening_instruction = blocks
+            .iter()
+            .find(|(text, _, _)| text.starts_with("You should spend"))
+            .map(|(text, _, _)| text.as_str())
+            .expect("opening IELTS instruction should be extracted");
+        assert!(opening_instruction.contains("spend about 20 minutes"));
+        assert!(opening_instruction.contains("minutes on Questions 1-13"));
+        assert!(!opening_instruction.contains("spendabout"));
 
         // The centered, bold, largest-font passage title must be a heading.
         let title = blocks
@@ -8314,7 +8376,7 @@ Answers
   <w:body>
     <w:p><w:pPr><w:pStyle w:val="IELTSHeading"/></w:pPr><w:r><w:t>READING PASSAGE 2</w:t></w:r></w:p>
     <w:p><w:r><w:t>Questions 14-16 Match each statement with the correct paragraph.</w:t></w:r></w:p>
-    <w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="42"/></w:numPr></w:pPr><w:r><w:t>A early research</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="IELTSOption"/></w:pPr><w:r><w:t>A early research</w:t></w:r></w:p>
     <w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="42"/></w:numPr></w:pPr><w:r><w:t>B later criticism</w:t></w:r></w:p>
   </w:body>
 </w:document>"#;
@@ -8334,6 +8396,7 @@ Answers
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:style w:type="paragraph" w:styleId="BaseHeading"><w:name w:val="Heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>
   <w:style w:type="paragraph" w:styleId="IELTSHeading"><w:name w:val="IELTS Passage Heading"/><w:basedOn w:val="BaseHeading"/></w:style>
+  <w:style w:type="paragraph" w:styleId="IELTSOption"><w:name w:val="IELTS Option"/><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="42"/></w:numPr></w:pPr></w:style>
 </w:styles>"#,
             )
             .unwrap();
@@ -8416,6 +8479,12 @@ Answers
                 .and_then(Value::as_str),
             Some("%2.")
         );
+        assert_eq!(
+            list_block
+                .pointer("/layoutHints/numbering/renderedLabel")
+                .and_then(Value::as_str),
+            Some("A.")
+        );
 
         let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
         let evidence = split
@@ -8425,6 +8494,217 @@ Answers
         assert!(evidence
             .iter()
             .any(|item| item.get("numberingId").and_then(Value::as_str) == Some("42")));
+
+        let _ = fs::remove_file(docx_path);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn docx_auto_numbering_recovers_questions_options_and_student_html() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let docx_path = env::temp_dir().join(format!(
+            "epic8-docx-auto-numbering-{}.docx",
+            Uuid::new_v4().simple()
+        ));
+        let output = env::temp_dir().join(format!(
+            "epic8-docx-auto-numbering-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        write_minimal_docx(
+            &docx_path,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>READING PASSAGE 1</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Archive access</w:t></w:r></w:p>
+    <w:p><w:r><w:t>The archive moved so visitors could inspect maps in a larger room.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Choose the correct letter, A, B, C or D.</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="10"/></w:numPr></w:pPr><w:r><w:t>Why did the archive move?</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="20"/></w:numPr></w:pPr><w:r><w:t>To reduce staffing</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="20"/></w:numPr></w:pPr><w:r><w:t>To provide more space</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="20"/></w:numPr></w:pPr><w:r><w:t>To close the map room</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="20"/></w:numPr></w:pPr><w:r><w:t>To sell the collection</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="10"/></w:numPr></w:pPr><w:r><w:t>What can visitors inspect?</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="21"/></w:numPr></w:pPr><w:r><w:t>Maps</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="21"/></w:numPr></w:pPr><w:r><w:t>Tickets</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="21"/></w:numPr></w:pPr><w:r><w:t>Furniture</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="21"/></w:numPr></w:pPr><w:r><w:t>Photographs only</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Choose the correct heading for each paragraph from the list of headings.</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="30"/></w:numPr></w:pPr><w:r><w:t>Early access problems</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="30"/></w:numPr></w:pPr><w:r><w:t>A larger public archive</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="30"/></w:numPr></w:pPr><w:r><w:t>Future collection plans</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="11"/></w:numPr></w:pPr><w:r><w:t>Paragraph A</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="11"/></w:numPr></w:pPr><w:r><w:t>Paragraph B</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Answers 14 B 15 A 16 ii 17 i</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#,
+        );
+        {
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&docx_path)
+                .unwrap();
+            let mut zip = zip::ZipWriter::new_append(file).unwrap();
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("word/numbering.xml", options).unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+  <w:abstractNum w:abstractNumId="2"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="upperLetter"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+  <w:abstractNum w:abstractNumId="3"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="lowerRoman"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+  <w:num w:numId="10"><w:abstractNumId w:val="1"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="14"/></w:lvlOverride></w:num>
+  <w:num w:numId="11"><w:abstractNumId w:val="1"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="16"/></w:lvlOverride></w:num>
+  <w:num w:numId="20"><w:abstractNumId w:val="2"/></w:num>
+  <w:num w:numId="21"><w:abstractNumId w:val="2"/></w:num>
+  <w:num w:numId="30"><w:abstractNumId w:val="3"/></w:num>
+</w:numbering>"#,
+            )
+            .unwrap();
+            zip.finish().unwrap();
+        }
+
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &docx_path,
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let blocks = doc
+            .pointer("/pages/0/blocks")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(blocks.iter().any(|block| {
+            block.get("text").and_then(Value::as_str) == Some("14. Why did the archive move?")
+                && block
+                    .pointer("/layoutHints/numbering/renderedLabel")
+                    .and_then(Value::as_str)
+                    == Some("14.")
+        }));
+        assert!(blocks.iter().any(|block| {
+            block.get("text").and_then(Value::as_str) == Some("A. To reduce staffing")
+        }));
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split.pointer("/questionGroupCandidates/0/questionRange"),
+            Some(&json!([14, 15]))
+        );
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/kindHint")
+                .and_then(Value::as_str),
+            Some("single_choice")
+        );
+        assert_eq!(
+            split.pointer("/questionGroupCandidates/1/questionRange"),
+            Some(&json!([16, 17]))
+        );
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/1/kindHint")
+                .and_then(Value::as_str),
+            Some("heading_matching")
+        );
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/prompt")
+                .and_then(Value::as_str),
+            Some("Why did the archive move?")
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/1/prompt")
+                .and_then(Value::as_str),
+            Some("What can visitors inspect?")
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/interaction/options"),
+            Some(&json!(["A", "B", "C", "D"]))
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/interaction/optionTexts/B")
+                .and_then(Value::as_str),
+            Some("To provide more space")
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/1/interaction/optionTexts/A")
+                .and_then(Value::as_str),
+            Some("Maps")
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/questions/0/prompt")
+                .and_then(Value::as_str),
+            Some("Paragraph A")
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/questions/0/interaction/options"),
+            Some(&json!(["i", "ii", "iii"]))
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/questions/0/interaction/optionTexts/ii")
+                .and_then(Value::as_str),
+            Some("A larger public archive")
+        );
+
+        let source = reading_source(&ir);
+        let body_html = source
+            .pointer("/questionGroups/0/bodyHtml")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(body_html.contains("value=\"B\""));
+        assert!(body_html.contains("To provide more space"));
+
+        let _ = fs::remove_file(docx_path);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn docx_embedded_drawing_requires_source_review_warning() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let docx_path = env::temp_dir().join(format!(
+            "epic8-docx-drawing-warning-{}.docx",
+            Uuid::new_v4().simple()
+        ));
+        let output = env::temp_dir().join(format!(
+            "epic8-docx-drawing-warning-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        write_minimal_docx(
+            &docx_path,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Questions 1-2 Label the map below.</w:t></w:r></w:p>
+    <w:p><w:r><w:drawing/></w:r></w:p>
+  </w:body>
+</w:document>"#,
+        );
+
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &docx_path,
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let warnings = doc
+            .pointer("/parser/warnings")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(warnings.iter().any(|warning| {
+            warning
+                .as_str()
+                .unwrap_or_default()
+                .contains("embedded drawings or images")
+        }));
 
         let _ = fs::remove_file(docx_path);
         let _ = fs::remove_file(output);

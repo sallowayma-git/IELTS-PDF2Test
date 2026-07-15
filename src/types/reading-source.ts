@@ -117,6 +117,7 @@ export interface NasExportResult {
   jobIds: string[];
   examIds: string[];
   assetCount: number;
+  manifestAssetCount?: number;
   libraryRoot?: string;
   readingExamsDir?: string;
   sourceDir?: string;

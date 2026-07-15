@@ -562,6 +562,30 @@ function normalizedQuestionContext(text: string): string {
   return text.toLowerCase().split(/\s+/).filter(Boolean).join(" ");
 }
 
+function hasExplicitZeroQuestionGroupMarker(text: string): boolean {
+  const lower = text.toLowerCase();
+  return [
+    "仅原文无题",
+    "仅文章无题",
+    "无题版",
+    "passage-only",
+    "passage_only",
+    "passage only",
+    "no-question-groups",
+    "no question groups",
+    "no questions",
+    "expected-zero-question-groups"
+  ].some((marker) => lower.includes(marker));
+}
+
+function jobExplicitlyDeclaresZeroQuestionGroups(job?: ImportJob): boolean {
+  if (!job) return false;
+  return hasExplicitZeroQuestionGroupMarker(job.title)
+    || job.tags.some(hasExplicitZeroQuestionGroupMarker)
+    || job.sourceFiles.some((source) => hasExplicitZeroQuestionGroupMarker(source.originalName)
+      || hasExplicitZeroQuestionGroupMarker(source.storedName));
+}
+
 function hasUmbrellaQuestionContext(text: string): boolean {
   const lower = normalizedQuestionContext(text);
   if (!lower.includes("reading passage")) return false;
@@ -722,6 +746,7 @@ function detectGroupKind(text: string): GroupKind {
   if (lower.includes("list of headings") || lower.includes("matching headings") || lower.includes("correct heading for") && lower.includes("headings")) return "heading_matching";
   if (lower.includes("classify") || lower.includes("classification") || lower.includes("according to which")) return "classification";
   if (lower.includes("which paragraph contains") || lower.includes("which section contains") || lower.includes("which paragraph mentions") || lower.includes("which section mentions") || lower.includes("which paragraph refers to") || lower.includes("which section refers to") || lower.includes("matching information")) return "matching_information";
+  if (isSingleChoiceText(text)) return "single_choice";
   if (isSentenceEndingMatchingText(text)) return "matching";
   if (normalized.includes("write the correct letter") && hasLetterOptionSpan(normalized)) return "matching";
   if (isMatchingPromptText(normalized)) return "matching";
@@ -731,7 +756,6 @@ function detectGroupKind(text: string): GroupKind {
   if (isShortAnswerInstructionText(text)) return "short_answer";
   if (lower.includes("complete the sentence") || lower.includes("complete the sentences")) return "sentence_completion";
   if (hasNumberedInlineBlanks(text)) return "sentence_completion";
-  if (isSingleChoiceText(text)) return "single_choice";
   if (lower.includes("short answer")) return "short_answer";
   return "short_answer";
 }
@@ -757,13 +781,15 @@ function hasLetterOptionSpan(normalized: string): boolean {
     "a-g",
     "a-h",
     "a-i",
+    "a-j",
     "letters a-c",
     "letters a-d",
     "letters a-e",
     "letters a-f",
     "letters a-g",
     "letters a-h",
-    "letters a-i"
+    "letters a-i",
+    "letters a-j"
   ].some((marker) => normalized.includes(marker));
 }
 
@@ -784,7 +810,6 @@ function isMatchingPromptText(normalized: string): boolean {
     || normalized.includes("match each opinion")
     || normalized.includes("match each sentence")
     || normalized.includes("match each with")
-    || normalized.includes("write the correct letter")
     || normalized.includes("look at the following")
     || normalized.includes("list of headings")
     || normalized.includes("correct heading for each");
@@ -792,6 +817,9 @@ function isMatchingPromptText(normalized: string): boolean {
 
 function isSingleChoiceText(text: string): boolean {
   const normalized = normalizedInstructionText(text);
+  const explicitLetterList = ["a, b, c or d", "a, b, c, or d", "a, b or c", "a, b, or c"]
+    .some((marker) => normalized.includes(marker));
+  if ((normalized.includes("choose the correct letter") || normalized.includes("write the correct letter")) && explicitLetterList) return true;
   if (isMatchingPromptText(normalized)) return false;
   if (normalized.includes("choose the correct letter") && hasSingleChoiceOptionRun(normalized)) return true;
   if (normalized.includes("which of the following") && hasSingleChoiceOptionRun(normalized)) return true;
@@ -892,6 +920,31 @@ function findNumberedBlankMarker(text: string, number: number, from: number): [n
   return undefined;
 }
 
+function previousNonSpaceChar(text: string, start: number): string | undefined {
+  for (let index = Math.min(start, text.length) - 1; index >= 0; index -= 1) {
+    if (!/\s/.test(text[index])) return text[index];
+  }
+  return undefined;
+}
+
+function previousWordLower(text: string, start: number): string {
+  let end = Math.min(start, text.length);
+  while (end > 0 && /\s/.test(text[end - 1])) end -= 1;
+  let begin = end;
+  while (begin > 0 && /[A-Za-z]/.test(text[begin - 1])) begin -= 1;
+  return text.slice(begin, end).toLowerCase();
+}
+
+function isNonQuestionNumberContext(text: string, start: number): boolean {
+  if (["-", "‐", "‑", "‒", "–", "—"].includes(previousNonSpaceChar(text, start) ?? "")) return true;
+  if (["passage", "box", "boxes"].includes(previousWordLower(text, start))) return true;
+  const clause = text.slice(0, start).split(/[\n\r.?!]/).at(-1) ?? "";
+  return clause
+    .split(/\s+/)
+    .map((word) => word.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, "").toLowerCase())
+    .some((word) => ["box", "boxes", "question", "questions"].includes(word));
+}
+
 function findNumberMarker(text: string, number: number, from: number): [number, number] | undefined {
   const needle = String(number);
   let search = Math.min(from, text.length);
@@ -901,6 +954,10 @@ function findNumberMarker(text: string, number: number, from: number): [number, 
     const afterDigits = start + needle.length;
     const before = start > 0 ? text[start - 1] : "";
     if (before && !/[\s([<>]/.test(before)) {
+      search = afterDigits;
+      continue;
+    }
+    if (isNonQuestionNumberContext(text, start)) {
       search = afterDigits;
       continue;
     }
@@ -1026,6 +1083,7 @@ function inferGroupRangeEndFromMarkers(text: string, start: number, headingEnd: 
 function letterOptionsForText(text: string): string[] {
   const lower = text.toLowerCase();
   const normalized = lower.replace(/[‐‑‒–—]/g, "-");
+  if (normalized.includes("a-j")) return ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
   if (normalized.includes("a-i")) return ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
   if (normalized.includes("a-h")) return ["A", "B", "C", "D", "E", "F", "G", "H"];
   if (normalized.includes("a-g") || lower.includes("list of headings")) return ["A", "B", "C", "D", "E", "F", "G"];
@@ -1517,20 +1575,25 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
     };
   }
 
-  const firstQuestionIndex = blocks.findIndex(isQuestionBlock);
-  const firstConcreteQuestionIndex = blocks.findIndex((block, index) => {
+  const explicitlyZeroQuestionGroups = jobExplicitlyDeclaresZeroQuestionGroups(job);
+  const firstQuestionIndex = explicitlyZeroQuestionGroups ? -1 : blocks.findIndex(isQuestionBlock);
+  const firstConcreteQuestionIndex = explicitlyZeroQuestionGroups ? -1 : blocks.findIndex((block, index) => {
     const text = blockText(block);
     return Boolean(detectQuestionHeadingRange(text)) && !isUmbrellaQuestionBlock(blocks, index);
   });
   const firstAnswerIndex = blocks.findIndex(isAnswerBlock);
   const passageBlocks =
-    firstConcreteQuestionIndex >= 0
+    explicitlyZeroQuestionGroups
+      ? blocks.filter((block) => !isNonContentPlaceholderBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
+      : firstConcreteQuestionIndex >= 0
       ? blocks.filter((block, index) => index < firstConcreteQuestionIndex && !isNonContentPlaceholderBlock(block) && !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
       : blocks.filter((block) => !isNonContentPlaceholderBlock(block) && !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore");
   const deferredPassageBlocks: DocumentBlock[] = [];
-  const allUmbrellaBlocks = blocks.filter((_, index) => isUmbrellaQuestionBlock(blocks, index));
+  const allUmbrellaBlocks = explicitlyZeroQuestionGroups ? [] : blocks.filter((_, index) => isUmbrellaQuestionBlock(blocks, index));
   const questionBlocks =
-    firstConcreteQuestionIndex >= 0
+    explicitlyZeroQuestionGroups
+      ? []
+      : firstConcreteQuestionIndex >= 0
       ? blocks
           .slice(firstConcreteQuestionIndex)
           .filter((block) => !isNonContentPlaceholderBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
@@ -1668,9 +1731,11 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
   const fallbackPassageRange = firstQuestionIndex > 0 ? blocks.slice(0, firstQuestionIndex).map((block) => block.blockId) : blocks.slice(0, Math.max(1, Math.min(3, blocks.length))).map((block) => block.blockId);
   const passageRange = filteredPassageBlocks.length ? filteredPassageBlocks.map((block) => block.blockId) : fallbackPassageRange;
   const issues = [
-    ...(questionGroupCandidates.length ? [] : ["未识别到题号范围，请手动切分。"]),
+    ...(explicitlyZeroQuestionGroups && !questionGroupCandidates.length
+      ? ["源文件已标记为仅文章无题，未创建题组。"]
+      : questionGroupCandidates.length ? [] : ["未识别到题号范围，请手动切分。"]),
     ...(questionGroupCandidates.some((candidate) => candidate.requiresManualQuestionImport) ? ["仅识别到总题号范围，请导入或手动填写每道题题干。"] : []),
-    ...(Object.keys(answerMap).length ? [] : ["未识别到答案，请手动填写。"]),
+    ...(Object.keys(answerMap).length || explicitlyZeroQuestionGroups && !questionGroupCandidates.length ? [] : ["未识别到答案，请手动填写。"]),
     ...(firstAnswerIndex >= 0 && firstQuestionIndex >= 0 && firstAnswerIndex < firstQuestionIndex ? ["答案内容出现在题目前，请确认切分顺序。"] : [])
   ];
 
@@ -1737,13 +1802,40 @@ function promptForQuestion(groupText: string, number: number, _fallbackHeading: 
   return "";
 }
 
+function findAsciiSectionMarker(text: string, from: number, marker: string): number | undefined {
+  const lower = text.toLowerCase();
+  let search = Math.min(from, text.length);
+  while (search < text.length) {
+    const relative = lower.slice(search).indexOf(marker);
+    if (relative < 0) return undefined;
+    const start = search + relative;
+    const end = start + marker.length;
+    const before = text[start - 1] ?? "";
+    const after = text[end] ?? "";
+    const beforeOk = !before || /[\s:;.\])]/.test(before);
+    const afterOk = !after || /[\s:;.\-–—]/.test(after);
+    const startsLine = !text.slice(0, start).split(/[\n\r]/).at(-1)?.trim();
+    const followedByColon = after === ":";
+    const followedByAnswerNumber = marker === "answers" && /^\s+\d{1,3}\b/.test(text.slice(end));
+    // "answers" is also an ordinary verb. It is a terminal marker only in
+    // heading form, with a colon, or immediately before a numbered key.
+    const headingLike = marker !== "answers" || startsLine || followedByColon || followedByAnswerNumber;
+    if (beforeOk && afterOk && headingLike) return start;
+    search = end;
+  }
+  return undefined;
+}
+
 function findFinalPromptBoundary(text: string, from: number): number {
   const lower = text.toLowerCase();
-  return [" questions ", " answers", " answer key"]
-    .map((marker) => lower.slice(from).indexOf(marker))
-    .filter((index) => index >= 0)
-    .map((index) => from + index)
-    .sort((a, b) => a - b)[0] ?? text.length;
+  let boundary = text.length;
+  const nextQuestions = lower.slice(from).search(/\squestions?\s+\d{1,3}\b/);
+  if (nextQuestions >= 0) boundary = Math.min(boundary, from + nextQuestions);
+  for (const marker of ["answer key", "answers", "disclaimer"]) {
+    const index = findAsciiSectionMarker(text, from, marker);
+    if (index !== undefined) boundary = Math.min(boundary, index);
+  }
+  return boundary;
 }
 
 function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr): ReadingAuthoringIr {
@@ -1756,7 +1848,7 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
     const kind = candidate.kindHint ?? "short_answer";
     const requiresManualQuestionImport = candidate.requiresManualQuestionImport === true;
     const groupBlocks = candidate.blockIds.map((blockId) => blocksById.get(blockId)).filter(Boolean) as DocumentBlock[];
-    const groupText = groupBlocks.map(blockText).join(" ") || candidate.instructionText;
+    const groupText = groupBlocks.map(blockText).join("\n") || candidate.instructionText;
     const [start, end] = candidate.questionRange;
     const layoutHint = candidate.layoutHint ?? layoutHintForGroup(kind, groupText);
     const questions = Array.from({ length: Math.max(0, end - start + 1) }, (_, offset) => start + offset).map((number) => {
@@ -1778,7 +1870,9 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       groupId: candidate.groupId || `group-${index + 1}`,
       kind,
       questionRange: candidate.questionRange,
-      instruction: [candidate.heading],
+      instruction: candidate.instructionText && candidate.instructionText.trim() !== candidate.heading.trim()
+        ? [candidate.heading, candidate.instructionText]
+        : [candidate.heading],
       questions,
       layout: {
         template: templateForKind(kind),

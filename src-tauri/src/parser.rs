@@ -486,13 +486,17 @@ fn parse_pdf_with_rust_text_extractor(
             // pdfium was loadable but the specific PDF failed. Record a
             // warning and fall back, so a single corrupt PDF doesn't block
             // the whole pipeline.
-            let mut fallback = parse_pdf_with_text_layer(job, source, upload_path, output_path, mode)?;
+            let mut fallback =
+                parse_pdf_with_text_layer(job, source, upload_path, output_path, mode)?;
             if let Some(parser) = fallback.get_mut("parser").and_then(Value::as_object_mut) {
                 let warnings = parser
                     .entry("warnings".to_string())
                     .or_insert_with(|| json!([]));
                 if let Some(items) = warnings.as_array_mut() {
-                    items.push(json!(format!("pdfium_backend_fell_back_to_text_layer:{}", other)));
+                    items.push(json!(format!(
+                        "pdfium_backend_fell_back_to_text_layer:{}",
+                        other
+                    )));
                 }
             }
             return Ok(fallback);
@@ -680,6 +684,7 @@ struct DocxParagraphMeta {
     numbering_id: Option<String>,
     numbering_format: Option<String>,
     numbering_text: Option<String>,
+    rendered_numbering_label: Option<String>,
     abstract_numbering_id: Option<String>,
     style_heading_level: Option<u32>,
     section_columns: Option<DocxSectionColumns>,
@@ -755,7 +760,11 @@ impl DocxParagraphMeta {
         // passage sub-heading (level 3) or, when centered, the passage title
         // (level 2). This rescues IELTS DOCX exports that mark structure only
         // via run formatting rather than Heading styles.
-        if centered { Some(2) } else { Some(3) }
+        if centered {
+            Some(2)
+        } else {
+            Some(3)
+        }
     }
 
     fn layout_hints(&self) -> Option<Value> {
@@ -796,7 +805,8 @@ impl DocxParagraphMeta {
                     "id": self.numbering_id,
                     "abstractId": self.abstract_numbering_id,
                     "format": self.numbering_format,
-                    "text": self.numbering_text
+                    "text": self.numbering_text,
+                    "renderedLabel": self.rendered_numbering_label
                 })
             } else {
                 Value::Null
@@ -831,19 +841,34 @@ struct DocxStyleDef {
     name: Option<String>,
     based_on: Option<String>,
     outline_level: Option<u32>,
+    numbering_level: Option<u32>,
+    numbering_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct DocxNumberingLevelDef {
     level: u32,
     format: Option<String>,
     text: Option<String>,
+    start: u32,
+}
+
+impl Default for DocxNumberingLevelDef {
+    fn default() -> Self {
+        Self {
+            level: 0,
+            format: None,
+            text: None,
+            start: 1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 struct DocxNumberingDefs {
     num_to_abstract: HashMap<String, String>,
     abstract_levels: HashMap<(String, u32), DocxNumberingLevelDef>,
+    start_overrides: HashMap<(String, u32), u32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -892,6 +917,11 @@ fn parse_docx_styles_xml(styles_xml: &[u8]) -> CommandResult<HashMap<String, Doc
                     } else if is_word_tag(&name, b"outlineLvl") {
                         style.outline_level =
                             attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                    } else if is_word_tag(&name, b"ilvl") {
+                        style.numbering_level =
+                            attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                    } else if is_word_tag(&name, b"numId") {
+                        style.numbering_id = attr_value(&event, b"val");
                     }
                 }
             }
@@ -916,6 +946,11 @@ fn parse_docx_styles_xml(styles_xml: &[u8]) -> CommandResult<HashMap<String, Doc
                     } else if is_word_tag(&name, b"outlineLvl") {
                         style.outline_level =
                             attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                    } else if is_word_tag(&name, b"ilvl") {
+                        style.numbering_level =
+                            attr_value(&event, b"val").and_then(|value| value.parse().ok());
+                    } else if is_word_tag(&name, b"numId") {
+                        style.numbering_id = attr_value(&event, b"val");
                     }
                 }
             }
@@ -943,6 +978,7 @@ fn parse_docx_numbering_xml(numbering_xml: &[u8]) -> CommandResult<DocxNumbering
     let mut current_abstract_id = None::<String>;
     let mut current_num_id = None::<String>;
     let mut current_level = None::<DocxNumberingLevelDef>;
+    let mut current_override_level = None::<u32>;
 
     loop {
         match reader
@@ -962,11 +998,26 @@ fn parse_docx_numbering_xml(numbering_xml: &[u8]) -> CommandResult<DocxNumbering
                             level,
                             ..DocxNumberingLevelDef::default()
                         });
+                } else if is_word_tag(&name, b"lvlOverride") {
+                    current_override_level =
+                        attr_value(&event, b"ilvl").and_then(|value| value.parse::<u32>().ok());
                 } else if let Some(level) = current_level.as_mut() {
                     if is_word_tag(&name, b"numFmt") {
                         level.format = attr_value(&event, b"val");
                     } else if is_word_tag(&name, b"lvlText") {
                         level.text = attr_value(&event, b"val");
+                    } else if is_word_tag(&name, b"start") {
+                        level.start = attr_value(&event, b"val")
+                            .and_then(|value| value.parse::<u32>().ok())
+                            .unwrap_or(1);
+                    }
+                } else if is_word_tag(&name, b"startOverride") {
+                    if let (Some(num_id), Some(level), Some(start)) = (
+                        current_num_id.as_ref(),
+                        current_override_level,
+                        attr_value(&event, b"val").and_then(|value| value.parse::<u32>().ok()),
+                    ) {
+                        defs.start_overrides.insert((num_id.clone(), level), start);
                     }
                 } else if is_word_tag(&name, b"abstractNumId") {
                     if let (Some(num_id), Some(abstract_id)) =
@@ -983,6 +1034,18 @@ fn parse_docx_numbering_xml(numbering_xml: &[u8]) -> CommandResult<DocxNumbering
                         level.format = attr_value(&event, b"val");
                     } else if is_word_tag(&name, b"lvlText") {
                         level.text = attr_value(&event, b"val");
+                    } else if is_word_tag(&name, b"start") {
+                        level.start = attr_value(&event, b"val")
+                            .and_then(|value| value.parse::<u32>().ok())
+                            .unwrap_or(1);
+                    }
+                } else if is_word_tag(&name, b"startOverride") {
+                    if let (Some(num_id), Some(level), Some(start)) = (
+                        current_num_id.as_ref(),
+                        current_override_level,
+                        attr_value(&event, b"val").and_then(|value| value.parse::<u32>().ok()),
+                    ) {
+                        defs.start_overrides.insert((num_id.clone(), level), start);
                     }
                 } else if is_word_tag(&name, b"abstractNumId") {
                     if let (Some(num_id), Some(abstract_id)) =
@@ -1003,6 +1066,8 @@ fn parse_docx_numbering_xml(numbering_xml: &[u8]) -> CommandResult<DocxNumbering
                     }
                 } else if is_word_tag(&name, b"abstractNum") {
                     current_abstract_id = None;
+                } else if is_word_tag(&name, b"lvlOverride") {
+                    current_override_level = None;
                 } else if is_word_tag(&name, b"num") {
                     current_num_id = None;
                 }
@@ -1062,6 +1127,34 @@ fn resolve_docx_style(
     (name, based_on, heading_level)
 }
 
+fn resolve_docx_style_numbering(
+    style_id: Option<&str>,
+    styles: &HashMap<String, DocxStyleDef>,
+) -> (Option<String>, Option<u32>) {
+    let Some(style_id) = style_id else {
+        return (None, None);
+    };
+    let mut current_id = style_id.to_string();
+    let mut seen = Vec::<String>::new();
+    for _ in 0..12 {
+        if seen.contains(&current_id) {
+            break;
+        }
+        seen.push(current_id.clone());
+        let Some(style) = styles.get(&current_id) else {
+            break;
+        };
+        if style.numbering_id.is_some() || style.numbering_level.is_some() {
+            return (style.numbering_id.clone(), style.numbering_level);
+        }
+        let Some(parent) = style.based_on.as_ref() else {
+            break;
+        };
+        current_id = parent.clone();
+    }
+    (None, None)
+}
+
 fn resolve_docx_numbering(
     numbering_id: Option<&str>,
     numbering_level: Option<u32>,
@@ -1082,13 +1175,158 @@ fn resolve_docx_numbering(
     )
 }
 
+fn format_docx_alpha(mut value: u32, uppercase: bool) -> String {
+    if value == 0 {
+        return String::new();
+    }
+    let mut chars = Vec::new();
+    while value > 0 {
+        value -= 1;
+        let base = if uppercase { b'A' } else { b'a' };
+        chars.push((base + (value % 26) as u8) as char);
+        value /= 26;
+    }
+    chars.into_iter().rev().collect()
+}
+
+fn format_docx_roman(mut value: u32, uppercase: bool) -> String {
+    if value == 0 || value > 3999 {
+        return value.to_string();
+    }
+    let mut output = String::new();
+    for (amount, marker) in [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ] {
+        while value >= amount {
+            output.push_str(marker);
+            value -= amount;
+        }
+    }
+    if uppercase {
+        output
+    } else {
+        output.to_ascii_lowercase()
+    }
+}
+
+fn format_docx_number(value: u32, format: Option<&str>) -> Option<String> {
+    match format.unwrap_or("decimal") {
+        "none" | "bullet" => None,
+        "upperLetter" => Some(format_docx_alpha(value, true)),
+        "lowerLetter" => Some(format_docx_alpha(value, false)),
+        "upperRoman" => Some(format_docx_roman(value, true)),
+        "lowerRoman" => Some(format_docx_roman(value, false)),
+        "decimalZero" if value < 10 => Some(format!("0{}", value)),
+        _ => Some(value.to_string()),
+    }
+}
+
+fn docx_numbering_start(
+    num_id: &str,
+    level: u32,
+    abstract_id: Option<&str>,
+    numbering_defs: &DocxNumberingDefs,
+) -> u32 {
+    numbering_defs
+        .start_overrides
+        .get(&(num_id.to_string(), level))
+        .copied()
+        .or_else(|| {
+            abstract_id.and_then(|abstract_id| {
+                numbering_defs
+                    .abstract_levels
+                    .get(&(abstract_id.to_string(), level))
+                    .map(|definition| definition.start)
+            })
+        })
+        .unwrap_or(1)
+}
+
+fn render_docx_numbering_label(
+    meta: &DocxParagraphMeta,
+    numbering_defs: &DocxNumberingDefs,
+    counters: &mut HashMap<(String, u32), u32>,
+) -> Option<String> {
+    let num_id = meta.numbering_id.as_deref()?;
+    let level = meta.numbering_level.unwrap_or(0);
+    let abstract_id = meta.abstract_numbering_id.as_deref();
+    let start = docx_numbering_start(num_id, level, abstract_id, numbering_defs);
+    let current_value = {
+        let current = counters
+            .entry((num_id.to_string(), level))
+            .and_modify(|value| *value = value.saturating_add(1))
+            .or_insert(start);
+        *current
+    };
+
+    counters.retain(|(candidate_num_id, candidate_level), _| {
+        candidate_num_id != num_id || *candidate_level <= level
+    });
+
+    let template = meta
+        .numbering_text
+        .clone()
+        .unwrap_or_else(|| format!("%{}.", level + 1));
+    let mut output = template;
+    for placeholder_level in 0..=8u32 {
+        let placeholder = format!("%{}", placeholder_level + 1);
+        if !output.contains(&placeholder) {
+            continue;
+        }
+        let value = counters
+            .get(&(num_id.to_string(), placeholder_level))
+            .copied()
+            .unwrap_or_else(|| {
+                docx_numbering_start(num_id, placeholder_level, abstract_id, numbering_defs)
+            });
+        let format = abstract_id.and_then(|abstract_id| {
+            numbering_defs
+                .abstract_levels
+                .get(&(abstract_id.to_string(), placeholder_level))
+                .and_then(|definition| definition.format.as_deref())
+        });
+        let rendered = format_docx_number(value, format)?;
+        output = output.replace(&placeholder, &rendered);
+    }
+    if output.contains('%') {
+        let rendered = format_docx_number(current_value, meta.numbering_format.as_deref())?;
+        output = rendered;
+    }
+    let label = collapse_whitespace(&output);
+    (!label.is_empty()).then_some(label)
+}
+
+fn text_starts_with_docx_label(text: &str, label: &str) -> bool {
+    let normalized_label = label.trim().trim_end_matches(['.', ')', ':', '、']);
+    let normalized_text = text.trim_start();
+    normalized_text.starts_with(label)
+        || (!normalized_label.is_empty()
+            && normalized_text
+                .strip_prefix(normalized_label)
+                .and_then(|rest| rest.chars().next())
+                .map(|next| next.is_whitespace() || matches!(next, '.' | ')' | ':' | '、'))
+                .unwrap_or(false))
+}
+
 fn parse_docx_document_xml(
     document_xml: &[u8],
     styles: &HashMap<String, DocxStyleDef>,
     numbering_defs: &DocxNumberingDefs,
 ) -> CommandResult<Vec<DocxRawBlock>> {
     let mut reader = Reader::from_reader(document_xml);
-    reader.config_mut().trim_text(true);
+    reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut blocks = Vec::<DocxRawBlock>::new();
     let mut in_table = false;
@@ -1113,6 +1351,9 @@ fn parse_docx_document_xml(
     let mut run_is_italic = false;
     let mut run_font_size: Option<u32> = None;
     let mut pending_page_break = false;
+    let mut in_paragraph = false;
+    let mut in_text_node = false;
+    let mut numbering_counters = HashMap::<(String, u32), u32>::new();
 
     loop {
         match reader
@@ -1139,6 +1380,7 @@ fn parse_docx_document_xml(
                     current_cell.vertical_merge =
                         Some(attr_value(&event, b"val").unwrap_or_else(|| "continue".to_string()));
                 } else if is_word_tag(&name, b"p") {
+                    in_paragraph = true;
                     paragraph_text.clear();
                     paragraph_meta = DocxParagraphMeta::default();
                     paragraph_meta.section_columns = active_section_columns.clone();
@@ -1160,9 +1402,9 @@ fn parse_docx_document_xml(
                     run_font_size = None;
                 } else if is_word_tag(&name, b"rPr") && in_run {
                     in_run_properties = true;
-                } else if is_word_tag(&name, b"b")
-                    || is_word_tag(&name, b"bCs")
-                {
+                } else if is_word_tag(&name, b"t") {
+                    in_text_node = true;
+                } else if is_word_tag(&name, b"b") || is_word_tag(&name, b"bCs") {
                     if in_run_properties {
                         run_is_bold = attr_value(&event, b"val")
                             .map(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
@@ -1201,6 +1443,13 @@ fn parse_docx_document_xml(
                 } else if is_word_tag(&name, b"vMerge") && (in_table_cell_properties || in_cell) {
                     current_cell.vertical_merge =
                         Some(attr_value(&event, b"val").unwrap_or_else(|| "continue".to_string()));
+                } else if is_word_tag(&name, b"tab")
+                    || is_word_tag(&name, b"br")
+                    || is_word_tag(&name, b"cr")
+                {
+                    if in_paragraph {
+                        paragraph_text.push(' ');
+                    }
                 }
             }
             Event::Empty(event) => {
@@ -1228,8 +1477,11 @@ fn parse_docx_document_xml(
                     run_font_size = attr_value(&event, b"val").and_then(|value| value.parse().ok());
                 } else if is_word_tag(&name, b"jc") && in_paragraph_properties {
                     paragraph_meta.justification = attr_value(&event, b"val");
-                } else if is_word_tag(&name, b"br") || is_word_tag(&name, b"lastRenderedPageBreak") {
-                    // page break within a run
+                } else if is_word_tag(&name, b"br") || is_word_tag(&name, b"lastRenderedPageBreak")
+                {
+                    if in_paragraph {
+                        paragraph_text.push(' ');
+                    }
                 } else if is_word_tag(&name, b"cols") && in_section_properties {
                     let columns = DocxSectionColumns {
                         count: attr_value(&event, b"num").and_then(|value| value.parse().ok()),
@@ -1246,55 +1498,84 @@ fn parse_docx_document_xml(
                 } else if is_word_tag(&name, b"vMerge") && (in_table_cell_properties || in_cell) {
                     current_cell.vertical_merge =
                         Some(attr_value(&event, b"val").unwrap_or_else(|| "continue".to_string()));
+                } else if is_word_tag(&name, b"tab")
+                    || is_word_tag(&name, b"br")
+                    || is_word_tag(&name, b"cr")
+                {
+                    if in_paragraph {
+                        paragraph_text.push(' ');
+                    }
                 }
             }
             Event::Text(event) => {
-                let text = event
-                    .decode()
-                    .map_err(|error| format!("docx_text_decode_failed:{}", error))?;
-                paragraph_text.push_str(&text);
+                if in_text_node {
+                    let text = event
+                        .decode()
+                        .map_err(|error| format!("docx_text_decode_failed:{}", error))?;
+                    paragraph_text.push_str(&text);
+                }
             }
             Event::End(event) => {
                 let name = event.name().as_ref().to_vec();
                 if is_word_tag(&name, b"p") {
                     let collapsed = collapse_whitespace(&paragraph_text);
                     if !collapsed.is_empty() {
+                        let mut resolved_meta = paragraph_meta.clone();
+                        let (style_name, based_on_style_id, style_heading_level) =
+                            resolve_docx_style(resolved_meta.style_id.as_deref(), styles);
+                        resolved_meta.style_name = style_name;
+                        resolved_meta.based_on_style_id = based_on_style_id;
+                        resolved_meta.resolved_style_id = resolved_meta.style_id.clone();
+                        resolved_meta.style_heading_level = style_heading_level;
+                        if resolved_meta.numbering_id.is_none() {
+                            let (style_numbering_id, style_numbering_level) =
+                                resolve_docx_style_numbering(
+                                    resolved_meta.style_id.as_deref(),
+                                    styles,
+                                );
+                            resolved_meta.numbering_id = style_numbering_id;
+                            resolved_meta.numbering_level = style_numbering_level;
+                        }
+                        let (abstract_id, numbering_format, numbering_text) =
+                            resolve_docx_numbering(
+                                resolved_meta.numbering_id.as_deref(),
+                                resolved_meta.numbering_level,
+                                numbering_defs,
+                            );
+                        resolved_meta.abstract_numbering_id = abstract_id;
+                        resolved_meta.numbering_format = numbering_format;
+                        resolved_meta.numbering_text = numbering_text;
+                        let numbering_label = render_docx_numbering_label(
+                            &resolved_meta,
+                            numbering_defs,
+                            &mut numbering_counters,
+                        );
+                        resolved_meta.rendered_numbering_label = numbering_label.clone();
+                        let visible_text = numbering_label
+                            .filter(|label| !text_starts_with_docx_label(&collapsed, label))
+                            .map(|label| format!("{} {}", label, collapsed))
+                            .unwrap_or_else(|| collapsed.clone());
                         if in_cell {
                             if !cell_text.is_empty() {
-                                cell_text.push(' ');
+                                cell_text.push('\n');
                             }
-                            cell_text.push_str(&collapsed);
+                            cell_text.push_str(&visible_text);
                         } else if !in_table {
-                            let mut resolved_meta = paragraph_meta.clone();
-                            let (style_name, based_on_style_id, style_heading_level) =
-                                resolve_docx_style(resolved_meta.style_id.as_deref(), styles);
-                            resolved_meta.style_name = style_name;
-                            resolved_meta.based_on_style_id = based_on_style_id;
-                            resolved_meta.resolved_style_id = resolved_meta.style_id.clone();
-                            resolved_meta.style_heading_level = style_heading_level;
-                            let (abstract_id, numbering_format, numbering_text) =
-                                resolve_docx_numbering(
-                                    resolved_meta.numbering_id.as_deref(),
-                                    resolved_meta.numbering_level,
-                                    numbering_defs,
-                                );
-                            resolved_meta.abstract_numbering_id = abstract_id;
-                            resolved_meta.numbering_format = numbering_format;
-                            resolved_meta.numbering_text = numbering_text;
                             // Infer a synthetic heading level from run formatting
                             // (bold/centered/short) when no Heading style applies.
                             resolved_meta.run_heading_level =
-                                resolved_meta.infer_run_heading_level(&collapsed);
+                                resolved_meta.infer_run_heading_level(&visible_text);
                             resolved_meta.has_page_break_before = Some(pending_page_break);
                             blocks.push(DocxRawBlock {
                                 kind: resolved_meta.block_kind(),
-                                text: collapsed,
+                                text: visible_text,
                                 table: None,
                                 layout_hints: resolved_meta.layout_hints(),
                             });
                         }
                     }
                     paragraph_text.clear();
+                    in_paragraph = false;
                     pending_page_break = false;
                 } else if is_word_tag(&name, b"r") {
                     // Fold this run's formatting into the paragraph aggregate.
@@ -1326,6 +1607,8 @@ fn parse_docx_document_xml(
                     in_run_properties = false;
                 } else if is_word_tag(&name, b"rPr") {
                     in_run_properties = false;
+                } else if is_word_tag(&name, b"t") {
+                    in_text_node = false;
                 } else if is_word_tag(&name, b"tc") && in_table {
                     current_cell.text = collapse_whitespace(&cell_text);
                     row_cells.push(current_cell.clone());
@@ -1402,6 +1685,16 @@ fn parse_docx_with_rust_ooxml(
     }
 
     let mut warnings = Vec::<String>::new();
+    let document_markup = String::from_utf8_lossy(&document_xml).to_ascii_lowercase();
+    if document_markup.contains("<w:drawing")
+        || document_markup.contains("<w:pict")
+        || document_markup.contains("<a:blip")
+    {
+        warnings.push(
+            "DOCX contains embedded drawings or images that are not yet copied into student assets; diagram, map, or plan questions require source review before export."
+                .to_string(),
+        );
+    }
     let mut raw_blocks = parse_docx_document_xml(&document_xml, &styles, &numbering_defs)?;
     if raw_blocks.is_empty() {
         warnings.push(

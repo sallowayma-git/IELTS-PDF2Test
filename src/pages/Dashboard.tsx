@@ -87,7 +87,7 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
             <li>核对解析结果，必要时补充人工转录</li>
             <li>仅在识别有风险时确认源文档</li>
             <li>核对并编辑题组；答案可稍后补充</li>
-            <li>直接导出，或加入批量发布</li>
+            <li>选择 NAS 共享目录并发布给学生端</li>
           </ol>
         </aside>
       </div>

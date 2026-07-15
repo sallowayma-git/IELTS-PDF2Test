@@ -1,6 +1,6 @@
 use crate::{
     cleanup::{cleanup_transient_job_artifacts, minimize_process_artifacts_after_authoring},
-    export_artifacts::{build_manifest, build_wrapper},
+    export_artifacts::{build_manifest, build_wrapper, safe_exam_id},
     export_pack::ExportValidationOptions,
     job_store::update_job,
     reading_source::reading_source,
@@ -11,7 +11,7 @@ use crate::{
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
@@ -58,6 +58,7 @@ struct WrittenSourceFile {
 struct NasDirectWriteResult {
     files: Vec<WrittenSourceFile>,
     manifest_js: String,
+    manifest_asset_count: usize,
     validation_overridden: bool,
     ignored_issues: Vec<Value>,
 }
@@ -852,6 +853,247 @@ fn replace_atomically(next_path: &Path, target_path: &Path) -> CommandResult<()>
     }
 }
 
+const READING_MANIFEST_GLOBAL: &str = "window.__READING_EXAM_MANIFEST__";
+
+fn parse_reading_manifest_js(source: &str) -> CommandResult<Map<String, Value>> {
+    let source = source.trim_start_matches('\u{feff}').trim();
+    let payload = source
+        .strip_prefix(READING_MANIFEST_GLOBAL)
+        .ok_or_else(|| "nas_manifest_parse_failed:missing_assignment".to_string())?
+        .trim_start()
+        .strip_prefix('=')
+        .ok_or_else(|| "nas_manifest_parse_failed:missing_assignment_operator".to_string())?
+        .trim();
+    let payload = payload.strip_suffix(';').unwrap_or(payload).trim();
+    let manifest: Value = serde_json::from_str(payload)
+        .map_err(|error| format!("nas_manifest_parse_failed:invalid_json:{error}"))?;
+    manifest
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "nas_manifest_parse_failed:root_must_be_object".to_string())
+}
+
+fn serialize_reading_manifest(manifest: Map<String, Value>) -> CommandResult<String> {
+    Ok(format!(
+        "{READING_MANIFEST_GLOBAL} = {};\n",
+        serde_json::to_string_pretty(&Value::Object(manifest))
+            .map_err(|error| error.to_string())?
+    ))
+}
+
+fn merge_reading_manifest_js(
+    existing_manifest_js: Option<&str>,
+    selected_manifest_js: &str,
+) -> CommandResult<(String, usize)> {
+    let mut selected = parse_reading_manifest_js(selected_manifest_js)?;
+    let selected_meta = selected.remove("_meta");
+    let selected_exam_ids = selected.keys().cloned().collect::<HashSet<_>>();
+
+    let mut merged = match existing_manifest_js {
+        Some(source) => parse_reading_manifest_js(source)?,
+        None => Map::new(),
+    };
+    let existing_meta = merged.remove("_meta");
+
+    // examId is the stable identity. Remove both the canonical key and any
+    // legacy alias carrying the same examId before inserting this batch.
+    merged.retain(|key, value| {
+        let entry_exam_id = value.get("examId").and_then(Value::as_str);
+        !selected_exam_ids.contains(key)
+            && !entry_exam_id.is_some_and(|exam_id| selected_exam_ids.contains(exam_id))
+    });
+    merged.extend(selected);
+
+    let asset_count = merged.len();
+    let mut metadata = existing_meta
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    if let Some(selected_metadata) = selected_meta.and_then(|value| value.as_object().cloned()) {
+        metadata.extend(selected_metadata);
+    }
+    metadata.insert("assetCount".to_string(), json!(asset_count));
+    merged.insert("_meta".to_string(), Value::Object(metadata));
+
+    Ok((serialize_reading_manifest(merged)?, asset_count))
+}
+
+#[derive(Debug)]
+struct CommittedNasFile {
+    target: PathBuf,
+    backup: Option<PathBuf>,
+}
+
+fn rollback_committed_nas_files(committed: &mut Vec<CommittedNasFile>) -> Vec<String> {
+    let mut errors = Vec::new();
+    while let Some(file) = committed.pop() {
+        if file.target.exists() {
+            if let Err(error) = fs::remove_file(&file.target) {
+                errors.push(format!("remove {}: {error}", file.target.display()));
+                continue;
+            }
+        }
+        if let Some(backup) = file.backup {
+            if let Err(error) = fs::rename(&backup, &file.target) {
+                errors.push(format!(
+                    "restore {} from {}: {error}",
+                    file.target.display(),
+                    backup.display()
+                ));
+            }
+        }
+    }
+    errors
+}
+
+fn commit_staged_nas_files(
+    reading_exams_dir: &Path,
+    staging_dir: &Path,
+    file_names: &[String],
+) -> CommandResult<()> {
+    let backup_dir = staging_dir.join("backups");
+    fs::create_dir_all(&backup_dir).map_err(|error| error.to_string())?;
+    let mut committed = Vec::with_capacity(file_names.len());
+
+    for (index, file_name) in file_names.iter().enumerate() {
+        let staged = staging_dir.join(file_name);
+        let target = reading_exams_dir.join(file_name);
+        let backup = if target.exists() {
+            if !target.is_file() {
+                let rollback_errors = rollback_committed_nas_files(&mut committed);
+                return Err(format!(
+                    "nas_direct_publish_target_not_file:{}{}",
+                    target.display(),
+                    if rollback_errors.is_empty() {
+                        String::new()
+                    } else {
+                        format!(":rollback_failed:{}", rollback_errors.join(" | "))
+                    }
+                ));
+            }
+            let backup = backup_dir.join(format!("{index}.bak"));
+            if let Err(error) = fs::rename(&target, &backup) {
+                let rollback_errors = rollback_committed_nas_files(&mut committed);
+                return Err(format!(
+                    "nas_direct_publish_backup_failed:{}:{error}{}",
+                    target.display(),
+                    if rollback_errors.is_empty() {
+                        String::new()
+                    } else {
+                        format!(":rollback_failed:{}", rollback_errors.join(" | "))
+                    }
+                ));
+            }
+            Some(backup)
+        } else {
+            None
+        };
+
+        if let Err(error) = fs::rename(&staged, &target) {
+            let mut current = vec![CommittedNasFile { target, backup }];
+            let mut rollback_errors = rollback_committed_nas_files(&mut current);
+            rollback_errors.extend(rollback_committed_nas_files(&mut committed));
+            return Err(format!(
+                "nas_direct_publish_commit_failed:{file_name}:{error}{}",
+                if rollback_errors.is_empty() {
+                    String::new()
+                } else {
+                    format!(":rollback_failed:{}", rollback_errors.join(" | "))
+                }
+            ));
+        }
+        committed.push(CommittedNasFile { target, backup });
+    }
+
+    Ok(())
+}
+
+fn write_nas_direct_artifacts(
+    reading_exams_dir: &Path,
+    files: &[WrittenSourceFile],
+) -> CommandResult<(String, usize)> {
+    let sources = files
+        .iter()
+        .map(|written| written.source.clone())
+        .collect::<Vec<_>>();
+    let selected_manifest_js = build_manifest(&sources)?;
+    let manifest_path = reading_exams_dir.join("manifest.js");
+    let existing_manifest_js = if manifest_path.exists() {
+        Some(fs::read_to_string(&manifest_path).map_err(|error| {
+            format!(
+                "nas_manifest_read_failed:{}:{error}",
+                manifest_path.display()
+            )
+        })?)
+    } else {
+        None
+    };
+    let (manifest_js, manifest_asset_count) = merge_reading_manifest_js(
+        existing_manifest_js.as_deref(),
+        &selected_manifest_js,
+    )?;
+
+    fs::create_dir_all(reading_exams_dir).map_err(|error| error.to_string())?;
+    let staging_dir = reading_exams_dir.join(format!(
+        ".nas-publish-staging-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    fs::create_dir(&staging_dir).map_err(|error| error.to_string())?;
+
+    let result = (|| {
+        let mut file_names = Vec::with_capacity(files.len() + 1);
+        for file in files {
+            let file_name = format!("{}.js", file.exam_id);
+            write_text(&staging_dir.join(&file_name), &file.wrapper_js)?;
+            file_names.push(file_name);
+        }
+        write_text(&staging_dir.join("manifest.js"), &manifest_js)?;
+        // The manifest is the discovery/commit point, so it must be last.
+        file_names.push("manifest.js".to_string());
+        commit_staged_nas_files(reading_exams_dir, &staging_dir, &file_names)
+    })();
+
+    let _ = fs::remove_dir_all(&staging_dir);
+    result?;
+    Ok((manifest_js, manifest_asset_count))
+}
+
+pub(crate) fn write_nas_reading_sources(
+    reading_exams_dir: &Path,
+    sources: &[Value],
+) -> CommandResult<(String, usize)> {
+    let mut seen_exam_ids = HashSet::new();
+    let mut files = Vec::with_capacity(sources.len());
+    for source in sources {
+        let exam_id = safe_exam_id(source)?;
+        if !seen_exam_ids.insert(exam_id.clone()) {
+            return Err(format!("duplicate_exam_id:{exam_id}"));
+        }
+        files.push(WrittenSourceFile {
+            job_id: String::new(),
+            exam_id,
+            wrapper_js: build_wrapper(source)?,
+            source: source.clone(),
+        });
+    }
+    write_nas_direct_artifacts(reading_exams_dir, &files)
+}
+
+pub(crate) fn resolve_real_nas_library_root(export_dir: &str) -> CommandResult<PathBuf> {
+    let export_dir = export_dir.trim();
+    if export_dir.is_empty() {
+        return Err("nas_export_requires_library_root".to_string());
+    }
+    if export_dir
+        .get(.."local://".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("local://"))
+    {
+        return Err(
+            "nas_export_requires_real_library_root:local_placeholder_not_allowed".to_string(),
+        );
+    }
+    Ok(normalize_nas_library_root(&PathBuf::from(export_dir)))
+}
+
 fn write_selected_nas_direct_files(
     root: &Path,
     job_ids: &[String],
@@ -906,22 +1148,12 @@ fn write_selected_nas_direct_files(
         });
     }
 
-    let sources = files
-        .iter()
-        .map(|written| written.source.clone())
-        .collect::<Vec<_>>();
-    let manifest_js = build_manifest(&sources)?;
-    fs::create_dir_all(reading_exams_dir).map_err(|error| error.to_string())?;
-    for file in &files {
-        write_text(
-            &reading_exams_dir.join(format!("{}.js", file.exam_id)),
-            &file.wrapper_js,
-        )?;
-    }
-    write_text(&reading_exams_dir.join("manifest.js"), &manifest_js)?;
+    let (manifest_js, manifest_asset_count) =
+        write_nas_direct_artifacts(reading_exams_dir, &files)?;
     Ok(NasDirectWriteResult {
         files,
         manifest_js,
+        manifest_asset_count,
         validation_overridden,
         ignored_issues,
     })
@@ -1235,12 +1467,7 @@ pub(crate) fn export_nas_library_core(
         .get("exportDir")
         .and_then(Value::as_str)
         .ok_or_else(|| "nas_export_requires_library_root".to_string())?;
-    let library_root = if export_dir.starts_with("local://") {
-        root.join("exports").join("nas-library")
-    } else {
-        PathBuf::from(export_dir)
-    };
-    let library_root = normalize_nas_library_root(&library_root);
+    let library_root = resolve_real_nas_library_root(export_dir)?;
     fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
     let reading_exams_dir = nas_reading_exams_dir(&library_root);
 
@@ -1260,6 +1487,7 @@ pub(crate) fn export_nas_library_core(
     let NasDirectWriteResult {
         files: written_sources,
         manifest_js,
+        manifest_asset_count,
         validation_overridden,
         ignored_issues,
     } = write_result;
@@ -1273,6 +1501,7 @@ pub(crate) fn export_nas_library_core(
             "runtime": "nas-js-direct",
             "readingExamFileCount": asset_count,
             "manifestFileCount": 1,
+            "manifestAssetCount": manifest_asset_count,
             "assetCount": asset_count,
             "validationPolicy": options.policy_name(),
             "validationOverridden": validation_overridden,
@@ -1318,6 +1547,7 @@ pub(crate) fn export_nas_library_core(
         "jobIds": written_sources.iter().map(|written| written.job_id.clone()).collect::<Vec<_>>(),
         "examIds": written_sources.iter().map(|written| written.exam_id.clone()).collect::<Vec<_>>(),
         "assetCount": asset_count,
+        "manifestAssetCount": manifest_asset_count,
         "libraryRoot": library_root.to_string_lossy(),
         "readingExamsDir": reading_exams_dir.to_string_lossy(),
         "version": version.clone(),
@@ -1335,6 +1565,7 @@ pub(crate) fn export_nas_library_core(
             "outputDir": library_root.to_string_lossy(),
             "readingExamsDir": reading_exams_dir.to_string_lossy(),
             "assetCount": asset_count,
+            "manifestAssetCount": manifest_asset_count,
             "validationPolicy": options.policy_name(),
             "validationOverridden": validation_overridden,
             "ignoredIssueCount": ignored_issue_count,
@@ -1343,4 +1574,165 @@ pub(crate) fn export_nas_library_core(
         },
         "cleanup": cleanup
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "nas-export-safety-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    fn source(exam_id: &str, title: &str) -> Value {
+        json!({
+            "examId": exam_id,
+            "meta": {
+                "title": title,
+                "category": "P1"
+            }
+        })
+    }
+
+    fn written_source(exam_id: &str, title: &str) -> WrittenSourceFile {
+        let source = source(exam_id, title);
+        WrittenSourceFile {
+            job_id: format!("job-{exam_id}"),
+            exam_id: exam_id.to_string(),
+            wrapper_js: build_wrapper(&source).unwrap(),
+            source,
+        }
+    }
+
+    #[test]
+    fn nas_direct_subset_publish_preserves_unselected_manifest_entries() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let old_a = source("exam-a", "A unchanged");
+        let old_b = source("exam-b", "B old");
+        write_text(&root.join("exam-a.js"), "legacy-a-wrapper").unwrap();
+        write_text(&root.join("exam-b.js"), "legacy-b-wrapper").unwrap();
+        write_text(
+            &root.join("manifest.js"),
+            &build_manifest(&[old_a.clone(), old_b]).unwrap(),
+        )
+        .unwrap();
+
+        let selected = vec![
+            written_source("exam-b", "B updated"),
+            written_source("exam-c", "C added"),
+        ];
+        let (manifest_js, manifest_asset_count) =
+            write_nas_direct_artifacts(&root, &selected).unwrap();
+        let manifest = Value::Object(parse_reading_manifest_js(&manifest_js).unwrap());
+
+        assert_eq!(manifest_asset_count, 3);
+        assert_eq!(
+            manifest
+                .pointer("/exam-a/title")
+                .and_then(Value::as_str),
+            Some("A unchanged")
+        );
+        assert_eq!(
+            manifest
+                .pointer("/exam-b/title")
+                .and_then(Value::as_str),
+            Some("B updated")
+        );
+        assert_eq!(
+            manifest
+                .pointer("/exam-c/title")
+                .and_then(Value::as_str),
+            Some("C added")
+        );
+        assert_eq!(
+            manifest
+                .pointer("/_meta/assetCount")
+                .and_then(Value::as_u64),
+            Some(3)
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("exam-a.js")).unwrap(),
+            "legacy-a-wrapper"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("manifest.js")).unwrap(),
+            manifest_js
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn malformed_existing_manifest_blocks_publish_before_writing_assets() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        let malformed = "window.__READING_EXAM_MANIFEST__ = { broken };\n";
+        write_text(&root.join("manifest.js"), malformed).unwrap();
+
+        let error = write_nas_direct_artifacts(
+            &root,
+            &[written_source("exam-new", "Must not be written")],
+        )
+        .unwrap_err();
+
+        assert!(error.starts_with("nas_manifest_parse_failed:invalid_json:"));
+        assert!(!root.join("exam-new.js").exists());
+        assert_eq!(
+            fs::read_to_string(root.join("manifest.js")).unwrap(),
+            malformed
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn staged_nas_commit_rolls_back_files_when_manifest_commit_cannot_start() {
+        let root = temp_root();
+        let staging = root.join("staging");
+        fs::create_dir_all(&staging).unwrap();
+        write_text(&root.join("exam-a.js"), "old-wrapper").unwrap();
+        fs::create_dir(root.join("manifest.js")).unwrap();
+        write_text(&staging.join("exam-a.js"), "new-wrapper").unwrap();
+        write_text(&staging.join("manifest.js"), "new-manifest").unwrap();
+
+        let error = commit_staged_nas_files(
+            &root,
+            &staging,
+            &["exam-a.js".to_string(), "manifest.js".to_string()],
+        )
+        .unwrap_err();
+
+        assert!(error.starts_with("nas_direct_publish_target_not_file:"));
+        assert_eq!(
+            fs::read_to_string(root.join("exam-a.js")).unwrap(),
+            "old-wrapper"
+        );
+        assert!(root.join("manifest.js").is_dir());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn nas_export_rejects_local_placeholder_before_creating_output() {
+        let root = temp_root();
+        let error = export_nas_library_core(
+            &root,
+            &json!({
+                "jobIds": ["unused-job"],
+                "exportDir": "LOCAL://exports/nas-library"
+            }),
+            false,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            "nas_export_requires_real_library_root:local_placeholder_not_allowed"
+        );
+        assert!(!root.exists());
+    }
 }

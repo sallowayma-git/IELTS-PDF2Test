@@ -44,6 +44,7 @@ export interface QuestionUmbrellaRange {
 export interface InteractionSpec {
   type: InteractionType;
   options?: string[];
+  optionTexts?: Record<string, string>;
   placeholder?: string;
   allowOptionReuse?: boolean;
   minSelections?: number;

@@ -27,6 +27,7 @@ Answers
 2 TRUE
 3 TRUE`;
 const DEV_PICKED_PATHS_KEY = "ielts-author-studio.dev-fallback-picked-paths.v1";
+const NAS_EXPORT_DIR_KEY = "ielts-author-studio.confirmed-nas-export-dir.v1";
 
 function arg(name, fallback = undefined) {
   const index = process.argv.indexOf(name);
@@ -418,7 +419,8 @@ function assert(condition, message, details) {
 
 async function resetDevStore(cdp) {
   await evaluate(cdp, `localStorage.removeItem("ielts-author-studio.dev-fallback-store.v1");
-localStorage.removeItem(${jsString(DEV_PICKED_PATHS_KEY)});`);
+localStorage.removeItem(${jsString(DEV_PICKED_PATHS_KEY)});
+localStorage.setItem(${jsString(NAS_EXPORT_DIR_KEY)}, ${jsString(path.join(os.tmpdir(), "pdf2test-ui-e2e-nas"))});`);
 }
 
 async function seedDevPickedPath(cdp, filePath) {
@@ -442,7 +444,7 @@ async function completeReviewPreviewExport(cdp, baseUrl, jobId) {
     return next?.job?.status !== "NeedsReview" && next?.sourceReview?.resolved !== false;
   }, { timeoutMs: 10000 });
   await click(cdp, "[data-testid='validate-and-export']");
-  await waitFor("route to publish center", async () => (await currentHash(cdp)).includes("/packs"), { timeoutMs: 10000 });
+  await waitFor("route to NAS export", async () => (await currentHash(cdp)).includes("/export"), { timeoutMs: 10000 });
   await waitSelector(cdp, "[data-testid='export-page']");
   await waitSelector(cdp, "[data-testid='export-job-checkbox']");
   await click(cdp, "[data-testid='generate-export']");
@@ -460,7 +462,7 @@ async function completeReviewPreviewExport(cdp, baseUrl, jobId) {
   assert(["Exported", "Cleaned"].includes(afterExport.job.status), "export should advance job to exported/cleaned state", afterExport.job);
   await waitSelector(cdp, "[data-testid='nas-export-result']");
   const nasResultText = await getText(cdp, "[data-testid='nas-export-result']");
-  assert(nasResultText.includes("NAS 版本"), "batch publish center should publish selected jobs to NAS", { nasResultText });
+  assert(nasResultText.includes("NAS 版本"), "NAS export should publish selected jobs", { nasResultText });
   return {
     finalStatus: afterExport.job.status,
     runtimeMode: afterExport.validationReport?.runtime?.mode ?? "unknown",
@@ -522,13 +524,9 @@ async function runForcedExportFlow(cdp, baseUrl) {
   const summary = await getStoreSummary(cdp);
   assert(summary?.job?.jobId, "forced export flow did not create a job", summary);
   await click(cdp, "[data-testid='validate-and-export']");
-  await waitFor("forced publish route", async () => (await currentHash(cdp)).includes("/packs"), { timeoutMs: 10000 });
+  await waitFor("forced NAS export route", async () => (await currentHash(cdp)).includes("/export"), { timeoutMs: 10000 });
   await waitSelector(cdp, "[data-testid='export-page']");
-  await click(cdp, "[data-testid='generate-export']");
   await waitSelector(cdp, "[data-testid='force-export']");
-  const blockingText = await getText(cdp, "[data-testid='export-error']");
-  assert(blockingText.includes("导出前还有项目需要确认"), "strict export should expose blocking diagnostics before override", { blockingText });
-
   await click(cdp, "[data-testid='force-export']");
   await waitSelector(cdp, "[data-testid='export-override-result']");
   await waitFor("forced export files", async () => {
@@ -541,7 +539,7 @@ async function runForcedExportFlow(cdp, baseUrl) {
   assert(["Exported", "Cleaned"].includes(afterExport.job.status), "force export should complete the job", afterExport.job);
 
   return {
-    name: "strict-block-then-force-export",
+    name: "one-click-force-export",
     jobId: summary.job.jobId,
     finalStatus: afterExport.job.status,
     overrideDisclosed: true

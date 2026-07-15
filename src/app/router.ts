@@ -10,7 +10,6 @@ export type RouteName =
   | "llm-review"
   | "preview"
   | "export"
-  | "packs"
   | "writing"
   | "library"
   | "libraryExam"
@@ -35,7 +34,7 @@ export function parseRoute(hash = window.location.hash): RouteState {
   }
   if (parts[0] === "library" && parts[1]) return { name: "libraryExam", examId: parts[1] };
   if (parts[0] === "library") return { name: "library" };
-  if (parts[0] === "packs") return { name: "packs" };
+  if (parts[0] === "export" || parts[0] === "packs") return { name: "export" };
   if (parts[0] === "writing") return { name: "writing" };
   if (parts[0] === "settings") return { name: "settings" };
   if (parts[0] === "jobs") return { name: "jobs" };
