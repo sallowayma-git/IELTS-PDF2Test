@@ -32,7 +32,12 @@ pub(crate) fn load_job(root: &Path, job_id: &str) -> CommandResult<ImportJob> {
 
 pub(crate) fn save_job(root: &Path, job: &ImportJob) -> CommandResult<()> {
     validate_path_segment("job_id", &job.job_id)?;
-    write_json(&job_dir(root, &job.job_id).join("job.json"), job)
+    write_json(&job_dir(root, &job.job_id).join("job.json"), job)?;
+    // 双写题库 DB（失败记日志但不阻断主流程，文件仍是导出源）。
+    if let Err(error) = crate::library_commands::upsert_reading_job(root, job) {
+        eprintln!("[library] upsert_reading_job failed for {}: {}", job.job_id, error);
+    }
+    Ok(())
 }
 
 pub(crate) fn update_job(

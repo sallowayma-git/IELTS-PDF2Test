@@ -44,6 +44,7 @@ export interface QuestionUmbrellaRange {
 export interface InteractionSpec {
   type: InteractionType;
   options?: string[];
+  optionTexts?: Record<string, string>;
   placeholder?: string;
   allowOptionReuse?: boolean;
   minSelections?: number;
@@ -157,6 +158,7 @@ export interface SplitSectionEvidence {
   headingLevel?: number;
   numberingLevel?: number;
   numberingId?: string;
+  sectionColumnCount?: number;
 }
 
 export interface SplitContinuationEdge {

@@ -1,9 +1,80 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+
+type PythonCommand = {
+  command: string;
+  args: string[];
+};
+
+function splitCommandLine(value: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  for (const char of value.trim()) {
+    if ((char === '"' || char === "'") && !quote) {
+      quote = char;
+      continue;
+    }
+    if (char === quote) {
+      quote = null;
+      continue;
+    }
+    if (/\s/.test(char) && !quote) {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (current) parts.push(current);
+  return parts;
+}
+
+function pythonCommandFromEnv(): PythonCommand | null {
+  const fromEnv = process.env.EPIC8_PYTHON || process.env.EPIC8_UNIFIED_PYTHON;
+  if (!fromEnv) return null;
+  if (existsSync(fromEnv)) {
+    return { command: resolve(fromEnv), args: [] };
+  }
+  const [command, ...args] = splitCommandLine(fromEnv);
+  return command ? { command, args } : null;
+}
+
+function canRun(command: string, args: string[] = []): boolean {
+  const result = spawnSync(command, [...args, "--version"], {
+    encoding: "utf8",
+    timeout: 10000,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  return result.status === 0 || result.status === 1;
+}
+
+function resolvePythonCommand(): PythonCommand {
+  const candidates = [
+    pythonCommandFromEnv(),
+    ...(process.platform === "win32"
+      ? [
+          { command: "py", args: ["-3"] },
+          { command: "python", args: [] }
+        ]
+      : [
+          { command: "python3", args: [] },
+          { command: "python", args: [] }
+        ])
+  ].filter((candidate): candidate is PythonCommand => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    if (canRun(candidate.command, candidate.args)) return candidate;
+  }
+  return candidates[0] ?? { command: "python3", args: [] };
+}
 
 function devSourceParserPlugin(): Plugin {
   return {
@@ -39,8 +110,10 @@ function devSourceParserPlugin(): Plugin {
           const outputPath = join(tempDir, "document-ir.json");
           if (payload.contentBase64) await writeFile(inputPath, Buffer.from(payload.contentBase64, "base64"));
           const parserPath = resolve("sidecars/python-parser/parser.py");
+          const python = resolvePythonCommand();
           await new Promise<void>((resolvePromise, reject) => {
-            const child = spawn("python3", [
+            const child = spawn(python.command, [
+              ...python.args,
               parserPath,
               "parse",
               "--input",

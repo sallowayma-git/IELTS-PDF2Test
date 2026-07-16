@@ -1,18 +1,7 @@
 import { deleteJob } from "../api/tauriCommands";
-import { go } from "../app/router";
+import { go, jobResumePath } from "../app/router";
 import { StatusPill } from "../components/StatusPill";
-import type { ImportJob, WorkflowStep } from "../types";
-
-const stepPath: Record<WorkflowStep, string> = {
-  Upload: "document",
-  DocumentReview: "document",
-  Split: "split",
-  Authoring: "groups",
-  LlmReview: "llm-review",
-  Preview: "preview",
-  Export: "export",
-  Pack: "pack"
-};
+import type { ImportJob } from "../types";
 
 export function JobList({ jobs, refresh }: { jobs: ImportJob[]; refresh: () => void }) {
   async function remove(jobId: string) {
@@ -32,14 +21,14 @@ export function JobList({ jobs, refresh }: { jobs: ImportJob[]; refresh: () => v
       <div className="job-table tall">
         {jobs.map((job) => (
           <div className="job-row static" key={job.jobId}>
-            <button className="link-cell" onClick={() => go(`/jobs/${job.jobId}/document`)}>
+            <button className="link-cell" onClick={() => go(jobResumePath(job))}>
               <strong>{job.title}</strong>
               <small>{job.jobId}</small>
             </button>
             <StatusPill status={job.status} />
             <span>{job.category}/{job.frequency}</span>
             <span>{job.sourceFiles.length} 个文件</span>
-            <button className="ghost small" onClick={() => go(`/jobs/${job.jobId}/${stepPath[job.currentStep] ?? "document"}`)}>打开</button>
+            <button className="ghost small" onClick={() => go(jobResumePath(job))}>打开</button>
             <button className="danger small" onClick={() => remove(job.jobId)}>删除</button>
           </div>
         ))}

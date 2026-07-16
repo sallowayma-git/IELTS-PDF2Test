@@ -10,34 +10,42 @@ export function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
+function renderOptionContent(question: QuestionDraft, option: string): string {
+  const label = escapeHtml(option);
+  const optionText = question.interaction.optionTexts?.[option]?.trim();
+  if (!optionText) return label;
+  return `<span class="choice-label">${label}</span> <span class="choice-text">${escapeHtml(optionText)}</span>`;
+}
+
+function hasOptions(question: QuestionDraft): boolean {
+  return Boolean(question.interaction.options?.length);
+}
+
+function renderOptionControls(question: QuestionDraft, inputType: "radio" | "checkbox"): string {
+  return (question.interaction.options ?? [])
+    .map(
+      (option) =>
+        `<label><input name="${escapeHtml(question.id)}" type="${inputType}" value="${escapeHtml(option)}"> ${renderOptionContent(question, option)}</label>`
+    )
+    .join("");
+}
+
 function renderRadioQuestion(question: QuestionDraft): string {
-  const options = question.interaction.options ?? [];
   return `
     <li class="author-question" data-question-id="${question.id}">
       <div class="question-prompt"><strong>${escapeHtml(question.displayNumber)}</strong> ${escapeHtml(question.prompt)}</div>
       <div class="choice-row">
-        ${options
-          .map(
-            (option) =>
-              `<label><input name="${question.id}" type="radio" value="${escapeHtml(option)}"> ${escapeHtml(option)}</label>`
-          )
-          .join("")}
+        ${renderOptionControls(question, "radio")}
       </div>
     </li>`;
 }
 
 function renderCheckboxQuestion(question: QuestionDraft): string {
-  const options = question.interaction.options ?? [];
   return `
     <li class="author-question" data-question-id="${question.id}">
       <div class="question-prompt"><strong>${escapeHtml(question.displayNumber)}</strong> ${escapeHtml(question.prompt)}</div>
       <div class="choice-row">
-        ${options
-          .map(
-            (option) =>
-              `<label><input name="${question.id}" type="checkbox" value="${escapeHtml(option)}"> ${escapeHtml(option)}</label>`
-          )
-          .join("")}
+        ${renderOptionControls(question, "checkbox")}
       </div>
     </li>`;
 }
@@ -66,7 +74,11 @@ function renderTableCompletion(group: QuestionGroupDraft): string {
       (question) => `<tr>
         <td><strong>${escapeHtml(question.displayNumber)}</strong></td>
         <td>${escapeHtml(question.prompt)}</td>
-        <td><input type="text" id="${question.id}_input" name="${question.id}" placeholder="answer"></td>
+        <td>${
+          hasOptions(question)
+            ? `<div class="choice-row">${renderOptionControls(question, "radio")}</div>`
+            : `<input type="text" id="${escapeHtml(question.id)}_input" name="${escapeHtml(question.id)}" placeholder="answer">`
+        }</td>
       </tr>`
     )
     .join("");
@@ -141,7 +153,10 @@ function renderInlineCompletion(group: QuestionGroupDraft): string | undefined {
     if (!marker) continue;
     const [start, end] = marker;
     body += escapeHtml(notes.slice(cursor, start));
-    body += `<span class="inline-completion" data-question-id="${escapeHtml(question.id)}"><strong>${escapeHtml(question.displayNumber)}</strong> <input type="text" id="${escapeHtml(question.id)}_input" name="${escapeHtml(question.id)}" placeholder="answer"></span>`;
+    const control = hasOptions(question)
+      ? `<span class="choice-row">${renderOptionControls(question, "radio")}</span>`
+      : `<input type="text" id="${escapeHtml(question.id)}_input" name="${escapeHtml(question.id)}" placeholder="answer">`;
+    body += `<span class="inline-completion" data-question-id="${escapeHtml(question.id)}"><strong>${escapeHtml(question.displayNumber)}</strong> ${control}</span>`;
     cursor = end;
   }
   body += escapeHtml(notes.slice(cursor));
@@ -153,7 +168,7 @@ export function renderGroupBodyHtml(group: QuestionGroupDraft): string {
   let body = "";
 
   if (group.layout.layoutHint === "inline_completion" || group.layout.template === "inline_text_completion") {
-    body = renderInlineCompletion(group) ?? `<ol>${group.questions.map(renderTextQuestion).join("")}</ol>`;
+    body = renderInlineCompletion(group) ?? `<ol>${group.questions.map(renderOptionQuestion).join("")}</ol>`;
   } else if (group.kind === "table_completion") {
     body = renderTableCompletion(group);
   } else if (group.kind === "multi_choice") {
@@ -207,7 +222,13 @@ export function toReadingExamSource(ir: ReadingAuthoringIr): ReadingExamSourceV1
       leadHtml: group.instruction.map((item) => `<p>${escapeHtml(item)}</p>`).join(""),
       allowOptionReuse: group.allowOptionReuse
     })),
-    answerKey: ir.answerKey,
+    answerKey: Object.fromEntries(
+      Object.entries(ir.answerKey).filter(([, answer]) =>
+        Array.isArray(answer)
+          ? answer.some((item) => String(item).trim())
+          : Boolean(String(answer ?? "").trim())
+      )
+    ),
     sourceRefs: {
       primaryHtml: `author-imports/${ir.jobId}/intermediate.html`,
       primaryProvider: "author_web",

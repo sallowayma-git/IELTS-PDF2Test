@@ -1,4 +1,4 @@
-use crate::html_escape;
+use crate::{authoring_review::answer_is_empty, html_escape};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -126,6 +126,74 @@ fn question_display_and_id(question: &Value) -> Option<(String, String)> {
     }
 }
 
+fn render_option_content(question: &Value, option: &str) -> String {
+    let label = html_escape(option);
+    let option_text = question
+        .pointer("/interaction/optionTexts")
+        .and_then(Value::as_object)
+        .and_then(|texts| texts.get(option))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    match option_text {
+        Some(text) => format!(
+            "<span class=\"choice-label\">{}</span> <span class=\"choice-text\">{}</span>",
+            label,
+            html_escape(text)
+        ),
+        None => label,
+    }
+}
+
+fn question_has_options(question: &Value) -> bool {
+    question
+        .pointer("/interaction/options")
+        .and_then(Value::as_array)
+        .map(|options| options.iter().any(|option| option.as_str().is_some()))
+        .unwrap_or(false)
+}
+
+fn render_option_controls(question: &Value, input_type: &str) -> String {
+    let qid = string_at(question, "id");
+    question
+        .pointer("/interaction/options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|option| {
+            format!(
+                "<label><input name=\"{}\" type=\"{}\" value=\"{}\"> {}</label>",
+                html_escape(qid),
+                input_type,
+                html_escape(option),
+                render_option_content(question, option)
+            )
+        })
+        .collect::<String>()
+}
+
+fn render_question_list_item(question: &Value, checkbox: bool) -> String {
+    let qid = string_at(question, "id");
+    if checkbox || question_has_options(question) {
+        let input_type = if checkbox { "checkbox" } else { "radio" };
+        format!(
+            "<li><div><strong>{}</strong> {}</div><div class=\"choice-row\">{}</div></li>",
+            html_escape(string_at(question, "displayNumber")),
+            html_escape(string_at(question, "prompt")),
+            render_option_controls(question, input_type)
+        )
+    } else {
+        format!(
+            "<li><label><strong>{}</strong> {} <input type=\"text\" id=\"{}_input\" name=\"{}\"></label></li>",
+            html_escape(string_at(question, "displayNumber")),
+            html_escape(string_at(question, "prompt")),
+            html_escape(qid),
+            html_escape(qid)
+        )
+    }
+}
+
 fn is_inline_blank_marker_char(ch: char) -> bool {
     matches!(
         ch,
@@ -246,12 +314,23 @@ fn render_inline_completion_from_notes(group: &Value, questions: &[Value]) -> Op
             continue;
         };
         output.push_str(&html_escape(&notes[cursor..start]));
+        let control = if question_has_options(question) {
+            format!(
+                "<span class=\"choice-row\">{}</span>",
+                render_option_controls(question, "radio")
+            )
+        } else {
+            format!(
+                "<input type=\"text\" id=\"{}_input\" name=\"{}\" placeholder=\"answer\">",
+                html_escape(&qid),
+                html_escape(&qid)
+            )
+        };
         output.push_str(&format!(
-            "<span class=\"inline-completion\" data-question-id=\"{}\"><strong>{}</strong> <input type=\"text\" id=\"{}_input\" name=\"{}\" placeholder=\"answer\"></span>",
+            "<span class=\"inline-completion\" data-question-id=\"{}\"><strong>{}</strong> {}</span>",
             html_escape(&qid),
             html_escape(&display),
-            html_escape(&qid),
-            html_escape(&qid)
+            control
         ));
         cursor = end;
     }
@@ -288,16 +367,7 @@ pub(crate) fn render_group_body_html(group: &Value) -> String {
         render_inline_completion_from_notes(group, &questions).unwrap_or_else(|| {
             let rows = questions
                 .iter()
-                .map(|q| {
-                    let qid = string_at(q, "id");
-                    format!(
-                        "<li><label><strong>{}</strong> {} <input type=\"text\" id=\"{}_input\" name=\"{}\"></label></li>",
-                        html_escape(string_at(q, "displayNumber")),
-                        html_escape(string_at(q, "prompt")),
-                        html_escape(qid),
-                        html_escape(qid)
-                    )
-                })
+                .map(|q| render_question_list_item(q, false))
                 .collect::<String>();
             format!("<ol>{}</ol>", rows)
         })
@@ -306,12 +376,23 @@ pub(crate) fn render_group_body_html(group: &Value) -> String {
             .iter()
             .map(|q| {
                 let qid = string_at(q, "id");
+                let control = if question_has_options(q) {
+                    format!(
+                        "<div class=\"choice-row\">{}</div>",
+                        render_option_controls(q, "radio")
+                    )
+                } else {
+                    format!(
+                        "<input type=\"text\" id=\"{}_input\" name=\"{}\" placeholder=\"answer\">",
+                        html_escape(qid),
+                        html_escape(qid)
+                    )
+                };
                 format!(
-                    "<tr><td><strong>{}</strong></td><td>{}</td><td><input type=\"text\" id=\"{}_input\" name=\"{}\" placeholder=\"answer\"></td></tr>",
+                    "<tr><td><strong>{}</strong></td><td>{}</td><td>{}</td></tr>",
                     html_escape(string_at(q, "displayNumber")),
                     html_escape(string_at(q, "prompt")),
-                    html_escape(qid),
-                    html_escape(qid)
+                    control
                 )
             })
             .collect::<String>();
@@ -319,61 +400,7 @@ pub(crate) fn render_group_body_html(group: &Value) -> String {
     } else {
         let rows = questions
             .iter()
-            .map(|q| {
-                let qid = string_at(q, "id");
-                let options = q
-                    .pointer("/interaction/options")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                if kind == "multi_choice" {
-                    let controls = options
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(|option| {
-                            format!(
-                                "<label><input name=\"{}\" type=\"checkbox\" value=\"{}\"> {}</label>",
-                                html_escape(qid),
-                                html_escape(option),
-                                html_escape(option)
-                            )
-                        })
-                        .collect::<String>();
-                    format!(
-                        "<li><div><strong>{}</strong> {}</div><div class=\"choice-row\">{}</div></li>",
-                        html_escape(string_at(q, "displayNumber")),
-                        html_escape(string_at(q, "prompt")),
-                        controls
-                    )
-                } else if !options.is_empty() {
-                    let controls = options
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(|option| {
-                            format!(
-                                "<label><input name=\"{}\" type=\"radio\" value=\"{}\"> {}</label>",
-                                html_escape(qid),
-                                html_escape(option),
-                                html_escape(option)
-                            )
-                        })
-                        .collect::<String>();
-                    format!(
-                        "<li><div><strong>{}</strong> {}</div><div class=\"choice-row\">{}</div></li>",
-                        html_escape(string_at(q, "displayNumber")),
-                        html_escape(string_at(q, "prompt")),
-                        controls
-                    )
-                } else {
-                    format!(
-                        "<li><label><strong>{}</strong> {} <input type=\"text\" id=\"{}_input\" name=\"{}\"></label></li>",
-                        html_escape(string_at(q, "displayNumber")),
-                        html_escape(string_at(q, "prompt")),
-                        html_escape(qid),
-                        html_escape(qid)
-                    )
-                }
-            })
+            .map(|q| render_question_list_item(q, kind == "multi_choice"))
             .collect::<String>();
         format!("<ol>{}</ol>", rows)
     };
@@ -392,13 +419,10 @@ pub(crate) fn answer_key_from_authoring(authoring: &Value) -> Value {
             if let Some(questions) = group.get("questions").and_then(Value::as_array) {
                 for question in questions {
                     if let Some(qid) = question.get("id").and_then(Value::as_str) {
-                        map.insert(
-                            qid.to_string(),
-                            question
-                                .get("answer")
-                                .cloned()
-                                .unwrap_or(Value::String(String::new())),
-                        );
+                        let answer = question.get("answer");
+                        if !answer_is_empty(answer) {
+                            map.insert(qid.to_string(), answer.cloned().unwrap_or(Value::Null));
+                        }
                     }
                 }
             }
@@ -671,4 +695,324 @@ pub(crate) fn reading_source(authoring: &Value) -> Value {
             .unwrap_or_default(),
     }
     .to_value()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reading_source, render_group_body_html};
+    use serde_json::{json, Value};
+
+    #[test]
+    fn option_texts_are_displayed_without_changing_submission_values() {
+        let group = json!({
+            "groupId": "g1",
+            "kind": "single_choice",
+            "instruction": [],
+            "questions": [{
+                "id": "q1",
+                "displayNumber": "1",
+                "prompt": "Choose one.",
+                "interaction": {
+                    "type": "radio",
+                    "options": ["A", "B"],
+                    "optionTexts": {
+                        "A": "First & best",
+                        "B": "Second <choice>"
+                    }
+                }
+            }]
+        });
+
+        let html = render_group_body_html(&group);
+
+        assert!(html.contains("value=\"A\""));
+        assert!(html.contains("value=\"B\""));
+        assert!(html.contains(
+            "<span class=\"choice-label\">A</span> <span class=\"choice-text\">First &amp; best</span>"
+        ));
+        assert!(html.contains(
+            "<span class=\"choice-label\">B</span> <span class=\"choice-text\">Second &lt;choice&gt;</span>"
+        ));
+        assert!(!html.contains("value=\"First &amp; best\""));
+    }
+
+    #[test]
+    fn options_without_option_texts_keep_the_legacy_display() {
+        let group = json!({
+            "groupId": "g1",
+            "kind": "single_choice",
+            "instruction": [],
+            "questions": [{
+                "id": "q1",
+                "displayNumber": "1",
+                "prompt": "Choose one.",
+                "interaction": {"type": "radio", "options": ["A"]}
+            }]
+        });
+
+        let html = render_group_body_html(&group);
+
+        assert!(html.contains("<input name=\"q1\" type=\"radio\" value=\"A\"> A</label>"));
+        assert!(!html.contains("choice-text"));
+    }
+
+    #[test]
+    fn authoring_option_banks_reach_single_choice_and_matching_list_student_html() {
+        let authoring = json!({
+            "schemaVersion": "ReadingAuthoringIRV1",
+            "jobId": "job-option-bank",
+            "exam": {
+                "examId": "exam-option-bank",
+                "title": "Option bank rendering",
+                "category": "P1",
+                "frequency": "medium",
+                "tags": [],
+                "sourceFiles": []
+            },
+            "passage": {
+                "title": "Passage",
+                "htmlBlocks": [{"blockId": "passage-main", "html": "<p>Passage</p>"}],
+                "sourceBlockIds": []
+            },
+            "groups": [
+                {
+                    "groupId": "single-choice",
+                    "kind": "single_choice",
+                    "instruction": ["Choose the correct letter, A, B, C or D."],
+                    "layout": {"template": "single_choice_list", "layoutHint": "list"},
+                    "questions": [{
+                        "id": "q1",
+                        "displayNumber": "1",
+                        "prompt": "Why was the archive moved?",
+                        "interaction": {
+                            "type": "radio",
+                            "options": ["A", "B", "C", "D"],
+                            "optionTexts": {
+                                "A": "To reduce staffing",
+                                "B": "To provide more space",
+                                "C": "To protect rare maps",
+                                "D": "To improve public transport"
+                            }
+                        }
+                    }]
+                },
+                {
+                    "groupId": "matching-list",
+                    "kind": "matching",
+                    "instruction": ["Complete the list using the correct letter, A, B, C or D."],
+                    "layout": {"template": "matching_list", "layoutHint": "list"},
+                    "allowOptionReuse": false,
+                    "questions": [{
+                        "id": "q2",
+                        "displayNumber": "2",
+                        "prompt": "Research location",
+                        "interaction": {
+                            "type": "matching",
+                            "options": ["A", "B", "C", "D"],
+                            "optionTexts": {
+                                "A": "University at Albany",
+                                "B": "University of Leeds",
+                                "C": "University of London",
+                                "D": "University of Oxford"
+                            }
+                        }
+                    }]
+                }
+            ],
+            "answerKey": {},
+            "questionOrder": ["q1", "q2"],
+            "questionDisplayMap": {"q1": "1", "q2": "2"},
+            "audit": {
+                "llmUsed": false,
+                "humanVerified": false,
+                "issues": [],
+                "revision": 1,
+                "updatedAt": "2026-07-15T00:00:00Z"
+            }
+        });
+
+        let source = reading_source(&authoring);
+        let cases = [
+            (
+                "/questionGroups/0/bodyHtml",
+                "q1",
+                [
+                    ("A", "To reduce staffing"),
+                    ("B", "To provide more space"),
+                    ("C", "To protect rare maps"),
+                    ("D", "To improve public transport"),
+                ],
+            ),
+            (
+                "/questionGroups/1/bodyHtml",
+                "q2",
+                [
+                    ("A", "University at Albany"),
+                    ("B", "University of Leeds"),
+                    ("C", "University of London"),
+                    ("D", "University of Oxford"),
+                ],
+            ),
+        ];
+
+        for (pointer, question_id, options) in cases {
+            let html = source.pointer(pointer).and_then(Value::as_str).unwrap();
+            for (label, text) in options {
+                assert!(
+                    html.contains(&format!(
+                        "<input name=\"{}\" type=\"radio\" value=\"{}\">",
+                        question_id, label
+                    )),
+                    "missing label submission value {label} in {pointer}: {html}"
+                );
+                assert!(
+                    html.contains(&format!(
+                        "<span class=\"choice-label\">{}</span> <span class=\"choice-text\">{}</span>",
+                        label, text
+                    )),
+                    "missing rendered option text for {label} in {pointer}: {html}"
+                );
+                assert!(
+                    !html.contains(&format!("value=\"{}\"", text)),
+                    "option text became a submission value in {pointer}: {html}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn completion_option_banks_override_text_layouts_without_changing_free_text() {
+        let authoring = json!({
+            "groups": [
+                {
+                    "groupId": "summary-bank",
+                    "kind": "summary_completion",
+                    "instruction": ["Choose the correct letter, A-H."],
+                    "layout": {
+                        "template": "summary_text_completion",
+                        "layoutHint": "inline_completion",
+                        "notes": "The final result was 36 _______."
+                    },
+                    "questions": [{
+                        "id": "q36",
+                        "displayNumber": "36",
+                        "prompt": "The final result was",
+                        "interaction": {
+                            "type": "matching",
+                            "options": ["A", "B", "C", "D", "E", "F", "G", "H"],
+                            "optionTexts": {
+                                "A": "natural evolution",
+                                "B": "seasonal migration",
+                                "C": "habitat loss",
+                                "D": "water pollution",
+                                "E": "commercial fishing",
+                                "F": "introduced plants",
+                                "G": "native fish",
+                                "H": "extinction"
+                            },
+                            "allowOptionReuse": false
+                        }
+                    }]
+                },
+                {
+                    "groupId": "summary-free-text",
+                    "kind": "summary_completion",
+                    "instruction": ["Write ONE WORD ONLY."],
+                    "layout": {
+                        "template": "summary_text_completion",
+                        "layoutHint": "inline_completion",
+                        "notes": "The archive contains 41 _______."
+                    },
+                    "questions": [{
+                        "id": "q41",
+                        "displayNumber": "41",
+                        "prompt": "The archive contains",
+                        "interaction": {"type": "text"}
+                    }]
+                },
+                {
+                    "groupId": "table-bank",
+                    "kind": "table_completion",
+                    "instruction": ["Choose the correct letter, A-D."],
+                    "layout": {"template": "table_completion", "layoutHint": "table"},
+                    "questions": [{
+                        "id": "q42",
+                        "displayNumber": "42",
+                        "prompt": "Research location",
+                        "interaction": {
+                            "type": "matching",
+                            "options": ["A", "B", "C", "D"],
+                            "optionTexts": {
+                                "A": "University at Albany",
+                                "B": "University of Leeds",
+                                "C": "University of London",
+                                "D": "University of Oxford"
+                            },
+                            "allowOptionReuse": false
+                        }
+                    }]
+                },
+                {
+                    "groupId": "table-free-text",
+                    "kind": "table_completion",
+                    "instruction": ["Write ONE WORD ONLY."],
+                    "layout": {"template": "table_completion", "layoutHint": "table"},
+                    "questions": [{
+                        "id": "q43",
+                        "displayNumber": "43",
+                        "prompt": "Archive material",
+                        "interaction": {"type": "text"}
+                    }]
+                }
+            ]
+        });
+
+        let source = reading_source(&authoring);
+        let summary_bank = source
+            .pointer("/questionGroups/0/bodyHtml")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(summary_bank.contains("notes-completion"));
+        for label in ["A", "B", "C", "D", "E", "F", "G", "H"] {
+            assert!(summary_bank.contains(&format!(
+                "<input name=\"q36\" type=\"radio\" value=\"{}\">",
+                label
+            )));
+        }
+        assert!(summary_bank.contains(
+            "<span class=\"choice-label\">H</span> <span class=\"choice-text\">extinction</span>"
+        ));
+        assert!(!summary_bank.contains("id=\"q36_input\""));
+        assert!(!summary_bank.contains("value=\"extinction\""));
+
+        let summary_free_text = source
+            .pointer("/questionGroups/1/bodyHtml")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(summary_free_text.contains(
+            "<input type=\"text\" id=\"q41_input\" name=\"q41\" placeholder=\"answer\">"
+        ));
+        assert!(!summary_free_text.contains("type=\"radio\""));
+
+        let table_bank = source
+            .pointer("/questionGroups/2/bodyHtml")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(table_bank.contains("completion-table"));
+        assert!(table_bank.contains("<input name=\"q42\" type=\"radio\" value=\"D\">"));
+        assert!(table_bank.contains(
+            "<span class=\"choice-label\">D</span> <span class=\"choice-text\">University of Oxford</span>"
+        ));
+        assert!(!table_bank.contains("id=\"q42_input\""));
+        assert!(!table_bank.contains("value=\"University of Oxford\""));
+
+        let table_free_text = source
+            .pointer("/questionGroups/3/bodyHtml")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(table_free_text.contains(
+            "<input type=\"text\" id=\"q43_input\" name=\"q43\" placeholder=\"answer\">"
+        ));
+        assert!(!table_free_text.contains("type=\"radio\""));
+    }
 }

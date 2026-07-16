@@ -1,5 +1,8 @@
 import type { AnswerValue, GroupKind } from "./authoring-ir";
 import type { Frequency, PassageCategory } from "./job";
+import type { ValidationIssue } from "./validation";
+
+export type IgnoredValidationIssue = ValidationIssue & { jobId: string };
 
 export interface ReadingExamSourceV1 {
   schemaVersion: "ReadingExamSourceV1";
@@ -63,6 +66,10 @@ export interface ExportResult {
   examId: string;
   files: Array<{ name: string; content: string }>;
   outputDir?: string;
+  validationPolicy?: ValidationPolicy;
+  validationOverridden?: boolean;
+  ignoredIssueCount?: number;
+  ignoredIssues?: IgnoredValidationIssue[];
   exportSummary?: unknown;
   cleanup?: {
     cleaned?: boolean;
@@ -78,6 +85,10 @@ export interface JsExportResult {
   jobIds: string[];
   files: Array<{ name: string; content: string }>;
   outputDir?: string;
+  validationPolicy?: ValidationPolicy;
+  validationOverridden?: boolean;
+  ignoredIssueCount?: number;
+  ignoredIssues?: IgnoredValidationIssue[];
   exportSummary?: unknown;
   cleanup?: Array<{
     cleaned?: boolean;
@@ -86,16 +97,19 @@ export interface JsExportResult {
     [key: string]: unknown;
   }>;
 }
+export type ValidationPolicy = "strict" | "force";
 
 export interface ExportReadingJsInput {
   jobIds: string[];
   exportDir?: string;
+  validationPolicy?: ValidationPolicy;
 }
 
 export interface ExportNasLibraryInput {
   jobIds: string[];
   exportDir?: string;
   version?: string;
+  validationPolicy?: ValidationPolicy;
 }
 
 export interface NasExportResult {
@@ -103,11 +117,16 @@ export interface NasExportResult {
   jobIds: string[];
   examIds: string[];
   assetCount: number;
+  manifestAssetCount?: number;
   libraryRoot?: string;
   readingExamsDir?: string;
   sourceDir?: string;
   publishDir?: string;
   version?: string;
+  validationPolicy?: ValidationPolicy;
+  validationOverridden?: boolean;
+  ignoredIssueCount?: number;
+  ignoredIssues?: IgnoredValidationIssue[];
   files: Array<{ name: string; content: string }>;
   report?: unknown;
   exportSummary?: unknown;
@@ -117,26 +136,4 @@ export interface NasExportResult {
     message?: string;
     [key: string]: unknown;
   }>;
-}
-
-export interface BuildPackInput {
-  packId: string;
-  version: string;
-  institution: string;
-  description: string;
-  validFrom?: string;
-  validTo?: string;
-  jobIds: string[];
-}
-
-export interface PackBuildResult {
-  packId: string;
-  outputPath: string;
-  files: string[];
-  zipSizeBytes?: number;
-  entryCount?: number;
-  manifest?: unknown;
-  exportSummary?: unknown;
-  cleanup?: unknown;
-  createdAt?: string;
 }

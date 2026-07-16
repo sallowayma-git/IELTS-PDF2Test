@@ -1,6 +1,6 @@
-use crate::util::{safe_path_segment, validate_path_segment};
+use crate::util::validate_path_segment;
 use crate::CommandResult;
-use chrono::Utc;
+use chrono::{DateTime, FixedOffset, Local, SecondsFormat};
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
@@ -10,19 +10,6 @@ pub(crate) struct ReadingAssetBundle {
     pub wrapper_js: String,
     pub manifest_js: String,
 }
-
-#[derive(Debug, Clone)]
-pub(crate) struct PackSource {
-    pub fallback_exam_id: String,
-    pub source: Value,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PackEntryBundle {
-    pub entries: Vec<(String, Vec<u8>)>,
-    pub pack_manifest: Value,
-}
-
 pub(crate) fn build_reading_asset_bundle(source: &Value) -> CommandResult<ReadingAssetBundle> {
     let exam_id = safe_exam_id(source)?;
     let wrapper_js = build_wrapper(source)?;
@@ -63,145 +50,100 @@ pub(crate) fn build_manifest(sources: &[Value]) -> CommandResult<String> {
             "category": source.pointer("/meta/category").and_then(Value::as_str).unwrap_or("P1")
         }));
     }
+    let generated_at = Local::now().fixed_offset();
+    manifest.insert(
+        "_meta".to_string(),
+        build_manifest_metadata(&generated_at, manifest.len()),
+    );
     Ok(format!(
         "window.__READING_EXAM_MANIFEST__ = {};\n",
         serde_json::to_string_pretty(&Value::Object(manifest)).map_err(|error| error.to_string())?
     ))
 }
 
-pub(crate) fn build_pack_manifest(input: &Value, sources: &[Value]) -> CommandResult<Value> {
-    let exams = sources
-        .iter()
-        .enumerate()
-        .map(|(index, source)| -> CommandResult<Value> {
-            let exam_id = safe_exam_id(source)?;
-            Ok(json!({
-                "order": index + 1,
-                "examId": exam_id,
-                "title": source.pointer("/meta/title").and_then(Value::as_str).unwrap_or("Untitled Reading"),
-                "category": source.pointer("/meta/category").and_then(Value::as_str).unwrap_or("P1"),
-                "frequency": source.pointer("/meta/frequency").and_then(Value::as_str).unwrap_or("medium"),
-                "script": format!("reading-exams/{}.js", exam_id)
-            }))
-        })
-        .collect::<CommandResult<Vec<_>>>()?;
-
-    Ok(json!({
-        "schemaVersion": "ReadingExamPackV1",
-        "packId": input.get("packId").and_then(Value::as_str).unwrap_or("pack-local"),
-        "version": input.get("version").and_then(Value::as_str).unwrap_or("0.1.0"),
-        "institution": input.get("institution").and_then(Value::as_str).unwrap_or("internal"),
-        "description": input.get("description").and_then(Value::as_str).unwrap_or(""),
-        "validFrom": input.get("validFrom").cloned().unwrap_or(Value::Null),
-        "validTo": input.get("validTo").cloned().unwrap_or(Value::Null),
-        "generatedAt": Utc::now().to_rfc3339(),
-        "assetsRoot": "reading-exams",
-        "exams": exams
-    }))
-}
-
-pub(crate) fn build_pack_entry_bundle(
-    input: &Value,
-    sources: &[PackSource],
-) -> CommandResult<PackEntryBundle> {
-    if sources.is_empty() {
-        return Err("pack_requires_at_least_one_source".to_string());
-    }
-
-    let mut normalized_sources = Vec::with_capacity(sources.len());
-    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
-    for item in sources {
-        let exam_id = item
-            .source
-            .get("examId")
-            .and_then(Value::as_str)
-            .map(|_| safe_exam_id(&item.source))
-            .unwrap_or_else(|| {
-                Ok(safe_path_segment("exam_id", &item.fallback_exam_id)?.to_string())
-            })?;
-        let mut source = item.source.clone();
-        if source.get("examId").and_then(Value::as_str).is_none() {
-            source
-                .as_object_mut()
-                .ok_or_else(|| "pack_source_must_be_object".to_string())?
-                .insert("examId".to_string(), Value::String(exam_id.clone()));
-        }
-        let wrapper = build_wrapper(&source)?;
-        entries.push((
-            format!("reading-exams/{}.js", exam_id),
-            wrapper.into_bytes(),
-        ));
-        normalized_sources.push(source);
-    }
-
-    let manifest_js = build_manifest(&normalized_sources)?;
-    let pack_manifest = build_pack_manifest(input, &normalized_sources)?;
-    let pack_json =
-        serde_json::to_string_pretty(&pack_manifest).map_err(|error| error.to_string())?;
-    entries.insert(
-        0,
-        (
-            "reading-exams/manifest.js".to_string(),
-            manifest_js.into_bytes(),
-        ),
-    );
-    entries.insert(0, ("pack.json".to_string(), pack_json.into_bytes()));
-
-    Ok(PackEntryBundle {
-        entries,
-        pack_manifest,
+fn build_manifest_metadata(generated_at: &DateTime<FixedOffset>, asset_count: usize) -> Value {
+    json!({
+        "schemaVersion": "ReadingExamManifestV1",
+        "batchId": generated_at.format("BATCH-%Y%m%d-%H%M%S-%3f").to_string(),
+        "generatedAt": generated_at.to_rfc3339_opts(SecondsFormat::Millis, false),
+        "assetCount": asset_count
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Timelike};
 
     #[test]
-    fn pack_entry_bundle_normalizes_missing_exam_id_to_fallback() {
-        let input = json!({
-            "packId": "pack-fixture",
-            "jobIds": ["job-fixture"]
-        });
+    fn manifest_metadata_uses_one_local_timestamp_and_counts_assets() {
+        let generated_at = FixedOffset::east_opt(8 * 60 * 60)
+            .unwrap()
+            .with_ymd_and_hms(2026, 7, 12, 23, 45, 6)
+            .single()
+            .unwrap()
+            .with_nanosecond(789_000_000)
+            .unwrap();
+
+        let metadata = build_manifest_metadata(&generated_at, 3);
+
+        assert_eq!(
+            metadata,
+            json!({
+                "schemaVersion": "ReadingExamManifestV1",
+                "batchId": "BATCH-20260712-234506-789",
+                "generatedAt": "2026-07-12T23:45:06.789+08:00",
+                "assetCount": 3
+            })
+        );
+    }
+
+    #[test]
+    fn manifest_keeps_exam_entries_unchanged_and_adds_metadata() {
         let source = json!({
-            "schemaVersion": "ReadingExamSourceV1",
-            "meta": {"title": "Fixture", "category": "P1"},
-            "questionGroups": [],
-            "answerKey": {},
-            "questionOrder": [],
-            "questionDisplayMap": {}
+            "examId": "reading-p1-001",
+            "meta": {
+                "title": "Reading fixture",
+                "category": "P1"
+            }
         });
 
-        let bundle = build_pack_entry_bundle(
-            &input,
-            &[PackSource {
-                fallback_exam_id: "job-fixture".to_string(),
-                source,
-            }],
-        )
-        .unwrap();
+        let manifest_js = build_manifest(&[source]).unwrap();
+        let manifest_json = manifest_js
+            .strip_prefix("window.__READING_EXAM_MANIFEST__ = ")
+            .and_then(|value| value.strip_suffix(";\n"))
+            .unwrap();
+        let manifest: Value = serde_json::from_str(manifest_json).unwrap();
 
-        let files = bundle
-            .entries
-            .iter()
-            .map(|(path, _)| path.as_str())
-            .collect::<Vec<_>>();
         assert_eq!(
-            files,
-            vec![
-                "pack.json",
-                "reading-exams/manifest.js",
-                "reading-exams/job-fixture.js"
-            ]
+            manifest.get("reading-p1-001"),
+            Some(&json!({
+                "examId": "reading-p1-001",
+                "dataKey": "reading-p1-001",
+                "script": "./reading-p1-001.js",
+                "title": "Reading fixture",
+                "category": "P1"
+            }))
         );
         assert_eq!(
-            bundle
-                .pack_manifest
-                .pointer("/exams/0/examId")
+            manifest
+                .pointer("/_meta/schemaVersion")
                 .and_then(Value::as_str),
-            Some("job-fixture")
+            Some("ReadingExamManifestV1")
         );
-        let wrapper = String::from_utf8(bundle.entries[2].1.clone()).unwrap();
-        assert!(wrapper.contains("\"job-fixture\""));
+        assert_eq!(
+            manifest
+                .pointer("/_meta/assetCount")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(manifest
+            .pointer("/_meta/batchId")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.starts_with("BATCH-")));
+        assert!(manifest
+            .pointer("/_meta/generatedAt")
+            .and_then(Value::as_str)
+            .is_some_and(|value| DateTime::parse_from_rfc3339(value).is_ok()));
     }
 }

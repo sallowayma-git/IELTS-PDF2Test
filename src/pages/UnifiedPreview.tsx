@@ -8,11 +8,25 @@ import {
   validateAuthoringIr
 } from "../api/tauriCommands";
 import { go } from "../app/router";
+import { sanitizeHtml } from "../utils/sanitizeHtml";
 import type { AutoPipelineReport, GroupKind, QuestionDraft, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
 
-const EXPORT_INTENT_KEY_PREFIX = "ielts-author-studio.export-intent.";
 const CLOUD_REVIEW_PENDING_KEY_PREFIX = "ielts-author-studio.cloud-review.";
+const CLOUD_REVIEW_FAILED_KEY_PREFIX = "ielts-author-studio.cloud-review.failed.";
+const CLOUD_REVIEW_QUEUE_STORAGE_KEY = "ielts-author-studio.cloud-review.queue";
+const CLOUD_REVIEW_EVENT_NAME = "ielts-author-studio.cloud-review.event";
 type AuditIssue = string | { message?: string; [key: string]: unknown };
+type CloudReviewQueueItem = { jobId: string; profileId?: string };
+type CloudReviewQueuePhase = "queued" | "running" | "completed" | "failed";
+type CloudReviewQueueEventDetail = {
+  jobId: string;
+  phase: CloudReviewQueuePhase;
+  report?: AutoPipelineReport;
+  error?: string;
+};
+type CloudReviewRuntimeWindow = Window & typeof globalThis & {
+  __IELTS_CLOUD_REVIEW_WORKER__?: Promise<void> | null;
+};
 
 const groupKinds: GroupKind[] = [
   "true_false_not_given",
@@ -46,10 +60,116 @@ const groupKindLabels: Record<GroupKind, string> = {
   sentence_completion: "句子填空"
 };
 
-type CloudState = "idle" | "running" | "done" | "warning" | "unavailable" | "error";
+type CloudState = "idle" | "queued" | "running" | "done" | "warning" | "unavailable" | "error";
 
-function pendingCloudReviewKey(jobId: string): string {
+function cloudReviewWindow(): CloudReviewRuntimeWindow | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window as CloudReviewRuntimeWindow;
+}
+
+function readCloudReviewQueue(): CloudReviewQueueItem[] {
+  const runtimeWindow = cloudReviewWindow();
+  if (!runtimeWindow) return [];
+  const raw = runtimeWindow.sessionStorage.getItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as CloudReviewQueueItem[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is CloudReviewQueueItem => !!item?.jobId);
+  } catch {
+    runtimeWindow.sessionStorage.removeItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY);
+    return [];
+  }
+}
+
+function writeCloudReviewQueue(queue: CloudReviewQueueItem[]): void {
+  const runtimeWindow = cloudReviewWindow();
+  if (!runtimeWindow) return;
+  if (queue.length) {
+    runtimeWindow.sessionStorage.setItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY, JSON.stringify(queue));
+    return;
+  }
+  runtimeWindow.sessionStorage.removeItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY);
+}
+
+function removeCloudReviewQueueItem(jobId: string): void {
+  writeCloudReviewQueue(readCloudReviewQueue().filter((item) => item.jobId !== jobId));
+}
+
+function emitCloudReviewQueueEvent(detail: CloudReviewQueueEventDetail): void {
+  const runtimeWindow = cloudReviewWindow();
+  runtimeWindow?.dispatchEvent(new CustomEvent<CloudReviewQueueEventDetail>(CLOUD_REVIEW_EVENT_NAME, { detail }));
+}
+
+export function pendingCloudReviewKey(jobId: string): string {
   return `${CLOUD_REVIEW_PENDING_KEY_PREFIX}${jobId}`;
+}
+
+function failedCloudReviewKey(jobId: string): string {
+  return `${CLOUD_REVIEW_FAILED_KEY_PREFIX}${jobId}`;
+}
+
+export function isCloudReviewQueued(jobId: string): boolean {
+  return readCloudReviewQueue().some((item) => item.jobId === jobId);
+}
+
+export function enqueueBackgroundCloudReview(jobId: string, profileId?: string | null): boolean {
+  const normalizedProfileId = profileId && profileId !== "profile-local-placeholder" ? profileId : undefined;
+  if (!normalizedProfileId) return false;
+
+  const queue = readCloudReviewQueue();
+  const existingIndex = queue.findIndex((item) => item.jobId === jobId);
+  if (existingIndex >= 0) {
+    if (!queue[existingIndex]?.profileId) {
+      queue[existingIndex] = { ...queue[existingIndex], profileId: normalizedProfileId };
+      writeCloudReviewQueue(queue);
+    }
+    return false;
+  }
+
+  writeCloudReviewQueue([...queue, { jobId, profileId: normalizedProfileId }]);
+  emitCloudReviewQueueEvent({ jobId, phase: "queued" });
+  return true;
+}
+
+export function startBackgroundCloudReviewScheduler(): void {
+  const runtimeWindow = cloudReviewWindow();
+  if (!runtimeWindow) return;
+  if (runtimeWindow.__IELTS_CLOUD_REVIEW_WORKER__) return;
+
+  runtimeWindow.__IELTS_CLOUD_REVIEW_WORKER__ = (async () => {
+    try {
+      while (true) {
+        const next = readCloudReviewQueue()[0];
+        if (!next) break;
+
+        runtimeWindow.sessionStorage.setItem(pendingCloudReviewKey(next.jobId), "1");
+        runtimeWindow.sessionStorage.removeItem(failedCloudReviewKey(next.jobId));
+        emitCloudReviewQueueEvent({ jobId: next.jobId, phase: "running" });
+        try {
+          const report = await runCloudReview(next.jobId, next.profileId ? { profileId: next.profileId } : undefined);
+          runtimeWindow.sessionStorage.removeItem(failedCloudReviewKey(next.jobId));
+          emitCloudReviewQueueEvent({ jobId: next.jobId, phase: "completed", report });
+        } catch (error) {
+          runtimeWindow.sessionStorage.setItem(
+            failedCloudReviewKey(next.jobId),
+            error instanceof Error ? error.message : String(error)
+          );
+          emitCloudReviewQueueEvent({
+            jobId: next.jobId,
+            phase: "failed",
+            error: error instanceof Error ? error.message : String(error)
+          });
+        } finally {
+          runtimeWindow.sessionStorage.removeItem(pendingCloudReviewKey(next.jobId));
+          removeCloudReviewQueueItem(next.jobId);
+        }
+      }
+    } finally {
+      runtimeWindow.__IELTS_CLOUD_REVIEW_WORKER__ = null;
+      if (readCloudReviewQueue().length) startBackgroundCloudReviewScheduler();
+    }
+  })();
 }
 
 function mainSourceIsPdf(ir?: ReadingAuthoringIr): boolean {
@@ -95,6 +215,10 @@ function cloudStateFromReport(report?: AutoPipelineReport, sourceIsPdf = false):
   if (cloud.failure) return { state: "error", label: "云端复核失败" };
   if (cloud.passed) return { state: "done", label: "云端复核已完成" };
   return { state: "warning", label: "云端提示有差异" };
+}
+
+function cloudStateIsTerminal(state: CloudState): boolean {
+  return state === "done" || state === "warning" || state === "unavailable" || state === "error";
 }
 
 function startBackgroundArtifacts(jobId: string): void {
@@ -201,12 +325,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   const [cloudLabel, setCloudLabel] = useState("等待云端复核");
   const [activeGroupId, setActiveGroupId] = useState<string | undefined>();
   const [activeQuestionId, setActiveQuestionId] = useState<string | undefined>();
-  const cloudRunStarted = useRef(false);
   const cloudPollTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    cloudRunStarted.current = false;
-  }, [jobId]);
 
   async function load(autoWarm = false) {
     const detail = await getJob(jobId);
@@ -218,9 +337,17 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     const sourceIsPdf = mainSourceIsPdf(nextIr);
     const nextCloud = cloudStateFromReport(nextPipeline, sourceIsPdf);
     const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
-    if (pending && nextCloud.state !== "done" && nextCloud.state !== "warning" && nextCloud.state !== "error") {
+    const queued = isCloudReviewQueued(jobId);
+    const failedMessage = window.sessionStorage.getItem(failedCloudReviewKey(jobId));
+    if (pending && !cloudStateIsTerminal(nextCloud.state)) {
       setCloudState("running");
       setCloudLabel("云端复核中");
+    } else if (queued && !cloudStateIsTerminal(nextCloud.state)) {
+      setCloudState("queued");
+      setCloudLabel("已加入云端复核队列");
+    } else if (failedMessage && !cloudStateIsTerminal(nextCloud.state)) {
+      setCloudState("error");
+      setCloudLabel("云端复核失败");
     } else {
       setCloudState(nextCloud.state);
       setCloudLabel(nextCloud.label);
@@ -234,6 +361,41 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   useEffect(() => {
     load(true).catch((error) => setRuntimeError(error instanceof Error ? error.message : String(error)));
   }, [jobId]);
+
+  useEffect(() => {
+    const listener = (event: Event) => {
+      const detail = (event as CustomEvent<CloudReviewQueueEventDetail>).detail;
+      if (!detail || detail.jobId !== jobId) return;
+
+      if (detail.phase === "queued") {
+        setCloudState("queued");
+        setCloudLabel("已加入云端复核队列");
+        return;
+      }
+      if (detail.phase === "running") {
+        setCloudState("running");
+        setCloudLabel("云端复核中");
+        return;
+      }
+      if (detail.phase === "completed" && detail.report) {
+        void load(false)
+          .then(() => {
+            setRuntimeError(undefined);
+            refresh();
+          })
+          .catch((error) => setRuntimeError(error instanceof Error ? error.message : String(error)));
+        return;
+      }
+      if (detail.phase === "failed") {
+        setCloudState("error");
+        setCloudLabel("云端复核失败");
+        setRuntimeError(detail.error ?? "云端复核失败");
+      }
+    };
+
+    window.addEventListener(CLOUD_REVIEW_EVENT_NAME, listener as EventListener);
+    return () => window.removeEventListener(CLOUD_REVIEW_EVENT_NAME, listener as EventListener);
+  }, [jobId, refresh]);
 
   useEffect(() => {
     if (!ir?.groups.length) {
@@ -268,6 +430,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       void getJob(jobId).then((detail) => {
         const nextReport = detail.pipelineReport;
         if (!nextReport?.quality?.cloudComparison?.attempted) return;
+        setIr(detail.authoringIr);
         setPipelineReport(nextReport);
         const nextCloud = cloudStateFromReport(nextReport, mainSourceIsPdf(detail.authoringIr));
         setCloudState(nextCloud.state);
@@ -282,34 +445,34 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   }, [jobId, pipelineReport?.quality?.cloudComparison?.attempted]);
 
   useEffect(() => {
-    if (!ir || cloudRunStarted.current) return;
-    if (!mainSourceIsPdf(ir)) return;
-    const comparison = pipelineReport?.quality?.cloudComparison;
-    if (comparison?.attempted || !pipelineReport?.llm?.profileId || pipelineReport.llm.profileId === "profile-local-placeholder") return;
-    const pendingKey = pendingCloudReviewKey(jobId);
-    if (window.sessionStorage.getItem(pendingKey) === "1") return;
+    if (!ir || !mainSourceIsPdf(ir)) return;
 
-    cloudRunStarted.current = true;
-    window.sessionStorage.setItem(pendingKey, "1");
-    setCloudState("running");
-    setCloudLabel("云端复核中");
-    void runCloudReview(jobId, { profileId: pipelineReport.llm.profileId })
-      .then((nextReport) => {
-        setPipelineReport(nextReport);
-        const nextCloud = cloudStateFromReport(nextReport, true);
-        setCloudState(nextCloud.state);
-        setCloudLabel(nextCloud.label);
-        refresh();
-      })
-      .catch((error) => {
-        setCloudState("error");
-        setCloudLabel("云端复核失败");
-        setRuntimeError(error instanceof Error ? error.message : String(error));
-      })
-      .finally(() => {
-        window.sessionStorage.removeItem(pendingKey);
-      });
-  }, [ir, jobId, pipelineReport?.llm?.profileId, pipelineReport?.quality?.cloudComparison?.attempted, refresh]);
+    const comparison = pipelineReport?.quality?.cloudComparison;
+    const profileId = pipelineReport?.llm?.profileId;
+    if (comparison?.attempted || !profileId || profileId === "profile-local-placeholder") return;
+    if (window.sessionStorage.getItem(failedCloudReviewKey(jobId))) return;
+
+    const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
+    if (pending) {
+      setCloudState("running");
+      setCloudLabel("云端复核中");
+      startBackgroundCloudReviewScheduler();
+      return;
+    }
+
+    if (isCloudReviewQueued(jobId)) {
+      setCloudState("queued");
+      setCloudLabel("已加入云端复核队列");
+      startBackgroundCloudReviewScheduler();
+      return;
+    }
+
+    if (enqueueBackgroundCloudReview(jobId, profileId)) {
+      setCloudState("queued");
+      setCloudLabel("已加入云端复核队列");
+    }
+    startBackgroundCloudReviewScheduler();
+  }, [ir, jobId, pipelineReport?.llm?.profileId, pipelineReport?.quality?.cloudComparison?.attempted]);
 
   const passageBlocks = useMemo(() => ir?.passage.htmlBlocks ?? [], [ir]);
   const rawAuditIssues = ir?.audit.issues ?? [];
@@ -435,7 +598,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     }
   }
 
-  async function directExport() {
+  async function openPublishCenter() {
     if (!ir) return;
     setSaving(true);
     setRuntimeError(undefined);
@@ -443,7 +606,6 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       const saved = await updateAuthoringIr(jobId, { ir });
       setIr(saved);
       startBackgroundArtifacts(jobId);
-      window.sessionStorage.setItem(`${EXPORT_INTENT_KEY_PREFIX}${jobId}`, "single-js");
       refresh();
       go(`/jobs/${jobId}/export`);
     } catch (error) {
@@ -465,13 +627,13 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
           <h2>{ir.exam.title || "题稿预览"}</h2>
         </div>
         <div className="preview-actions">
-          <div className={`cloud-indicator ${cloudState}`} title={cloudLabel} aria-label={cloudLabel}>
+          <div className={`cloud-indicator ${cloudState === "queued" ? "running" : cloudState}`} title={cloudLabel} aria-label={cloudLabel}>
             <span className="cloud-indicator-dot" aria-hidden="true" />
             <small>{cloudLabel}</small>
           </div>
-          <button className="ghost" data-testid="verify-all-groups" onClick={() => void verifyAllGroups()} disabled={saving}>全部核对</button>
+          <button className="ghost" data-testid="verify-all-groups" onClick={() => void verifyAllGroups()} disabled={saving}>全部标记已核对</button>
           <button className="ghost" onClick={() => void saveDraft()} disabled={saving}>{saving ? "正在保存..." : "保存"}</button>
-          <button className="primary" data-testid="validate-and-export" onClick={() => void directExport()} disabled={saving}>导出</button>
+          <button className="primary" data-testid="validate-and-export" onClick={() => void openPublishCenter()} disabled={saving}>保存并前往发布</button>
         </div>
       </header>
 
@@ -518,7 +680,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                     <span>{block.blockId}</span>
                     {focused ? <strong>当前关联</strong> : null}
                   </div>
-                  <div dangerouslySetInnerHTML={{ __html: block.html }} />
+                  <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(block.html) }} />
                 </div>
               );
             })}
@@ -618,7 +780,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                 <aside className="question-list-pane">
                   <div className="question-list-head">
                     <strong>题目列表</strong>
-                    <small>左侧选题，右侧细改；列表中可直接快改答案。</small>
+                    <small>左侧选题，右侧细改；答案可选填。</small>
                   </div>
                   <div className="question-list-scroll">
                     {activeGroup.questions.map((question) => {
@@ -638,7 +800,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                             <p>{promptPreview(question.prompt)}</p>
                           </button>
                           <label className="question-quick-answer">
-                            快改答案
+                            答案（可选）
                             <input
                               value={answerText(question)}
                               onChange={(event) => updateQuestionAnswer(activeGroup.groupId, question.id, event.target.value)}
@@ -695,7 +857,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
 
                       <div className="question-detail-grid">
                         <label>
-                          标准答案
+                          答案（可选）
                           <input
                             value={answerText(activeQuestion)}
                             onChange={(event) => updateQuestionAnswer(activeGroup.groupId, activeQuestion.id, event.target.value)}
@@ -710,7 +872,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                               verified: event.target.checked
                             }))}
                           />
-                          已核对题干与答案
+                          已核对本题
                         </label>
                       </div>
                     </div>

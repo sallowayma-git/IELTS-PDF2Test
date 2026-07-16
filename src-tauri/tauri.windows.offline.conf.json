@@ -1,6 +1,10 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
+    "resources": [
+      "../sidecars",
+      "lib/pdfium-windows/pdfium.dll"
+    ],
     "windows": {
       "webviewInstallMode": {
         "type": "offlineInstaller",

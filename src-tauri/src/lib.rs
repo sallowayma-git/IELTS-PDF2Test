@@ -6,9 +6,17 @@ use authoring_commands::{
 use auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
 use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
-use export_artifacts::{build_manifest, build_wrapper, safe_exam_id};
-use export_nas_library::export_nas_library_core;
-use export_pack::{build_pack_core, export_reading_assets_core, export_reading_js_core};
+use export_artifacts::{build_wrapper, safe_exam_id};
+use export_nas_library::{
+    export_nas_library_core, nas_reading_exams_dir, resolve_real_nas_library_root,
+    write_nas_reading_sources,
+};
+#[cfg(test)]
+use export_pack::export_reading_assets_core;
+use export_pack::{
+    export_reading_assets_with_options_core, export_reading_js_core, ExportValidationOptions,
+};
+use export_writing_library::export_writing_library_core;
 use llm_commands::{
     apply_llm_suggestion_core, delete_llm_profile_core, llm_run_group_core, save_llm_profile_core,
     test_llm_profile_core,
@@ -31,18 +39,24 @@ mod authoring_review;
 mod authoring_validation;
 mod auto_pipeline;
 mod cleanup;
+#[cfg(test)]
+mod cross_repo_contract_fixture;
+mod db;
 mod diagnostics;
 mod environment;
 mod export_artifacts;
 mod export_nas_library;
 mod export_pack;
+mod export_writing_library;
 mod job_commands;
 mod job_store;
+mod library_commands;
 mod llm_commands;
 mod llm_gateway;
 mod llm_profiles;
 mod llm_suggestions;
 mod parser;
+mod pdf_geometry;
 mod preview_commands;
 mod reading_source;
 mod runtime_validation;
@@ -50,6 +64,7 @@ mod source_review;
 mod util;
 mod validator;
 mod workflow_state;
+mod writing_store;
 use tauri::{AppHandle, Manager};
 
 pub type CommandResult<T> = Result<T, String>;
@@ -162,6 +177,71 @@ pub struct JobMetaPatch {
     pub tags: Option<Vec<String>>,
     #[serde(rename = "activeLlmProfileId")]
     pub active_llm_profile_id: Option<String>,
+}
+
+// ── 题库管理（library）类型 ───────────────────────────────────────────────
+// 统一收录阅读 + 写作题目，subject 区分；status 用统一枚举避免两套模型混淆。
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct LibraryFilter {
+    pub subject: Option<String>,  // "reading" | "writing"
+    pub status: Option<String>,   // draft | needs_review | ready | exported
+    pub category: Option<String>, // P1|P2|P3 (阅读) | task1|task2 (写作)
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LibraryExamSummary {
+    pub id: String,
+    #[serde(rename = "examId")]
+    pub exam_id: Option<String>,
+    pub title: String,
+    pub subject: String,
+    pub category: Option<String>,
+    pub frequency: Option<String>,
+    pub status: String,
+    #[serde(rename = "taskType")]
+    pub task_type: Option<String>,
+    pub tags: Vec<String>,
+    #[serde(rename = "sourceHash")]
+    pub source_hash: Option<String>,
+    #[serde(rename = "issueErrors")]
+    pub issue_errors: u32,
+    #[serde(rename = "issueWarnings")]
+    pub issue_warnings: u32,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LibraryExamDetail {
+    pub summary: LibraryExamSummary,
+    pub payload: Value,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct LibraryMetaPatch {
+    pub title: Option<String>,
+    pub category: Option<String>,
+    pub frequency: Option<String>,
+    pub status: Option<String>,
+    #[serde(rename = "taskType")]
+    pub task_type: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct LibraryStats {
+    pub total: u32,
+    #[serde(rename = "bySubject")]
+    pub by_subject: std::collections::BTreeMap<String, u32>,
+    #[serde(rename = "byStatus")]
+    pub by_status: std::collections::BTreeMap<String, u32>,
+    #[serde(rename = "byCategory")]
+    pub by_category: std::collections::BTreeMap<String, u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -519,10 +599,9 @@ fn export_nas_library_from_pdf_paths(paths: &[PathBuf], args: &[String]) -> Comm
         cli_option_value(args, "--export-dir").ok_or_else(|| "missing_export_dir".to_string())?;
     let version = cli_option_value(args, "--version")
         .unwrap_or_else(|| Utc::now().format("%Y.%m.%d-%H%M%S").to_string());
-    let library_root = PathBuf::from(export_dir);
+    let library_root = resolve_real_nas_library_root(&export_dir)?;
     fs::create_dir_all(&library_root).map_err(|error| error.to_string())?;
-    let reading_exams_dir = library_root.clone();
-    fs::create_dir_all(&reading_exams_dir).map_err(|error| error.to_string())?;
+    let reading_exams_dir = nas_reading_exams_dir(&library_root);
 
     let mut seen_exam_ids = HashSet::new();
     let mut source_entries = Vec::with_capacity(paths.len());
@@ -544,11 +623,8 @@ fn export_nas_library_from_pdf_paths(paths: &[PathBuf], args: &[String]) -> Comm
         .iter()
         .map(|(_, _, source, _)| source.clone())
         .collect::<Vec<_>>();
-    let manifest_js = build_manifest(&sources)?;
-    for (_, exam_id, _, wrapper_js) in &source_entries {
-        util::write_text(&reading_exams_dir.join(format!("{exam_id}.js")), wrapper_js)?;
-    }
-    util::write_text(&reading_exams_dir.join("manifest.js"), &manifest_js)?;
+    let (manifest_js, manifest_asset_count) =
+        write_nas_reading_sources(&reading_exams_dir, &sources)?;
     let exam_ids = source_entries
         .iter()
         .map(|(_, exam_id, _, _)| exam_id.clone())
@@ -576,6 +652,7 @@ fn export_nas_library_from_pdf_paths(paths: &[PathBuf], args: &[String]) -> Comm
         "examId": exam_ids.first().cloned().unwrap_or_default(),
         "examIds": exam_ids,
         "assetCount": source_entries.len(),
+        "manifestAssetCount": manifest_asset_count,
         "files": files,
         "readingSource": sources.first().cloned().unwrap_or(Value::Null),
         "readingSources": sources,
@@ -652,6 +729,16 @@ fn run_cli(args: &[String]) -> CommandResult<bool> {
 
 pub fn run_cli_or_app() {
     let args = env::args().skip(1).collect::<Vec<_>>();
+    let is_cli = run_cli_is_active(&args);
+    // In a release build the binary uses the Windows GUI subsystem (see
+    // main.rs `windows_subsystem = "windows"`), so no console window is
+    // allocated on launch. When invoked as a CLI (e.g.
+    // `--generate-reading-source`), re-attach to the parent process's console
+    // and reopen the std streams so `println!`/`eprintln!` still reach the
+    // terminal. GUI launches skip this and run windowed with no console.
+    if is_cli {
+        attach_parent_console();
+    }
     match run_cli(&args) {
         Ok(true) => {}
         Ok(false) => run(),
@@ -660,6 +747,82 @@ pub fn run_cli_or_app() {
             std::process::exit(1);
         }
     }
+}
+
+/// Returns true when the given args select the CLI path (a known headless
+/// command) rather than the GUI. Mirrors the dispatch in `run_cli`.
+fn run_cli_is_active(args: &[String]) -> bool {
+    matches!(
+        args.first().map(String::as_str),
+        Some("--generate-reading-source")
+            | Some("--run-auto-pipeline")
+            | Some("--export-nas-library")
+            | Some("--help")
+            | Some("-h")
+            | Some("--version")
+            | Some("-V")
+    )
+}
+
+/// Attach to the parent process's console (Windows release builds only) and
+/// rebind the standard handles so CLI output is visible. No-op on non-Windows,
+/// when no parent console exists (e.g. launched from Explorer), or when
+/// stdout/stderr are already redirected to a file/pipe (so
+/// `app.exe --generate-reading-source > out.json` still works).
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
+fn attach_parent_console() {
+    // Raw FFI to kernel32 — avoids pulling in the windows-sys/winapi crate.
+    // Rust's `println!`/`eprintln!` write via io::stdout()/io::stderr(), which
+    // read the standard handle through GetStdHandle on each write, so calling
+    // SetStdHandle with a new console output handle is enough to redirect
+    // Rust's std streams (no C-runtime freopen needed).
+    extern "system" {
+        fn AttachConsole(pid: u32) -> i32;
+        fn GetStdHandle(nstd: u32) -> *mut std::ffi::c_void;
+        fn SetStdHandle(nstd: u32, handle: *mut std::ffi::c_void) -> i32;
+        fn GetConsoleMode(handle: *mut std::ffi::c_void, mode: *mut u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF;
+    const STD_INPUT_HANDLE: u32 = 0xFFFFFFF6; // (u32)-10
+    const STD_OUTPUT_HANDLE: u32 = 0xFFFFFFF5; // (u32)-11
+    const STD_ERROR_HANDLE: u32 = 0xFFFFFFF4; // (u32)-12
+
+    unsafe {
+        let out_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        let err_handle = GetStdHandle(STD_ERROR_HANDLE);
+        let mut mode: u32 = 0;
+        let out_is_console = !out_handle.is_null() && GetConsoleMode(out_handle, &mut mode) != 0;
+        let err_is_console = !err_handle.is_null() && GetConsoleMode(err_handle, &mut mode) != 0;
+        // Already wired to a console (launched from an existing console) —
+        // nothing to do, and redirecting would break shell pipes.
+        if out_is_console && err_is_console {
+            return;
+        }
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return; // no parent console to attach to (e.g. launched from Explorer)
+        }
+        // After AttachConsole, GetStdHandle returns the parent console's
+        // handles. Rebind only the streams that were not already redirected
+        // to a file/pipe, preserving `> file` and `|` behaviour.
+        let conout = GetStdHandle(STD_OUTPUT_HANDLE);
+        let conerr = GetStdHandle(STD_ERROR_HANDLE);
+        let conin = GetStdHandle(STD_INPUT_HANDLE);
+        if !out_is_console && !conout.is_null() {
+            SetStdHandle(STD_OUTPUT_HANDLE, conout);
+        }
+        if !err_is_console && !conerr.is_null() {
+            SetStdHandle(STD_ERROR_HANDLE, conerr);
+        }
+        if !conin.is_null() {
+            SetStdHandle(STD_INPUT_HANDLE, conin);
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "windows", not(debug_assertions))))]
+fn attach_parent_console() {
+    // Debug builds and non-Windows platforms always have a console / are
+    // already wired to std streams.
 }
 
 #[tauri::command]
@@ -712,7 +875,9 @@ async fn choose_export_dir(app: AppHandle) -> CommandResult<Option<String>> {
 }
 
 #[tauri::command]
-async fn pick_pdf_folder_sources(app: AppHandle) -> CommandResult<Vec<job_commands::PickedSourcePath>> {
+async fn pick_pdf_folder_sources(
+    app: AppHandle,
+) -> CommandResult<Vec<job_commands::PickedSourcePath>> {
     job_commands::pick_pdf_folder_sources_core(app).await
 }
 
@@ -931,10 +1096,12 @@ async fn run_preview_e2e(job_id: String, app: AppHandle) -> CommandResult<Value>
 async fn export_reading_assets(
     job_id: String,
     export_dir: String,
+    validation_policy: Option<String>,
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    export_reading_assets_core(&root, &job_id, &export_dir, true)
+    let options = ExportValidationOptions::from_policy(validation_policy.as_deref())?;
+    export_reading_assets_with_options_core(&root, &job_id, &export_dir, true, options)
 }
 
 #[tauri::command]
@@ -949,10 +1116,81 @@ async fn export_nas_library(input: Value, app: AppHandle) -> CommandResult<Value
     export_nas_library_core(&root, &input, true)
 }
 
+// ---------- 写作题库命令（独立模型，不污染阅读 ImportJob）----------
 #[tauri::command]
-async fn build_pack(input: Value, app: AppHandle) -> CommandResult<Value> {
+async fn create_writing_job(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    build_pack_core(&root, &input, true)
+    util::ensure_app_dirs(&root)?;
+    let parsed: writing_store::CreateWritingJobInput = serde_json::from_value(input)
+        .map_err(|error| format!("create_writing_job_invalid_input:{}", error))?;
+    let job = writing_store::make_writing_job(parsed);
+    writing_store::save_writing_job(&root, &job)?;
+    Ok(serde_json::to_value(&job).map_err(|error| error.to_string())?)
+}
+
+#[tauri::command]
+async fn list_writing_jobs(filter: Option<Value>, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let parsed_filter = match filter {
+        Some(value) => Some(
+            serde_json::from_value::<writing_store::WritingJobFilter>(value)
+                .map_err(|error| format!("list_writing_jobs_invalid_filter:{}", error))?,
+        ),
+        None => None,
+    };
+    let jobs = writing_store::list_writing_jobs(&root, parsed_filter)?;
+    Ok(serde_json::to_value(&jobs).map_err(|error| error.to_string())?)
+}
+
+#[tauri::command]
+async fn get_writing_job(job_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let job = writing_store::load_writing_job(&root, &job_id)?;
+    Ok(serde_json::to_value(&job).map_err(|error| error.to_string())?)
+}
+
+#[tauri::command]
+async fn update_writing_job(job_id: String, patch: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let parsed: writing_store::WritingJobPatch = serde_json::from_value(patch)
+        .map_err(|error| format!("update_writing_job_invalid_patch:{}", error))?;
+    let job = writing_store::update_writing_job(&root, &job_id, |job| {
+        if let Some(title) = parsed.title {
+            job.title = title;
+        }
+        if let Some(task_type) = parsed.task_type {
+            let normalized = task_type.trim().to_lowercase();
+            if normalized == "task1" || normalized == "task2" {
+                job.task_type = normalized;
+            }
+        }
+        if let Some(exam_id) = parsed.exam_id {
+            job.exam_id = exam_id;
+        }
+        if let Some(prompt_text) = parsed.prompt_text {
+            job.prompt_text = prompt_text;
+        }
+        if let Some(suggested_word_count) = parsed.suggested_word_count {
+            job.suggested_word_count = suggested_word_count;
+        }
+        if let Some(status) = parsed.status {
+            job.status = status;
+        }
+    })?;
+    Ok(serde_json::to_value(&job).map_err(|error| error.to_string())?)
+}
+
+#[tauri::command]
+async fn delete_writing_job(job_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    writing_store::delete_writing_job(&root, &job_id)?;
+    Ok(json!({ "deleted": true, "jobId": job_id }))
+}
+
+#[tauri::command]
+async fn export_writing_library(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    export_writing_library_core(&root, &input)
 }
 
 #[tauri::command]
@@ -979,6 +1217,94 @@ async fn run_cloud_review(
         .map_err(|error| error.to_string())?
 }
 
+// ── 题库管理命令（library）──────────────────────────────────────────────────
+
+#[tauri::command]
+async fn list_library_exams(
+    filter: Option<LibraryFilter>,
+    app: AppHandle,
+) -> CommandResult<Vec<LibraryExamSummary>> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::list_library_exams_core(&root, filter)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn get_library_exam(id: String, app: AppHandle) -> CommandResult<Option<LibraryExamDetail>> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::get_library_exam_core(&root, &id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn update_library_exam_meta(
+    id: String,
+    patch: LibraryMetaPatch,
+    app: AppHandle,
+) -> CommandResult<Option<LibraryExamSummary>> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::update_library_exam_meta_core(&root, &id, patch)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn delete_library_exam(id: String, app: AppHandle) -> CommandResult<bool> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::delete_library_exam_core(&root, &id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn search_library_exams(
+    query: String,
+    app: AppHandle,
+) -> CommandResult<Vec<LibraryExamSummary>> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::search_library_exams_core(&root, &query)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn get_library_stats(app: AppHandle) -> CommandResult<LibraryStats> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || library_commands::get_library_stats_core(&root))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn restore_library_exam(id: String, app: AppHandle) -> CommandResult<bool> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library_commands::restore_library_exam_core(&root, &id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn list_trashed_exams(app: AppHandle) -> CommandResult<Vec<LibraryExamSummary>> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || library_commands::list_trashed_exams_core(&root))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -987,6 +1313,8 @@ pub fn run() {
         .setup(|app| {
             let root = app_root(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
             ensure_app_dirs(&root).map_err(Box::<dyn std::error::Error>::from)?;
+            // 初始化题库 DB schema + 首次启动迁移既有 job 数据（幂等，失败不阻断启动）。
+            let _ = library_commands::migrate_existing_into_library(&root);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1027,7 +1355,20 @@ pub fn run() {
             export_reading_assets,
             export_reading_js,
             export_nas_library,
-            build_pack
+            export_writing_library,
+            create_writing_job,
+            list_writing_jobs,
+            get_writing_job,
+            update_writing_job,
+            delete_writing_job,
+            list_library_exams,
+            get_library_exam,
+            update_library_exam_meta,
+            delete_library_exam,
+            search_library_exams,
+            get_library_stats,
+            restore_library_exam,
+            list_trashed_exams
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1052,7 +1393,7 @@ mod tests {
     use crate::environment::{command_probe, environment_preflight_report};
     use crate::export_artifacts::{build_manifest, build_wrapper, safe_exam_id};
     use crate::export_nas_library::{
-        publish_nas_library_from_source_tree, write_source_payload_file,
+        nas_reading_exams_dir, publish_nas_library_from_source_tree, write_source_payload_file,
     };
     use crate::job_store::{load_job, make_job, save_job, update_job};
     use crate::llm_profiles::{
@@ -1371,10 +1712,37 @@ mod tests {
         refresh_authoring_review_state(ir);
     }
 
+    fn clear_all_authoring_answers(ir: &mut Value) -> Vec<String> {
+        let mut question_ids = Vec::new();
+        if let Some(groups) = ir.get_mut("groups").and_then(Value::as_array_mut) {
+            for question in groups.iter_mut().flat_map(|group| {
+                group
+                    .get_mut("questions")
+                    .and_then(Value::as_array_mut)
+                    .into_iter()
+                    .flatten()
+            }) {
+                if let Some(qid) = question.get("id").and_then(Value::as_str) {
+                    question_ids.push(qid.to_string());
+                }
+                if let Some(obj) = question.as_object_mut() {
+                    obj.insert("answer".to_string(), Value::String(String::new()));
+                }
+            }
+        }
+        let needs_review = refresh_authoring_review_state(ir);
+        assert_eq!(needs_review, 0, "empty answers must not require review");
+        let answer_key = crate::reading_source::answer_key_from_authoring(ir);
+        ir.as_object_mut()
+            .unwrap()
+            .insert("answerKey".to_string(), answer_key);
+        question_ids
+    }
+
     #[test]
     fn unsafe_path_segments_are_rejected() {
         assert!(is_safe_path_segment("import-20260531120000-abcdef12"));
-        assert!(is_safe_path_segment("pack.fixture-01"));
+        assert!(is_safe_path_segment("exam.fixture-01"));
 
         for value in [
             "",
@@ -1435,28 +1803,6 @@ mod tests {
         assert!(safe_exam_id(&source).is_err());
         assert!(build_wrapper(&source).is_err());
         assert!(build_manifest(&[source]).is_err());
-    }
-
-    #[test]
-    fn build_pack_core_rejects_unsafe_pack_and_job_ids_before_paths() {
-        let root = temp_test_root();
-        ensure_app_dirs(&root).unwrap();
-
-        let unsafe_pack = json!({
-            "packId": "../pack",
-            "jobIds": ["missing-job"]
-        });
-        let pack_error = build_pack_core(&root, &unsafe_pack, false).unwrap_err();
-        assert!(pack_error.contains("invalid_pack_id_path_segment"));
-
-        let unsafe_job = json!({
-            "packId": "pack-safe",
-            "jobIds": ["../job"]
-        });
-        let job_error = build_pack_core(&root, &unsafe_job, false).unwrap_err();
-        assert!(job_error.contains("invalid_job_id_path_segment"));
-
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1843,6 +2189,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
         samples.sort();
+        if samples.is_empty() {
+            eprintln!(
+                "skipping files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate: Files/ contains no PDF samples"
+            );
+            return;
+        }
         assert_eq!(samples.len(), 4);
 
         let root = temp_test_root();
@@ -2193,7 +2545,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_review_issues_block_empty_answers() {
+    fn publish_review_issues_require_low_confidence_verification() {
         let job = test_job();
         let doc = sample_document_ir(&job, "auto");
         let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
@@ -2916,13 +3268,21 @@ Answers
     }
 
     #[test]
-    fn rust_contract_validator_rejects_missing_answer_key_coverage() {
+    fn rust_contract_validator_warns_for_missing_answer_key_coverage() {
         let mut source = contract_fixture_source();
         source["answerKey"].as_object_mut().unwrap().remove("q2");
 
-        let messages = contract_messages(&source);
+        let issues = validator::validate_reading_source_contract(&source);
+        let warning = issues
+            .iter()
+            .find(|issue| issue.get("path").and_then(Value::as_str) == Some("$.answerKey.q2"))
+            .expect("missing answer warning");
 
-        assert!(messages.contains("q2 is missing from answerKey"));
+        assert_eq!(
+            warning.get("severity").and_then(Value::as_str),
+            Some("warning")
+        );
+        assert!(!validator::has_error_issues(&issues));
     }
 
     #[test]
@@ -3492,10 +3852,10 @@ Answers
         let ir = parse_source_document(&job, &source, &fixture, &output, "auto")
             .expect("no-text PDF fixture should parse through Rust PDF extractor");
 
-        assert_eq!(
+        assert!(matches!(
             ir.pointer("/parser/provider").and_then(Value::as_str),
-            Some("rust-parser:pdf:pdf-extract")
-        );
+            Some("rust-parser:pdf:pdf-extract") | Some("python-parser-sidecar:pdf:pypdf")
+        ));
         assert!(parser_warnings(Some(&ir))
             .iter()
             .any(|warning| warning.contains("no extractable text")));
@@ -6504,6 +6864,18 @@ Answers
 
         let exam_id = result.get("examId").and_then(Value::as_str).unwrap();
         assert_eq!(exam_id, expected_exam_id);
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("strict")
+        );
+        assert_eq!(
+            result.get("validationOverridden").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            result.get("ignoredIssueCount").and_then(Value::as_u64),
+            Some(0)
+        );
         assert!(out_dir.join(format!("{}.json", exam_id)).exists());
         assert!(out_dir.join(format!("{}.js", exam_id)).exists());
         assert!(out_dir.join("manifest.js").exists());
@@ -6531,6 +6903,231 @@ Answers
         assert!(!job_path.join("validation-report.json").exists());
         assert!(!job_path.join("publish-readiness-report.json").exists());
         assert!(!job_path.join("preview").exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn strict_export_allows_missing_answers_and_ignores_historical_needs_review_status() {
+        let root = temp_test_root();
+        let (job, mut ir) = make_publishable_fixture(&root);
+        let missing_question_ids = clear_all_authoring_answers(&mut ir);
+        assert!(!missing_question_ids.is_empty());
+        assert_eq!(
+            ir.pointer("/audit/humanVerified").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(ir
+            .get("answerKey")
+            .and_then(Value::as_object)
+            .map(serde_json::Map::is_empty)
+            .unwrap_or(false));
+        assert!(!authoring_review_issues(&ir).iter().any(|issue| {
+            issue
+                .get("path")
+                .and_then(Value::as_str)
+                .is_some_and(|path| path.starts_with("$.answerKey"))
+        }));
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+        update_job(&root, &job.job_id, |saved| {
+            saved.status = JobStatus::NeedsReview;
+        })
+        .unwrap();
+
+        let static_report = validate_authoring(&job.job_id, Some(&ir));
+        assert_eq!(
+            static_report.get("passed").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(static_report
+            .get("issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|issue| {
+                issue.get("severity").and_then(Value::as_str) == Some("warning")
+                    && issue
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .is_some_and(|path| path.starts_with("$.answerKey"))
+            }));
+
+        let out_dir = root.join("missing-answer-export");
+        let result = export_reading_assets_core(
+            &root,
+            &job.job_id,
+            out_dir.to_string_lossy().as_ref(),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("strict")
+        );
+        assert_eq!(
+            result.get("validationOverridden").and_then(Value::as_bool),
+            Some(false)
+        );
+        let report: Value = read_json(&out_dir.join("validation-report.json")).unwrap();
+        assert_eq!(report.get("passed").and_then(Value::as_bool), Some(true));
+        assert!(report
+            .get("issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .all(|issue| issue.get("severity").and_then(Value::as_str) != Some("error")));
+        let exam_id = result.get("examId").and_then(Value::as_str).unwrap();
+        let source: Value = read_json(&out_dir.join(format!("{}.json", exam_id))).unwrap();
+        assert!(source
+            .get("answerKey")
+            .and_then(Value::as_object)
+            .map(serde_json::Map::is_empty)
+            .unwrap_or(false));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn force_export_bypasses_publish_validation_and_records_override() {
+        let root = temp_test_root();
+        let (job, mut ir) = make_publishable_fixture(&root);
+        ir.pointer_mut("/audit/humanVerified")
+            .map(|value| *value = json!(false));
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+        let out_dir = root.join("forced-export");
+        let options = ExportValidationOptions::from_policy(Some("force")).unwrap();
+
+        let result = export_reading_assets_with_options_core(
+            &root,
+            &job.job_id,
+            out_dir.to_string_lossy().as_ref(),
+            true,
+            options,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("force")
+        );
+        assert_eq!(
+            result.get("validationOverridden").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(result
+            .get("ignoredIssueCount")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count > 0));
+        let ignored_issues = result
+            .get("ignoredIssues")
+            .and_then(Value::as_array)
+            .expect("force export ignored issues");
+        assert!(ignored_issues.iter().any(|issue| {
+            issue.get("jobId").and_then(Value::as_str) == Some(job.job_id.as_str())
+                && issue.get("severity").and_then(Value::as_str) == Some("error")
+                && issue.get("path").and_then(Value::as_str) == Some("$.audit.humanVerified")
+                && issue.get("issueId").and_then(Value::as_str).is_some()
+                && issue.get("message").and_then(Value::as_str).is_some()
+        }));
+        assert_eq!(
+            result
+                .pointer("/exportSummary/validationOverridden")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        let report: Value = read_json(&out_dir.join("validation-report.json")).unwrap();
+        assert_eq!(report.get("passed").and_then(Value::as_bool), Some(false));
+        assert!(report
+            .get("issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(
+                |issue| issue.get("path").and_then(Value::as_str) == Some("$.audit.humanVerified")
+            ));
+        let project: Value =
+            read_json(&job_dir(&root, &job.job_id).join("authoring-project.json")).unwrap();
+        assert!(project
+            .pointer("/exportSummary/ignoredIssues")
+            .and_then(Value::as_array)
+            .is_some_and(|issues| !issues.is_empty()));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn force_policy_is_honored_by_js_and_nas_exports() {
+        let root = temp_test_root();
+        let (js_job, mut js_ir) = make_publishable_fixture(&root);
+        let (nas_job, mut nas_ir) = make_publishable_fixture(&root);
+        for (job_id, ir) in [
+            (js_job.job_id.as_str(), &mut js_ir),
+            (nas_job.job_id.as_str(), &mut nas_ir),
+        ] {
+            ir["audit"]["humanVerified"] = json!(false);
+            write_json(&job_dir(&root, job_id).join("authoring-ir.json"), ir).unwrap();
+        }
+
+        let js_result = export_reading_js_core(
+            &root,
+            &json!({
+                "jobIds": [js_job.job_id],
+                "exportDir": root.join("forced-js").to_string_lossy(),
+                "validationPolicy": "force"
+            }),
+            true,
+        )
+        .unwrap();
+        let nas_result = export_nas_library_core(
+            &root,
+            &json!({
+                "jobIds": [nas_job.job_id],
+                "exportDir": root.join("forced-nas").to_string_lossy(),
+                "validationPolicy": "force"
+            }),
+            true,
+        )
+        .unwrap();
+        for result in [&js_result, &nas_result] {
+            assert_eq!(
+                result.get("validationPolicy").and_then(Value::as_str),
+                Some("force")
+            );
+            assert_eq!(
+                result.get("validationOverridden").and_then(Value::as_bool),
+                Some(true)
+            );
+            assert!(result
+                .get("ignoredIssues")
+                .and_then(Value::as_array)
+                .is_some_and(|issues| !issues.is_empty()));
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn force_export_does_not_bypass_unsafe_exam_id() {
+        let root = temp_test_root();
+        let (job, mut ir) = make_publishable_fixture(&root);
+        ir["exam"]["examId"] = json!("../unsafe-exam");
+        ir["audit"]["humanVerified"] = json!(false);
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+        let out_dir = root.join("unsafe-forced-export");
+        let options = ExportValidationOptions::from_policy(Some("force")).unwrap();
+
+        let error = export_reading_assets_with_options_core(
+            &root,
+            &job.job_id,
+            out_dir.to_string_lossy().as_ref(),
+            true,
+            options,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("invalid_exam_id_path_segment"));
+        assert!(!out_dir.exists());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6588,6 +7185,10 @@ Answers
         let result = export_reading_js_core(&root, &input, true).unwrap();
 
         assert_eq!(result.get("mode").and_then(Value::as_str), Some("single"));
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("strict")
+        );
         assert_eq!(
             result
                 .get("examIds")
@@ -6678,8 +7279,14 @@ Answers
             Some("nas-library")
         );
         assert_eq!(result.get("assetCount").and_then(Value::as_u64), Some(1));
-        let reading_exams_dir = library_root.clone();
-        assert!(library_root.join(format!("{}.js", expected_exam_id)).exists());
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("strict")
+        );
+        let reading_exams_dir = nas_reading_exams_dir(&library_root);
+        assert!(reading_exams_dir
+            .join(format!("{}.js", expected_exam_id))
+            .exists());
         assert!(reading_exams_dir.join("manifest.js").exists());
         assert!(!library_root.join("publish").join("library.db").exists());
         assert!(!library_root.join("source").exists());
@@ -6975,7 +7582,7 @@ Answers
         assert!(handled);
         assert!(!library_root.join("source").exists());
         assert!(!library_root.join("publish").join("library.db").exists());
-        let reading_exams_dir = library_root.clone();
+        let reading_exams_dir = nas_reading_exams_dir(&library_root);
         assert!(reading_exams_dir.join("manifest.js").exists());
         let exam_files = fs::read_dir(&reading_exams_dir)
             .unwrap()
@@ -6994,103 +7601,55 @@ Answers
     }
 
     #[test]
-    fn build_pack_core_writes_zip_after_static_runtime_gate() {
-        let root = temp_test_root();
-        let (job, ir) = make_publishable_fixture(&root);
-        let expected_exam_id = ir
-            .pointer("/exam/examId")
+    fn consecutive_nas_cli_subset_exports_merge_existing_manifest() {
+        let test_root = temp_test_root();
+        let library_root = test_root.join("nas-cli-library");
+        let export_args = vec![
+            "--export-dir".to_string(),
+            library_root.to_string_lossy().to_string(),
+            "--version".to_string(),
+            "2026.07.16-cli-merge".to_string(),
+        ];
+        let first_fixture = parser_fixture("complex-reading.pdf");
+        let second_fixture = parser_fixture("demanding-reading-passage-3.pdf");
+
+        let first = export_nas_library_from_pdf_paths(&[first_fixture], &export_args).unwrap();
+        let first_exam_id = first
+            .get("examId")
             .and_then(Value::as_str)
             .unwrap()
             .to_string();
-        let input = json!({
-            "packId": "pack-fixture",
-            "version": "0.1.0",
-            "institution": "internal",
-            "description": "fixture",
-            "jobIds": [job.job_id]
-        });
-
-        let result = build_pack_core(&root, &input, true).unwrap();
-
-        let output_path = PathBuf::from(result.get("outputPath").and_then(Value::as_str).unwrap());
-        assert!(output_path.exists());
-        assert!(output_path.metadata().unwrap().len() > 0);
-        assert_eq!(result.get("entryCount").and_then(Value::as_u64), Some(3));
         assert_eq!(
-            result
-                .pointer("/manifest/exams/0/examId")
-                .and_then(Value::as_str),
-            Some(expected_exam_id.as_str())
-        );
-        assert_eq!(
-            load_job(&root, &job.job_id).unwrap().status,
-            JobStatus::Cleaned
-        );
-        assert_eq!(
-            result
-                .pointer("/cleanup/0/cleaned")
-                .and_then(Value::as_bool),
-            Some(true)
-        );
-        assert!(root
-            .join("packs")
-            .join("pack-fixture")
-            .join("pack.json")
-            .exists());
-        assert!(root
-            .join("packs")
-            .join("pack-fixture")
-            .join("reading-exams")
-            .join("manifest.js")
-            .exists());
-        assert!(root
-            .join("packs")
-            .join("pack-fixture")
-            .join("reading-exams")
-            .join(format!("{}.js", expected_exam_id))
-            .exists());
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn build_pack_publish_gate_failure_writes_no_pack_or_cleanup() {
-        let root = temp_test_root();
-        let (job, mut ir) = make_publishable_fixture(&root);
-        if let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) {
-            audit.insert("humanVerified".to_string(), json!(false));
-        }
-        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
-        let input = json!({
-            "packId": "blocked-pack",
-            "version": "0.1.0",
-            "institution": "internal",
-            "description": "blocked",
-            "jobIds": [job.job_id]
-        });
-
-        let error = build_pack_core(&root, &input, true).unwrap_err();
-
-        assert!(error.contains("pack_validation_failed"));
-        assert!(error.contains("$.audit.humanVerified"));
-        assert!(!root.join("packs").join("blocked-pack.zip").exists());
-        assert!(!root
-            .join("packs")
-            .join("blocked-pack")
-            .join("pack.json")
-            .exists());
-        let job_path = job_dir(&root, &job.job_id);
-        assert!(!job_path.join("cleanup-summary.json").exists());
-        assert!(job_path.join("authoring-project.json").exists());
-        assert!(!job_path.join("document-ir.json").exists());
-        assert!(!job_path.join("split-candidates.json").exists());
-        assert!(!job_path.join("publish-readiness-report.json").exists());
-        assert_eq!(
-            load_job(&root, &job.job_id).unwrap().status,
-            JobStatus::Working
+            first.get("manifestAssetCount").and_then(Value::as_u64),
+            Some(1)
         );
 
-        let _ = fs::remove_dir_all(root);
+        let second = export_nas_library_from_pdf_paths(&[second_fixture], &export_args).unwrap();
+        let second_exam_id = second
+            .get("examId")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        assert_ne!(first_exam_id, second_exam_id);
+        assert_eq!(
+            second
+                .get("manifestAssetCount")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+
+        let reading_exams_dir = nas_reading_exams_dir(&library_root);
+        let manifest = fs::read_to_string(reading_exams_dir.join("manifest.js")).unwrap();
+        assert!(manifest.contains(&first_exam_id));
+        assert!(manifest.contains(&second_exam_id));
+        assert!(reading_exams_dir
+            .join(format!("{first_exam_id}.js"))
+            .exists());
+        assert!(reading_exams_dir
+            .join(format!("{second_exam_id}.js"))
+            .exists());
+
+        let _ = fs::remove_dir_all(test_root);
     }
 
     #[test]
@@ -7148,11 +7707,36 @@ Answers
         )
         .unwrap();
 
-        assert_eq!(
-            doc.pointer("/parser/provider").and_then(Value::as_str),
-            Some(provider)
-        );
-        assert!(parser_warnings(Some(&doc)).is_empty());
+        let actual_provider = doc.pointer("/parser/provider").and_then(Value::as_str);
+        if provider == "rust-parser:pdf:pdf-extract" {
+            assert!(
+                matches!(
+                    actual_provider,
+                    Some("rust-parser:pdf:pdf-extract") | Some("python-parser-sidecar:pdf:pypdf")
+                ),
+                "unexpected PDF provider for {}: {:?}",
+                file_name,
+                actual_provider
+            );
+        } else {
+            assert_eq!(actual_provider, Some(provider));
+        }
+        let warnings = parser_warnings(Some(&doc));
+        if actual_provider == Some("python-parser-sidecar:pdf:pypdf") {
+            assert_eq!(
+                warnings.len(),
+                1,
+                "unexpected PDF fallback warnings: {:?}",
+                warnings
+            );
+            assert!(
+                warnings[0].starts_with("rust pdf-extract failed; used Python parser fallback:"),
+                "unexpected PDF fallback warning: {:?}",
+                warnings
+            );
+        } else {
+            assert!(warnings.is_empty());
+        }
         assert!(low_confidence_block_ids(Some(&doc), 0.5).is_empty());
         let blocks = dynamic_document_blocks(Some(&doc));
         assert!(blocks
@@ -7220,6 +7804,306 @@ Answers
     #[test]
     fn complex_docx_fixture_reaches_authoring_ir() {
         assert_complex_fixture_pipeline("complex-reading.docx", "rust-parser:docx:ooxml");
+    }
+
+    /// Regression test for the demanding DOCX fixture that marks structure ONLY
+    /// via run-level formatting (bold/centered/font-size) — no Heading styles,
+    /// no numbering, no tables. Verifies the parser now captures `runFormat`
+    /// and infers synthetic heading levels so passage sub-headings and the
+    /// centered passage title are recognized.
+    #[test]
+    fn demanding_docx_run_format_detects_bold_subheadings_and_title() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let output = env::temp_dir().join(format!(
+            "epic8-demanding-docx-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &parser_fixture("demanding-reading-passage-1.docx"),
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let _ = fs::remove_file(&output);
+
+        // Collect every block's text + runFormat + headingLevel.
+        let mut blocks: Vec<(String, Option<Value>, Option<u64>)> = Vec::new();
+        for page in doc
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            for block in page
+                .get("blocks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let text = block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let run_format = block.pointer("/layoutHints/runFormat").cloned();
+                let heading_level = block
+                    .pointer("/layoutHints/headingLevel")
+                    .and_then(Value::as_u64);
+                blocks.push((text, run_format, heading_level));
+            }
+        }
+
+        let opening_instruction = blocks
+            .iter()
+            .find(|(text, _, _)| text.starts_with("You should spend"))
+            .map(|(text, _, _)| text.as_str())
+            .expect("opening IELTS instruction should be extracted");
+        assert!(opening_instruction.contains("spend about 20 minutes"));
+        assert!(opening_instruction.contains("minutes on Questions 1-13"));
+        assert!(!opening_instruction.contains("spendabout"));
+
+        // The centered, bold, largest-font passage title must be a heading.
+        let title = blocks
+            .iter()
+            .find(|(text, _, _)| text == "The history of lighting");
+        assert!(title.is_some(), "passage title block should be present");
+        let (_, title_fmt, title_hl) = title.unwrap();
+        let title_fmt = title_fmt.as_ref().expect("title must have runFormat");
+        assert_eq!(
+            title_fmt.get("bold").and_then(Value::as_bool),
+            Some(true),
+            "title must be bold"
+        );
+        assert_eq!(
+            title_fmt.get("centered").and_then(Value::as_bool),
+            Some(true),
+            "title must be centered"
+        );
+        assert_eq!(
+            *title_hl,
+            Some(2),
+            "centered title should be heading level 2"
+        );
+
+        // Each bold sub-heading should be detected as a heading (level 3).
+        for subheading in ["Candlelight", "Oil lamps", "Gas lighting", "Electricity"] {
+            let found = blocks.iter().find(|(text, _, _)| text == subheading);
+            assert!(
+                found.is_some(),
+                "sub-heading {} should be present",
+                subheading
+            );
+            let (_, fmt, hl) = found.unwrap();
+            let fmt = fmt.as_ref().expect("sub-heading must have runFormat");
+            assert_eq!(
+                fmt.get("bold").and_then(Value::as_bool),
+                Some(true),
+                "sub-heading {} must be bold",
+                subheading
+            );
+            assert_eq!(
+                *hl,
+                Some(3),
+                "sub-heading {} should be heading level 3",
+                subheading
+            );
+        }
+
+        // Body paragraphs must NOT be flagged as headings.
+        let body = blocks
+            .iter()
+            .find(|(text, _, _)| text.starts_with("We forget how painfully dark"));
+        assert!(body.is_some(), "a body paragraph should be present");
+        let (_, body_fmt, body_hl) = body.unwrap();
+        if let Some(fmt) = body_fmt.as_ref() {
+            assert_ne!(
+                fmt.get("bold").and_then(Value::as_bool),
+                Some(true),
+                "body paragraph must not be bold"
+            );
+        }
+        assert_eq!(*body_hl, None, "body paragraph must not be a heading");
+    }
+
+    /// Regression test for the demanding PDF fixture (2-column passage, A-H
+    /// option grid, mixed blank markers, no answer key). When the pdfium
+    /// library is available, verifies the parser yields REAL coordinates (not
+    /// the fabricated [72, *, 520, *] envelope) and that the 2-column passage
+    /// page is correctly split into left/right columns. Skips gracefully when
+    /// pdfium is not bundled (e.g. CI without the binary).
+    #[test]
+    fn demanding_pdf_pdfium_yields_real_coordinates_and_column_split() {
+        if crate::pdf_geometry::pdfium_library_path().is_none() {
+            // pdfium binary not available in this environment — skip.
+            return;
+        }
+        let mut job = test_job();
+        job.source_files = vec![test_source("pdf")];
+        let output = env::temp_dir().join(format!(
+            "epic8-demanding-pdf-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &parser_fixture("demanding-reading-passage-3.pdf"),
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let _ = fs::remove_file(&output);
+
+        // Provider must be pdfium (real coordinates), not the text-layer fallback.
+        let provider = doc
+            .pointer("/parser/provider")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert_eq!(
+            provider, "rust-parser:pdf:pdfium",
+            "pdfium backend should be used when the library is available"
+        );
+
+        // At least one block must escape the fabricated bbox envelope
+        // [72, *, 520, *] — i.e. have a real x1 > 520.5 or real x0 < 71.5.
+        let mut has_real_coord = false;
+        let mut page0_has_right_column = false;
+        for page in doc
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let page_index = page.get("pageIndex").and_then(Value::as_u64).unwrap_or(0);
+            for block in page
+                .get("blocks")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(bbox) = block.get("bbox").and_then(Value::as_array) {
+                    let x0 = bbox.first().and_then(Value::as_f64).unwrap_or(0.0);
+                    let x1 = bbox.get(2).and_then(Value::as_f64).unwrap_or(0.0);
+                    if x1 > 520.5 || x0 < 71.5 {
+                        has_real_coord = true;
+                    }
+                    // On the 2-column passage page, a right-column block has
+                    // x0 clearly past the gutter (> 300 on a 612pt page).
+                    if page_index == 1 && x0 > 300.0 {
+                        page0_has_right_column = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            has_real_coord,
+            "pdfium must produce real coordinates, not the fabricated envelope"
+        );
+        assert!(
+            page0_has_right_column,
+            "the 2-column passage page must contain right-column blocks (column split working)"
+        );
+    }
+
+    #[test]
+    fn demanding_pdf_split_keeps_cross_page_passage_before_question_pages() {
+        if crate::pdf_geometry::pdfium_library_path().is_none() {
+            return;
+        }
+        let mut job = test_job();
+        job.source_files = vec![test_source("pdf")];
+        let output = env::temp_dir().join(format!(
+            "epic8-demanding-pdf-split-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &parser_fixture("demanding-reading-passage-3.pdf"),
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let _ = fs::remove_file(&output);
+
+        assert_eq!(
+            doc.pointer("/parser/provider").and_then(Value::as_str),
+            Some("rust-parser:pdf:pdfium"),
+            "cross-page regression should run against the pdfium path"
+        );
+
+        let blocks = dynamic_document_blocks(Some(&doc));
+        let lookup_block = |block_id: &str| {
+            blocks
+                .iter()
+                .find(|block| block.get("blockId").and_then(Value::as_str) == Some(block_id))
+        };
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+
+        let passage_ids = split
+            .pointer("/passageCandidates/0/range")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        let passage_pages = passage_ids
+            .iter()
+            .filter_map(|block_id| {
+                lookup_block(block_id)
+                    .and_then(|block| block.get("pageIndex").and_then(Value::as_u64))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            passage_pages.contains(&2),
+            "passage range should retain at least one continuation block from page 2"
+        );
+        assert_eq!(
+            passage_pages.iter().copied().max(),
+            Some(2),
+            "passage recovery should stop before question-only page 3"
+        );
+
+        let passage_text = passage_ids
+            .iter()
+            .filter_map(|block_id| lookup_block(block_id))
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            passage_text.to_lowercase().contains("household artefacts")
+                || passage_text.to_lowercase().contains("critical awareness"),
+            "recovered passage text should include page 2 continuation prose"
+        );
+
+        let first_group_ids = split
+            .pointer("/questionGroupCandidates/0/blockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        let first_group_pages = first_group_ids
+            .iter()
+            .filter_map(|block_id| {
+                lookup_block(block_id)
+                    .and_then(|block| block.get("pageIndex").and_then(Value::as_u64))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            first_group_pages.iter().copied().min(),
+            Some(3),
+            "first concrete question group should begin on page 3 after the cross-page passage"
+        );
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/questionRange/0")
+                .and_then(Value::as_u64),
+            Some(27)
+        );
     }
 
     #[test]
@@ -7492,7 +8376,7 @@ Answers
   <w:body>
     <w:p><w:pPr><w:pStyle w:val="IELTSHeading"/></w:pPr><w:r><w:t>READING PASSAGE 2</w:t></w:r></w:p>
     <w:p><w:r><w:t>Questions 14-16 Match each statement with the correct paragraph.</w:t></w:r></w:p>
-    <w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="42"/></w:numPr></w:pPr><w:r><w:t>A early research</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="IELTSOption"/></w:pPr><w:r><w:t>A early research</w:t></w:r></w:p>
     <w:p><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="42"/></w:numPr></w:pPr><w:r><w:t>B later criticism</w:t></w:r></w:p>
   </w:body>
 </w:document>"#;
@@ -7512,6 +8396,7 @@ Answers
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:style w:type="paragraph" w:styleId="BaseHeading"><w:name w:val="Heading 2"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>
   <w:style w:type="paragraph" w:styleId="IELTSHeading"><w:name w:val="IELTS Passage Heading"/><w:basedOn w:val="BaseHeading"/></w:style>
+  <w:style w:type="paragraph" w:styleId="IELTSOption"><w:name w:val="IELTS Option"/><w:pPr><w:numPr><w:ilvl w:val="1"/><w:numId w:val="42"/></w:numPr></w:pPr></w:style>
 </w:styles>"#,
             )
             .unwrap();
@@ -7594,6 +8479,12 @@ Answers
                 .and_then(Value::as_str),
             Some("%2.")
         );
+        assert_eq!(
+            list_block
+                .pointer("/layoutHints/numbering/renderedLabel")
+                .and_then(Value::as_str),
+            Some("A.")
+        );
 
         let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
         let evidence = split
@@ -7603,6 +8494,217 @@ Answers
         assert!(evidence
             .iter()
             .any(|item| item.get("numberingId").and_then(Value::as_str) == Some("42")));
+
+        let _ = fs::remove_file(docx_path);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn docx_auto_numbering_recovers_questions_options_and_student_html() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let docx_path = env::temp_dir().join(format!(
+            "epic8-docx-auto-numbering-{}.docx",
+            Uuid::new_v4().simple()
+        ));
+        let output = env::temp_dir().join(format!(
+            "epic8-docx-auto-numbering-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        write_minimal_docx(
+            &docx_path,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>READING PASSAGE 1</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Archive access</w:t></w:r></w:p>
+    <w:p><w:r><w:t>The archive moved so visitors could inspect maps in a larger room.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Choose the correct letter, A, B, C or D.</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="10"/></w:numPr></w:pPr><w:r><w:t>Why did the archive move?</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="20"/></w:numPr></w:pPr><w:r><w:t>To reduce staffing</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="20"/></w:numPr></w:pPr><w:r><w:t>To provide more space</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="20"/></w:numPr></w:pPr><w:r><w:t>To close the map room</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="20"/></w:numPr></w:pPr><w:r><w:t>To sell the collection</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="10"/></w:numPr></w:pPr><w:r><w:t>What can visitors inspect?</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="21"/></w:numPr></w:pPr><w:r><w:t>Maps</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="21"/></w:numPr></w:pPr><w:r><w:t>Tickets</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="21"/></w:numPr></w:pPr><w:r><w:t>Furniture</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="21"/></w:numPr></w:pPr><w:r><w:t>Photographs only</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Choose the correct heading for each paragraph from the list of headings.</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="30"/></w:numPr></w:pPr><w:r><w:t>Early access problems</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="30"/></w:numPr></w:pPr><w:r><w:t>A larger public archive</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="30"/></w:numPr></w:pPr><w:r><w:t>Future collection plans</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="11"/></w:numPr></w:pPr><w:r><w:t>Paragraph A</w:t></w:r></w:p>
+    <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="11"/></w:numPr></w:pPr><w:r><w:t>Paragraph B</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Answers 14 B 15 A 16 ii 17 i</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#,
+        );
+        {
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&docx_path)
+                .unwrap();
+            let mut zip = zip::ZipWriter::new_append(file).unwrap();
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("word/numbering.xml", options).unwrap();
+            zip.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+  <w:abstractNum w:abstractNumId="2"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="upperLetter"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+  <w:abstractNum w:abstractNumId="3"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="lowerRoman"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>
+  <w:num w:numId="10"><w:abstractNumId w:val="1"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="14"/></w:lvlOverride></w:num>
+  <w:num w:numId="11"><w:abstractNumId w:val="1"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="16"/></w:lvlOverride></w:num>
+  <w:num w:numId="20"><w:abstractNumId w:val="2"/></w:num>
+  <w:num w:numId="21"><w:abstractNumId w:val="2"/></w:num>
+  <w:num w:numId="30"><w:abstractNumId w:val="3"/></w:num>
+</w:numbering>"#,
+            )
+            .unwrap();
+            zip.finish().unwrap();
+        }
+
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &docx_path,
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let blocks = doc
+            .pointer("/pages/0/blocks")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(blocks.iter().any(|block| {
+            block.get("text").and_then(Value::as_str) == Some("14. Why did the archive move?")
+                && block
+                    .pointer("/layoutHints/numbering/renderedLabel")
+                    .and_then(Value::as_str)
+                    == Some("14.")
+        }));
+        assert!(blocks.iter().any(|block| {
+            block.get("text").and_then(Value::as_str) == Some("A. To reduce staffing")
+        }));
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split.pointer("/questionGroupCandidates/0/questionRange"),
+            Some(&json!([14, 15]))
+        );
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/0/kindHint")
+                .and_then(Value::as_str),
+            Some("single_choice")
+        );
+        assert_eq!(
+            split.pointer("/questionGroupCandidates/1/questionRange"),
+            Some(&json!([16, 17]))
+        );
+        assert_eq!(
+            split
+                .pointer("/questionGroupCandidates/1/kindHint")
+                .and_then(Value::as_str),
+            Some("heading_matching")
+        );
+
+        let ir = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/prompt")
+                .and_then(Value::as_str),
+            Some("Why did the archive move?")
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/1/prompt")
+                .and_then(Value::as_str),
+            Some("What can visitors inspect?")
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/interaction/options"),
+            Some(&json!(["A", "B", "C", "D"]))
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/0/interaction/optionTexts/B")
+                .and_then(Value::as_str),
+            Some("To provide more space")
+        );
+        assert_eq!(
+            ir.pointer("/groups/0/questions/1/interaction/optionTexts/A")
+                .and_then(Value::as_str),
+            Some("Maps")
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/questions/0/prompt")
+                .and_then(Value::as_str),
+            Some("Paragraph A")
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/questions/0/interaction/options"),
+            Some(&json!(["i", "ii", "iii"]))
+        );
+        assert_eq!(
+            ir.pointer("/groups/1/questions/0/interaction/optionTexts/ii")
+                .and_then(Value::as_str),
+            Some("A larger public archive")
+        );
+
+        let source = reading_source(&ir);
+        let body_html = source
+            .pointer("/questionGroups/0/bodyHtml")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(body_html.contains("value=\"B\""));
+        assert!(body_html.contains("To provide more space"));
+
+        let _ = fs::remove_file(docx_path);
+        let _ = fs::remove_file(output);
+    }
+
+    #[test]
+    fn docx_embedded_drawing_requires_source_review_warning() {
+        let mut job = test_job();
+        job.source_files = vec![test_source("docx")];
+        let docx_path = env::temp_dir().join(format!(
+            "epic8-docx-drawing-warning-{}.docx",
+            Uuid::new_v4().simple()
+        ));
+        let output = env::temp_dir().join(format!(
+            "epic8-docx-drawing-warning-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        write_minimal_docx(
+            &docx_path,
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Questions 1-2 Label the map below.</w:t></w:r></w:p>
+    <w:p><w:r><w:drawing/></w:r></w:p>
+  </w:body>
+</w:document>"#,
+        );
+
+        let doc = parse_source_document(
+            &job,
+            job.source_files.first().unwrap(),
+            &docx_path,
+            &output,
+            "auto",
+        )
+        .unwrap();
+        let warnings = doc
+            .pointer("/parser/warnings")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(warnings.iter().any(|warning| {
+            warning
+                .as_str()
+                .unwrap_or_default()
+                .contains("embedded drawings or images")
+        }));
 
         let _ = fs::remove_file(docx_path);
         let _ = fs::remove_file(output);
@@ -7693,6 +8795,12 @@ Answers
             })
             .collect::<Vec<_>>();
         samples.sort();
+        if samples.is_empty() {
+            eprintln!(
+                "skipping files_pdf_samples_reach_expected_review_paths: Files/ contains no PDF samples"
+            );
+            return;
+        }
         assert_eq!(
             samples.len(),
             4,
@@ -7744,10 +8852,12 @@ Answers
                 .join(format!("{}-files-sample-document-ir.json", job.job_id));
             let doc = parse_source_document(&job, &source, sample, &parser_output, "auto")
                 .unwrap_or_else(|error| panic!("{} parse failed: {}", sample.display(), error));
-            assert_eq!(
-                doc.pointer("/parser/provider").and_then(Value::as_str),
-                Some("rust-parser:pdf:pdf-extract"),
-                "{} should use Rust PDF text-layer parser",
+            assert!(
+                matches!(
+                    doc.pointer("/parser/provider").and_then(Value::as_str),
+                    Some("rust-parser:pdf:pdf-extract") | Some("python-parser-sidecar:pdf:pypdf")
+                ),
+                "{} should parse through either the Rust PDF path or the Python PDF fallback",
                 sample.display()
             );
             let extracted_text = dynamic_document_blocks(Some(&doc))
@@ -8471,7 +9581,17 @@ Answers
             })
             .collect::<Vec<_>>();
         samples.sort();
-        assert_eq!(samples.len(), 4);
+        if samples.is_empty() {
+            eprintln!(
+                "skipping files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate: Files/ contains no PDF samples"
+            );
+            return;
+        }
+        assert_eq!(
+            samples.len(),
+            4,
+            "Files/ should contain exactly the four user-provided PDF samples"
+        );
 
         let mut source_review_required = 0usize;
         let mut authoring_or_llm_required = 0usize;

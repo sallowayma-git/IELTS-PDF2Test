@@ -5,6 +5,24 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultOutDir = path.join(repoRoot, "tmp", "pdf-regression-sample");
+const validatorScript = path.join(repoRoot, "sidecars", "node-validator", "validate-reading-source.mjs");
+const localSmokeFixtures = [
+  {
+    id: "complex-reading",
+    pdfPath: path.join(repoRoot, "fixtures", "parser", "complex-reading.pdf"),
+    expect: { validatorPass: true, minGroups: 1, minAnswers: 1 }
+  },
+  {
+    id: "demanding-reading-passage-3",
+    pdfPath: path.join(repoRoot, "fixtures", "parser", "demanding-reading-passage-3.pdf"),
+    expect: { validatorPass: true, minGroups: 1, minAnswers: 1 }
+  },
+  {
+    id: "no-text-manual-review",
+    pdfPath: path.join(repoRoot, "fixtures", "parser", "no-text.pdf"),
+    expect: { manualReviewWarning: /no extractable text|manual review required/i, maxGroups: 0, maxAnswers: 0 }
+  }
+];
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help === true || args.h === true) {
@@ -15,133 +33,320 @@ const pdfDirArg = args.pdfDir ?? args["pdf-dir"];
 const legacyDirArg = args.legacyDir ?? args["legacy-dir"];
 const outDirArg = args.outDir ?? args["out-dir"];
 const skipBuildArg = args.skipBuild ?? args["skip-build"];
-
-if (!pdfDirArg || !legacyDirArg) {
-  console.error("[pdf-regression] --pdf-dir and --legacy-dir are required for real corpus data.");
-  printUsageAndExit(2);
-}
-
 const sampleSize = Number(args.sample ?? 30);
-const pdfDir = path.resolve(pdfDirArg);
-const legacyDir = path.resolve(legacyDirArg);
 const outDir = path.resolve(outDirArg ?? defaultOutDir);
 const seed = args.seed ?? String(Date.now());
 const strict = args.strict === "true" || args.strict === true;
 const skipBuild = skipBuildArg === "true" || skipBuildArg === true;
-
-assertReadableDirectory(pdfDir, "--pdf-dir");
-assertReadableDirectory(legacyDir, "--legacy-dir");
+const forceSmoke = args.smoke === "true" || args.smoke === true;
+const requireCorpus = args.requireCorpus === "true" || args.requireCorpus === true || args["require-corpus"] === "true" || args["require-corpus"] === true;
 fs.mkdirSync(outDir, { recursive: true });
-
-const legacyItems = loadLegacyReadingExams(legacyDir);
-const legacyByPdf = new Map();
-for (const item of legacyItems) {
-  const key = normalizeFileKey(item.data?.meta?.pdfFilename);
-  if (key) legacyByPdf.set(key, item);
-}
-
-const allPdfs = fs.readdirSync(pdfDir)
-  .filter((name) => name.toLowerCase().endsWith(".pdf"))
-  .map((name) => path.join(pdfDir, name))
-  .sort((a, b) => a.localeCompare(b));
-
-const matched = [];
-const unmatched = [];
-for (const pdfPath of allPdfs) {
-  const legacy = legacyByPdf.get(normalizeFileKey(path.basename(pdfPath)));
-  if (legacy) matched.push({ pdfPath, legacy });
-  else unmatched.push(pdfPath);
-}
-
-const selected = shuffle(matched, seed).slice(0, Math.min(sampleSize, matched.length));
 const cli = path.resolve(args.cli ?? path.join(repoRoot, "src-tauri", "target", "debug", cliBinaryName()));
-if (!skipBuild || !fs.existsSync(cli)) {
-  const build = spawnSync("cargo", ["build", "--manifest-path", path.join(repoRoot, "src-tauri", "Cargo.toml")], {
-    cwd: repoRoot,
-    stdio: "inherit"
+ensureCliBuilt(cli, skipBuild);
+
+const mode = determineMode({ pdfDirArg, legacyDirArg, forceSmoke, requireCorpus });
+const report = mode === "smoke"
+  ? runSmokeRegression({ cli, outDir, seed })
+  : runCorpusRegression({
+    cli,
+    outDir,
+    seed,
+    sampleSize,
+    pdfDirArg,
+    legacyDirArg
   });
-  if (build.status !== 0) process.exit(build.status ?? 1);
+const reportPath = path.join(outDir, "report.json");
+fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+console.log(JSON.stringify(makeSummary(report, reportPath), null, 2));
+
+const shouldFail = report.mode === "smoke" ? report.failCount > 0 : strict && report.failCount > 0;
+if (shouldFail) process.exit(1);
+
+function determineMode({ pdfDirArg: pdfDirValue, legacyDirArg: legacyDirValue, forceSmoke: forceSmokeValue, requireCorpus: requireCorpusValue }) {
+  if (pdfDirValue && legacyDirValue) return "corpus";
+  if (pdfDirValue || legacyDirValue) {
+    if (forceSmokeValue) return "smoke";
+    console.error("[pdf-regression] --pdf-dir and --legacy-dir must be provided together.");
+    printUsageAndExit(2);
+  }
+  if (requireCorpusValue) {
+    console.error("[pdf-regression] corpus mode was required but no --pdf-dir/--legacy-dir were provided.");
+    printUsageAndExit(2);
+  }
+  return "smoke";
 }
 
-const results = [];
-for (const [index, item] of selected.entries()) {
-  const outputPath = path.join(outDir, `${String(index + 1).padStart(2, "0")}-${safeName(path.basename(item.pdfPath))}.json`);
-  const generated = spawnSync(cli, ["--generate-reading-source", item.pdfPath, "--out", outputPath], {
+function ensureCliBuilt(cliPath, skipBuildValue) {
+  if (!skipBuildValue || !fs.existsSync(cliPath)) {
+    const build = spawnSync("cargo", ["build", "--manifest-path", path.join(repoRoot, "src-tauri", "Cargo.toml")], {
+      cwd: repoRoot,
+      stdio: "inherit"
+    });
+    if (build.status !== 0) process.exit(build.status ?? 1);
+  }
+  if (!fs.existsSync(cliPath)) {
+    console.error(`[pdf-regression] CLI binary not found after build: ${cliPath}`);
+    process.exit(2);
+  }
+}
+
+function runCorpusRegression({ cli: cliPath, outDir: outputDir, seed: seedValue, sampleSize: sampleSizeValue, pdfDirArg: pdfDirValue, legacyDirArg: legacyDirValue }) {
+  const pdfDir = path.resolve(pdfDirValue);
+  const legacyDir = path.resolve(legacyDirValue);
+  assertReadableDirectory(pdfDir, "--pdf-dir");
+  assertReadableDirectory(legacyDir, "--legacy-dir");
+
+  const legacyItems = loadLegacyReadingExams(legacyDir);
+  const legacyByPdf = new Map();
+  for (const item of legacyItems) {
+    const key = normalizeFileKey(item.data?.meta?.pdfFilename);
+    if (key) legacyByPdf.set(key, item);
+  }
+
+  const allPdfs = fs.readdirSync(pdfDir)
+    .filter((name) => name.toLowerCase().endsWith(".pdf"))
+    .map((name) => path.join(pdfDir, name))
+    .sort((a, b) => a.localeCompare(b));
+
+  const matched = [];
+  const unmatched = [];
+  for (const pdfPath of allPdfs) {
+    const legacy = legacyByPdf.get(normalizeFileKey(path.basename(pdfPath)));
+    if (legacy) matched.push({ pdfPath, legacy });
+    else unmatched.push(pdfPath);
+  }
+
+  const selected = shuffle(matched, seedValue).slice(0, Math.min(sampleSizeValue, matched.length));
+  const results = [];
+  for (const [index, item] of selected.entries()) {
+    const outputPath = path.join(outputDir, `${String(index + 1).padStart(2, "0")}-${safeName(path.basename(item.pdfPath))}.json`);
+    const generation = generateReadingSource(cliPath, item.pdfPath, outputPath);
+    if (!generation.ok) {
+      results.push({
+        pdf: item.pdfPath,
+        legacyId: item.legacy.id,
+        ok: false,
+        error: generation.error
+      });
+      continue;
+    }
+    let actual;
+    try {
+      actual = normalizeGenerated(extractReadingSource(generation.payload));
+    } catch (error) {
+      results.push({
+        pdf: item.pdfPath,
+        legacyId: item.legacy.id,
+        ok: false,
+        error: error.message,
+        generatedPath: outputPath
+      });
+      continue;
+    }
+    const expected = normalizeLegacy(item.legacy.data);
+    const comparison = compareNormalized(actual, expected);
+    results.push({
+      pdf: item.pdfPath,
+      legacyId: item.legacy.id,
+      ok: comparison.ok,
+      structureOk: comparison.structureOk,
+      answersOk: comparison.answersOk,
+      limitation: classifyLimitation(generation.payload, comparison),
+      comparison,
+      generatedPath: outputPath
+    });
+  }
+
+  const failures = results.filter((result) => !result.ok);
+  const structureFailures = results.filter((result) => result.structureOk === false);
+  const answerFailures = results.filter((result) => result.answersOk === false);
+  const parserLimitations = results.filter((result) => result.limitation);
+  return {
+    schemaVersion: "PdfRegressionSampleReportV1",
+    mode: "corpus",
+    generatedAt: new Date().toISOString(),
+    seed: seedValue,
+    sampleSize: sampleSizeValue,
+    pdfDir,
+    legacyDir,
+    matchedCount: matched.length,
+    unmatchedCount: unmatched.length,
+    selected: selected.map((item) => ({ pdf: item.pdfPath, legacyId: item.legacy.id })),
+    passCount: results.length - failures.length,
+    failCount: failures.length,
+    structurePassCount: results.length - structureFailures.length,
+    structureFailCount: structureFailures.length,
+    answerPassCount: results.length - answerFailures.length,
+    answerFailCount: answerFailures.length,
+    parserLimitationCount: parserLimitations.length,
+    results
+  };
+}
+
+function runSmokeRegression({ cli: cliPath, outDir: outputDir, seed: seedValue }) {
+  const results = [];
+  for (const [index, fixture] of localSmokeFixtures.entries()) {
+    const outputPath = path.join(outputDir, `${String(index + 1).padStart(2, "0")}-smoke-${safeName(fixture.id)}.json`);
+    const generation = generateReadingSource(cliPath, fixture.pdfPath, outputPath);
+    if (!generation.ok) {
+      results.push({
+        fixtureId: fixture.id,
+        pdf: fixture.pdfPath,
+        ok: false,
+        error: generation.error,
+        generatedPath: outputPath
+      });
+      continue;
+    }
+    let readingSource;
+    try {
+      readingSource = extractReadingSource(generation.payload);
+    } catch (error) {
+      results.push({
+        fixtureId: fixture.id,
+        pdf: fixture.pdfPath,
+        ok: false,
+        error: error.message,
+        generatedPath: outputPath
+      });
+      continue;
+    }
+    const readingSourcePath = path.join(outputDir, `${String(index + 1).padStart(2, "0")}-smoke-${safeName(fixture.id)}.reading-source.json`);
+    fs.writeFileSync(readingSourcePath, JSON.stringify(readingSource, null, 2));
+    const validator = validateReadingSource(readingSourcePath);
+    const parserWarnings = generation.payload?.documentIr?.parser?.warnings ?? [];
+    const groupCount = readingSource?.questionGroups?.length ?? 0;
+    const answerCount = Object.keys(readingSource?.answerKey ?? {}).length;
+    const manualReviewExpected = Boolean(fixture.expect.manualReviewWarning);
+    const manualReviewMatched = manualReviewExpected
+      ? fixture.expect.manualReviewWarning.test(parserWarnings.join("\n"))
+        && groupCount <= (fixture.expect.maxGroups ?? 0)
+        && answerCount <= (fixture.expect.maxAnswers ?? 0)
+      : false;
+    const validatorMatched = fixture.expect.validatorPass === true
+      ? validator.passed
+        && groupCount >= (fixture.expect.minGroups ?? 1)
+        && answerCount >= (fixture.expect.minAnswers ?? 1)
+      : false;
+    results.push({
+      fixtureId: fixture.id,
+      pdf: fixture.pdfPath,
+      ok: manualReviewExpected ? manualReviewMatched : validatorMatched,
+      manualReviewExpected,
+      validatorPassed: validator.passed,
+      parserProvider: generation.payload?.documentIr?.parser?.provider ?? null,
+      parserWarnings,
+      groupCount,
+      answerCount,
+      generatedPath: outputPath,
+      readingSourcePath,
+      validation: validator.report,
+      expectation: manualReviewExpected
+        ? "manual-review-warning"
+        : "valid-reading-source"
+    });
+  }
+
+  const failures = results.filter((result) => !result.ok);
+  const validatorFailures = results.filter((result) => result.manualReviewExpected !== true && result.validatorPassed === false);
+  const manualReviewCount = results.filter((result) => result.manualReviewExpected === true).length;
+  return {
+    schemaVersion: "PdfRegressionSampleReportV1",
+    mode: "smoke",
+    generatedAt: new Date().toISOString(),
+    seed: seedValue,
+    sampleSize: results.length,
+    pdfDir: null,
+    legacyDir: null,
+    matchedCount: results.length,
+    unmatchedCount: 0,
+    selected: results.map((result) => ({ pdf: result.pdf, fixtureId: result.fixtureId })),
+    passCount: results.length - failures.length,
+    failCount: failures.length,
+    structurePassCount: results.length - validatorFailures.length,
+    structureFailCount: validatorFailures.length,
+    answerPassCount: results.length - failures.length,
+    answerFailCount: failures.length,
+    parserLimitationCount: manualReviewCount,
+    results
+  };
+}
+
+function makeSummary(report, reportPath) {
+  return {
+    mode: report.mode,
+    seed: report.seed,
+    sampled: report.selected.length,
+    matchedCount: report.matchedCount,
+    unmatchedCount: report.unmatchedCount,
+    passCount: report.passCount,
+    failCount: report.failCount,
+    structurePassCount: report.structurePassCount,
+    structureFailCount: report.structureFailCount,
+    answerPassCount: report.answerPassCount,
+    answerFailCount: report.answerFailCount,
+    parserLimitationCount: report.parserLimitationCount,
+    reportPath
+  };
+}
+
+function generateReadingSource(cliPath, pdfPath, outputPath) {
+  const generated = spawnSync(cliPath, ["--generate-reading-source", pdfPath, "--out", outputPath], {
     cwd: repoRoot,
     encoding: "utf8"
   });
   if (generated.status !== 0) {
-    results.push({
-      pdf: item.pdfPath,
-      legacyId: item.legacy.id,
+    return {
       ok: false,
       error: generated.stderr.trim() || generated.stdout.trim() || `exit_${generated.status}`
-    });
-    continue;
+    };
   }
-  const payload = JSON.parse(fs.readFileSync(outputPath, "utf8"));
-  const actual = normalizeGenerated(payload.readingSource);
-  const expected = normalizeLegacy(item.legacy.data);
-  const comparison = compareNormalized(actual, expected);
-  results.push({
-    pdf: item.pdfPath,
-    legacyId: item.legacy.id,
-    ok: comparison.ok,
-    structureOk: comparison.structureOk,
-    answersOk: comparison.answersOk,
-    limitation: classifyLimitation(payload, comparison),
-    comparison,
-    generatedPath: outputPath
-  });
+  let payload;
+  try {
+    payload = JSON.parse(fs.readFileSync(outputPath, "utf8"));
+  } catch (error) {
+    return {
+      ok: false,
+      error: `invalid_json:${error.message}`
+    };
+  }
+  return {
+    ok: true,
+    payload
+  };
 }
 
-const failures = results.filter((result) => !result.ok);
-const structureFailures = results.filter((result) => result.structureOk === false);
-const answerFailures = results.filter((result) => result.answersOk === false);
-const parserLimitations = results.filter((result) => result.limitation);
-const report = {
-  schemaVersion: "PdfRegressionSampleReportV1",
-  generatedAt: new Date().toISOString(),
-  seed,
-  sampleSize,
-  pdfDir,
-  legacyDir,
-  matchedCount: matched.length,
-  unmatchedCount: unmatched.length,
-  selected: selected.map((item) => ({ pdf: item.pdfPath, legacyId: item.legacy.id })),
-  passCount: results.length - failures.length,
-  failCount: failures.length,
-  structurePassCount: results.length - structureFailures.length,
-  structureFailCount: structureFailures.length,
-  answerPassCount: results.length - answerFailures.length,
-  answerFailCount: answerFailures.length,
-  parserLimitationCount: parserLimitations.length,
-  results
-};
-const reportPath = path.join(outDir, "report.json");
-fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-console.log(JSON.stringify({
-  seed,
-  sampled: selected.length,
-  matchedCount: matched.length,
-  unmatchedCount: unmatched.length,
-  passCount: report.passCount,
-  failCount: report.failCount,
-  structurePassCount: report.structurePassCount,
-  structureFailCount: report.structureFailCount,
-  answerPassCount: report.answerPassCount,
-  answerFailCount: report.answerFailCount,
-  parserLimitationCount: report.parserLimitationCount,
-  reportPath
-}, null, 2));
+function extractReadingSource(payload) {
+  const readingSource = payload?.readingSource ?? payload?.reading_source ?? payload;
+  if (!readingSource || typeof readingSource !== "object") {
+    throw new Error("generated payload does not contain a readable readingSource object");
+  }
+  return readingSource;
+}
 
-if (strict && failures.length) process.exit(1);
+function validateReadingSource(readingSourcePath) {
+  const result = spawnSync(process.execPath, [validatorScript, readingSourcePath], {
+    cwd: repoRoot,
+    encoding: "utf8"
+  });
+  const stdout = result.stdout.trim();
+  return {
+    passed: result.status === 0,
+    report: stdout ? JSON.parse(stdout) : null,
+    stderr: result.stderr.trim()
+  };
+}
 
 function parseArgs(argv) {
   const parsed = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (!arg.startsWith("--")) continue;
+    const eqIndex = arg.indexOf("=");
+    if (eqIndex > 2) {
+      parsed[arg.slice(2, eqIndex)] = arg.slice(eqIndex + 1);
+      continue;
+    }
     const key = arg.slice(2);
     const next = argv[index + 1];
     if (!next || next.startsWith("--")) parsed[key] = true;
@@ -155,9 +360,12 @@ function parseArgs(argv) {
 
 function printUsageAndExit(code) {
   const usage = [
-    "usage: node scripts/pdf-regression-sample.mjs --pdf-dir <dir> --legacy-dir <dir> [options]",
+    "usage: node scripts/pdf-regression-sample.mjs [--pdf-dir <dir> --legacy-dir <dir>] [options]",
     "",
-    "Required:",
+    "Default behavior:",
+    "  With no corpus directories, runs a local smoke regression against bundled parser fixtures.",
+    "",
+    "Corpus mode:",
     "  --pdf-dir <dir>      Directory containing real PDF corpus files.",
     "  --legacy-dir <dir>   Directory containing legacy generated reading exam JS files.",
     "",
@@ -167,7 +375,9 @@ function printUsageAndExit(code) {
     "  --seed <value>       Deterministic sample seed. Default: current timestamp.",
     "  --cli <path>         Existing ielts-author-studio CLI binary to run.",
     "  --skip-build         Skip cargo build when --cli/default binary already exists.",
-    "  --strict             Exit non-zero when any sampled comparison fails."
+    "  --strict             Exit non-zero when any sampled comparison fails in corpus mode.",
+    "  --smoke              Force bundled-fixture smoke mode even if corpus args are incomplete.",
+    "  --require-corpus     Fail instead of falling back to bundled smoke mode."
   ].join("\n");
   (code === 0 ? console.log : console.error)(usage);
   process.exit(code);
