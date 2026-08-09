@@ -45,6 +45,20 @@ const expectedRootVersions = {
 if (manifest.schemaBundleVersion !== "2026.08.0") {
   errors.push(`unexpected_schema_bundle_version:${manifest.schemaBundleVersion}`);
 }
+const compatibility = manifest.compatibility ?? {};
+for (const [key, expected] of Object.entries({
+  v1ArtifactsMutable: false,
+  v1ToV2Disposition: "needs_review",
+  v2ToV1Disposition: "blocked_until_lossless_compiler",
+  artifactStoreLayoutVersion: "JobArtifactLayoutV1",
+  currentRevisionSchemaVersion: "JobCurrentRevisionV1",
+  revisionRecordSchemaVersion: "AuthoringRevisionRecordV1",
+  legacyJobOpenMode: "read_only_compatible"
+})) {
+  if (compatibility[key] !== expected) {
+    errors.push(`compatibility_contract_mismatch:${key}:expected=${expected}:actual=${compatibility[key] ?? "missing"}`);
+  }
+}
 
 for (const [schemaName, entry] of Object.entries(manifest.schemas ?? {})) {
   const relativePath = String(entry.path ?? "");

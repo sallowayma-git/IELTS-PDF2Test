@@ -20,6 +20,7 @@ import type {
   ManualTranscriptionInput,
   VisionTranscriptionInput,
   AutoPipelineReport,
+  JobArtifactStatusV2,
   PackBuildResult,
   ParseOptions,
   PreviewAssets,
@@ -83,6 +84,13 @@ export async function debugDocumentIrV2Overlay(jobId: string): Promise<DocumentI
     throw new Error("document_ir_v2_overlay_requires_tauri_runtime");
   }
   return command("debug_document_ir_v2_overlay", { jobId });
+}
+
+export async function getJobArtifactStatus(jobId: string): Promise<JobArtifactStatusV2> {
+  if (!isTauriRuntime()) {
+    throw new Error("job_artifact_status_requires_tauri_runtime");
+  }
+  return command("get_job_artifact_status", { jobId });
 }
 
 export async function rerunOcr(jobId: string, pageIndices: number[]): Promise<DocumentIr> {

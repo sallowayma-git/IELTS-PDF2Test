@@ -1,3 +1,4 @@
+use artifact_store::inspect_job_artifacts;
 use authoring_commands::{
     apply_manual_transcription_core, apply_vision_transcription_core, build_authoring_ir_core,
     parse_document_core, render_group_html_core, resolve_source_review_core, run_rule_split_core,
@@ -13,10 +14,10 @@ use llm_commands::{
     apply_llm_suggestion_core, delete_llm_profile_core, llm_run_group_core, save_llm_profile_core,
     test_llm_profile_core,
 };
+use pdf_facts_shadow::debug_document_ir_v2_overlay_core;
 use preview_commands::{
     generate_preview_assets_core, run_preview_e2e_core, validate_authoring_ir_core,
 };
-use pdf_facts_shadow::debug_document_ir_v2_overlay_core;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -26,6 +27,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use util::ensure_app_dirs;
+mod artifact_store;
 mod authoring_commands;
 mod authoring_pipeline;
 mod authoring_review;
@@ -858,6 +860,12 @@ async fn save_diagnostics_settings(
 }
 
 #[tauri::command]
+async fn get_job_artifact_status(job_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    inspect_job_artifacts(&root, &job_id)
+}
+
+#[tauri::command]
 async fn save_llm_profile(input: SaveLlmProfileInput, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     ensure_app_dirs(&root)?;
@@ -1026,6 +1034,7 @@ pub fn run() {
             run_environment_preflight,
             get_diagnostics_settings,
             save_diagnostics_settings,
+            get_job_artifact_status,
             save_llm_profile,
             delete_llm_profile,
             test_llm_profile,

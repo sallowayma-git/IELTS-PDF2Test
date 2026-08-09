@@ -9,3 +9,4 @@ export * from "./document-ir-v2";
 export * from "./content-doc-v2";
 export * from "./quality-report-v2";
 export * from "./ielts-authoring-v2";
+export * from "./artifact-store-v2";

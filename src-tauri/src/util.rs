@@ -106,7 +106,23 @@ pub(crate) fn hash_file_or_path(path: &Path) -> CommandResult<(String, u64, Opti
 }
 
 pub(crate) fn ensure_job_dirs(path: &Path) -> CommandResult<()> {
-    for relative in ["uploads", "preview", "exports"] {
+    for relative in [
+        "uploads",
+        "sources",
+        "preview",
+        "preview/runtime",
+        "exports",
+        "extraction",
+        "authoring",
+        "authoring/revisions",
+        "authoring/patches",
+        "assets",
+        "assets/blobs",
+        "assets/metadata",
+        "assets/previews",
+        "export-history",
+        "legacy",
+    ] {
         fs::create_dir_all(path.join(relative)).map_err(|error| error.to_string())?;
     }
     Ok(())

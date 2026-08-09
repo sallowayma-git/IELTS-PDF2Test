@@ -1,6 +1,6 @@
 # Phase 1 contract bundle
 
-This directory is the canonical contract source for Phase 1. The PR-01 schema bundle is deliberately independent of the V1 parser and is not loaded by any production command or feature flag.
+This directory is the canonical contract source for Phase 1. The schema bundle is deliberately independent of the V1 parser and is not loaded by any production command or feature flag.
 
 The stable schema identifiers are:
 
@@ -17,7 +17,9 @@ The stable schema identifiers are:
 - V1 → V2 is a best-effort migration boundary only. The skeleton reports `needs_review`, preserves the V1 artifact, and never marks inferred text, answers, options, slots, or provenance as verified.
 - V2 → V1 is blocked until a lossless compatibility compiler exists. Unsupported rich layout or shared-response semantics must not be silently flattened into V1 HTML.
 - `schemaVersion` is an exact dispatch key. Unknown versions are rejected by the migration boundary and must be opened read-only or reported as blocked.
-- Artifact/revision storage, parser shadow extraction, V2 runtime routing, and feature-flag changes are outside PR-01.
+- The Phase 1 artifact store uses `jobs/<jobId>/sources`, `extraction`, `authoring/revisions`, `authoring/patches`, `assets`, `preview`, `export-history`, and `legacy`. Canonical V2 JSON is written through a same-directory temp file, flush/sync, and replace sequence; revision commits use an optimistic base revision and keep immutable prior artifacts.
+- Existing V1 paths (`job.json`, `uploads`, `document-ir.json`, `authoring-ir.json`, and the current V1 export paths) remain readable and are not rewritten by the V2 store.
+- V2 runtime routing, V2 semantic parsing, and feature-flag enablement remain outside Phase 1.
 
 ## PR-02 PDF facts shadow extraction
 
@@ -39,6 +41,8 @@ From the PDF2TEST repository:
 ```powershell
 npm run verify:phase1:schema
 cargo test --manifest-path src-tauri/Cargo.toml schema
+cargo test --manifest-path src-tauri/Cargo.toml artifact_store
+cargo test --manifest-path src-tauri/Cargo.toml migration_v1
 cargo test --manifest-path src-tauri/Cargo.toml pdf_facts_shadow
 ```
 

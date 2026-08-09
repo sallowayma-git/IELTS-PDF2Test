@@ -28,7 +28,11 @@
     "v1ArtifactsMutable": false,
     "v1ToV2Disposition": "needs_review",
     "v2ToV1Disposition": "blocked_until_lossless_compiler",
-    "runtimeFeatureFlagsChangedByPr01": false
+    "runtimeFeatureFlagsChangedByPr01": false,
+    "artifactStoreLayoutVersion": "JobArtifactLayoutV1",
+    "currentRevisionSchemaVersion": "JobCurrentRevisionV1",
+    "revisionRecordSchemaVersion": "AuthoringRevisionRecordV1",
+    "legacyJobOpenMode": "read_only_compatible"
   },
   "peerRepositories": {
     "nasForWendao": {

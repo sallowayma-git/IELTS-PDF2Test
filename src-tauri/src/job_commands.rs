@@ -1,3 +1,4 @@
+use crate::artifact_store::ensure_job_artifact_layout;
 use crate::diagnostics::DiagnosticsSettings;
 use crate::job_store::{list_saved_jobs, load_job, make_job, save_job, update_job};
 use crate::llm_profiles::load_profiles;
@@ -79,6 +80,7 @@ pub(crate) async fn create_import_job_core(
     let job = make_job(input);
     let dir = job_dir(&root, &job.job_id);
     ensure_job_dirs(&dir)?;
+    ensure_job_artifact_layout(&root, &job.job_id)?;
     save_job(&root, &job)?;
     Ok(job)
 }

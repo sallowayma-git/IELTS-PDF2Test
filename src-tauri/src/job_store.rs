@@ -74,3 +74,27 @@ pub(crate) fn list_saved_jobs(
     jobs.sort_by_key(|job| Reverse(job.updated_at));
     Ok(jobs)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{env, fs};
+
+    #[test]
+    fn legacy_job_load_does_not_require_phase1_directories() {
+        let root = env::temp_dir().join(format!(
+            "phase1-job-store-{}",
+            Uuid::new_v4().simple()
+        ));
+        let job = make_job(CreateJobInput {
+            title: Some("Legacy job".to_string()),
+            ..Default::default()
+        });
+        save_job(&root, &job).unwrap();
+        let loaded = load_job(&root, &job.job_id).unwrap();
+        assert_eq!(loaded.job_id, job.job_id);
+        assert_eq!(loaded.title, "Legacy job");
+        assert!(!job_dir(&root, &job.job_id).join("authoring").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+}

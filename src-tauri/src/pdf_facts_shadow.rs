@@ -1,6 +1,7 @@
+use crate::artifact_store::write_canonical_json_atomic;
 use crate::job_store::load_job;
 use crate::schema::document_ir_v2::DocumentIRV2;
-use crate::util::{read_json, write_json, write_text};
+use crate::util::{read_json, write_text};
 use crate::{CommandResult, ImportJob, SourceFile};
 use chrono::Utc;
 use pdf_extract::{Document, MediaBox, OutputDev, OutputError, Transform};
@@ -226,7 +227,7 @@ pub(crate) fn write_pdf_facts_shadow(
     output_path: &Path,
 ) -> CommandResult<Value> {
     let value = extract_pdf_facts_shadow(job, source, input_path)?;
-    write_json(output_path, &value)?;
+    write_canonical_json_atomic(output_path, &value)?;
     Ok(value)
 }
 
