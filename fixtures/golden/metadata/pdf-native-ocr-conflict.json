@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-native-ocr-conflict",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-native-ocr-conflict.pdf",
+    "sha256": "fe59b541a45d663ceb94fffb9b8ce4dab0e133b159cdae694b9e26b0dd04d3a8",
+    "sizeBytes": 1523,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          2
+        ],
+        "kind": "single_choice",
+        "slotIds": [
+          "q1",
+          "q2"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "radio"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "radio"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "Visible native text and hidden OCR text intentionally disagree."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-native-ocr-conflict.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 9,
+      "groupCount": 1,
+      "slotCount": 2,
+      "assetCount": 0,
+      "answerCount": 2,
+      "warningCount": 0,
+      "groupKinds": [
+        "short_answer"
+      ],
+      "questionIds": [
+        "q1",
+        "q2"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

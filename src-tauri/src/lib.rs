@@ -16,6 +16,7 @@ use llm_commands::{
 use preview_commands::{
     generate_preview_assets_core, run_preview_e2e_core, validate_authoring_ir_core,
 };
+use pdf_facts_shadow::debug_document_ir_v2_overlay_core;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -43,9 +44,11 @@ mod llm_gateway;
 mod llm_profiles;
 mod llm_suggestions;
 mod parser;
+mod pdf_facts_shadow;
 mod preview_commands;
 mod reading_source;
 mod runtime_validation;
+pub mod schema;
 mod source_review;
 mod util;
 mod validator;
@@ -727,6 +730,15 @@ async fn parse_document(
 }
 
 #[tauri::command]
+async fn debug_document_ir_v2_overlay(
+    job_id: String,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    debug_document_ir_v2_overlay_core(&root, &job_id)
+}
+
+#[tauri::command]
 async fn rerun_ocr(
     job_id: String,
     _page_indices: Vec<u32>,
@@ -1000,6 +1012,7 @@ pub fn run() {
             choose_export_dir,
             pick_pdf_folder_sources,
             parse_document,
+            debug_document_ir_v2_overlay,
             rerun_ocr,
             apply_manual_transcription,
             apply_vision_transcription,

@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ielts-author-studio.dev/phase1/common-v2.schema.json",
+  "title": "IELTS V2 shared schema primitives",
+  "$defs": {
+    "pageRotation": {
+      "type": "integer",
+      "enum": [0, 90, 180, 270]
+    },
+    "coordinateUnit": {
+      "type": "string",
+      "enum": ["pt", "emu", "px"]
+    },
+    "coordinateOrigin": {
+      "type": "string",
+      "enum": ["top-left", "bottom-left"]
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height", "unit", "origin", "pageRotation"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number", "minimum": 0 },
+        "height": { "type": "number", "minimum": 0 },
+        "unit": { "$ref": "#/$defs/coordinateUnit" },
+        "origin": { "$ref": "#/$defs/coordinateOrigin" },
+        "pageRotation": { "$ref": "#/$defs/pageRotation" },
+        "normalized": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "number", "minimum": 0, "maximum": 1 },
+            { "type": "number", "minimum": 0, "maximum": 1 },
+            { "type": "number", "minimum": 0, "maximum": 1 },
+            { "type": "number", "minimum": 0, "maximum": 1 }
+          ],
+          "items": false,
+          "minItems": 4,
+          "maxItems": 4
+        }
+      }
+    },
+    "quad": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["points", "unit", "origin"],
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 8,
+          "maxItems": 8
+        },
+        "unit": { "$ref": "#/$defs/coordinateUnit" },
+        "origin": { "$ref": "#/$defs/coordinateOrigin" }
+      }
+    },
+    "sourceAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceFileId", "pageIndex", "nodeIds", "extractionMode", "sourceHash"],
+      "properties": {
+        "sourceFileId": { "type": "string", "minLength": 1 },
+        "pageIndex": { "type": "integer", "minimum": 0 },
+        "nodeIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "bbox": { "$ref": "#/$defs/rect" },
+        "charRange": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start", "end"],
+          "properties": {
+            "start": { "type": "integer", "minimum": 0 },
+            "end": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "ooxmlPath": { "type": "string", "minLength": 1 },
+        "relationshipId": { "type": "string", "minLength": 1 },
+        "extractionMode": {
+          "type": "string",
+          "enum": ["pdf_native", "pdf_ocr", "pdf_rendered_crop", "docx_ooxml", "docx_rendered_fallback", "manual"]
+        },
+        "sourceHash": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sourceFileRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceFileId", "originalName", "mediaType", "sha256", "byteLength", "role"],
+      "properties": {
+        "sourceFileId": { "type": "string", "minLength": 1 },
+        "originalName": { "type": "string", "minLength": 1 },
+        "mediaType": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "byteLength": { "type": "integer", "minimum": 0 },
+        "role": {
+          "type": "string",
+          "enum": ["question_paper", "answer_key", "explanation", "supplement", "unknown"]
+        }
+      }
+    },
+    "textStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fontName": { "type": "string" },
+        "fontSizePt": { "type": "number", "exclusiveMinimum": 0 },
+        "weight": { "type": "integer", "minimum": 100, "maximum": 900 },
+        "bold": { "type": "boolean" },
+        "italic": { "type": "boolean" },
+        "underline": { "type": "boolean" },
+        "strike": { "type": "boolean" },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{8}$" },
+        "backgroundColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{8}$" },
+        "superscript": { "type": "boolean" },
+        "subscript": { "type": "boolean" },
+        "language": { "type": "string" }
+      }
+    },
+    "assetDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "kind", "mime", "relativePath", "sha256", "byteLength", "extractionMode"],
+      "properties": {
+        "assetId": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["raster_image", "vector_render", "page_crop", "diagram", "chart", "audio", "thumbnail"]
+        },
+        "mime": { "type": "string", "minLength": 1 },
+        "relativePath": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "byteLength": { "type": "integer", "minimum": 0 },
+        "widthPx": { "type": "integer", "minimum": 0 },
+        "heightPx": { "type": "integer", "minimum": 0 },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "extractionMode": {
+          "type": "string",
+          "enum": ["embedded", "page_crop", "rendered_vector", "docx_media", "user_upload"]
+        },
+        "altText": { "type": "string" },
+        "decorative": { "type": "boolean" },
+        "sourceAnchor": { "$ref": "#/$defs/sourceAnchor" }
+      }
+    }
+  }
+}

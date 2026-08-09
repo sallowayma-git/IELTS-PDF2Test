@@ -1,0 +1,211 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "private-random-01",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-01.pdf",
+    "originalName": "234. P2 - The Secret Language of Plants 植物交流.pdf",
+    "sha256": "64d151d4f76976b43cf50b61faff6d43e420c0fb9ef2c95fdf0211c2ee3318ed",
+    "sizeBytes": 1209068,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question",
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 6,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 7,
+        "roles": [
+          "needs_review"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          14,
+          19
+        ],
+        "kind": "heading_matching",
+        "slotIds": [
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          20,
+          23
+        ],
+        "kind": "summary_completion",
+        "slotIds": [
+          "q20",
+          "q21",
+          "q22",
+          "q23"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          24,
+          26
+        ],
+        "kind": "matching",
+        "slotIds": [
+          "q24",
+          "q25",
+          "q26"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q14",
+        "displayNumber": "14",
+        "responseType": "select"
+      },
+      {
+        "id": "q15",
+        "displayNumber": "15",
+        "responseType": "select"
+      },
+      {
+        "id": "q16",
+        "displayNumber": "16",
+        "responseType": "select"
+      },
+      {
+        "id": "q17",
+        "displayNumber": "17",
+        "responseType": "select"
+      },
+      {
+        "id": "q18",
+        "displayNumber": "18",
+        "responseType": "select"
+      },
+      {
+        "id": "q19",
+        "displayNumber": "19",
+        "responseType": "select"
+      },
+      {
+        "id": "q20",
+        "displayNumber": "20",
+        "responseType": "text"
+      },
+      {
+        "id": "q21",
+        "displayNumber": "21",
+        "responseType": "text"
+      },
+      {
+        "id": "q22",
+        "displayNumber": "22",
+        "responseType": "text"
+      },
+      {
+        "id": "q23",
+        "displayNumber": "23",
+        "responseType": "text"
+      },
+      {
+        "id": "q24",
+        "displayNumber": "24",
+        "responseType": "select"
+      },
+      {
+        "id": "q25",
+        "displayNumber": "25",
+        "responseType": "select"
+      },
+      {
+        "id": "q26",
+        "displayNumber": "26",
+        "responseType": "select"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "样本使用固定随机种子抽取；V1 派生标注是可复现的初始契约，正式评分前仍需人工确认。",
+    "V1 parser emitted 2 warning(s); warning details remain part of the baseline."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/private-random-01.json",
+    "observed": {
+      "pageCount": 7,
+      "blockCount": 61,
+      "groupCount": 3,
+      "slotCount": 13,
+      "assetCount": 0,
+      "answerCount": 13,
+      "warningCount": 2,
+      "groupKinds": [
+        "heading_matching",
+        "summary_completion",
+        "matching"
+      ],
+      "questionIds": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-borderless-table",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-borderless-table.pdf",
+    "sha256": "6df6c4db08fdd846ef17a828d87cd0c0bea2debddffdbc214d6dd8e7fb9443ac",
+    "sizeBytes": 1428,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question",
+          "table"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          4
+        ],
+        "kind": "table_completion",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "text"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "text"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "Column alignment, not vector rules, is the only table evidence."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-borderless-table.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 6,
+      "groupCount": 0,
+      "slotCount": 0,
+      "assetCount": 0,
+      "answerCount": 0,
+      "warningCount": 0,
+      "groupKinds": [],
+      "questionIds": [],
+      "roles": []
+    }
+  }
+}

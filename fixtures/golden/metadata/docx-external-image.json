@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "docx-external-image",
+  "source": {
+    "path": "fixtures/golden/synthetic/docx/docx-external-image.docx",
+    "sha256": "c4df41c183508292ec6153181ecf3b9f4137cccdd6a8d18be5b2ec416057ddca",
+    "sizeBytes": 2293,
+    "format": "docx"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "visual_review"
+        ]
+      }
+    ],
+    "taskGroups": [],
+    "slots": [],
+    "assets": [
+      {
+        "id": "external-image-1",
+        "type": "external_image",
+        "required": true
+      }
+    ]
+  },
+  "knownIssues": [
+    "The image relationship targets an unavailable external resource and must block formal publish."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/docx-external-image.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 2,
+      "groupCount": 0,
+      "slotCount": 0,
+      "assetCount": 0,
+      "answerCount": 0,
+      "warningCount": 0,
+      "groupKinds": [],
+      "questionIds": [],
+      "roles": []
+    }
+  }
+}

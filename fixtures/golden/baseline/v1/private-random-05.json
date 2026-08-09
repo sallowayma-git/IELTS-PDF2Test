@@ -1,0 +1,3228 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "private-random-05",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-05.pdf",
+    "sha256": "33f3fe6aad5beabd081eae9cdc173c01eaaa8be51cf2560f89e1a6f826d7ea3e",
+    "sizeBytes": 393544
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 5,
+    "blockCount": 43,
+    "groupCount": 3,
+    "slotCount": 14,
+    "assetCount": 0,
+    "answerCount": 14,
+    "warningCount": 1,
+    "groupKinds": [
+      "summary_completion",
+      "short_answer",
+      "single_choice"
+    ],
+    "questionIds": [
+      "q27",
+      "q28",
+      "q29",
+      "q30",
+      "q31",
+      "q32",
+      "q33",
+      "q34",
+      "q35",
+      "q36",
+      "q37",
+      "q38",
+      "q39",
+      "q40"
+    ],
+    "roles": [
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q27": "",
+        "q28": "",
+        "q29": "",
+        "q30": "",
+        "q31": "",
+        "q32": "",
+        "q33": "",
+        "q34": "",
+        "q35": "",
+        "q36": "",
+        "q37": "",
+        "q38": "",
+        "q39": "",
+        "q40": ""
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "private-random-05.pdf",
+            "role": "MainQuestion",
+            "sha256": "33f3fe6aad5beabd081eae9cdc173c01eaaa8be51cf2560f89e1a6f826d7ea3e",
+            "sizeBytes": 393544,
+            "storedName": "private-random-05.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "private random 05"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            }
+          ],
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 27-32"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "summary_completion",
+          "layout": {
+            "layoutHint": "inline_completion",
+            "notes": "Questions 27–32 Complete the summary using the list of phrases, A–L, below. Write the correct letter, A–L, in boxes 27–32 on your answer sheet. MNCs often encounter language barriers in their daily operations, so they seek several approaches to solve such problems. First, using the native language gives them a realistic base in a different- language-speaking country, but problems turn up when they deal with overseas 27 ________. For example, when translating key 28 ________, differences inevitably arise because of rules in different countries. Another way is to rely on a combination of spoken language and 29 ________, yet a report noted that over one-tenth of business 30 ________ were processed in a party-language setting. A third way is to hire translators. However, this is 31 ________; besides, if they are not well- prepared, they have to engage in 32 ________ work.",
+            "template": "summary_text_completion"
+          },
+          "questionRange": [
+            27,
+            32
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "27",
+              "id": "q27",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "For example, when translating key",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "28",
+              "id": "q28",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": ", differences inevitably arise because of rules in different countries. Another way is to rely on a combination of spoken language and",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "29",
+              "id": "q29",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": ", yet a report noted that over one-tenth of business",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "30",
+              "id": "q30",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "were processed in a party-language setting. A third way is to hire translators. However, this is",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "31",
+              "id": "q31",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "; besides, if they are not well- prepared, they have to engage in",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "32",
+              "id": "q32",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "work.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 27–32"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary using the list of phrases, A–L, below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A–L, in boxes 27–32 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "MNCs often encounter language barriers in their daily operations, so they seek several approaches"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "to solve such problems. First, using the native language gives them a realistic base in a different-"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "language-speaking country, but problems turn up when they deal with overseas 27 ________. For"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "example, when translating key 28 ________, differences inevitably arise because of rules in different"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "countries. Another way is to rely on a combination of spoken language and 29 ________, yet a"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "report noted that over one-tenth of business 30 ________ were processed in a party-language"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "setting. A third way is to hire translators. However, this is 31 ________; besides, if they are not well-"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "prepared, they have to engage in 32 ________ work."
+            }
+          ],
+          "sourceBlockIds": [
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 33-39"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "short_answer",
+          "layout": {
+            "layoutHint": "list",
+            "template": "short_answer_list"
+          },
+          "questionRange": [
+            33,
+            39
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "33",
+              "id": "q33",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "What “understandable reaction” does the author say companies show when facing a skills shortage?",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "34",
+              "id": "q34",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "During an economic depression, how does the writer label language training in firms?",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "35",
+              "id": "q35",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "What has Volkswagen Group provided as an example for other multinationals?",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "36",
+              "id": "q36",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "In Volkswagen, language training is regarded as what kind of solution?",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "37",
+              "id": "q37",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "How many stages are required to progress from basics to full competence?",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "38",
+              "id": "q38",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "Roughly how long does each refresher course take?",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "39",
+              "id": "q39",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "At least how long is needed for a specialist to work effectively in a foreign language? A gestures B clients C transactions D assumption E accurate F documents G managers H body language I long-term J effective K rivals L costly",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 33–39"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Answer the questions below."
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose NO MORE THAN THREE WORDS AND/OR A NUMBER from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 32-39 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "33 What “understandable reaction” does the author say companies show when facing a skills shortage?"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "34 During an economic depression, how does the writer label language training in firms?"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "35 What has Volkswagen Group provided as an example for other multinationals?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "36 In Volkswagen, language training is regarded as what kind of solution?"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "37 How many stages are required to progress from basics to full competence?"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "38 Roughly how long does each refresher course take?"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "39 At least how long is needed for a specialist to work effectively in a foreign language?"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A gestures B clients C transactions D assumption"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "E accurate F documents G managers H body language"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "I long-term J effective K rivals L costly"
+            }
+          ],
+          "sourceBlockIds": [
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042"
+          ],
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            }
+          ],
+          "groupId": "group-3",
+          "instruction": [
+            "Questions 40"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "single_choice",
+          "layout": {
+            "layoutHint": "list",
+            "template": "single_choice_list"
+          },
+          "questionRange": [
+            40,
+            40
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "40",
+              "id": "q40",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Choose the correct letter, A, B, C or D. Write the correct letter in box 40 on your answer sheet. 40 What is the main function of this passage? A Reveal all kinds of language problems that companies may encounter. B Exhibit well-known cases in dealing with language difficulties. C Evaluate various approaches to the language barrier in multinational companies. D Testify that training is the only feasible approach to solve language problems.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [
+            "Option reuse was inferred from question type; source wording did not state it explicitly."
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Question 40"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose the correct letter, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter in box 40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "40 What is the main function of this passage?"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Reveal all kinds of language problems that companies may encounter. B Exhibit well-known cases in dealing with languag"
+            }
+          ],
+          "sourceBlockIds": [
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   3</p>\n<p>The importance of language management in multinational companies has never been greater than \ntoday. Multinationals are becoming ever more conscious of the importance of global coordination \nas a source of competitive advantage, and language remains the ultimate barrier to aspirations of \ninternational harmonization. Before attempting to consider language-management strategies, \ncompanies will have to evaluate the magnitude of the language barrier confronting them and, in \ndoing so, examine it in three dimensions: language diversity, language penetration and language \nsophistication. Companies next need to turn their attention to how they should best manage \nlanguage. There is a range of options from which MNCs can formulate their language strategy.</p>\n<p>Lingua Franca</p>\n<p>The simplest answer—though realistic only for English-speaking companies—is to rely on one’s \nnative tongue. As recently as 1991 a survey of British exporting companies found that over a third \nused English exclusively in dealings with foreign customers. This attitude that “one language fits \nall” has also been carried through into the Internet age. A survey of the websites of top American \ncompanies confirmed that over half made no provision for foreign-language access, and another \nfound that less than 10 % of leading companies were able to respond adequately to e-mails other \nthan in the company’s language. Widespread though it is, however, reliance on a single language \nis a strategy that is fatally flawed. It makes no allowance for the growing trend in linguistic \nnationalism whereby buyers in Asia, South America and the Middle East in particular are asserting \ntheir right to “work in the language of the customer”. It also fails to recognise the increasing vitality \nof languages such as Spanish, Arabic and Chinese that over time are likely to challenge the \ndominance of English as a lingua franca. In the IT arena it ignores the rapid globalisation of the \nInternet, where the number of English-language e-commerce transactions, e-mails and websites is \nrapidly diminishing as a percentage of the total. Finally, total reliance on a single language puts \nthe English speaker at risk in negotiations. Contracts, rules and legislation are invariably written in \nthe local language, and a company unable to operate in that language is vulnerable.</p>\n<p>Functional Multilingualism</p>\n<p>Another improvised approach is to rely on what has been termed “functional multilingualism”. \nEssentially, this means muddling through—relying on a mix of languages, pidgins and gestures to \ncommunicate by whatever means the parties have at their disposal. In a social context such a \nshared effort might aid bonding, the frustration of communication being regularly punctuated by \nmoments of absurdity and humour. However, as the basis for business negotiations it appears \nvery hit-and-miss. Yet Hagen’s recent study suggests that 16 % of international business \ntransactions are conducted in a “cocktail of languages”. Functional multilingualism shares the \nsame defects as reliance on a lingua franca and increases the probability of cognitive divergence \nbetween the parties.</p>\n<p>External Language Resources</p>\n<p>A more rational response is to employ external resources such as translators and interpreters, and \ncertainly there are many excellent companies specialised in these fields. However, this is by no \nmeans an end to the language barrier. For a start these services can be very expensive, with a top \nsimultaneous interpreter commanding daily rates as high as a partner in an international \nconsulting firm. Secondly, any good translator or interpreter will insist that, to be fully effective, \nthey must understand the context of the subject matter—something not always possible owing to \ncomplexity, lack of preparation time, or more often the reluctance of the parties to explain the \nwider context to an outsider. Unless there has been considerable pre-explanation, ambiguity and \ncultural overtones are likely to remain in the source messages. Interpreters will of course \nendeavour to provide a hi-fidelity translation, but in such circumstances they must use initiative \nand guess-work, clearly injecting a potential source of misunderstanding. Finally, while a good \ninterpreter will attempt to convey spirit as well as meaning, there is inevitably a loss of rhetorical \npower; for negotiation, persuasion or humour, an interpreter is a poor substitute for direct \ncommunication.</p>\n<p>Training</p>\n<p>The immediate and understandable reaction to any skills shortage is to consider personnel \ndevelopment, and the language-training industry is well developed, offering programmes at almost \nevery level and in numerous languages. However, no company should be deluded into believing \ntraining alone guarantees success. Training budgets are geared to the economic cycle: when \ntimes are good, money is invested; when belts tighten, training is one of the first luxuries to be \npared down. In a study across four European countries nearly twice as many companies said they \nneeded language training in coming years as had conducted it in past years—highlighting the gap \nbetween good intentions and delivery. Unless a company is committed to sustaining the strategy \neven through bad times, it will fail.</p>\n<p>One notable and committed leader in language training is the Volkswagen Group. Over many \nyears it has developed a language strategy that can be regarded as a model of professional \nmanagement. Volkswagen treats language training as a strategic solution, not a tactical one. \nProgressing from “basics” to full “communication competence” requires completion of six language \nstages, each demanding roughly 90 hours of classroom refresher work, supplemented by self-\nstudy over 6-9 months. Each stage ends with an achievement test that is a prerequisite for \ncontinuing. Even this highly structured programme expects a minimum of three years of fairly \nintensive study before an accountant, engineer, buyer or salesperson can work effectively in a \nforeign language. Clearly, firms pursuing this route must do so with realistic expectations and long-\nterm commitment; except for brush-up courses for the already fluent, training is not a quick fix and \nother methods will still be needed.</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 27-40",
+            "questionRange": [
+              27,
+              40
+            ],
+            "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Language Strategy in Multinational Companies"
+          }
+        ],
+        "sourceBlockIds": [
+          "b001",
+          "b003",
+          "b004",
+          "b005",
+          "b006",
+          "b007",
+          "b008",
+          "b009",
+          "b010",
+          "b011",
+          "b012"
+        ],
+        "title": "RE ADI NG P AS S AGE 3"
+      },
+      "questionDisplayMap": {
+        "q27": "27",
+        "q28": "28",
+        "q29": "29",
+        "q30": "30",
+        "q31": "31",
+        "q32": "32",
+        "q33": "33",
+        "q34": "34",
+        "q35": "35",
+        "q36": "36",
+        "q37": "37",
+        "q38": "38",
+        "q39": "39",
+        "q40": "40"
+      },
+      "questionOrder": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>RE ADI NG  P AS S AGE   3</p>",
+              "pageIndex": 1,
+              "text": "RE ADI NG  P AS S AGE   3  "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 \nbelow. \n Language Strategy in Multinational Companies</p>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 \nbelow. \n Language Strategy in Multinational Companies "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The importance of language management in multinational companies has never been greater than \ntoday. Multinationals are becoming ever more conscious of the importance of global coordination \nas a source of competitive advantage, and language remains the ultimate barrier to aspirations of \ninternational harmonization. Before attempting to consider language-management strategies, \ncompanies will have to evaluate the magnitude of the language barrier confronting them and, in \ndoing so, examine it in three dimensions: language diversity, language penetration and language \nsophistication. Companies next need to turn their attention to how they should best manage \nlanguage. There is a range of options from which MNCs can formulate their language strategy.</p>",
+              "pageIndex": 1,
+              "text": "The importance of language management in multinational companies has never been greater than \ntoday. Multinationals are becoming ever more conscious of the importance of global coordination \nas a source of competitive advantage, and language remains the ultimate barrier to aspirations of \ninternational harmonization. Before attempting to consider language-management strategies, \ncompanies will have to evaluate the magnitude of the language barrier confronting them and, in \ndoing so, examine it in three dimensions: language diversity, language penetration and language \nsophistication. Companies next need to turn their attention to how they should best manage \nlanguage. There is a range of options from which MNCs can formulate their language strategy. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Lingua Franca</p>",
+              "pageIndex": 1,
+              "text": "Lingua Franca "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The simplest answer—though realistic only for English-speaking companies—is to rely on one’s \nnative tongue. As recently as 1991 a survey of British exporting companies found that over a third \nused English exclusively in dealings with foreign customers. This attitude that “one language fits \nall” has also been carried through into the Internet age. A survey of the websites of top American \ncompanies confirmed that over half made no provision for foreign-language access, and another \nfound that less than 10 % of leading companies were able to respond adequately to e-mails other \nthan in the company’s language. Widespread though it is, however, reliance on a single language \nis a strategy that is fatally flawed. It makes no allowance for the growing trend in linguistic \nnationalism whereby buyers in Asia, South America and the Middle East in particular are asserting \ntheir right to “work in the language of the customer”. It also fails to recognise the increasing vitality \nof languages such as Spanish, Arabic and Chinese that over time are likely to challenge the \ndominance of English as a lingua franca. In the IT arena it ignores the rapid globalisation of the \nInternet, where the number of English-language e-commerce transactions, e-mails and websites is \nrapidly diminishing as a percentage of the total. Finally, total reliance on a single language puts \nthe English speaker at risk in negotiations. Contracts, rules and legislation are invariably written in \nthe local language, and a company unable to operate in that language is vulnerable.</p>",
+              "pageIndex": 1,
+              "text": "The simplest answer—though realistic only for English-speaking companies—is to rely on one’s \nnative tongue. As recently as 1991 a survey of British exporting companies found that over a third \nused English exclusively in dealings with foreign customers. This attitude that “one language fits \nall” has also been carried through into the Internet age. A survey of the websites of top American \ncompanies confirmed that over half made no provision for foreign-language access, and another \nfound that less than 10 % of leading companies were able to respond adequately to e-mails other \nthan in the company’s language. Widespread though it is, however, reliance on a single language \nis a strategy that is fatally flawed. It makes no allowance for the growing trend in linguistic \nnationalism whereby buyers in Asia, South America and the Middle East in particular are asserting \ntheir right to “work in the language of the customer”. It also fails to recognise the increasing vitality \nof languages such as Spanish, Arabic and Chinese that over time are likely to challenge the \ndominance of English as a lingua franca. In the IT arena it ignores the rapid globalisation of the \nInternet, where the number of English-language e-commerce transactions, e-mails and websites is \nrapidly diminishing as a percentage of the total. Finally, total reliance on a single language puts \nthe English speaker at risk in negotiations. Contracts, rules and legislation are invariably written in \nthe local language, and a company unable to operate in that language is vulnerable. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Functional Multilingualism</p>",
+              "pageIndex": 1,
+              "text": "Functional Multilingualism "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Another improvised approach is to rely on what has been termed “functional multilingualism”. \nEssentially, this means muddling through—relying on a mix of languages, pidgins and gestures to \ncommunicate by whatever means the parties have at their disposal. In a social context such a \nshared effort might aid bonding, the frustration of communication being regularly punctuated by \nmoments of absurdity and humour. However, as the basis for business negotiations it appears \nvery hit-and-miss. Yet Hagen’s recent study suggests that 16 % of international business \ntransactions are conducted in a “cocktail of languages”. Functional multilingualism shares the \nsame defects as reliance on a lingua franca and increases the probability of cognitive divergence \nbetween the parties.</p>",
+              "pageIndex": 1,
+              "text": "Another improvised approach is to rely on what has been termed “functional multilingualism”. \nEssentially, this means muddling through—relying on a mix of languages, pidgins and gestures to \ncommunicate by whatever means the parties have at their disposal. In a social context such a \nshared effort might aid bonding, the frustration of communication being regularly punctuated by \nmoments of absurdity and humour. However, as the basis for business negotiations it appears \nvery hit-and-miss. Yet Hagen’s recent study suggests that 16 % of international business \ntransactions are conducted in a “cocktail of languages”. Functional multilingualism shares the \nsame defects as reliance on a lingua franca and increases the probability of cognitive divergence \nbetween the parties. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>External Language Resources</p>",
+              "pageIndex": 2,
+              "text": "External Language Resources   "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b009",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A more rational response is to employ external resources such as translators and interpreters, and \ncertainly there are many excellent companies specialised in these fields. However, this is by no \nmeans an end to the language barrier. For a start these services can be very expensive, with a top \nsimultaneous interpreter commanding daily rates as high as a partner in an international \nconsulting firm. Secondly, any good translator or interpreter will insist that, to be fully effective, \nthey must understand the context of the subject matter—something not always possible owing to \ncomplexity, lack of preparation time, or more often the reluctance of the parties to explain the \nwider context to an outsider. Unless there has been considerable pre-explanation, ambiguity and \ncultural overtones are likely to remain in the source messages. Interpreters will of course \nendeavour to provide a hi-fidelity translation, but in such circumstances they must use initiative \nand guess-work, clearly injecting a potential source of misunderstanding. Finally, while a good \ninterpreter will attempt to convey spirit as well as meaning, there is inevitably a loss of rhetorical \npower; for negotiation, persuasion or humour, an interpreter is a poor substitute for direct \ncommunication.</p>",
+              "pageIndex": 2,
+              "text": "A more rational response is to employ external resources such as translators and interpreters, and \ncertainly there are many excellent companies specialised in these fields. However, this is by no \nmeans an end to the language barrier. For a start these services can be very expensive, with a top \nsimultaneous interpreter commanding daily rates as high as a partner in an international \nconsulting firm. Secondly, any good translator or interpreter will insist that, to be fully effective, \nthey must understand the context of the subject matter—something not always possible owing to \ncomplexity, lack of preparation time, or more often the reluctance of the parties to explain the \nwider context to an outsider. Unless there has been considerable pre-explanation, ambiguity and \ncultural overtones are likely to remain in the source messages. Interpreters will of course \nendeavour to provide a hi-fidelity translation, but in such circumstances they must use initiative \nand guess-work, clearly injecting a potential source of misunderstanding. Finally, while a good \ninterpreter will attempt to convey spirit as well as meaning, there is inevitably a loss of rhetorical \npower; for negotiation, persuasion or humour, an interpreter is a poor substitute for direct \ncommunication. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b010",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Training</p>",
+              "pageIndex": 2,
+              "text": "Training "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b011",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The immediate and understandable reaction to any skills shortage is to consider personnel \ndevelopment, and the language-training industry is well developed, offering programmes at almost \nevery level and in numerous languages. However, no company should be deluded into believing \ntraining alone guarantees success. Training budgets are geared to the economic cycle: when \ntimes are good, money is invested; when belts tighten, training is one of the first luxuries to be \npared down. In a study across four European countries nearly twice as many companies said they \nneeded language training in coming years as had conducted it in past years—highlighting the gap \nbetween good intentions and delivery. Unless a company is committed to sustaining the strategy \neven through bad times, it will fail.</p>",
+              "pageIndex": 2,
+              "text": "The immediate and understandable reaction to any skills shortage is to consider personnel \ndevelopment, and the language-training industry is well developed, offering programmes at almost \nevery level and in numerous languages. However, no company should be deluded into believing \ntraining alone guarantees success. Training budgets are geared to the economic cycle: when \ntimes are good, money is invested; when belts tighten, training is one of the first luxuries to be \npared down. In a study across four European countries nearly twice as many companies said they \nneeded language training in coming years as had conducted it in past years—highlighting the gap \nbetween good intentions and delivery. Unless a company is committed to sustaining the strategy \neven through bad times, it will fail. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>One notable and committed leader in language training is the Volkswagen Group. Over many \nyears it has developed a language strategy that can be regarded as a model of professional \nmanagement. Volkswagen treats language training as a strategic solution, not a tactical one. \nProgressing from “basics” to full “communication competence” requires completion of six language \nstages, each demanding roughly 90 hours of classroom refresher work, supplemented by self-\nstudy over 6-9 months. Each stage ends with an achievement test that is a prerequisite for \ncontinuing. Even this highly structured programme expects a minimum of three years of fairly \nintensive study before an accountant, engineer, buyer or salesperson can work effectively in a \nforeign language. Clearly, firms pursuing this route must do so with realistic expectations and long-\nterm commitment; except for brush-up courses for the already fluent, training is not a quick fix and \nother methods will still be needed.</p>",
+              "pageIndex": 2,
+              "text": "One notable and committed leader in language training is the Volkswagen Group. Over many \nyears it has developed a language strategy that can be regarded as a model of professional \nmanagement. Volkswagen treats language training as a strategic solution, not a tactical one. \nProgressing from “basics” to full “communication competence” requires completion of six language \nstages, each demanding roughly 90 hours of classroom refresher work, supplemented by self-\nstudy over 6-9 months. Each stage ends with an achievement test that is a prerequisite for \ncontinuing. Even this highly structured programme expects a minimum of three years of fairly \nintensive study before an accountant, engineer, buyer or salesperson can work effectively in a \nforeign language. Clearly, firms pursuing this route must do so with realistic expectations and long-\nterm commitment; except for brush-up courses for the already fluent, training is not a quick fix and \nother methods will still be needed. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 2,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b013",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 27–32</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 27–32 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b014",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Complete the summary using the list of phrases, A–L, below.</p>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Complete the summary using the list of phrases, A–L, below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b015",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter, A–L, in boxes 27–32 on your answer sheet.</p>",
+              "pageIndex": 3,
+              "text": "Write the correct letter, A–L, in boxes 27–32 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b016",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>MNCs often encounter language barriers in their daily operations, so they seek several approaches</p>",
+              "pageIndex": 3,
+              "text": "MNCs often encounter language barriers in their daily operations, so they seek several approaches "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b017",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>to solve such problems. First, using the native language gives them a realistic base in a different-</p>",
+              "pageIndex": 3,
+              "text": "to solve such problems. First, using the native language gives them a realistic base in a different-"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b018",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>language-speaking country, but problems turn up when they deal with overseas 27 ________. For</p>",
+              "pageIndex": 3,
+              "text": "language-speaking country, but problems turn up when they deal with overseas 27 ________. For "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b019",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>example, when translating key 28 ________, differences inevitably arise because of rules in different</p>",
+              "pageIndex": 3,
+              "text": "example, when translating key 28 ________, differences inevitably arise because of rules in different "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b020",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>countries.  Another  way  is  to  rely  on  a  combination  of  spoken  language  and  29  ________,  yet  a</p>",
+              "pageIndex": 3,
+              "text": "countries.  Another  way  is  to  rely  on  a  combination  of  spoken  language  and  29  ________,  yet  a "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b021",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>report  noted  that  over  one-tenth  of  business  30  ________  were  processed  in  a  party-language</p>",
+              "pageIndex": 3,
+              "text": "report  noted  that  over  one-tenth  of  business  30  ________  were  processed  in  a  party-language "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>setting. A third way is to hire translators. However, this is 31 ________; besides, if they are not well-</p>",
+              "pageIndex": 3,
+              "text": "setting. A third way is to hire translators. However, this is 31 ________; besides, if they are not well-"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>prepared, they have to engage in 32 ________ work.</p>",
+              "pageIndex": 3,
+              "text": "prepared, they have to engage in 32 ________ work. "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b024",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 33–39</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 33–39 "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b025",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Answer the questions below.</p>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Answer the questions below. "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose NO MORE THAN THREE WORDS AND/OR A NUMBER from the passage for each \nanswer.</p>",
+              "pageIndex": 3,
+              "text": "Choose NO MORE THAN THREE WORDS AND/OR A NUMBER from the passage for each \nanswer. "
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b027",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write your answers in boxes 32-39 on your answer sheet.</p>",
+              "pageIndex": 3,
+              "text": "Write your answers in boxes 32-39 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>33  What “understandable reaction” does the author say companies show when facing a skills \nshortage?</p>",
+              "pageIndex": 3,
+              "text": "33  What “understandable reaction” does the author say companies show when facing a skills \nshortage? "
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b029",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>34  During an economic depression, how does the writer label language training in firms?</p>",
+              "pageIndex": 3,
+              "text": "34  During an economic depression, how does the writer label language training in firms? "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b030",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>35  What has Volkswagen Group provided as an example for other multinationals?</p>",
+              "pageIndex": 3,
+              "text": "35  What has Volkswagen Group provided as an example for other multinationals? "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>36  In Volkswagen, language training is regarded as what kind of solution?</p>",
+              "pageIndex": 3,
+              "text": "36  In Volkswagen, language training is regarded as what kind of solution? "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>37  How many stages are required to progress from basics to full competence?</p>",
+              "pageIndex": 3,
+              "text": "37  How many stages are required to progress from basics to full competence? "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>38  Roughly how long does each refresher course take?</p>",
+              "pageIndex": 3,
+              "text": "38  Roughly how long does each refresher course take? "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b034",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>39  At least how long is needed for a specialist to work effectively in a foreign language?</p>",
+              "pageIndex": 3,
+              "text": "39  At least how long is needed for a specialist to work effectively in a foreign language? "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    gestures      B  clients      C    transactions    D    assumption</p>",
+              "pageIndex": 3,
+              "text": "A    gestures      B  clients      C    transactions    D    assumption   "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>E    accurate    F    documents    G    managers    H    body language</p>",
+              "pageIndex": 3,
+              "text": "E    accurate    F    documents    G    managers    H    body language   "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>I    long-term    J    effective      K    rivals       L    costly</p>",
+              "pageIndex": 3,
+              "text": "I    long-term    J    effective      K    rivals       L    costly "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 3,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Question 40</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Question 40 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose the correct letter, A, B, C or D.</p>",
+              "pageIndex": 4,
+              "text": "Choose the correct letter, A, B, C or D. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter in box 40 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write the correct letter in box 40 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>40  What is the main function of this passage?</p>",
+              "pageIndex": 4,
+              "text": "40  What is the main function of this passage? "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b042",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A  Reveal all kinds of language problems that companies may encounter. \nB  Exhibit well-known cases in dealing with language difficulties. \nC  Evaluate various approaches to the language barrier in multinational companies. \nD  Testify that training is the only feasible approach to solve language problems.</p>",
+              "pageIndex": 4,
+              "text": "A  Reveal all kinds of language problems that companies may encounter. \nB  Exhibit well-known cases in dealing with language difficulties. \nC  Evaluate various approaches to the language barrier in multinational companies. \nD  Testify that training is the only feasible approach to solve language problems. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 4,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b043",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 5]</p>",
+              "pageIndex": 5,
+              "text": "[No extractable text on page 5]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 5,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "private-random-05.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 5 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q27": "",
+        "q28": "",
+        "q29": "",
+        "q30": "",
+        "q31": "",
+        "q32": "",
+        "q33": "",
+        "q34": "",
+        "q35": "",
+        "q36": "",
+        "q37": "",
+        "q38": "",
+        "q39": "",
+        "q40": ""
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:33f3fe6aad5beabd081eae9cdc173c01eaaa8be51cf2560f89e1a6f826d7ea3e;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "private-random-05.pdf",
+        "questionIntroHtml": "<h3>Questions</h3><ul class=\"question-umbrella-ranges\"><li><strong>Questions 27-40</strong><span>Q27-40</span></li></ul>",
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 27-40",
+            "questionRange": [
+              27,
+              40
+            ],
+            "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Language Strategy in Multinational Companies"
+          }
+        ],
+        "title": "private random 05"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   3</p>\n<p>The importance of language management in multinational companies has never been greater than \ntoday. Multinationals are becoming ever more conscious of the importance of global coordination \nas a source of competitive advantage, and language remains the ultimate barrier to aspirations of \ninternational harmonization. Before attempting to consider language-management strategies, \ncompanies will have to evaluate the magnitude of the language barrier confronting them and, in \ndoing so, examine it in three dimensions: language diversity, language penetration and language \nsophistication. Companies next need to turn their attention to how they should best manage \nlanguage. There is a range of options from which MNCs can formulate their language strategy.</p>\n<p>Lingua Franca</p>\n<p>The simplest answer—though realistic only for English-speaking companies—is to rely on one’s \nnative tongue. As recently as 1991 a survey of British exporting companies found that over a third \nused English exclusively in dealings with foreign customers. This attitude that “one language fits \nall” has also been carried through into the Internet age. A survey of the websites of top American \ncompanies confirmed that over half made no provision for foreign-language access, and another \nfound that less than 10 % of leading companies were able to respond adequately to e-mails other \nthan in the company’s language. Widespread though it is, however, reliance on a single language \nis a strategy that is fatally flawed. It makes no allowance for the growing trend in linguistic \nnationalism whereby buyers in Asia, South America and the Middle East in particular are asserting \ntheir right to “work in the language of the customer”. It also fails to recognise the increasing vitality \nof languages such as Spanish, Arabic and Chinese that over time are likely to challenge the \ndominance of English as a lingua franca. In the IT arena it ignores the rapid globalisation of the \nInternet, where the number of English-language e-commerce transactions, e-mails and websites is \nrapidly diminishing as a percentage of the total. Finally, total reliance on a single language puts \nthe English speaker at risk in negotiations. Contracts, rules and legislation are invariably written in \nthe local language, and a company unable to operate in that language is vulnerable.</p>\n<p>Functional Multilingualism</p>\n<p>Another improvised approach is to rely on what has been termed “functional multilingualism”. \nEssentially, this means muddling through—relying on a mix of languages, pidgins and gestures to \ncommunicate by whatever means the parties have at their disposal. In a social context such a \nshared effort might aid bonding, the frustration of communication being regularly punctuated by \nmoments of absurdity and humour. However, as the basis for business negotiations it appears \nvery hit-and-miss. Yet Hagen’s recent study suggests that 16 % of international business \ntransactions are conducted in a “cocktail of languages”. Functional multilingualism shares the \nsame defects as reliance on a lingua franca and increases the probability of cognitive divergence \nbetween the parties.</p>\n<p>External Language Resources</p>\n<p>A more rational response is to employ external resources such as translators and interpreters, and \ncertainly there are many excellent companies specialised in these fields. However, this is by no \nmeans an end to the language barrier. For a start these services can be very expensive, with a top \nsimultaneous interpreter commanding daily rates as high as a partner in an international \nconsulting firm. Secondly, any good translator or interpreter will insist that, to be fully effective, \nthey must understand the context of the subject matter—something not always possible owing to \ncomplexity, lack of preparation time, or more often the reluctance of the parties to explain the \nwider context to an outsider. Unless there has been considerable pre-explanation, ambiguity and \ncultural overtones are likely to remain in the source messages. Interpreters will of course \nendeavour to provide a hi-fidelity translation, but in such circumstances they must use initiative \nand guess-work, clearly injecting a potential source of misunderstanding. Finally, while a good \ninterpreter will attempt to convey spirit as well as meaning, there is inevitably a loss of rhetorical \npower; for negotiation, persuasion or humour, an interpreter is a poor substitute for direct \ncommunication.</p>\n<p>Training</p>\n<p>The immediate and understandable reaction to any skills shortage is to consider personnel \ndevelopment, and the language-training industry is well developed, offering programmes at almost \nevery level and in numerous languages. However, no company should be deluded into believing \ntraining alone guarantees success. Training budgets are geared to the economic cycle: when \ntimes are good, money is invested; when belts tighten, training is one of the first luxuries to be \npared down. In a study across four European countries nearly twice as many companies said they \nneeded language training in coming years as had conducted it in past years—highlighting the gap \nbetween good intentions and delivery. Unless a company is committed to sustaining the strategy \neven through bad times, it will fail.</p>\n<p>One notable and committed leader in language training is the Volkswagen Group. Over many \nyears it has developed a language strategy that can be regarded as a model of professional \nmanagement. Volkswagen treats language training as a strategic solution, not a tactical one. \nProgressing from “basics” to full “communication competence” requires completion of six language \nstages, each demanding roughly 90 hours of classroom refresher work, supplemented by self-\nstudy over 6-9 months. Each stage ends with an achievement test that is a prerequisite for \ncontinuing. Even this highly structured programme expects a minimum of three years of fairly \nintensive study before an accountant, engineer, buyer or salesperson can work effectively in a \nforeign language. Clearly, firms pursuing this route must do so with realistic expectations and long-\nterm commitment; except for brush-up courses for the already fluent, training is not a quick fix and \nother methods will still be needed.</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q27": "27",
+        "q28": "28",
+        "q29": "29",
+        "q30": "30",
+        "q31": "31",
+        "q32": "32",
+        "q33": "33",
+        "q34": "34",
+        "q35": "35",
+        "q36": "36",
+        "q37": "37",
+        "q38": "38",
+        "q39": "39",
+        "q40": "40"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 27-32</p></div><div class=\"notes-completion\">Questions 27–32 Complete the summary using the list of phrases, A–L, below. Write the correct letter, A–L, in boxes 27–32 on your answer sheet. MNCs often encounter language barriers in their daily operations, so they seek several approaches to solve such problems. First, using the native language gives them a realistic base in a different- language-speaking country, but problems turn up when they deal with overseas <span class=\"inline-completion\" data-question-id=\"q27\"><strong>27</strong> <input type=\"text\" id=\"q27_input\" name=\"q27\" placeholder=\"answer\"></span> For example, when translating key <span class=\"inline-completion\" data-question-id=\"q28\"><strong>28</strong> <input type=\"text\" id=\"q28_input\" name=\"q28\" placeholder=\"answer\"></span>, differences inevitably arise because of rules in different countries. Another way is to rely on a combination of spoken language and <span class=\"inline-completion\" data-question-id=\"q29\"><strong>29</strong> <input type=\"text\" id=\"q29_input\" name=\"q29\" placeholder=\"answer\"></span>, yet a report noted that over one-tenth of business <span class=\"inline-completion\" data-question-id=\"q30\"><strong>30</strong> <input type=\"text\" id=\"q30_input\" name=\"q30\" placeholder=\"answer\"></span> were processed in a party-language setting. A third way is to hire translators. However, this is <span class=\"inline-completion\" data-question-id=\"q31\"><strong>31</strong> <input type=\"text\" id=\"q31_input\" name=\"q31\" placeholder=\"answer\"></span>; besides, if they are not well- prepared, they have to engage in <span class=\"inline-completion\" data-question-id=\"q32\"><strong>32</strong> <input type=\"text\" id=\"q32_input\" name=\"q32\" placeholder=\"answer\"></span> work.</div></section>",
+          "groupId": "group-1",
+          "kind": "summary_completion",
+          "leadHtml": "<p>Questions 27-32</p>",
+          "questionIds": [
+            "q27",
+            "q28",
+            "q29",
+            "q30",
+            "q31",
+            "q32"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 33-39</p></div><ol><li><label><strong>33</strong> What “understandable reaction” does the author say companies show when facing a skills shortage? <input type=\"text\" id=\"q33_input\" name=\"q33\"></label></li><li><label><strong>34</strong> During an economic depression, how does the writer label language training in firms? <input type=\"text\" id=\"q34_input\" name=\"q34\"></label></li><li><label><strong>35</strong> What has Volkswagen Group provided as an example for other multinationals? <input type=\"text\" id=\"q35_input\" name=\"q35\"></label></li><li><label><strong>36</strong> In Volkswagen, language training is regarded as what kind of solution? <input type=\"text\" id=\"q36_input\" name=\"q36\"></label></li><li><label><strong>37</strong> How many stages are required to progress from basics to full competence? <input type=\"text\" id=\"q37_input\" name=\"q37\"></label></li><li><label><strong>38</strong> Roughly how long does each refresher course take? <input type=\"text\" id=\"q38_input\" name=\"q38\"></label></li><li><label><strong>39</strong> At least how long is needed for a specialist to work effectively in a foreign language? A gestures B clients C transactions D assumption E accurate F documents G managers H body language I long-term J effective K rivals L costly <input type=\"text\" id=\"q39_input\" name=\"q39\"></label></li></ol></section>",
+          "groupId": "group-2",
+          "kind": "short_answer",
+          "leadHtml": "<p>Questions 33-39</p>",
+          "questionIds": [
+            "q33",
+            "q34",
+            "q35",
+            "q36",
+            "q37",
+            "q38",
+            "q39"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 40</p></div><ol><li><div><strong>40</strong> Choose the correct letter, A, B, C or D. Write the correct letter in box 40 on your answer sheet. 40 What is the main function of this passage? A Reveal all kinds of language problems that companies may encounter. B Exhibit well-known cases in dealing with language difficulties. C Evaluate various approaches to the language barrier in multinational companies. D Testify that training is the only feasible approach to solve language problems.</div><div class=\"choice-row\"><label><input name=\"q40\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q40\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q40\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q40\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "groupId": "group-3",
+          "kind": "single_choice",
+          "leadHtml": "<p>Questions 40</p>",
+          "questionIds": [
+            "q40"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260809143543-be985fe7/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/private-random-05.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/private-real/private-random-05.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001",
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009",
+            "b010",
+            "b011",
+            "b012"
+          ],
+          "title": "RE ADI NG P AS S AGE 3"
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b013",
+              "b014",
+              "b015",
+              "b016",
+              "b017",
+              "b018",
+              "b019",
+              "b020",
+              "b021",
+              "b022",
+              "b023"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "summary_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            }
+          ],
+          "groupId": "group-1",
+          "heading": "Questions 27-32",
+          "instructionText": "Questions 27–32",
+          "kindHint": "summary_completion",
+          "layoutHint": "inline_completion",
+          "questionRange": [
+            27,
+            32
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 27–32"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary using the list of phrases, A–L, below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A–L, in boxes 27–32 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "MNCs often encounter language barriers in their daily operations, so they seek several approaches"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "to solve such problems. First, using the native language gives them a realistic base in a different-"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "language-speaking country, but problems turn up when they deal with overseas 27 ________. For"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "example, when translating key 28 ________, differences inevitably arise because of rules in different"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "countries. Another way is to rely on a combination of spoken language and 29 ________, yet a"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "report noted that over one-tenth of business 30 ________ were processed in a party-language"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "setting. A third way is to hire translators. However, this is 31 ________; besides, if they are not well-"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "prepared, they have to engage in 32 ________ work."
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b024",
+              "b025",
+              "b026",
+              "b027",
+              "b028",
+              "b029",
+              "b030",
+              "b031",
+              "b032",
+              "b033",
+              "b034",
+              "b035",
+              "b036",
+              "b037"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "short_answer",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 33-39",
+          "instructionText": "Questions 33–39",
+          "kindHint": "short_answer",
+          "layoutHint": "list",
+          "questionRange": [
+            33,
+            39
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 33–39"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Answer the questions below."
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose NO MORE THAN THREE WORDS AND/OR A NUMBER from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 32-39 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "33 What “understandable reaction” does the author say companies show when facing a skills shortage?"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "34 During an economic depression, how does the writer label language training in firms?"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "35 What has Volkswagen Group provided as an example for other multinationals?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "36 In Volkswagen, language training is regarded as what kind of solution?"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "37 How many stages are required to progress from basics to full competence?"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "38 Roughly how long does each refresher course take?"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "39 At least how long is needed for a specialist to work effectively in a foreign language?"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A gestures B clients C transactions D assumption"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "E accurate F documents G managers H body language"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "I long-term J effective K rivals L costly"
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042"
+          ],
+          "classification": {
+            "confidence": 0.68,
+            "evidence": [
+              "b038",
+              "b039",
+              "b040",
+              "b041",
+              "b042"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D"
+              ],
+              "type": "radio"
+            },
+            "kind": "single_choice",
+            "warnings": [
+              "Option reuse was inferred from question type; source wording did not state it explicitly."
+            ]
+          },
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            }
+          ],
+          "groupId": "group-3",
+          "heading": "Questions 40",
+          "instructionText": "Question 40",
+          "kindHint": "single_choice",
+          "layoutHint": "list",
+          "questionRange": [
+            40,
+            40
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Question 40"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose the correct letter, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter in box 40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "40 What is the main function of this passage?"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Reveal all kinds of language problems that companies may encounter. B Exhibit well-known cases in dealing with languag"
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": [
+        {
+          "blockId": "b002",
+          "heading": "Questions 27-40",
+          "questionRange": [
+            27,
+            40
+          ],
+          "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Language Strategy in Multinational Companies"
+        }
+      ]
+    }
+  }
+}

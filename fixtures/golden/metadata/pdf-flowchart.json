@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-flowchart",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-flowchart.pdf",
+    "sha256": "b4f8cbd9734070c0326894ee2e0f4ae8efdac20663610337d7089e865431a22e",
+    "sizeBytes": 1862,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question",
+          "figure"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          4
+        ],
+        "kind": "diagram_completion",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "text"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "text"
+      }
+    ],
+    "assets": [
+      {
+        "id": "flowchart-1",
+        "type": "flowchart",
+        "required": true
+      }
+    ]
+  },
+  "knownIssues": [
+    "Arrows and boxes define a flow layout rather than ordinary paragraphs."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-flowchart.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 15,
+      "groupCount": 1,
+      "slotCount": 4,
+      "assetCount": 0,
+      "answerCount": 4,
+      "warningCount": 0,
+      "groupKinds": [
+        "diagram_completion"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3",
+        "q4"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

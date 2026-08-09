@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-image-only",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-image-only.pdf",
+    "sha256": "02a7745adf46e060d7be866ce3475a7aaafcf0431c835004225de16d0c055f4f",
+    "sizeBytes": 8205,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "visual_review"
+        ]
+      }
+    ],
+    "taskGroups": [],
+    "slots": [],
+    "assets": [
+      {
+        "id": "page-1-raster",
+        "type": "page_image",
+        "required": true
+      }
+    ]
+  },
+  "knownIssues": [
+    "The page has no native text and requires a visual asset/OCR review."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-image-only.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 1,
+      "groupCount": 0,
+      "slotCount": 0,
+      "assetCount": 0,
+      "answerCount": 0,
+      "warningCount": 1,
+      "groupKinds": [],
+      "questionIds": [],
+      "roles": []
+    }
+  }
+}

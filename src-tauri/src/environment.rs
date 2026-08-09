@@ -216,6 +216,10 @@ pub(crate) fn local_ocr_enabled() -> bool {
     env_flag_enabled("EPIC8_ENABLE_LOCAL_OCR", false)
 }
 
+pub(crate) fn document_ir_v2_shadow_enabled() -> bool {
+    cfg!(debug_assertions) && env_flag_enabled("EPIC8_DOCUMENT_IR_V2_SHADOW", false)
+}
+
 pub(crate) fn pdf_renderer_setting() -> String {
     env::var("EPIC8_PDF_RENDERER")
         .ok()

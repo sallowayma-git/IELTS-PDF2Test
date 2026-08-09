@@ -1,0 +1,433 @@
+{
+  "schemaVersion": "GoldenCorpusManifestV1",
+  "planId": "phase-0",
+  "metricsPath": "fixtures/golden/metrics.json",
+  "legacyReferencePath": "fixtures/golden/private/legacy-reference.json",
+  "baseline": {
+    "repositories": [
+      {
+        "repositoryId": "pdf2test",
+        "path": ".",
+        "branch": "main",
+        "commit": "78811e384b792ffae481192df7a52f0a4526e110"
+      },
+      {
+        "repositoryId": "nas-for-wendao",
+        "path": "../NAS",
+        "branch": "feat/exam-terminal-security-lifecycle",
+        "commit": "84b38bc71564ace01168a34bedc2401d6dd8c0f7"
+      }
+    ],
+    "repoBranch": "main",
+    "repoCommit": "78811e384b792ffae481192df7a52f0a4526e110",
+    "capturedAt": "2026-08-09",
+    "v1Parser": "src-tauri/target/debug/ielts-author-studio.exe --generate-reading-source"
+  },
+  "featureFlags": {
+    "documentIrV2": false,
+    "authoringV2": false,
+    "runtimeSourceV2": false,
+    "nasPackageV2": false,
+    "listeningV1": false,
+    "pdfPerQuestionLlmRepair": false
+  },
+  "fixtures": [
+    {
+      "fixtureId": "docx-external-image",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/docx/docx-external-image.docx",
+      "sha256": "c4df41c183508292ec6153181ecf3b9f4137cccdd6a8d18be5b2ec416057ddca",
+      "sizeBytes": 2293,
+      "metadataPath": "fixtures/golden/metadata/docx-external-image.json",
+      "baselinePath": "fixtures/golden/baseline/v1/docx-external-image.json"
+    },
+    {
+      "fixtureId": "docx-floating-text-box",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/docx/docx-floating-text-box.docx",
+      "sha256": "ae3251a6557b1aec86231af840de457041e1e32c0fb48eed58a60a20a74b2bd4",
+      "sizeBytes": 2202,
+      "metadataPath": "fixtures/golden/metadata/docx-floating-text-box.json",
+      "baselinePath": "fixtures/golden/baseline/v1/docx-floating-text-box.json"
+    },
+    {
+      "fixtureId": "docx-section-columns",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/docx/docx-section-columns.docx",
+      "sha256": "32ec265d746f6d988c6060a3a261e1570f76dad322a2e7ed0b05a5a60ac152f5",
+      "sizeBytes": 2111,
+      "metadataPath": "fixtures/golden/metadata/docx-section-columns.json",
+      "baselinePath": "fixtures/golden/baseline/v1/docx-section-columns.json"
+    },
+    {
+      "fixtureId": "docx-smartart",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/docx/docx-smartart.docx",
+      "sha256": "2273d3551b17db9840f3df675f8aadc13d54bfb33d8ed54a32281b49c92af632",
+      "sizeBytes": 2677,
+      "metadataPath": "fixtures/golden/metadata/docx-smartart.json",
+      "baselinePath": "fixtures/golden/baseline/v1/docx-smartart.json"
+    },
+    {
+      "fixtureId": "docx-table-merged-cells",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/docx/docx-table-merged-cells.docx",
+      "sha256": "7c8c28e736464025ad036cc488d7155cedad9895dc5d22f7c5aab028928ab1aa",
+      "sizeBytes": 2147,
+      "metadataPath": "fixtures/golden/metadata/docx-table-merged-cells.json",
+      "baselinePath": "fixtures/golden/baseline/v1/docx-table-merged-cells.json"
+    },
+    {
+      "fixtureId": "parser-complex-reading",
+      "status": "available",
+      "sourcePath": "fixtures/parser/complex-reading.pdf",
+      "sha256": "9e0bc61e9f1cdb741675446c26a2240306e1456dba0c909e005efea7d26515aa",
+      "sizeBytes": 1458,
+      "metadataPath": "fixtures/golden/metadata/parser-complex-reading.json",
+      "baselinePath": "fixtures/golden/baseline/v1/parser-complex-reading.json"
+    },
+    {
+      "fixtureId": "parser-image-only-reading",
+      "status": "available",
+      "sourcePath": "fixtures/parser/image-only-reading.pdf",
+      "sha256": "b878279d1035d8cf93e78600123b3adbe34bb9b3782f43a275eeec8343df8daa",
+      "sizeBytes": 29347,
+      "metadataPath": "fixtures/golden/metadata/parser-image-only-reading.json",
+      "baselinePath": "fixtures/golden/baseline/v1/parser-image-only-reading.json"
+    },
+    {
+      "fixtureId": "parser-no-text",
+      "status": "available",
+      "sourcePath": "fixtures/parser/no-text.pdf",
+      "sha256": "b7afea3367ddb3fb338936b1da34755309a0999d05c97219164f10a3cf006d0c",
+      "sizeBytes": 476,
+      "metadataPath": "fixtures/golden/metadata/parser-no-text.json",
+      "baselinePath": "fixtures/golden/baseline/v1/parser-no-text.json"
+    },
+    {
+      "fixtureId": "pdf-borderless-table",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-borderless-table.pdf",
+      "sha256": "6df6c4db08fdd846ef17a828d87cd0c0bea2debddffdbc214d6dd8e7fb9443ac",
+      "sizeBytes": 1428,
+      "metadataPath": "fixtures/golden/metadata/pdf-borderless-table.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-borderless-table.json"
+    },
+    {
+      "fixtureId": "pdf-broken-font",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-broken-font.pdf",
+      "sha256": "d9a257f3251a9787e6de8931773117e44e8e8dea372e2b86026178e978bbc598",
+      "sizeBytes": 1582,
+      "metadataPath": "fixtures/golden/metadata/pdf-broken-font.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-broken-font.json"
+    },
+    {
+      "fixtureId": "pdf-flowchart",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-flowchart.pdf",
+      "sha256": "b4f8cbd9734070c0326894ee2e0f4ae8efdac20663610337d7089e865431a22e",
+      "sizeBytes": 1862,
+      "metadataPath": "fixtures/golden/metadata/pdf-flowchart.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-flowchart.json"
+    },
+    {
+      "fixtureId": "pdf-header-footer",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-header-footer.pdf",
+      "sha256": "88f8c0b0605c6bbd230671f85c57ec57085cfb9739ef415fb2fbae7a5751ce2a",
+      "sizeBytes": 2118,
+      "metadataPath": "fixtures/golden/metadata/pdf-header-footer.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-header-footer.json"
+    },
+    {
+      "fixtureId": "pdf-hidden-ocr",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-hidden-ocr.pdf",
+      "sha256": "f7d55e5dc5d18ec0d374f695fa6bd339e1b656ad26eaf647e8f66557eb3ad840",
+      "sizeBytes": 7702,
+      "metadataPath": "fixtures/golden/metadata/pdf-hidden-ocr.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-hidden-ocr.json"
+    },
+    {
+      "fixtureId": "pdf-image-only",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-image-only.pdf",
+      "sha256": "02a7745adf46e060d7be866ce3475a7aaafcf0431c835004225de16d0c055f4f",
+      "sizeBytes": 8205,
+      "metadataPath": "fixtures/golden/metadata/pdf-image-only.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-image-only.json"
+    },
+    {
+      "fixtureId": "pdf-map-hotspot",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-map-hotspot.pdf",
+      "sha256": "36ab101b32886e62d95ef807efac0c7e6aa172a2f5d9b3a4b5108316b81eec27",
+      "sizeBytes": 1803,
+      "metadataPath": "fixtures/golden/metadata/pdf-map-hotspot.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-map-hotspot.json"
+    },
+    {
+      "fixtureId": "pdf-mixed-text-image",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-mixed-text-image.pdf",
+      "sha256": "1386bb49c0b420858227eb06663c96de24258e964e397df5363a4d095c5386ba",
+      "sizeBytes": 7916,
+      "metadataPath": "fixtures/golden/metadata/pdf-mixed-text-image.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-mixed-text-image.json"
+    },
+    {
+      "fixtureId": "pdf-native-ocr-conflict",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-native-ocr-conflict.pdf",
+      "sha256": "fe59b541a45d663ceb94fffb9b8ce4dab0e133b159cdae694b9e26b0dd04d3a8",
+      "sizeBytes": 1523,
+      "metadataPath": "fixtures/golden/metadata/pdf-native-ocr-conflict.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-native-ocr-conflict.json"
+    },
+    {
+      "fixtureId": "pdf-question-before-passage",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-question-before-passage.pdf",
+      "sha256": "14f46523e91bc0d8f828f5d42d3432bea51431614b3b66c16b0fbdc1a7c68f6a",
+      "sizeBytes": 2050,
+      "metadataPath": "fixtures/golden/metadata/pdf-question-before-passage.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-question-before-passage.json"
+    },
+    {
+      "fixtureId": "pdf-rotated-page",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-rotated-page.pdf",
+      "sha256": "334e8a4a390206d50d31132a883ec677df0531f5692c13007ee15ea5f3493a70",
+      "sizeBytes": 1534,
+      "metadataPath": "fixtures/golden/metadata/pdf-rotated-page.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-rotated-page.json"
+    },
+    {
+      "fixtureId": "pdf-ruled-table",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-ruled-table.pdf",
+      "sha256": "64e8acbc4959f323e292337267718080211a397574de82517c519ed89b089cb7",
+      "sizeBytes": 1488,
+      "metadataPath": "fixtures/golden/metadata/pdf-ruled-table.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-ruled-table.json"
+    },
+    {
+      "fixtureId": "pdf-three-column",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-three-column.pdf",
+      "sha256": "472c1920cc8bda2b0c3cc657209dcaff94a17f05e219ddcc1ecd03d5ae0ffd41",
+      "sizeBytes": 1664,
+      "metadataPath": "fixtures/golden/metadata/pdf-three-column.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-three-column.json"
+    },
+    {
+      "fixtureId": "pdf-two-column",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-two-column.pdf",
+      "sha256": "552d9b98ada71d3ddd21d063d8539268d5fe87a0051723d65c29274a2ee7b81d",
+      "sizeBytes": 1694,
+      "metadataPath": "fixtures/golden/metadata/pdf-two-column.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-two-column.json"
+    },
+    {
+      "fixtureId": "pdf-vector-diagram",
+      "status": "available",
+      "sourcePath": "fixtures/golden/synthetic/pdf/pdf-vector-diagram.pdf",
+      "sha256": "c58f5429055ce5aac488291b1ab041207aa44491584b5c323e4b87cd9c8f9951",
+      "sizeBytes": 1573,
+      "metadataPath": "fixtures/golden/metadata/pdf-vector-diagram.json",
+      "baselinePath": "fixtures/golden/baseline/v1/pdf-vector-diagram.json"
+    },
+    {
+      "fixtureId": "private-random-01",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-01.pdf",
+      "originalName": "234. P2 - The Secret Language of Plants 植物交流.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 1,
+      "sha256": "64d151d4f76976b43cf50b61faff6d43e420c0fb9ef2c95fdf0211c2ee3318ed",
+      "sizeBytes": 1209068,
+      "metadataPath": "fixtures/golden/metadata/private-random-01.json",
+      "baselinePath": "fixtures/golden/baseline/v1/private-random-01.json"
+    },
+    {
+      "fixtureId": "private-random-02",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-02.pdf",
+      "originalName": "162. P3 - Sea Change for Salinity 土地盐碱化.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 2,
+      "sha256": "ae0017d25606595ea0d870e1fcf88832a1c7e53d7082c9add2149cca2b3cd057",
+      "sizeBytes": 903212,
+      "metadataPath": "fixtures/golden/metadata/private-random-02.json",
+      "baselinePath": "fixtures/golden/baseline/v1/private-random-02.json"
+    },
+    {
+      "fixtureId": "private-random-03",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-03.pdf",
+      "originalName": "74. P3 - Let’s teach them how to teach 教他们如何教学.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 3,
+      "sha256": "8b20e08276b287d1934ec25ad1fd2bea3e98b1667a487731602e77255c437588",
+      "sizeBytes": 732374,
+      "metadataPath": "fixtures/golden/metadata/private-random-03.json",
+      "baselinePath": "fixtures/golden/baseline/v1/private-random-03.json"
+    },
+    {
+      "fixtureId": "private-random-04",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-04.pdf",
+      "originalName": "65. P3 - Does class size matter 课堂规模.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 4,
+      "sha256": "c17bcb3af9554d2cdc3866d7e656925d5510797fcbe3bad1e28d746829a183a5",
+      "sizeBytes": 632988,
+      "metadataPath": "fixtures/golden/metadata/private-random-04.json",
+      "baselinePath": "fixtures/golden/baseline/v1/private-random-04.json"
+    },
+    {
+      "fixtureId": "private-random-05",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-05.pdf",
+      "originalName": "73. P3 - Language Strategy in Multinational Companies 跨国公司语言策略.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 5,
+      "sha256": "33f3fe6aad5beabd081eae9cdc173c01eaaa8be51cf2560f89e1a6f826d7ea3e",
+      "sizeBytes": 393544,
+      "metadataPath": "fixtures/golden/metadata/private-random-05.json",
+      "baselinePath": "fixtures/golden/baseline/v1/private-random-05.json"
+    },
+    {
+      "fixtureId": "private-random-06",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-06.pdf",
+      "originalName": "81. P3 - Robert Louis Stevenson 苏格兰作家.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 6,
+      "sha256": "c648162b838efeac0d1490704d6be7101dfdab90b38bb78dbefc47b9f0690a85",
+      "sizeBytes": 1058751,
+      "metadataPath": "fixtures/golden/metadata/private-random-06.json",
+      "baselinePath": "fixtures/golden/baseline/v1/private-random-06.json"
+    },
+    {
+      "fixtureId": "private-random-07",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-07.pdf",
+      "originalName": "51. P2 - The dingo debate 澳洲野犬_澳洲野狗.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 7,
+      "sha256": "e4a4d4f09524ef33c9407c1e989c2d21683d852688ddaa682d85339001a016c2",
+      "sizeBytes": 724778,
+      "metadataPath": "fixtures/golden/metadata/private-random-07.json",
+      "baselinePath": "fixtures/golden/baseline/v1/private-random-07.json"
+    },
+    {
+      "fixtureId": "private-random-08",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-08.pdf",
+      "originalName": "2. P1 - Sunlight Soap 阳光牌肥皂.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 8,
+      "sha256": "75275001693a300982593a1de71a30b2d4736e523dc8f69908ea9feae41e5786",
+      "sizeBytes": 373519,
+      "metadataPath": "fixtures/golden/metadata/private-random-08.json",
+      "baselinePath": "fixtures/golden/baseline/v1/private-random-08.json"
+    }
+  ],
+  "requiredPrivateCorpus": [
+    {
+      "fixtureId": "private-random-01",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-01.pdf",
+      "originalName": "234. P2 - The Secret Language of Plants 植物交流.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 1
+    },
+    {
+      "fixtureId": "private-random-02",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-02.pdf",
+      "originalName": "162. P3 - Sea Change for Salinity 土地盐碱化.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 2
+    },
+    {
+      "fixtureId": "private-random-03",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-03.pdf",
+      "originalName": "74. P3 - Let’s teach them how to teach 教他们如何教学.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 3
+    },
+    {
+      "fixtureId": "private-random-04",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-04.pdf",
+      "originalName": "65. P3 - Does class size matter 课堂规模.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 4
+    },
+    {
+      "fixtureId": "private-random-05",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-05.pdf",
+      "originalName": "73. P3 - Language Strategy in Multinational Companies 跨国公司语言策略.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 5
+    },
+    {
+      "fixtureId": "private-random-06",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-06.pdf",
+      "originalName": "81. P3 - Robert Louis Stevenson 苏格兰作家.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 6
+    },
+    {
+      "fixtureId": "private-random-07",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-07.pdf",
+      "originalName": "51. P2 - The dingo debate 澳洲野犬_澳洲野狗.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 7
+    },
+    {
+      "fixtureId": "private-random-08",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/private-random-08.pdf",
+      "originalName": "2. P1 - Sunlight Soap 阳光牌肥皂.pdf",
+      "selectionSeed": 20260809,
+      "sampleRank": 8
+    }
+  ],
+  "plannedSyntheticFixtures": [],
+  "legacyReferenceFixtureIds": [
+    "fishbourne-roman-palace",
+    "listening-to-the-ocean",
+    "chili-peppers",
+    "petri-dish",
+    "organisational-design",
+    "western-celebrity",
+    "conformity",
+    "sleep-study"
+  ],
+  "privateSourceSelection": {
+    "method": "seeded-fisher-yates",
+    "sourceDirectory": "C:\\Users\\lenovo\\Desktop\\working space\\0.3.1 working\\ReadingPractice\\PDF",
+    "populationCount": 272,
+    "sampleCount": 8,
+    "seed": 20260809,
+    "selected": [
+      "234. P2 - The Secret Language of Plants 植物交流.pdf",
+      "162. P3 - Sea Change for Salinity 土地盐碱化.pdf",
+      "74. P3 - Let’s teach them how to teach 教他们如何教学.pdf",
+      "65. P3 - Does class size matter 课堂规模.pdf",
+      "73. P3 - Language Strategy in Multinational Companies 跨国公司语言策略.pdf",
+      "81. P3 - Robert Louis Stevenson 苏格兰作家.pdf",
+      "51. P2 - The dingo debate 澳洲野犬_澳洲野狗.pdf",
+      "2. P1 - Sunlight Soap 阳光牌肥皂.pdf"
+    ]
+  }
+}

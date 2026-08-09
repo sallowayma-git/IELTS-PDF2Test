@@ -1,0 +1,212 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "private-random-03",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-03.pdf",
+    "originalName": "74. P3 - Let’s teach them how to teach 教他们如何教学.pdf",
+    "sha256": "8b20e08276b287d1934ec25ad1fd2bea3e98b1667a487731602e77255c437588",
+    "sizeBytes": 732374,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question",
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 6,
+        "roles": [
+          "needs_review"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          27,
+          31
+        ],
+        "kind": "single_choice",
+        "slotIds": [
+          "q27",
+          "q28",
+          "q29",
+          "q30",
+          "q31"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          32,
+          36
+        ],
+        "kind": "yes_no_not_given",
+        "slotIds": [
+          "q32",
+          "q33",
+          "q34",
+          "q35",
+          "q36"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          37,
+          40
+        ],
+        "kind": "matching",
+        "slotIds": [
+          "q37",
+          "q38",
+          "q39",
+          "q40"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q27",
+        "displayNumber": "27",
+        "responseType": "radio"
+      },
+      {
+        "id": "q28",
+        "displayNumber": "28",
+        "responseType": "radio"
+      },
+      {
+        "id": "q29",
+        "displayNumber": "29",
+        "responseType": "radio"
+      },
+      {
+        "id": "q30",
+        "displayNumber": "30",
+        "responseType": "radio"
+      },
+      {
+        "id": "q31",
+        "displayNumber": "31",
+        "responseType": "radio"
+      },
+      {
+        "id": "q32",
+        "displayNumber": "32",
+        "responseType": "radio"
+      },
+      {
+        "id": "q33",
+        "displayNumber": "33",
+        "responseType": "radio"
+      },
+      {
+        "id": "q34",
+        "displayNumber": "34",
+        "responseType": "radio"
+      },
+      {
+        "id": "q35",
+        "displayNumber": "35",
+        "responseType": "radio"
+      },
+      {
+        "id": "q36",
+        "displayNumber": "36",
+        "responseType": "radio"
+      },
+      {
+        "id": "q37",
+        "displayNumber": "37",
+        "responseType": "select"
+      },
+      {
+        "id": "q38",
+        "displayNumber": "38",
+        "responseType": "select"
+      },
+      {
+        "id": "q39",
+        "displayNumber": "39",
+        "responseType": "select"
+      },
+      {
+        "id": "q40",
+        "displayNumber": "40",
+        "responseType": "select"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "样本使用固定随机种子抽取；V1 派生标注是可复现的初始契约，正式评分前仍需人工确认。",
+    "V1 parser emitted 2 warning(s); warning details remain part of the baseline."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/private-random-03.json",
+    "observed": {
+      "pageCount": 6,
+      "blockCount": 52,
+      "groupCount": 3,
+      "slotCount": 14,
+      "assetCount": 0,
+      "answerCount": 14,
+      "warningCount": 2,
+      "groupKinds": [
+        "single_choice",
+        "yes_no_not_given",
+        "matching"
+      ],
+      "questionIds": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

@@ -1,0 +1,3248 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "private-random-07",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-07.pdf",
+    "sha256": "e4a4d4f09524ef33c9407c1e989c2d21683d852688ddaa682d85339001a016c2",
+    "sizeBytes": 724778
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 5,
+    "blockCount": 46,
+    "groupCount": 3,
+    "slotCount": 13,
+    "assetCount": 0,
+    "answerCount": 13,
+    "warningCount": 1,
+    "groupKinds": [
+      "matching_information",
+      "matching",
+      "sentence_completion"
+    ],
+    "questionIds": [
+      "q14",
+      "q15",
+      "q16",
+      "q17",
+      "q18",
+      "q19",
+      "q20",
+      "q21",
+      "q22",
+      "q23",
+      "q24",
+      "q25",
+      "q26"
+    ],
+    "roles": [
+      "passage",
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q14": "",
+        "q15": "",
+        "q16": "",
+        "q17": "",
+        "q18": "",
+        "q19": "",
+        "q20": "",
+        "q21": "",
+        "q22": "",
+        "q23": "",
+        "q24": "",
+        "q25": "",
+        "q26": ""
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "private-random-07.pdf",
+            "role": "MainQuestion",
+            "sha256": "e4a4d4f09524ef33c9407c1e989c2d21683d852688ddaa682d85339001a016c2",
+            "sizeBytes": 724778,
+            "storedName": "private-random-07.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "private random 07"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": true,
+          "classificationEvidence": [
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            }
+          ],
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 14-20"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "matching_information",
+          "layout": {
+            "layoutHint": "list",
+            "template": "matching_information"
+          },
+          "questionRange": [
+            14,
+            20
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "14",
+              "id": "q14",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a description of a barrier designed to stop dingoes, which also divides two kinds of non-natives animals",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "15",
+              "id": "q15",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "how dingoes ensure that rival species do not dominate",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "16",
+              "id": "q16",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a reference to a widespread non-native species that other animals feed on",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "17",
+              "id": "q17",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a mention of the dingo’s arrival in Australia",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "18",
+              "id": "q18",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "research which has proved that dingoes have resorted to eating young livestock",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "19",
+              "id": "q19",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a description of a method used to kill dingoes",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "20",
+              "id": "q20",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "the way that the structure of dingo groups affects how quickly their numbers grow",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 14-20"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Reading Passage has eight sections, A-H."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Which section contains the following information?"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A-H, in boxes 14-20 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "NB You may use any letter more than once."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "14 a description of a barrier designed to stop dingoes, which also divides two kinds of non-natives animals"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "15 how dingoes ensure that rival species do not dominate"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "16 a reference to a widespread non-native species that other animals feed on"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "17 a mention of the dingo’s arrival in Australia"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "18 research which has proved that dingoes have resorted to eating young livestock"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "19 a description of a method used to kill dingoes"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "20 the way that the structure of dingo groups affects how quickly their numbers grow"
+            }
+          ],
+          "sourceBlockIds": [
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037"
+          ],
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 21-23"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "matching",
+          "layout": {
+            "layoutHint": "list",
+            "template": "matching_list"
+          },
+          "questionRange": [
+            21,
+            23
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "21",
+              "id": "q21",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Dingoes tend to hunt native animals rather than hunting other non-native predators.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "22",
+              "id": "q22",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "The presence of dingoes puts the income of some people at risk.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "23",
+              "id": "q23",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Dingoes have had little impact on the dying out of animal species in Australia.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [
+            "Option reuse was inferred from question type; source wording did not state it explicitly."
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 21-23"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Look at the following statements (Questions 21-23) and the list of people below."
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Match each statement with the correct person, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A, B, C or D, in boxes 21-23 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "21 Dingoes tend to hunt native animals rather than hunting other non-native predators."
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "22 The presence of dingoes puts the income of some people at risk."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "23 Dingoes have had little impact on the dying out of animal species in Australia."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "List of People"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Stuart McKechnie B Chris Johnson C Lee Allen D Mark Clifford"
+            }
+          ],
+          "sourceBlockIds": [
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
+              "toBlockId": "b045"
+            }
+          ],
+          "groupId": "group-3",
+          "instruction": [
+            "Questions 24-26"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "sentence_completion",
+          "layout": {
+            "layoutHint": "inline_completion",
+            "notes": "Questions 24-26 Complete the sentences below. Choose NO MORE THAN TWO WORDS from the passage for each answer. Write your answers in boxes 24-26 on your answer sheet. 24 The dingo replaced the ……… as the main predatory animal in Australia. 25 Foxes and cats are more likely to hunt native animals when there are fewer……… 26 Australian animals reproduce at a slow rate as a natural way of avoiding ……… KEY Key: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26. Overpopulation",
+            "template": "inline_text_completion"
+          },
+          "questionRange": [
+            24,
+            26
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "24",
+              "id": "q24",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "The dingo replaced the ……… as the main predatory animal in Australia.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "25",
+              "id": "q25",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "Foxes and cats are more likely to hunt native animals when there are fewer………",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "26",
+              "id": "q26",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "Australian animals reproduce at a slow rate as a natural way of avoiding ……… KEY Key: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26. Overpopulation",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 24-26"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the sentences below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose NO MORE THAN TWO WORDS from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 24-26 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "24 The dingo replaced the ……… as the main predatory animal in Australia."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "25 Foxes and cats are more likely to hunt native animals when there are fewer………"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "26 Australian animals reproduce at a slow rate as a natural way of avoiding ………"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b045",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "KEY Key: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26. Overpopulation"
+            }
+          ],
+          "sourceBlockIds": [
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   2</p>\n<p>Graziers see them as pests, and poisoning is common, but some biologists think Australia’s \ndingoes are the best weapon in a war against imported cats and foxes.</p>\n<p>A  A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the \nKimberley region in northwest Australia. As the plane circles, those aboard drop 1,000 small \npieces of meat, one by one, onto the scrubland below, each piece laced with poison; this \npractice is known as baiting.</p>\n<p>Besides 50,000 head of cattle, Carlton Hill is home to the dingo, Australia’s largest \nmammalian predator and the bane of a grazier’s (cattle farmer’s) life. Stuart McKechnie, \nmanager of Carlton Hill, complains that graziers’ livelihoods are threatened when dingoes prey \non cattle. But one man wants the baiting to end, and for dingoes to once again roam \nAustralia’s wide-open spaces. According to Chris Johnson of James Cook University, \n“Australia needs more dingoes to protect our biodiversity.”</p>\n<p>B  About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing \nmillennia, these descendants of the wolf spread across the continent and, as the Tasmanian \ntiger disappeared completely from Australia, dingoes became Australia’s top predators. As \nagricultural development took place, the European settlers found that they could not safely \nkeep their livestock where dingoes roamed. So began one of the most sustained efforts at \npest control in Australia’s history. Over the last 150 years, dingoes have been shot and \npoisoned, and fences have been used in an attempt to keep them away from livestock. But at \nthe same time, as the European settlers tried to eliminate one native pest from Australia, they \nintroduced more of their own.</p>\n<p>C  In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits \nhad covered most of the mainland. Rabbits provide huge prey base for two other introduced \nspecies: the feral (wild) cat and the red fox.</p>\n<p>The interaction between foxes, cats and rabbits is a huge problem for native mammals. In \ngood years, rabbit numbers increase dramatically, and fox and cat populations grow quickly in \nresponse to the abundance of this prey. When bad seasons follow, rabbit numbers are \nsignificantly reduced – and the dwindling but still large fox and cat populations are left with \nlittle to eat besides native mammals.</p>\n<p>D  Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an \nadaption to prevent overpopulation in the arid environment, where food can be scarce and \nunreliable – and populations decline because they can’t grow fast enough to replace animals \nkilled by the predators. Johnson says dingoes are the solution to this problem because they \nkeep cat and fox populations under control. Besides regularly eating the smaller predators, \ndingoes will kill them simply to lessen competition.</p>\n<p>Dingo packs live in large, stable territories and generally have only one fertile female, which \nlimits their rate of increase. In the 4,000 years that dingoes have been Australia, they have \ncontributed to few, if any, extinctions, Johnson says.</p>\n<p>E  Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is \nthe world’s longest fence, two meters high and stretching from the coast in Queensland to the \nGreat Australian Bight in South Australia; it is there to keep dingoes out of southeast, the \nfence separates the main types of livestock found in Australia. To the northwest of the fence, \ncattle predominate; to the southwest, sheep fill the landscape. In fact, Australia is a land \ndominated by these animals – 25 million cattle, 100 million sheep and just over 20 million \npeople.</p>\n<p>F  While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt \ncattle once the calves are much past two or three weeks old, according to McKechnie. And a \nstudy in Queensland suggests that dingoes don’t even prey heavily on the newborn calves \nunless their staple prey disappears due to deteriorating conditions like drought.</p>\n<p>This study, co-authored by Lee Allen of the Robert Wicks Research Centre in Queensland, \nsuggests that the aggressive baiting programs used against dingoes may actually be counter-\nproductive for graziers. When dingoes are removed from an area by baiting, the area is \nrecolonized by younger, more solitary dingoes. These animals aren’t capable of going after \nlarge prey like kangaroos, so they turn to calves. In their study, some of the highest rates of \ncalf predation occurred in areas that had been baited.</p>\n<p>G  Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not \nconvinced by Allen’s assertion. Clifford says, “It’s obvious if we drop or loosen control on \ndingoes, we are going to lose more calves.” He doesn’t believe that dingoes will go after \nkangaroos when calves are around. Nor is he persuaded of dingoes’ supposed ecological \nbenefits, saying he is not convinced that they manage to catch cats that often, believing they \nare more likely to catch small native animals instead.</p>\n<p>H  McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his \ncattle for food, but points out that in parts of Western Australia, there are no foxes, and not \nvery many cats. He doesn’t see how relaxing controls on dingoes in his area will improve the \necological balance.</p>\n<p>Johnson sees a need for a change in philosophy on the part of graziers. “There might be a \nnumber of different ways of thinking through dingo management in cattle country,” he says. “At \nthe moment, though, that hasn’t got through to graziers. There’s still just one prescription, and \nthat is to bait as widely as possible.”</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 14-26",
+            "questionRange": [
+              14,
+              26
+            ],
+            "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading Passage 2 below. The dingo debate"
+          }
+        ],
+        "sourceBlockIds": [
+          "b001",
+          "b003",
+          "b004",
+          "b005",
+          "b006",
+          "b007",
+          "b008",
+          "b009",
+          "b010",
+          "b011",
+          "b012",
+          "b013",
+          "b014",
+          "b015",
+          "b016"
+        ],
+        "title": "RE ADI NG P AS S AGE 2"
+      },
+      "questionDisplayMap": {
+        "q14": "14",
+        "q15": "15",
+        "q16": "16",
+        "q17": "17",
+        "q18": "18",
+        "q19": "19",
+        "q20": "20",
+        "q21": "21",
+        "q22": "22",
+        "q23": "23",
+        "q24": "24",
+        "q25": "25",
+        "q26": "26"
+      },
+      "questionOrder": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>RE ADI NG  P AS S AGE   2</p>",
+              "pageIndex": 1,
+              "text": "RE ADI NG  P AS S AGE   2  "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>You should spend about 20 minutes on Questions 14–26, which are based on Reading \nPassage 2 below. \n The dingo debate</p>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading \nPassage 2 below. \n The dingo debate "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Graziers see them as pests, and poisoning is common, but some biologists think Australia’s \ndingoes are the best weapon in a war against imported cats and foxes.</p>",
+              "pageIndex": 1,
+              "text": "Graziers see them as pests, and poisoning is common, but some biologists think Australia’s \ndingoes are the best weapon in a war against imported cats and foxes. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A  A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the \nKimberley region in northwest Australia. As the plane circles, those aboard drop 1,000 small \npieces of meat, one by one, onto the scrubland below, each piece laced with poison; this \npractice is known as baiting.</p>",
+              "pageIndex": 1,
+              "text": "A  A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the \nKimberley region in northwest Australia. As the plane circles, those aboard drop 1,000 small \npieces of meat, one by one, onto the scrubland below, each piece laced with poison; this \npractice is known as baiting. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Besides 50,000 head of cattle, Carlton Hill is home to the dingo, Australia’s largest \nmammalian predator and the bane of a grazier’s (cattle farmer’s) life. Stuart McKechnie, \nmanager of Carlton Hill, complains that graziers’ livelihoods are threatened when dingoes prey \non cattle. But one man wants the baiting to end, and for dingoes to once again roam \nAustralia’s wide-open spaces. According to Chris Johnson of James Cook University, \n“Australia needs more dingoes to protect our biodiversity.”</p>",
+              "pageIndex": 1,
+              "text": "Besides 50,000 head of cattle, Carlton Hill is home to the dingo, Australia’s largest \nmammalian predator and the bane of a grazier’s (cattle farmer’s) life. Stuart McKechnie, \nmanager of Carlton Hill, complains that graziers’ livelihoods are threatened when dingoes prey \non cattle. But one man wants the baiting to end, and for dingoes to once again roam \nAustralia’s wide-open spaces. According to Chris Johnson of James Cook University, \n“Australia needs more dingoes to protect our biodiversity.” "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>B  About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing \nmillennia, these descendants of the wolf spread across the continent and, as the Tasmanian \ntiger disappeared completely from Australia, dingoes became Australia’s top predators. As \nagricultural development took place, the European settlers found that they could not safely \nkeep their livestock where dingoes roamed. So began one of the most sustained efforts at \npest control in Australia’s history. Over the last 150 years, dingoes have been shot and \npoisoned, and fences have been used in an attempt to keep them away from livestock. But at \nthe same time, as the European settlers tried to eliminate one native pest from Australia, they \nintroduced more of their own.</p>",
+              "pageIndex": 1,
+              "text": "B  About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing \nmillennia, these descendants of the wolf spread across the continent and, as the Tasmanian \ntiger disappeared completely from Australia, dingoes became Australia’s top predators. As \nagricultural development took place, the European settlers found that they could not safely \nkeep their livestock where dingoes roamed. So began one of the most sustained efforts at \npest control in Australia’s history. Over the last 150 years, dingoes have been shot and \npoisoned, and fences have been used in an attempt to keep them away from livestock. But at \nthe same time, as the European settlers tried to eliminate one native pest from Australia, they \nintroduced more of their own. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>C  In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits \nhad covered most of the mainland. Rabbits provide huge prey base for two other introduced \nspecies: the feral (wild) cat and the red fox.</p>",
+              "pageIndex": 1,
+              "text": "C  In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits \nhad covered most of the mainland. Rabbits provide huge prey base for two other introduced \nspecies: the feral (wild) cat and the red fox.   "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The interaction between foxes, cats and rabbits is a huge problem for native mammals. In \ngood years, rabbit numbers increase dramatically, and fox and cat populations grow quickly in \nresponse to the abundance of this prey. When bad seasons follow, rabbit numbers are \nsignificantly reduced – and the dwindling but still large fox and cat populations are left with \nlittle to eat besides native mammals.</p>",
+              "pageIndex": 1,
+              "text": "The interaction between foxes, cats and rabbits is a huge problem for native mammals. In \ngood years, rabbit numbers increase dramatically, and fox and cat populations grow quickly in \nresponse to the abundance of this prey. When bad seasons follow, rabbit numbers are \nsignificantly reduced – and the dwindling but still large fox and cat populations are left with \nlittle to eat besides native mammals. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b009",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>D  Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an \nadaption to prevent overpopulation in the arid environment, where food can be scarce and \nunreliable – and populations decline because they can’t grow fast enough to replace animals \nkilled by the predators. Johnson says dingoes are the solution to this problem because they \nkeep cat and fox populations under control. Besides regularly eating the smaller predators, \ndingoes will kill them simply to lessen competition.</p>",
+              "pageIndex": 2,
+              "text": "D  Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an \nadaption to prevent overpopulation in the arid environment, where food can be scarce and \nunreliable – and populations decline because they can’t grow fast enough to replace animals \nkilled by the predators. Johnson says dingoes are the solution to this problem because they \nkeep cat and fox populations under control. Besides regularly eating the smaller predators, \ndingoes will kill them simply to lessen competition. "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b010",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Dingo packs live in large, stable territories and generally have only one fertile female, which \nlimits their rate of increase. In the 4,000 years that dingoes have been Australia, they have \ncontributed to few, if any, extinctions, Johnson says.</p>",
+              "pageIndex": 2,
+              "text": "Dingo packs live in large, stable territories and generally have only one fertile female, which \nlimits their rate of increase. In the 4,000 years that dingoes have been Australia, they have \ncontributed to few, if any, extinctions, Johnson says. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b011",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>E  Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is \nthe world’s longest fence, two meters high and stretching from the coast in Queensland to the \nGreat Australian Bight in South Australia; it is there to keep dingoes out of southeast, the \nfence separates the main types of livestock found in Australia. To the northwest of the fence, \ncattle predominate; to the southwest, sheep fill the landscape. In fact, Australia is a land \ndominated by these animals – 25 million cattle, 100 million sheep and just over 20 million \npeople.</p>",
+              "pageIndex": 2,
+              "text": "E  Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is \nthe world’s longest fence, two meters high and stretching from the coast in Queensland to the \nGreat Australian Bight in South Australia; it is there to keep dingoes out of southeast, the \nfence separates the main types of livestock found in Australia. To the northwest of the fence, \ncattle predominate; to the southwest, sheep fill the landscape. In fact, Australia is a land \ndominated by these animals – 25 million cattle, 100 million sheep and just over 20 million \npeople. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>F  While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt \ncattle once the calves are much past two or three weeks old, according to McKechnie. And a \nstudy in Queensland suggests that dingoes don’t even prey heavily on the newborn calves \nunless their staple prey disappears due to deteriorating conditions like drought.</p>",
+              "pageIndex": 2,
+              "text": "F  While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt \ncattle once the calves are much past two or three weeks old, according to McKechnie. And a \nstudy in Queensland suggests that dingoes don’t even prey heavily on the newborn calves \nunless their staple prey disappears due to deteriorating conditions like drought. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b013",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>This study, co-authored by Lee Allen of the Robert Wicks Research Centre in Queensland, \nsuggests that the aggressive baiting programs used against dingoes may actually be counter-\nproductive for graziers. When dingoes are removed from an area by baiting, the area is \nrecolonized by younger, more solitary dingoes. These animals aren’t capable of going after \nlarge prey like kangaroos, so they turn to calves. In their study, some of the highest rates of \ncalf predation occurred in areas that had been baited.</p>",
+              "pageIndex": 2,
+              "text": "This study, co-authored by Lee Allen of the Robert Wicks Research Centre in Queensland, \nsuggests that the aggressive baiting programs used against dingoes may actually be counter-\nproductive for graziers. When dingoes are removed from an area by baiting, the area is \nrecolonized by younger, more solitary dingoes. These animals aren’t capable of going after \nlarge prey like kangaroos, so they turn to calves. In their study, some of the highest rates of \ncalf predation occurred in areas that had been baited. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b014",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>G  Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not \nconvinced by Allen’s assertion. Clifford says, “It’s obvious if we drop or loosen control on \ndingoes, we are going to lose more calves.” He doesn’t believe that dingoes will go after \nkangaroos when calves are around. Nor is he persuaded of dingoes’ supposed ecological \nbenefits, saying he is not convinced that they manage to catch cats that often, believing they \nare more likely to catch small native animals instead.</p>",
+              "pageIndex": 2,
+              "text": "G  Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not \nconvinced by Allen’s assertion. Clifford says, “It’s obvious if we drop or loosen control on \ndingoes, we are going to lose more calves.” He doesn’t believe that dingoes will go after \nkangaroos when calves are around. Nor is he persuaded of dingoes’ supposed ecological \nbenefits, saying he is not convinced that they manage to catch cats that often, believing they \nare more likely to catch small native animals instead. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b015",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>H  McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his \ncattle for food, but points out that in parts of Western Australia, there are no foxes, and not \nvery many cats. He doesn’t see how relaxing controls on dingoes in his area will improve the \necological balance.</p>",
+              "pageIndex": 2,
+              "text": "H  McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his \ncattle for food, but points out that in parts of Western Australia, there are no foxes, and not \nvery many cats. He doesn’t see how relaxing controls on dingoes in his area will improve the \necological balance. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b016",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Johnson sees a need for a change in philosophy on the part of graziers. “There might be a \nnumber of different ways of thinking through dingo management in cattle country,” he says. “At \nthe moment, though, that hasn’t got through to graziers. There’s still just one prescription, and \nthat is to bait as widely as possible.”</p>",
+              "pageIndex": 2,
+              "text": "Johnson sees a need for a change in philosophy on the part of graziers. “There might be a \nnumber of different ways of thinking through dingo management in cattle country,” he says. “At \nthe moment, though, that hasn’t got through to graziers. There’s still just one prescription, and \nthat is to bait as widely as possible.” "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 2,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b017",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 14-20</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 14-20 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b018",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Reading Passage has eight sections, A-H.</h3>",
+              "pageIndex": 3,
+              "roleHint": "passage",
+              "text": "Reading Passage has eight sections, A-H. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b019",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Which section contains the following information?</p>",
+              "pageIndex": 3,
+              "text": "Which section contains the following information? "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b020",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter, A-H, in boxes 14-20 on your answer sheet.</p>",
+              "pageIndex": 3,
+              "text": "Write the correct letter, A-H, in boxes 14-20 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b021",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>NB You may use any letter more than once.</p>",
+              "pageIndex": 3,
+              "text": "NB You may use any letter more than once. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>14  a description of a barrier designed to stop dingoes, which also divides two kinds of non-natives \nanimals</p>",
+              "pageIndex": 3,
+              "text": "14  a description of a barrier designed to stop dingoes, which also divides two kinds of non-natives \nanimals "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>15  how dingoes ensure that rival species do not dominate</p>",
+              "pageIndex": 3,
+              "text": "15  how dingoes ensure that rival species do not dominate "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b024",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>16  a reference to a widespread non-native species that other animals feed on</p>",
+              "pageIndex": 3,
+              "text": "16  a reference to a widespread non-native species that other animals feed on "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b025",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>17  a mention of the dingo’s arrival in Australia</p>",
+              "pageIndex": 3,
+              "text": "17  a mention of the dingo’s arrival in Australia "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>18  research which has proved that dingoes have resorted to eating young livestock</p>",
+              "pageIndex": 3,
+              "text": "18  research which has proved that dingoes have resorted to eating young livestock "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b027",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>19  a description of a method used to kill dingoes</p>",
+              "pageIndex": 3,
+              "text": "19  a description of a method used to kill dingoes "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>20  the way that the structure of dingo groups affects how quickly their numbers grow</p>",
+              "pageIndex": 3,
+              "text": "20  the way that the structure of dingo groups affects how quickly their numbers grow "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b029",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 21-23</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 21-23 "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b030",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Look at the following statements (Questions 21-23) and the list of people below.</p>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Look at the following statements (Questions 21-23) and the list of people below.   "
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Match each statement with the correct person, A, B, C or D.</p>",
+              "pageIndex": 3,
+              "text": "Match each statement with the correct person, A, B, C or D. "
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter, A, B, C or D, in boxes 21-23 on your answer sheet.</p>",
+              "pageIndex": 3,
+              "text": "Write the correct letter, A, B, C or D, in boxes 21-23 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>21  Dingoes tend to hunt native animals rather than hunting other non-native predators.</p>",
+              "pageIndex": 3,
+              "text": "21  Dingoes tend to hunt native animals rather than hunting other non-native predators. "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b034",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>22  The presence of dingoes puts the income of some people at risk.</p>",
+              "pageIndex": 3,
+              "text": "22  The presence of dingoes puts the income of some people at risk. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>23  Dingoes have had little impact on the dying out of animal species in Australia.</p>",
+              "pageIndex": 3,
+              "text": "23  Dingoes have had little impact on the dying out of animal species in Australia. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>List of People</p>",
+              "pageIndex": 3,
+              "text": " List of People "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    Stuart McKechnie \nB    Chris Johnson \nC    Lee Allen \nD    Mark Clifford</p>",
+              "pageIndex": 3,
+              "text": "A    Stuart McKechnie \nB    Chris Johnson \nC    Lee Allen \nD    Mark Clifford "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 3,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 24-26</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 24-26 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Complete the sentences below.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Complete the sentences below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose NO MORE THAN TWO WORDS from the passage for each answer.</p>",
+              "pageIndex": 4,
+              "text": "Choose NO MORE THAN TWO WORDS from the passage for each answer.   "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write your answers in boxes 24-26 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write your answers in boxes 24-26 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b042",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>24  The dingo replaced the ……… as the main predatory animal in Australia.</p>",
+              "pageIndex": 4,
+              "text": "24  The dingo replaced the ……… as the main predatory animal in Australia. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b043",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>25  Foxes and cats are more likely to hunt native animals when there are fewer………</p>",
+              "pageIndex": 4,
+              "text": "25  Foxes and cats are more likely to hunt native animals when there are fewer……… "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b044",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>26  Australian animals reproduce at a slow rate as a natural way of avoiding ………</p>",
+              "pageIndex": 4,
+              "text": "26  Australian animals reproduce at a slow rate as a natural way of avoiding ……… "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b045",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>KEY \nKey: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26. \nOverpopulation</p>",
+              "pageIndex": 4,
+              "text": "KEY \nKey: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26. \nOverpopulation "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 4,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b046",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 5]</p>",
+              "pageIndex": 5,
+              "text": "[No extractable text on page 5]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 5,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "private-random-07.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 5 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q14": "",
+        "q15": "",
+        "q16": "",
+        "q17": "",
+        "q18": "",
+        "q19": "",
+        "q20": "",
+        "q21": "",
+        "q22": "",
+        "q23": "",
+        "q24": "",
+        "q25": "",
+        "q26": ""
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:e4a4d4f09524ef33c9407c1e989c2d21683d852688ddaa682d85339001a016c2;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "private-random-07.pdf",
+        "questionIntroHtml": "<h3>Questions</h3><ul class=\"question-umbrella-ranges\"><li><strong>Questions 14-26</strong><span>Q14-26</span></li></ul>",
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 14-26",
+            "questionRange": [
+              14,
+              26
+            ],
+            "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading Passage 2 below. The dingo debate"
+          }
+        ],
+        "title": "private random 07"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   2</p>\n<p>Graziers see them as pests, and poisoning is common, but some biologists think Australia’s \ndingoes are the best weapon in a war against imported cats and foxes.</p>\n<p>A  A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the \nKimberley region in northwest Australia. As the plane circles, those aboard drop 1,000 small \npieces of meat, one by one, onto the scrubland below, each piece laced with poison; this \npractice is known as baiting.</p>\n<p>Besides 50,000 head of cattle, Carlton Hill is home to the dingo, Australia’s largest \nmammalian predator and the bane of a grazier’s (cattle farmer’s) life. Stuart McKechnie, \nmanager of Carlton Hill, complains that graziers’ livelihoods are threatened when dingoes prey \non cattle. But one man wants the baiting to end, and for dingoes to once again roam \nAustralia’s wide-open spaces. According to Chris Johnson of James Cook University, \n“Australia needs more dingoes to protect our biodiversity.”</p>\n<p>B  About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing \nmillennia, these descendants of the wolf spread across the continent and, as the Tasmanian \ntiger disappeared completely from Australia, dingoes became Australia’s top predators. As \nagricultural development took place, the European settlers found that they could not safely \nkeep their livestock where dingoes roamed. So began one of the most sustained efforts at \npest control in Australia’s history. Over the last 150 years, dingoes have been shot and \npoisoned, and fences have been used in an attempt to keep them away from livestock. But at \nthe same time, as the European settlers tried to eliminate one native pest from Australia, they \nintroduced more of their own.</p>\n<p>C  In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits \nhad covered most of the mainland. Rabbits provide huge prey base for two other introduced \nspecies: the feral (wild) cat and the red fox.</p>\n<p>The interaction between foxes, cats and rabbits is a huge problem for native mammals. In \ngood years, rabbit numbers increase dramatically, and fox and cat populations grow quickly in \nresponse to the abundance of this prey. When bad seasons follow, rabbit numbers are \nsignificantly reduced – and the dwindling but still large fox and cat populations are left with \nlittle to eat besides native mammals.</p>\n<p>D  Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an \nadaption to prevent overpopulation in the arid environment, where food can be scarce and \nunreliable – and populations decline because they can’t grow fast enough to replace animals \nkilled by the predators. Johnson says dingoes are the solution to this problem because they \nkeep cat and fox populations under control. Besides regularly eating the smaller predators, \ndingoes will kill them simply to lessen competition.</p>\n<p>Dingo packs live in large, stable territories and generally have only one fertile female, which \nlimits their rate of increase. In the 4,000 years that dingoes have been Australia, they have \ncontributed to few, if any, extinctions, Johnson says.</p>\n<p>E  Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is \nthe world’s longest fence, two meters high and stretching from the coast in Queensland to the \nGreat Australian Bight in South Australia; it is there to keep dingoes out of southeast, the \nfence separates the main types of livestock found in Australia. To the northwest of the fence, \ncattle predominate; to the southwest, sheep fill the landscape. In fact, Australia is a land \ndominated by these animals – 25 million cattle, 100 million sheep and just over 20 million \npeople.</p>\n<p>F  While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt \ncattle once the calves are much past two or three weeks old, according to McKechnie. And a \nstudy in Queensland suggests that dingoes don’t even prey heavily on the newborn calves \nunless their staple prey disappears due to deteriorating conditions like drought.</p>\n<p>This study, co-authored by Lee Allen of the Robert Wicks Research Centre in Queensland, \nsuggests that the aggressive baiting programs used against dingoes may actually be counter-\nproductive for graziers. When dingoes are removed from an area by baiting, the area is \nrecolonized by younger, more solitary dingoes. These animals aren’t capable of going after \nlarge prey like kangaroos, so they turn to calves. In their study, some of the highest rates of \ncalf predation occurred in areas that had been baited.</p>\n<p>G  Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not \nconvinced by Allen’s assertion. Clifford says, “It’s obvious if we drop or loosen control on \ndingoes, we are going to lose more calves.” He doesn’t believe that dingoes will go after \nkangaroos when calves are around. Nor is he persuaded of dingoes’ supposed ecological \nbenefits, saying he is not convinced that they manage to catch cats that often, believing they \nare more likely to catch small native animals instead.</p>\n<p>H  McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his \ncattle for food, but points out that in parts of Western Australia, there are no foxes, and not \nvery many cats. He doesn’t see how relaxing controls on dingoes in his area will improve the \necological balance.</p>\n<p>Johnson sees a need for a change in philosophy on the part of graziers. “There might be a \nnumber of different ways of thinking through dingo management in cattle country,” he says. “At \nthe moment, though, that hasn’t got through to graziers. There’s still just one prescription, and \nthat is to bait as widely as possible.”</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q14": "14",
+        "q15": "15",
+        "q16": "16",
+        "q17": "17",
+        "q18": "18",
+        "q19": "19",
+        "q20": "20",
+        "q21": "21",
+        "q22": "22",
+        "q23": "23",
+        "q24": "24",
+        "q25": "25",
+        "q26": "26"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": true,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 14-20</p></div><ol><li><div><strong>14</strong> a description of a barrier designed to stop dingoes, which also divides two kinds of non-natives animals</div><div class=\"choice-row\"><label><input name=\"q14\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q14\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q14\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q14\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q14\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q14\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q14\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q14\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>15</strong> how dingoes ensure that rival species do not dominate</div><div class=\"choice-row\"><label><input name=\"q15\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q15\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q15\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q15\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q15\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q15\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q15\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q15\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>16</strong> a reference to a widespread non-native species that other animals feed on</div><div class=\"choice-row\"><label><input name=\"q16\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q16\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q16\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q16\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q16\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q16\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q16\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q16\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>17</strong> a mention of the dingo’s arrival in Australia</div><div class=\"choice-row\"><label><input name=\"q17\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q17\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q17\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q17\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q17\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q17\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q17\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q17\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>18</strong> research which has proved that dingoes have resorted to eating young livestock</div><div class=\"choice-row\"><label><input name=\"q18\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q18\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q18\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q18\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q18\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q18\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q18\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q18\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>19</strong> a description of a method used to kill dingoes</div><div class=\"choice-row\"><label><input name=\"q19\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q19\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q19\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q19\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q19\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q19\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q19\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q19\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>20</strong> the way that the structure of dingo groups affects how quickly their numbers grow</div><div class=\"choice-row\"><label><input name=\"q20\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q20\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q20\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q20\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q20\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q20\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q20\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q20\" type=\"radio\" value=\"H\"> H</label></div></li></ol></section>",
+          "groupId": "group-1",
+          "kind": "matching_information",
+          "leadHtml": "<p>Questions 14-20</p>",
+          "questionIds": [
+            "q14",
+            "q15",
+            "q16",
+            "q17",
+            "q18",
+            "q19",
+            "q20"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 21-23</p></div><ol><li><div><strong>21</strong> Dingoes tend to hunt native animals rather than hunting other non-native predators.</div><div class=\"choice-row\"><label><input name=\"q21\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q21\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q21\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q21\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>22</strong> The presence of dingoes puts the income of some people at risk.</div><div class=\"choice-row\"><label><input name=\"q22\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q22\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q22\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q22\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>23</strong> Dingoes have had little impact on the dying out of animal species in Australia.</div><div class=\"choice-row\"><label><input name=\"q23\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q23\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q23\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q23\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "groupId": "group-2",
+          "kind": "matching",
+          "leadHtml": "<p>Questions 21-23</p>",
+          "questionIds": [
+            "q21",
+            "q22",
+            "q23"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 24-26</p></div><ol><li><label><strong>24</strong> The dingo replaced the ……… as the main predatory animal in Australia. <input type=\"text\" id=\"q24_input\" name=\"q24\"></label></li><li><label><strong>25</strong> Foxes and cats are more likely to hunt native animals when there are fewer……… <input type=\"text\" id=\"q25_input\" name=\"q25\"></label></li><li><label><strong>26</strong> Australian animals reproduce at a slow rate as a natural way of avoiding ……… KEY Key: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26. Overpopulation <input type=\"text\" id=\"q26_input\" name=\"q26\"></label></li></ol></section>",
+          "groupId": "group-3",
+          "kind": "sentence_completion",
+          "leadHtml": "<p>Questions 24-26</p>",
+          "questionIds": [
+            "q24",
+            "q25",
+            "q26"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260809143545-57d3f5dd/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/private-random-07.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/private-real/private-random-07.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001",
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009",
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016"
+          ],
+          "title": "RE ADI NG P AS S AGE 2"
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b017",
+              "b018",
+              "b019",
+              "b020",
+              "b021",
+              "b022",
+              "b023",
+              "b024",
+              "b025",
+              "b026",
+              "b027",
+              "b028"
+            ],
+            "interaction": {
+              "allowOptionReuse": true,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D",
+                "E",
+                "F",
+                "G",
+                "H"
+              ],
+              "type": "matching"
+            },
+            "kind": "matching_information",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            }
+          ],
+          "groupId": "group-1",
+          "heading": "Questions 14-20",
+          "instructionText": "Questions 14-20",
+          "kindHint": "matching_information",
+          "layoutHint": "list",
+          "questionRange": [
+            14,
+            20
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 14-20"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Reading Passage has eight sections, A-H."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Which section contains the following information?"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A-H, in boxes 14-20 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "NB You may use any letter more than once."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "14 a description of a barrier designed to stop dingoes, which also divides two kinds of non-natives animals"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "15 how dingoes ensure that rival species do not dominate"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "16 a reference to a widespread non-native species that other animals feed on"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "17 a mention of the dingo’s arrival in Australia"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "18 research which has proved that dingoes have resorted to eating young livestock"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "19 a description of a method used to kill dingoes"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "20 the way that the structure of dingo groups affects how quickly their numbers grow"
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037"
+          ],
+          "classification": {
+            "confidence": 0.68,
+            "evidence": [
+              "b029",
+              "b030",
+              "b031",
+              "b032",
+              "b033",
+              "b034",
+              "b035",
+              "b036",
+              "b037"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D"
+              ],
+              "type": "matching"
+            },
+            "kind": "matching",
+            "warnings": [
+              "Option reuse was inferred from question type; source wording did not state it explicitly."
+            ]
+          },
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 21-23",
+          "instructionText": "Questions 21-23",
+          "kindHint": "matching",
+          "layoutHint": "list",
+          "questionRange": [
+            21,
+            23
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 21-23"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Look at the following statements (Questions 21-23) and the list of people below."
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Match each statement with the correct person, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A, B, C or D, in boxes 21-23 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "21 Dingoes tend to hunt native animals rather than hunting other non-native predators."
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "22 The presence of dingoes puts the income of some people at risk."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "23 Dingoes have had little impact on the dying out of animal species in Australia."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "List of People"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Stuart McKechnie B Chris Johnson C Lee Allen D Mark Clifford"
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b038",
+              "b039",
+              "b040",
+              "b041",
+              "b042",
+              "b043",
+              "b044",
+              "b045"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "sentence_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
+              "toBlockId": "b045"
+            }
+          ],
+          "groupId": "group-3",
+          "heading": "Questions 24-26",
+          "instructionText": "Questions 24-26",
+          "kindHint": "sentence_completion",
+          "layoutHint": "inline_completion",
+          "questionRange": [
+            24,
+            26
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 24-26"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the sentences below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose NO MORE THAN TWO WORDS from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 24-26 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "24 The dingo replaced the ……… as the main predatory animal in Australia."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "25 Foxes and cats are more likely to hunt native animals when there are fewer………"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "26 Australian animals reproduce at a slow rate as a natural way of avoiding ………"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b045",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "KEY Key: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26. Overpopulation"
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": [
+        {
+          "blockId": "b002",
+          "heading": "Questions 14-26",
+          "questionRange": [
+            14,
+            26
+          ],
+          "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading Passage 2 below. The dingo debate"
+        }
+      ]
+    }
+  }
+}

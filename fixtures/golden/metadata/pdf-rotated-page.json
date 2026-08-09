@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-rotated-page",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-rotated-page.pdf",
+    "sha256": "334e8a4a390206d50d31132a883ec677df0531f5692c13007ee15ea5f3493a70",
+    "sizeBytes": 1534,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage",
+          "question"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          3
+        ],
+        "kind": "true_false_not_given",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "radio"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "radio"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "radio"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "Page rotation metadata must be normalized before grouping."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-rotated-page.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 10,
+      "groupCount": 1,
+      "slotCount": 3,
+      "assetCount": 0,
+      "answerCount": 3,
+      "warningCount": 0,
+      "groupKinds": [
+        "true_false_not_given"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

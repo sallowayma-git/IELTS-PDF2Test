@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ielts-author-studio.local/schema/golden-fixture-metadata-v1.schema.json",
+  "title": "GoldenFixtureMetadataV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "fixtureId", "source", "expected", "knownIssues", "baseline"],
+  "properties": {
+    "schemaVersion": { "const": "GoldenFixtureMetadataV1" },
+    "fixtureId": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "sizeBytes", "format"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "originalName": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "format": { "enum": ["pdf", "docx", "audio"] }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pageRoles", "taskGroups", "slots", "assets"],
+      "properties": {
+        "pageRoles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pageIndex", "roles"],
+            "properties": {
+              "pageIndex": { "type": "integer", "minimum": 1 },
+              "roles": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+            }
+          }
+        },
+        "taskGroups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "displayRange", "kind", "slotIds"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "displayRange": { "type": "array", "prefixItems": [{ "type": "integer", "minimum": 1 }, { "type": "integer", "minimum": 1 }], "items": false, "minItems": 2, "maxItems": 2 },
+              "kind": { "type": "string", "minLength": 1 },
+              "slotIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+            }
+          }
+        },
+        "slots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "displayNumber", "responseType"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "displayNumber": { "type": "string", "minLength": 1 },
+              "responseType": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "type", "required"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "type": { "type": "string", "minLength": 1 },
+              "required": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "knownIssues": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v1Path", "observed"],
+      "properties": {
+        "v1Path": { "type": "string", "minLength": 1 },
+        "observed": { "type": "object" }
+      }
+    }
+  }
+}

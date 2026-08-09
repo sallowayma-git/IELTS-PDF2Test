@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "docx-floating-text-box",
+  "source": {
+    "path": "fixtures/golden/synthetic/docx/docx-floating-text-box.docx",
+    "sha256": "ae3251a6557b1aec86231af840de457041e1e32c0fb48eed58a60a20a74b2bd4",
+    "sizeBytes": 2202,
+    "format": "docx"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question",
+          "text_box"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          2
+        ],
+        "kind": "short_answer",
+        "slotIds": [
+          "q1",
+          "q2"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "The question text is inside a floating VML text box."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/docx-floating-text-box.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 4,
+      "groupCount": 1,
+      "slotCount": 2,
+      "assetCount": 0,
+      "answerCount": 2,
+      "warningCount": 0,
+      "groupKinds": [
+        "short_answer"
+      ],
+      "questionIds": [
+        "q1",
+        "q2"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

@@ -1,0 +1,246 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "pdf-ruled-table",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-ruled-table.pdf",
+    "sha256": "64e8acbc4959f323e292337267718080211a397574de82517c519ed89b089cb7",
+    "sizeBytes": 1488
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 1,
+    "blockCount": 6,
+    "groupCount": 0,
+    "slotCount": 0,
+    "assetCount": 0,
+    "answerCount": 0,
+    "warningCount": 0,
+    "groupKinds": [],
+    "questionIds": [],
+    "roles": []
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {},
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No question range heading detected; manual split required.",
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "pdf-ruled-table.pdf",
+            "role": "MainQuestion",
+            "sha256": "64e8acbc4959f323e292337267718080211a397574de82517c519ed89b089cb7",
+            "sizeBytes": 1488,
+            "storedName": "pdf-ruled-table.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "pdf ruled table"
+      },
+      "groups": [],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>Synthetic ruled table completion fixture</p>\n<p>Item Evidence Answer</p>\n<p>1 table evidence ________</p>\n<p>2 table evidence ________</p>\n<p>3 table evidence ________</p>\n<p>4 table evidence ________</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [],
+        "sourceBlockIds": [
+          "b001",
+          "b002",
+          "b003",
+          "b004",
+          "b005",
+          "b006"
+        ],
+        "title": "Synthetic ruled table completion fixture"
+      },
+      "questionDisplayMap": {},
+      "questionOrder": [],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Synthetic ruled table completion fixture</p>",
+              "pageIndex": 1,
+              "text": "Synthetic ruled table completion fixture"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Item Evidence Answer</p>",
+              "pageIndex": 1,
+              "text": "Item Evidence Answer"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>1 table evidence ________</p>",
+              "pageIndex": 1,
+              "text": "1 table evidence ________"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>2 table evidence ________</p>",
+              "pageIndex": 1,
+              "text": "2 table evidence ________"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>3 table evidence ________</p>",
+              "pageIndex": 1,
+              "text": "3 table evidence ________"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>4 table evidence ________</p>",
+              "pageIndex": 1,
+              "text": "4 table evidence ________"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "pdf-ruled-table.pdf",
+        "version": "0.1.0",
+        "warnings": []
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {},
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:64e8acbc4959f323e292337267718080211a397574de82517c519ed89b089cb7;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "pdf-ruled-table.pdf",
+        "questionIntroHtml": "<h3>Questions</h3>",
+        "questionUmbrellaRanges": [],
+        "title": "pdf ruled table"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>Synthetic ruled table completion fixture</p>\n<p>Item Evidence Answer</p>\n<p>1 table evidence ________</p>\n<p>2 table evidence ________</p>\n<p>3 table evidence ________</p>\n<p>4 table evidence ________</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {},
+      "questionGroups": [],
+      "questionOrder": [],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260809143541-babf4eb6/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/pdf-ruled-table.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/synthetic/pdf/pdf-ruled-table.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No question range heading detected; manual split required.",
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001",
+            "b002",
+            "b003",
+            "b004",
+            "b005",
+            "b006"
+          ],
+          "title": "Synthetic ruled table completion fixture"
+        }
+      ],
+      "questionGroupCandidates": [],
+      "umbrellaQuestionRanges": []
+    }
+  }
+}

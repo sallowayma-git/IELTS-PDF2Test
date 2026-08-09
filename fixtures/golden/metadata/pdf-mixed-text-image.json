@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-mixed-text-image",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-mixed-text-image.pdf",
+    "sha256": "1386bb49c0b420858227eb06663c96de24258e964e397df5363a4d095c5386ba",
+    "sizeBytes": 7916,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage",
+          "question",
+          "figure"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          2
+        ],
+        "kind": "diagram_completion",
+        "slotIds": [
+          "q1",
+          "q2"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      }
+    ],
+    "assets": [
+      {
+        "id": "figure-1",
+        "type": "embedded_image",
+        "required": true
+      }
+    ]
+  },
+  "knownIssues": [
+    "Text and the embedded figure must share a source region without flattening the asset."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-mixed-text-image.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 8,
+      "groupCount": 1,
+      "slotCount": 2,
+      "assetCount": 0,
+      "answerCount": 2,
+      "warningCount": 0,
+      "groupKinds": [
+        "short_answer"
+      ],
+      "questionIds": [
+        "q1",
+        "q2"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

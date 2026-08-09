@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ielts-author-studio.dev/phase1/document-ir-v2.schema.json",
+  "title": "DocumentIRV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "documentId", "jobId", "sourceFiles", "pages", "assets", "coverageLedger", "parser"],
+  "properties": {
+    "schemaVersion": { "const": "DocumentIRV2" },
+    "documentId": { "type": "string", "minLength": 1 },
+    "jobId": { "type": "string", "minLength": 1 },
+    "sourceFiles": {
+      "type": "array",
+      "items": { "$ref": "./common-v2.schema.json#/$defs/sourceFileRecord" }
+    },
+    "pages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/page" }
+    },
+    "assets": {
+      "type": "array",
+      "items": { "$ref": "./common-v2.schema.json#/$defs/assetDescriptor" }
+    },
+    "coverageLedger": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/coverageEntry" }
+    },
+    "parser": { "$ref": "#/$defs/parser" }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "glyph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text", "bbox", "origin", "style", "unicodeMapError", "hidden", "confidence", "source", "sourceAnchor"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "quad": { "$ref": "./common-v2.schema.json#/$defs/quad" },
+        "origin": { "$ref": "#/$defs/point" },
+        "baseline": { "type": "number" },
+        "angleRad": { "type": "number" },
+        "style": { "$ref": "./common-v2.schema.json#/$defs/textStyle" },
+        "unicodeMapError": { "type": "boolean" },
+        "hidden": { "type": "boolean" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "type": "string", "enum": ["native", "ocr"] },
+        "sourceAnchor": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
+      }
+    },
+    "span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "glyphIds", "text", "bbox", "style", "whitespaceBefore", "whitespaceAfter", "confidence", "sourceAnchors"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "glyphIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "text": { "type": "string" },
+        "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "style": { "$ref": "./common-v2.schema.json#/$defs/textStyle" },
+        "whitespaceBefore": { "type": "string", "enum": ["none", "source", "synthetic"] },
+        "whitespaceAfter": { "type": "string", "enum": ["none", "source", "synthetic"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
+      }
+    },
+    "line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "spanIds", "text", "bbox", "writingMode", "indentationPt", "hardBreakAfter", "sourceOrder", "confidence", "sourceAnchors"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "spanIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "text": { "type": "string" },
+        "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "baseline": { "type": "number" },
+        "writingMode": { "type": "string", "enum": ["horizontal-tb", "vertical-rl", "vertical-lr"] },
+        "indentationPt": { "type": "number", "minimum": 0 },
+        "hangingIndentPt": { "type": "number", "minimum": 0 },
+        "lineHeightPt": { "type": "number", "minimum": 0 },
+        "hardBreakAfter": { "type": "boolean" },
+        "sourceOrder": { "type": "integer", "minimum": 0 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
+      }
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "bbox", "childLineIds", "childObjectIds", "confidence", "sourceAnchors"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["text", "title", "list", "table", "figure", "diagram", "form", "header", "footer", "page_number", "rule", "unknown"] },
+        "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "childLineIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "childObjectIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "columnIndex": { "type": "integer", "minimum": 0 },
+        "sectionIndex": { "type": "integer", "minimum": 0 },
+        "zIndex": { "type": "integer" },
+        "readingOrderRank": { "type": "integer", "minimum": 0 },
+        "readingOrderAlternatives": { "type": "array", "items": { "type": "array", "items": { "type": "string", "minLength": 1 } } },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
+      }
+    },
+    "vectorCommand": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["op", "x", "y"], "properties": { "op": { "const": "move" }, "x": { "type": "number" }, "y": { "type": "number" } } },
+        { "type": "object", "additionalProperties": false, "required": ["op", "x", "y"], "properties": { "op": { "const": "line" }, "x": { "type": "number" }, "y": { "type": "number" } } },
+        { "type": "object", "additionalProperties": false, "required": ["op", "points"], "properties": { "op": { "const": "curve" }, "points": { "type": "array", "items": { "type": "number" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["op"], "properties": { "op": { "const": "close" } } }
+      ]
+    },
+    "vectorPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "bbox", "sourceAnchor"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "commands": { "type": "array", "items": { "$ref": "#/$defs/vectorCommand" } },
+        "strokeWidth": { "type": "number", "minimum": 0 },
+        "strokeColor": { "type": "string" },
+        "fillColor": { "type": "string" },
+        "isAxisAlignedRule": { "type": "boolean" },
+        "sourceAnchor": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
+      }
+    },
+    "tableCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cellId", "row", "col", "rowSpan", "colSpan", "bbox", "contentRegionIds", "borderEvidence", "confidence", "sourceAnchors"],
+      "properties": {
+        "cellId": { "type": "string", "minLength": 1 },
+        "row": { "type": "integer", "minimum": 0 },
+        "col": { "type": "integer", "minimum": 0 },
+        "rowSpan": { "type": "integer", "minimum": 1 },
+        "colSpan": { "type": "integer", "minimum": 1 },
+        "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "contentRegionIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "headerScope": { "type": "string", "enum": ["row", "column", "both", "none"] },
+        "borderEvidence": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "bbox", "rows", "cols", "cells", "detectionMode", "topologyConfidence", "contentConfidence", "sourceAnchors"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "rows": { "type": "integer", "minimum": 0 },
+        "cols": { "type": "integer", "minimum": 0 },
+        "cells": { "type": "array", "items": { "$ref": "#/$defs/tableCell" } },
+        "detectionMode": { "type": "string", "enum": ["ooxml", "ruling_lines", "text_alignment", "vision_model", "manual"] },
+        "captionRegionId": { "type": "string", "minLength": 1 },
+        "visualFallbackAssetId": { "type": "string", "minLength": 1 },
+        "topologyConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "contentConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "nativeCharacterCount", "unicodeErrorRatio", "duplicateTextRatio", "imageCoverageRatio", "textCoverageRatio", "rotationConfidence", "requiresOcrRegions", "warnings"],
+      "properties": {
+        "classification": { "type": "string", "enum": ["born_digital", "mixed", "scanned", "garbled", "empty"] },
+        "nativeCharacterCount": { "type": "integer", "minimum": 0 },
+        "unicodeErrorRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "duplicateTextRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "imageCoverageRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "textCoverageRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rotationConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "requiresOcrRegions": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/rect" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pageIndex", "widthPt", "heightPt", "rotation", "glyphs", "spans", "lines", "regions", "vectorPaths", "tables", "assetIds", "readingOrder", "quality"],
+      "properties": {
+        "pageIndex": { "type": "integer", "minimum": 0 },
+        "widthPt": { "type": "number", "exclusiveMinimum": 0 },
+        "heightPt": { "type": "number", "exclusiveMinimum": 0 },
+        "rotation": { "$ref": "./common-v2.schema.json#/$defs/pageRotation" },
+        "mediaBox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "cropBox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "glyphs": { "type": "array", "items": { "$ref": "#/$defs/glyph" } },
+        "spans": { "type": "array", "items": { "$ref": "#/$defs/span" } },
+        "lines": { "type": "array", "items": { "$ref": "#/$defs/line" } },
+        "regions": { "type": "array", "items": { "$ref": "#/$defs/region" } },
+        "vectorPaths": { "type": "array", "items": { "$ref": "#/$defs/vectorPath" } },
+        "tables": { "type": "array", "items": { "$ref": "#/$defs/table" } },
+        "assetIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "readingOrder": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "quality": { "$ref": "#/$defs/quality" }
+      }
+    },
+    "coverageEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceNodeId", "disposition", "targetIds"],
+      "properties": {
+        "sourceNodeId": { "type": "string", "minLength": 1 },
+        "disposition": { "type": "string", "enum": ["passage", "question", "instruction", "option", "answer", "explanation", "header_footer", "decorative", "ignored_with_reason", "unassigned"] },
+        "targetIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "parser": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "providerVersion", "extractionStartedAt", "extractionCompletedAt", "options", "warnings"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "providerVersion": { "type": "string", "minLength": 1 },
+        "extractionStartedAt": { "type": "string", "format": "date-time" },
+        "extractionCompletedAt": { "type": "string", "format": "date-time" },
+        "options": { "type": "object" },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

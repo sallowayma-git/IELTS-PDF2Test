@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "parser-no-text",
+  "source": {
+    "path": "fixtures/parser/no-text.pdf",
+    "sha256": "b7afea3367ddb3fb338936b1da34755309a0999d05c97219164f10a3cf006d0c",
+    "sizeBytes": 476,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "visual_review"
+        ]
+      }
+    ],
+    "taskGroups": [],
+    "slots": [],
+    "assets": [
+      {
+        "id": "page-1-raster",
+        "type": "page_image",
+        "required": true
+      }
+    ]
+  },
+  "knownIssues": [
+    "V1 cannot extract text from the page and requests OCR/manual review.",
+    "V1 also needs the Python parser fallback because the PDF trailer is invalid.",
+    "The fixture is intentionally not treated as a valid empty document."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/parser-no-text.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 1,
+      "groupCount": 0,
+      "slotCount": 0,
+      "assetCount": 0,
+      "answerCount": 0,
+      "warningCount": 2,
+      "groupKinds": [],
+      "questionIds": [],
+      "roles": []
+    }
+  }
+}

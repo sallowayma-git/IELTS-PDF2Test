@@ -1,0 +1,204 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "private-random-05",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-05.pdf",
+    "originalName": "73. P3 - Language Strategy in Multinational Companies 跨国公司语言策略.pdf",
+    "sha256": "33f3fe6aad5beabd081eae9cdc173c01eaaa8be51cf2560f89e1a6f826d7ea3e",
+    "sizeBytes": 393544,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "needs_review"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          27,
+          32
+        ],
+        "kind": "summary_completion",
+        "slotIds": [
+          "q27",
+          "q28",
+          "q29",
+          "q30",
+          "q31",
+          "q32"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          33,
+          39
+        ],
+        "kind": "short_answer",
+        "slotIds": [
+          "q33",
+          "q34",
+          "q35",
+          "q36",
+          "q37",
+          "q38",
+          "q39"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          40,
+          40
+        ],
+        "kind": "single_choice",
+        "slotIds": [
+          "q40"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q27",
+        "displayNumber": "27",
+        "responseType": "text"
+      },
+      {
+        "id": "q28",
+        "displayNumber": "28",
+        "responseType": "text"
+      },
+      {
+        "id": "q29",
+        "displayNumber": "29",
+        "responseType": "text"
+      },
+      {
+        "id": "q30",
+        "displayNumber": "30",
+        "responseType": "text"
+      },
+      {
+        "id": "q31",
+        "displayNumber": "31",
+        "responseType": "text"
+      },
+      {
+        "id": "q32",
+        "displayNumber": "32",
+        "responseType": "text"
+      },
+      {
+        "id": "q33",
+        "displayNumber": "33",
+        "responseType": "text"
+      },
+      {
+        "id": "q34",
+        "displayNumber": "34",
+        "responseType": "text"
+      },
+      {
+        "id": "q35",
+        "displayNumber": "35",
+        "responseType": "text"
+      },
+      {
+        "id": "q36",
+        "displayNumber": "36",
+        "responseType": "text"
+      },
+      {
+        "id": "q37",
+        "displayNumber": "37",
+        "responseType": "text"
+      },
+      {
+        "id": "q38",
+        "displayNumber": "38",
+        "responseType": "text"
+      },
+      {
+        "id": "q39",
+        "displayNumber": "39",
+        "responseType": "text"
+      },
+      {
+        "id": "q40",
+        "displayNumber": "40",
+        "responseType": "radio"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "样本使用固定随机种子抽取；V1 派生标注是可复现的初始契约，正式评分前仍需人工确认。",
+    "V1 parser emitted 1 warning(s); warning details remain part of the baseline."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/private-random-05.json",
+    "observed": {
+      "pageCount": 5,
+      "blockCount": 43,
+      "groupCount": 3,
+      "slotCount": 14,
+      "assetCount": 0,
+      "answerCount": 14,
+      "warningCount": 1,
+      "groupKinds": [
+        "summary_completion",
+        "short_answer",
+        "single_choice"
+      ],
+      "questionIds": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

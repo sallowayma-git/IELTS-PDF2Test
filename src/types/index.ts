@@ -4,3 +4,8 @@ export * from "./authoring-ir";
 export * from "./validation";
 export * from "./settings";
 export * from "./reading-source";
+export * from "./schema-common-v2";
+export * from "./document-ir-v2";
+export * from "./content-doc-v2";
+export * from "./quality-report-v2";
+export * from "./ielts-authoring-v2";

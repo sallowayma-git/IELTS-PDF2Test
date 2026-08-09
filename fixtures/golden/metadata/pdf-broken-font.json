@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-broken-font",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-broken-font.pdf",
+    "sha256": "d9a257f3251a9787e6de8931773117e44e8e8dea372e2b86026178e978bbc598",
+    "sizeBytes": 1582,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage",
+          "question"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          3
+        ],
+        "kind": "short_answer",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "text"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "Unicode and missing-glyph behavior needs explicit diagnostics."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-broken-font.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 11,
+      "groupCount": 1,
+      "slotCount": 3,
+      "assetCount": 0,
+      "answerCount": 3,
+      "warningCount": 0,
+      "groupKinds": [
+        "short_answer"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

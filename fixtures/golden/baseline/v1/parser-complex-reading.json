@@ -1,0 +1,671 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "parser-complex-reading",
+  "source": {
+    "path": "fixtures/parser/complex-reading.pdf",
+    "sha256": "9e0bc61e9f1cdb741675446c26a2240306e1456dba0c909e005efea7d26515aa",
+    "sizeBytes": 1458
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 1,
+    "blockCount": 5,
+    "groupCount": 2,
+    "slotCount": 5,
+    "assetCount": 0,
+    "answerCount": 5,
+    "warningCount": 1,
+    "groupKinds": [
+      "true_false_not_given",
+      "table_completion"
+    ],
+    "questionIds": [
+      "q1",
+      "q2",
+      "q3",
+      "q4",
+      "q5"
+    ],
+    "roles": [
+      "answer",
+      "passage",
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q1": "TRUE",
+        "q2": "FALSE",
+        "q3": "NOT GIVEN",
+        "q4": "maps",
+        "q5": "diaries"
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "complex-reading.pdf",
+            "role": "MainQuestion",
+            "sha256": "9e0bc61e9f1cdb741675446c26a2240306e1456dba0c909e005efea7d26515aa",
+            "sizeBytes": 1458,
+            "storedName": "complex-reading.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "complex reading"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b002"
+          ],
+          "confidence": 0.82,
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 1-3"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "true_false_not_given",
+          "layout": {
+            "layoutHint": "list",
+            "template": "tfng_list"
+          },
+          "questionRange": [
+            1,
+            3
+          ],
+          "questions": [
+            {
+              "answer": "TRUE",
+              "confidence": 0.82,
+              "displayNumber": "1",
+              "id": "q1",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "The archive moved into a renovated warehouse.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b002"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "FALSE",
+              "confidence": 0.82,
+              "displayNumber": "2",
+              "id": "q2",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Visitors cannot inspect maps at the new site.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b002"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "NOT GIVEN",
+              "confidence": 0.82,
+              "displayNumber": "3",
+              "id": "q3",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "The passage says the museum opened in 1901.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b002"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 "
+            }
+          ],
+          "sourceBlockIds": [
+            "b002"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b003",
+            "b004"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b003",
+              "reason": "same-section-continuation",
+              "toBlockId": "b004"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 4-5"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "table_completion",
+          "layout": {
+            "layoutHint": "table",
+            "tableHeaders": [
+              "Question",
+              "Prompt",
+              "Answer"
+            ],
+            "template": "table_completion"
+          },
+          "questionRange": [
+            4,
+            5
+          ],
+          "questions": [
+            {
+              "answer": "maps",
+              "confidence": 0.82,
+              "displayNumber": "4",
+              "id": "q4",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b003",
+                "b004"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "diaries",
+              "confidence": 0.82,
+              "displayNumber": "5",
+              "id": "q5",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b003",
+                "b004"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "answer. Item | Location maps | room diaries | room"
+            }
+          ],
+          "sourceBlockIds": [
+            "b003",
+            "b004"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<h3>READING PASSAGE 1 Complex Fixture Passage This passage describes a museum that moved its archive into a renovated warehouse. The new site allowed visitors to inspect maps, tools, and diaries in one room.</h3>"
+          }
+        ],
+        "questionUmbrellaRanges": [],
+        "sourceBlockIds": [
+          "b001"
+        ],
+        "title": "complex reading"
+      },
+      "questionDisplayMap": {
+        "q1": "1",
+        "q2": "2",
+        "q3": "3",
+        "q4": "4",
+        "q5": "5"
+      },
+      "questionOrder": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>READING PASSAGE 1 Complex Fixture Passage This passage describes a museum that moved its archive into a renovated warehouse. The new site allowed visitors to inspect maps, tools, and diaries in one room.</h3>",
+              "roleHint": "passage",
+              "text": "READING PASSAGE 1 Complex Fixture Passage This passage describes a museum that moved its archive into a renovated warehouse. The new site allowed visitors to inspect maps, tools, and diaries in one room."
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 The archive moved into a renovated warehouse. 2 Visitors cannot inspect maps at the new site. 3 The passage says the museum opened in 1901.</h3>",
+              "roleHint": "question",
+              "text": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 The archive moved into a renovated warehouse. 2 Visitors cannot inspect maps at the new site. 3 The passage says the museum opened in 1901."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each</h3>",
+              "roleHint": "question",
+              "text": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "table",
+              "confidence": 0.98,
+              "html": "<table><tr><td>answer. Item</td><td>Location maps</td><td>room diaries</td><td>room</td></tr></table>",
+              "text": "answer. Item | Location maps | room diaries | room"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 maps 5 diaries</p>",
+              "roleHint": "answer",
+              "text": "Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 maps 5 diaries"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "python-parser-sidecar:pdf:pypdf",
+        "version": "0.3.0",
+        "warnings": [
+          "rust pdf-extract failed; used Python parser fallback: rust_pdf_extract_failed:PDF error: couldn't parse input: invalid file trailer"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q1": "TRUE",
+        "q2": "FALSE",
+        "q3": "NOT GIVEN",
+        "q4": "maps",
+        "q5": "diaries"
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:9e0bc61e9f1cdb741675446c26a2240306e1456dba0c909e005efea7d26515aa;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "complex-reading.pdf",
+        "questionIntroHtml": "<h3>Questions</h3>",
+        "questionUmbrellaRanges": [],
+        "title": "complex reading"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<h3>READING PASSAGE 1 Complex Fixture Passage This passage describes a museum that moved its archive into a renovated warehouse. The new site allowed visitors to inspect maps, tools, and diaries in one room.</h3>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q1": "1",
+        "q2": "2",
+        "q3": "3",
+        "q4": "4",
+        "q5": "5"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-3</p></div><ol><li><div><strong>1</strong> The archive moved into a renovated warehouse.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> Visitors cannot inspect maps at the new site.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> The passage says the museum opened in 1901.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "groupId": "group-1",
+          "kind": "true_false_not_given",
+          "leadHtml": "<p>Questions 1-3</p>",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 4-5</p></div><table class=\"completion-table\"><thead><tr><th>Question</th><th>Prompt</th><th>Answer</th></tr></thead><tbody><tr><td><strong>4</strong></td><td></td><td><input type=\"text\" id=\"q4_input\" name=\"q4\" placeholder=\"answer\"></td></tr><tr><td><strong>5</strong></td><td></td><td><input type=\"text\" id=\"q5_input\" name=\"q5\" placeholder=\"answer\"></td></tr></tbody></table></section>",
+          "groupId": "group-2",
+          "kind": "table_completion",
+          "leadHtml": "<p>Questions 4-5</p>",
+          "questionIds": [
+            "q4",
+            "q5"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260809143539-16b2e47f/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/complex-reading.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/parser/complex-reading.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [
+        {
+          "answers": {
+            "1": "TRUE",
+            "2": "FALSE",
+            "3": "NOT GIVEN",
+            "4": "maps",
+            "5": "diaries"
+          },
+          "source": "b005"
+        }
+      ],
+      "issues": [],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001"
+          ],
+          "title": "complex reading"
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b002"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b002"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "TRUE",
+                "FALSE",
+                "NOT GIVEN"
+              ],
+              "type": "radio"
+            },
+            "kind": "true_false_not_given",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "groupId": "group-1",
+          "heading": "Questions 1-3",
+          "instructionText": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 The archive moved into a renovated warehouse. 2 Visitors cannot inspect maps at the new site. 3 The passage says the museum opened in 1901.",
+          "kindHint": "true_false_not_given",
+          "layoutHint": "list",
+          "questionRange": [
+            1,
+            3
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 "
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b003",
+            "b004"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b003",
+              "b004"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "table_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b003",
+              "reason": "same-section-continuation",
+              "toBlockId": "b004"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 4-5",
+          "instructionText": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each",
+          "kindHint": "table_completion",
+          "layoutHint": "table",
+          "questionRange": [
+            4,
+            5
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "answer. Item | Location maps | room diaries | room"
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": []
+    }
+  }
+}

@@ -1,0 +1,218 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "private-random-02",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-02.pdf",
+    "originalName": "162. P3 - Sea Change for Salinity 土地盐碱化.pdf",
+    "sha256": "ae0017d25606595ea0d870e1fcf88832a1c7e53d7082c9add2149cca2b3cd057",
+    "sizeBytes": 903212,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "question",
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 6,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 7,
+        "roles": [
+          "needs_review"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          27,
+          33
+        ],
+        "kind": "matching_information",
+        "slotIds": [
+          "q27",
+          "q28",
+          "q29",
+          "q30",
+          "q31",
+          "q32",
+          "q33"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          34,
+          36
+        ],
+        "kind": "matching",
+        "slotIds": [
+          "q34",
+          "q35",
+          "q36"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          37,
+          40
+        ],
+        "kind": "single_choice",
+        "slotIds": [
+          "q37",
+          "q38",
+          "q39",
+          "q40"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q27",
+        "displayNumber": "27",
+        "responseType": "select"
+      },
+      {
+        "id": "q28",
+        "displayNumber": "28",
+        "responseType": "select"
+      },
+      {
+        "id": "q29",
+        "displayNumber": "29",
+        "responseType": "select"
+      },
+      {
+        "id": "q30",
+        "displayNumber": "30",
+        "responseType": "select"
+      },
+      {
+        "id": "q31",
+        "displayNumber": "31",
+        "responseType": "select"
+      },
+      {
+        "id": "q32",
+        "displayNumber": "32",
+        "responseType": "select"
+      },
+      {
+        "id": "q33",
+        "displayNumber": "33",
+        "responseType": "select"
+      },
+      {
+        "id": "q34",
+        "displayNumber": "34",
+        "responseType": "select"
+      },
+      {
+        "id": "q35",
+        "displayNumber": "35",
+        "responseType": "select"
+      },
+      {
+        "id": "q36",
+        "displayNumber": "36",
+        "responseType": "select"
+      },
+      {
+        "id": "q37",
+        "displayNumber": "37",
+        "responseType": "radio"
+      },
+      {
+        "id": "q38",
+        "displayNumber": "38",
+        "responseType": "radio"
+      },
+      {
+        "id": "q39",
+        "displayNumber": "39",
+        "responseType": "radio"
+      },
+      {
+        "id": "q40",
+        "displayNumber": "40",
+        "responseType": "radio"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "样本使用固定随机种子抽取；V1 派生标注是可复现的初始契约，正式评分前仍需人工确认。",
+    "V1 parser emitted 2 warning(s); warning details remain part of the baseline."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/private-random-02.json",
+    "observed": {
+      "pageCount": 7,
+      "blockCount": 49,
+      "groupCount": 3,
+      "slotCount": 14,
+      "assetCount": 0,
+      "answerCount": 14,
+      "warningCount": 2,
+      "groupKinds": [
+        "matching_information",
+        "matching",
+        "single_choice"
+      ],
+      "questionIds": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

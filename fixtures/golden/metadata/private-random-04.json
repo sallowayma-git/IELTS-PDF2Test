@@ -1,0 +1,201 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "private-random-04",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-04.pdf",
+    "originalName": "65. P3 - Does class size matter 课堂规模.pdf",
+    "sha256": "c17bcb3af9554d2cdc3866d7e656925d5510797fcbe3bad1e28d746829a183a5",
+    "sizeBytes": 632988,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question",
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 6,
+        "roles": [
+          "needs_review"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          27,
+          31
+        ],
+        "kind": "matching_information",
+        "slotIds": [
+          "q27",
+          "q28",
+          "q29",
+          "q30",
+          "q31"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          32,
+          40
+        ],
+        "kind": "classification",
+        "slotIds": [
+          "q32",
+          "q33",
+          "q34",
+          "q35",
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q27",
+        "displayNumber": "27",
+        "responseType": "select"
+      },
+      {
+        "id": "q28",
+        "displayNumber": "28",
+        "responseType": "select"
+      },
+      {
+        "id": "q29",
+        "displayNumber": "29",
+        "responseType": "select"
+      },
+      {
+        "id": "q30",
+        "displayNumber": "30",
+        "responseType": "select"
+      },
+      {
+        "id": "q31",
+        "displayNumber": "31",
+        "responseType": "select"
+      },
+      {
+        "id": "q32",
+        "displayNumber": "32",
+        "responseType": "text"
+      },
+      {
+        "id": "q33",
+        "displayNumber": "33",
+        "responseType": "text"
+      },
+      {
+        "id": "q34",
+        "displayNumber": "34",
+        "responseType": "text"
+      },
+      {
+        "id": "q35",
+        "displayNumber": "35",
+        "responseType": "text"
+      },
+      {
+        "id": "q36",
+        "displayNumber": "36",
+        "responseType": "text"
+      },
+      {
+        "id": "q37",
+        "displayNumber": "37",
+        "responseType": "text"
+      },
+      {
+        "id": "q38",
+        "displayNumber": "38",
+        "responseType": "text"
+      },
+      {
+        "id": "q39",
+        "displayNumber": "39",
+        "responseType": "text"
+      },
+      {
+        "id": "q40",
+        "displayNumber": "40",
+        "responseType": "text"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "样本使用固定随机种子抽取；V1 派生标注是可复现的初始契约，正式评分前仍需人工确认。",
+    "V1 parser emitted 1 warning(s); warning details remain part of the baseline."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/private-random-04.json",
+    "observed": {
+      "pageCount": 6,
+      "blockCount": 42,
+      "groupCount": 2,
+      "slotCount": 14,
+      "assetCount": 0,
+      "answerCount": 14,
+      "warningCount": 1,
+      "groupKinds": [
+        "matching_information",
+        "classification"
+      ],
+      "questionIds": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

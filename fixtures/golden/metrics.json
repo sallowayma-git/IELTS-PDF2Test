@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "GoldenMetricsV1",
+  "sourcePlanSection": "17.3-17.4",
+  "metricGroups": [
+    {
+      "id": "physical-text",
+      "metrics": [
+        { "id": "character-error-rate", "scope": "ocr-regions", "unit": "ratio", "formula": "edit_distance(reference,prediction)/reference_characters" },
+        { "id": "word-error-rate", "scope": "ocr-regions", "unit": "ratio", "formula": "word_edit_distance(reference,prediction)/reference_words" },
+        { "id": "line-boundary-f1", "scope": "page-lines", "unit": "ratio", "formula": "f1(reference_line_boundaries,predicted_line_boundaries)" },
+        { "id": "reading-order-pairwise-accuracy", "scope": "ordered-regions", "unit": "ratio", "formula": "correct_ordered_pairs/all_comparable_pairs" },
+        { "id": "region-role-macro-f1", "scope": "page-regions", "unit": "ratio", "formula": "macro_f1(reference_roles,predicted_roles)" },
+        { "id": "significant-region-coverage", "scope": "page-regions", "unit": "ratio", "formula": "assigned_significant_regions/all_significant_regions" }
+      ]
+    },
+    {
+      "id": "question-structure",
+      "metrics": [
+        { "id": "question-number-recall", "scope": "scored-slots", "unit": "ratio", "formula": "recalled_question_numbers/reference_question_numbers", "readyTarget": { "operator": ">=", "value": 0.995 } },
+        { "id": "question-number-precision", "scope": "scored-slots", "unit": "ratio", "formula": "correct_question_numbers/predicted_question_numbers" },
+        { "id": "instruction-signature-accuracy", "scope": "task-groups", "unit": "ratio", "formula": "correct_instruction_signatures/all_instruction_signatures" },
+        { "id": "task-type-accuracy", "scope": "task-groups", "unit": "ratio", "formula": "correct_task_types/all_task_groups", "readyTarget": { "operator": ">=", "value": 0.99 } },
+        { "id": "prompt-token-recall", "scope": "scored-prompts", "unit": "ratio", "formula": "recalled_prompt_tokens/reference_prompt_tokens", "readyTarget": { "operator": ">=", "value": 0.99 } },
+        { "id": "prompt-boundary-exact-match", "scope": "scored-prompts", "unit": "ratio", "formula": "exact_prompt_boundaries/all_prompts" },
+        { "id": "option-label-recall", "scope": "fixed-option-tasks", "unit": "ratio", "formula": "recalled_option_labels/reference_option_labels", "readyTarget": { "operator": "=", "value": 1 } },
+        { "id": "option-text-token-recall", "scope": "fixed-option-tasks", "unit": "ratio", "formula": "recalled_option_tokens/reference_option_tokens" },
+        { "id": "option-bank-binding-accuracy", "scope": "option-bank-tasks", "unit": "ratio", "formula": "correct_bank_bindings/all_bank_bindings", "readyTarget": { "operator": ">=", "value": 0.99 } },
+        { "id": "answer-slot-recall", "scope": "scored-slots", "unit": "ratio", "formula": "recalled_answer_slots/reference_answer_slots", "readyTarget": { "operator": "=", "value": 1 } },
+        { "id": "answer-slot-precision", "scope": "scored-slots", "unit": "ratio", "formula": "correct_answer_slots/predicted_answer_slots" },
+        { "id": "response-group-exact-match", "scope": "response-groups", "unit": "ratio", "formula": "exact_response_groups/all_response_groups" },
+        { "id": "word-limit-exact-match", "scope": "completion-groups", "unit": "ratio", "formula": "exact_word_limits/all_word_limits" },
+        { "id": "duplicate-display-numbers", "scope": "scored-slots", "unit": "count", "formula": "duplicate_display_numbers" },
+        { "id": "missing-prompt-for-scored-slot", "scope": "scored-slots", "unit": "count", "formula": "scored_slots_without_prompt" }
+      ]
+    },
+    {
+      "id": "rich-layout",
+      "metrics": [
+        { "id": "table-topology-score", "scope": "tables", "unit": "ratio", "formula": "table_topology_score(reference,prediction)" },
+        { "id": "table-content-score", "scope": "tables", "unit": "ratio", "formula": "table_content_score(reference,prediction)" },
+        { "id": "table-location-score", "scope": "tables", "unit": "ratio", "formula": "table_location_score(reference,prediction)" },
+        { "id": "figure-asset-recall", "scope": "figures", "unit": "ratio", "formula": "recalled_figure_assets/reference_figure_assets" },
+        { "id": "diagram-hotspot-iou", "scope": "diagram-hotspots", "unit": "ratio", "formula": "intersection_over_union(reference_hotspots,predicted_hotspots)" },
+        { "id": "asset-integrity-pass-rate", "scope": "referenced-assets", "unit": "ratio", "formula": "assets_with_matching_hash/all_referenced_assets", "readyTarget": { "operator": "=", "value": 1 } },
+        { "id": "visual-regression-ssim", "scope": "preview-viewports", "unit": "ratio", "formula": "ssim(reference_viewport,predicted_viewport)", "auxiliary": true }
+      ]
+    },
+    {
+      "id": "publish-runtime",
+      "metrics": [
+        { "id": "student-loader-pass-rate", "scope": "published-packages", "unit": "ratio", "formula": "loader_passes/all_loader_probes", "readyTarget": { "operator": "=", "value": 1 } },
+        { "id": "render-without-console-error", "scope": "published-packages", "unit": "ratio", "formula": "renders_without_console_error/all_render_probes", "readyTarget": { "operator": "=", "value": 1 } },
+        { "id": "all-slots-reachable", "scope": "published-packages", "unit": "ratio", "formula": "reachable_slots/all_scored_slots", "readyTarget": { "operator": "=", "value": 1 } },
+        { "id": "answer-persistence-submit-pass", "scope": "published-packages", "unit": "ratio", "formula": "persist_and_submit_passes/all_attempt_probes", "readyTarget": { "operator": "=", "value": 1 } },
+        { "id": "manifest-asset-hash-integrity", "scope": "published-packages", "unit": "ratio", "formula": "matching_manifest_asset_hashes/all_manifest_assets", "readyTarget": { "operator": "=", "value": 1 } },
+        { "id": "rollback-success-rate", "scope": "publish-fault-injection", "unit": "ratio", "formula": "successful_rollbacks/all_rollback_drills" },
+        { "id": "critical-security-issues", "scope": "all-pipeline-stages", "unit": "count", "formula": "critical_or_high_security_issues" }
+      ]
+    }
+  ],
+  "hardGates": [
+    { "id": "required-answer-slot-coverage", "metricId": "answer-slot-recall", "operator": "=", "value": 1 },
+    { "id": "duplicate-display-numbers", "metricId": "duplicate-display-numbers", "operator": "=", "value": 0 },
+    { "id": "missing-prompt-for-scored-slot", "metricId": "missing-prompt-for-scored-slot", "operator": "=", "value": 0 },
+    { "id": "fixed-option-label-coverage", "metricId": "option-label-recall", "operator": "=", "value": 1 },
+    { "id": "referenced-asset-integrity", "metricId": "asset-integrity-pass-rate", "operator": "=", "value": 1 },
+    { "id": "student-loader-probe", "metricId": "student-loader-pass-rate", "operator": "=", "value": 1 },
+    { "id": "critical-security-issues", "metricId": "critical-security-issues", "operator": "=", "value": 0 }
+  ]
+}

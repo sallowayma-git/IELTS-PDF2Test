@@ -1,0 +1,641 @@
+{
+  "schemaVersion": "LegacyCorpusReferenceIndexV1",
+  "status": "reference-only",
+  "sourceRoot": "../reading-exams",
+  "note": "This index is evidence from the legacy JS corpus only; it is not a substitute for the required source PDFs.",
+  "referenceCount": 8,
+  "missing": [],
+  "references": [
+    {
+      "fixtureId": "fishbourne-roman-palace",
+      "status": "reference-only",
+      "sourceType": "legacy-reading-exam-js",
+      "examId": "p1-high-171",
+      "title": "Fishbourne Roman Palace 罗马宫殿",
+      "category": "P1",
+      "pdfFilename": "8. P1 - Fishbourne Roman Palace 罗马宫殿【高】.pdf",
+      "legacyJsPath": "../reading-exams/p1-high-171.js",
+      "legacyJsSha256": "1341bd254a064189d3ee700e0d5383d1f33660935ee3d7ecec1a422c27555817",
+      "legacyJsSizeBytes": 14665,
+      "questionGroups": [
+        {
+          "groupId": "group-1",
+          "kind": "true_false_not_given",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "q5",
+            "q6"
+          ],
+          "questionNumbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "questionRange": [
+            1,
+            6
+          ]
+        },
+        {
+          "groupId": "group-2",
+          "kind": "short_answer",
+          "questionIds": [
+            "q7",
+            "q8",
+            "q9",
+            "q10",
+            "q11",
+            "q12",
+            "q13"
+          ],
+          "questionNumbers": [
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "questionRange": [
+            7,
+            13
+          ]
+        }
+      ],
+      "questionCount": 13,
+      "answerCount": 13,
+      "assetCount": 0
+    },
+    {
+      "fixtureId": "listening-to-the-ocean",
+      "status": "reference-only",
+      "sourceType": "legacy-reading-exam-js",
+      "examId": "p1-medium-182",
+      "title": "Listening to the Ocean 海洋探测",
+      "category": "P1",
+      "pdfFilename": "9. P1 - Listening to the Ocean 海洋探测【次】.pdf",
+      "legacyJsPath": "../reading-exams/p1-medium-182.js",
+      "legacyJsSha256": "35a2dd8d4ecd9dea6fff582e544985d4af3ce2a113fa1fdfb039e9c8b6f514e6",
+      "legacyJsSizeBytes": 17486,
+      "questionGroups": [
+        {
+          "groupId": "group-1",
+          "kind": "true_false_not_given",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4"
+          ],
+          "questionNumbers": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "questionRange": [
+            1,
+            4
+          ]
+        },
+        {
+          "groupId": "group-2",
+          "kind": "sentence_completion",
+          "questionIds": [
+            "q5",
+            "q6",
+            "q7",
+            "q8"
+          ],
+          "questionNumbers": [
+            5,
+            6,
+            7,
+            8
+          ],
+          "questionRange": [
+            5,
+            8
+          ]
+        },
+        {
+          "groupId": "group-3",
+          "kind": "single_choice",
+          "questionIds": [
+            "q9",
+            "q10",
+            "q11",
+            "q12",
+            "q13"
+          ],
+          "questionNumbers": [
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "questionRange": [
+            9,
+            13
+          ]
+        }
+      ],
+      "questionCount": 13,
+      "answerCount": 13,
+      "assetCount": 0
+    },
+    {
+      "fixtureId": "chili-peppers",
+      "status": "reference-only",
+      "sourceType": "legacy-reading-exam-js",
+      "examId": "p1-low-160",
+      "title": "Chili peppers 辣椒的历史",
+      "category": "P1",
+      "pdfFilename": "7. P1 - Chili peppers 辣椒的历史.pdf",
+      "legacyJsPath": "../reading-exams/p1-low-160.js",
+      "legacyJsSha256": "882dad1b8a6681f4b1e3727ff0b22201b87ec1ae4d439ee14a4d45ea5bb7a88e",
+      "legacyJsSizeBytes": 15240,
+      "questionGroups": [
+        {
+          "groupId": "group-1",
+          "kind": "true_false_not_given",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "q5",
+            "q6"
+          ],
+          "questionNumbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "questionRange": [
+            1,
+            6
+          ]
+        },
+        {
+          "groupId": "group-2",
+          "kind": "sentence_completion",
+          "questionIds": [
+            "q7",
+            "q8",
+            "q9",
+            "q10",
+            "q11",
+            "q12",
+            "q13"
+          ],
+          "questionNumbers": [
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "questionRange": [
+            7,
+            13
+          ]
+        }
+      ],
+      "questionCount": 13,
+      "answerCount": 13,
+      "assetCount": 0
+    },
+    {
+      "fixtureId": "petri-dish",
+      "status": "reference-only",
+      "sourceType": "legacy-reading-exam-js",
+      "examId": "p2-low-08",
+      "title": "How the Petri dish supports scientific advances 培养皿",
+      "category": "P2",
+      "pdfFilename": "105. P2 - How the Petri dish supports scientific advances 培养皿.pdf",
+      "legacyJsPath": "../reading-exams/p2-low-08.js",
+      "legacyJsSha256": "2482038bcc699d87ba7aaa5ad5d156f0a277075aab740d6519109a4aded57e09",
+      "legacyJsSizeBytes": 17687,
+      "questionGroups": [
+        {
+          "groupId": "group-1",
+          "kind": "table_completion",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "q5",
+            "q6",
+            "q14",
+            "q15",
+            "q16"
+          ],
+          "questionNumbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            14,
+            15,
+            16
+          ],
+          "questionRange": null
+        },
+        {
+          "groupId": "group-2",
+          "kind": "matching",
+          "questionIds": [
+            "q7",
+            "q8",
+            "q9",
+            "q10",
+            "q11",
+            "q12"
+          ],
+          "questionNumbers": [
+            7,
+            8,
+            9,
+            10,
+            11,
+            12
+          ],
+          "questionRange": [
+            7,
+            12
+          ]
+        },
+        {
+          "groupId": "group-3",
+          "kind": "summary_completion",
+          "questionIds": [
+            "q13",
+            "q14",
+            "q15",
+            "q16"
+          ],
+          "questionNumbers": [
+            13,
+            14,
+            15,
+            16
+          ],
+          "questionRange": [
+            13,
+            16
+          ]
+        }
+      ],
+      "questionCount": 16,
+      "answerCount": 16,
+      "assetCount": 0
+    },
+    {
+      "fixtureId": "organisational-design",
+      "status": "reference-only",
+      "sourceType": "legacy-reading-exam-js",
+      "examId": "p2-high-09",
+      "title": "Early Approaches to Organisational Design 组织设计",
+      "category": "P2",
+      "pdfFilename": "106. P2 - Early Approaches to Organisational Design 组织设计【高】.pdf",
+      "legacyJsPath": "../reading-exams/p2-high-09.js",
+      "legacyJsSha256": "f952e79a5529db5df099b202293b318184249b2006c2628e9a9089bcc0746620",
+      "legacyJsSizeBytes": 18649,
+      "questionGroups": [
+        {
+          "groupId": "group-1",
+          "kind": "multi_choice",
+          "questionIds": [
+            "q1",
+            "q2"
+          ],
+          "questionNumbers": [
+            1,
+            2
+          ],
+          "questionRange": [
+            1,
+            2
+          ]
+        },
+        {
+          "groupId": "group-2",
+          "kind": "multi_choice",
+          "questionIds": [
+            "q3",
+            "q4"
+          ],
+          "questionNumbers": [
+            3,
+            4
+          ],
+          "questionRange": [
+            3,
+            4
+          ]
+        },
+        {
+          "groupId": "group-3",
+          "kind": "multi_choice",
+          "questionIds": [
+            "q5",
+            "q6"
+          ],
+          "questionNumbers": [
+            5,
+            6
+          ],
+          "questionRange": [
+            5,
+            6
+          ]
+        },
+        {
+          "groupId": "group-4",
+          "kind": "multi_choice",
+          "questionIds": [
+            "q7",
+            "q8"
+          ],
+          "questionNumbers": [
+            7,
+            8
+          ],
+          "questionRange": [
+            7,
+            8
+          ]
+        },
+        {
+          "groupId": "group-5",
+          "kind": "matching",
+          "questionIds": [
+            "q9",
+            "q10",
+            "q11",
+            "q12",
+            "q13"
+          ],
+          "questionNumbers": [
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "questionRange": [
+            9,
+            13
+          ]
+        }
+      ],
+      "questionCount": 13,
+      "answerCount": 13,
+      "assetCount": 0
+    },
+    {
+      "fixtureId": "western-celebrity",
+      "status": "reference-only",
+      "sourceType": "legacy-reading-exam-js",
+      "examId": "p2-medium-10",
+      "title": "A study of western celebrity 西方名人",
+      "category": "P2",
+      "pdfFilename": "107. P2 - A study of western celebrity 西方名人【次】.pdf",
+      "legacyJsPath": "../reading-exams/p2-medium-10.js",
+      "legacyJsSha256": "a96a34025feb7713d392a58cfc77473c4ead83bb7b8bb898f62be0327d6dd07f",
+      "legacyJsSizeBytes": 16566,
+      "questionGroups": [
+        {
+          "groupId": "group-1",
+          "kind": "matching",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "q5",
+            "q6",
+            "q7"
+          ],
+          "questionNumbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "questionRange": [
+            1,
+            7
+          ]
+        },
+        {
+          "groupId": "group-2",
+          "kind": "matching",
+          "questionIds": [
+            "q8",
+            "q9",
+            "q10"
+          ],
+          "questionNumbers": [
+            8,
+            9,
+            10
+          ],
+          "questionRange": [
+            8,
+            10
+          ]
+        },
+        {
+          "groupId": "group-3",
+          "kind": "summary_completion",
+          "questionIds": [
+            "q11",
+            "q12",
+            "q13"
+          ],
+          "questionNumbers": [
+            11,
+            12,
+            13
+          ],
+          "questionRange": [
+            11,
+            13
+          ]
+        }
+      ],
+      "questionCount": 13,
+      "answerCount": 13,
+      "assetCount": 0
+    },
+    {
+      "fixtureId": "conformity",
+      "status": "reference-only",
+      "sourceType": "legacy-reading-exam-js",
+      "examId": "p3-low-44",
+      "title": "Conformity 从众心理",
+      "category": "P3",
+      "pdfFilename": "138. P3 - Conformity 从众心理.pdf",
+      "legacyJsPath": "../reading-exams/p3-low-44.js",
+      "legacyJsSha256": "c583e74d3656950efe34d250dfd46833df738156565402092380d66f0b47f4ce",
+      "legacyJsSizeBytes": 14522,
+      "questionGroups": [
+        {
+          "groupId": "group-1",
+          "kind": "yes_no_not_given",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4"
+          ],
+          "questionNumbers": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "questionRange": [
+            1,
+            4
+          ]
+        },
+        {
+          "groupId": "group-2",
+          "kind": "summary_completion",
+          "questionIds": [
+            "q5",
+            "q6",
+            "q7",
+            "q8",
+            "q9"
+          ],
+          "questionNumbers": [
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "questionRange": [
+            5,
+            9
+          ]
+        },
+        {
+          "groupId": "group-3",
+          "kind": "sentence_completion",
+          "questionIds": [
+            "q10",
+            "q11",
+            "q12",
+            "q13",
+            "q14"
+          ],
+          "questionNumbers": [
+            10,
+            11,
+            12,
+            13,
+            14
+          ],
+          "questionRange": [
+            10,
+            14
+          ]
+        }
+      ],
+      "questionCount": 14,
+      "answerCount": 14,
+      "assetCount": 0
+    },
+    {
+      "fixtureId": "sleep-study",
+      "status": "reference-only",
+      "sourceType": "legacy-reading-exam-js",
+      "examId": "p1-low-45",
+      "title": "Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions 部落睡眠研究",
+      "category": "P1",
+      "pdfFilename": "139. P1 - Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions 部落睡眠研究.pdf",
+      "legacyJsPath": "../reading-exams/p1-low-45.js",
+      "legacyJsSha256": "f9d8a14ea4c25c9068335f6ae134d9bf76f0543fcbcc779c5cb2980d14b6b4d0",
+      "legacyJsSizeBytes": 13769,
+      "questionGroups": [
+        {
+          "groupId": "group-1",
+          "kind": "true_false_not_given",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4"
+          ],
+          "questionNumbers": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "questionRange": [
+            1,
+            4
+          ]
+        },
+        {
+          "groupId": "group-2",
+          "kind": "sentence_completion",
+          "questionIds": [
+            "q5",
+            "q6",
+            "q7",
+            "q8",
+            "q9",
+            "q10",
+            "q11",
+            "q12",
+            "q13"
+          ],
+          "questionNumbers": [
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ],
+          "questionRange": [
+            5,
+            13
+          ]
+        }
+      ],
+      "questionCount": 13,
+      "answerCount": 13,
+      "assetCount": 0
+    }
+  ]
+}

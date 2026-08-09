@@ -1,0 +1,93 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-map-hotspot",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-map-hotspot.pdf",
+    "sha256": "36ab101b32886e62d95ef807efac0c7e6aa172a2f5d9b3a4b5108316b81eec27",
+    "sizeBytes": 1803,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question",
+          "figure"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          4
+        ],
+        "kind": "diagram_completion",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "text"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "text"
+      }
+    ],
+    "assets": [
+      {
+        "id": "map-1",
+        "type": "map",
+        "required": true
+      }
+    ]
+  },
+  "knownIssues": [
+    "Answer locations are spatial hotspots inside the map."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-map-hotspot.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 12,
+      "groupCount": 1,
+      "slotCount": 4,
+      "assetCount": 0,
+      "answerCount": 4,
+      "warningCount": 0,
+      "groupKinds": [
+        "short_answer"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3",
+        "q4"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

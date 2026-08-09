@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "docx-smartart",
+  "source": {
+    "path": "fixtures/golden/synthetic/docx/docx-smartart.docx",
+    "sha256": "2273d3551b17db9840f3df675f8aadc13d54bfb33d8ed54a32281b49c92af632",
+    "sizeBytes": 2677,
+    "format": "docx"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question",
+          "figure"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          3
+        ],
+        "kind": "diagram_completion",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "text"
+      }
+    ],
+    "assets": [
+      {
+        "id": "smartart-1",
+        "type": "smartart",
+        "required": true
+      }
+    ]
+  },
+  "knownIssues": [
+    "SmartArt is represented by diagram parts and relationships, not only document text."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/docx-smartart.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 2,
+      "groupCount": 1,
+      "slotCount": 3,
+      "assetCount": 0,
+      "answerCount": 3,
+      "warningCount": 0,
+      "groupKinds": [
+        "short_answer"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

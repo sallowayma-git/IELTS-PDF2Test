@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ielts-author-studio.dev/phase1/quality-report-v2.schema.json",
+  "title": "QualityReportV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "state", "documentScore", "sourceCoverage", "taskScores", "hardFailures", "issues", "metrics", "evaluatedAt", "evaluatorVersion"],
+  "properties": {
+    "schemaVersion": { "const": "QualityReportV2" },
+    "state": { "type": "string", "enum": ["ready", "review_required", "blocked"] },
+    "documentScore": { "type": "number", "minimum": 0, "maximum": 1 },
+    "sourceCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+    "taskScores": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 } },
+    "hardFailures": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "issues": { "type": "array", "items": { "$ref": "#/$defs/reviewIssue" } },
+    "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
+    "evaluatedAt": { "type": "string", "format": "date-time" },
+    "evaluatorVersion": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "reviewIssue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issueId", "code", "severity", "message", "targetType", "targetId", "sourceAnchors", "suggestedActions"],
+      "properties": {
+        "issueId": { "type": "string", "minLength": 1 },
+        "code": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["info", "warning", "blocking"] },
+        "message": { "type": "string", "minLength": 1 },
+        "targetType": { "type": "string", "enum": ["document", "page", "region", "task", "response_group", "slot", "asset"] },
+        "targetId": { "type": "string", "minLength": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } },
+        "suggestedActions": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["assign_role", "edit_text", "merge_lines", "split_prompt", "attach_option_bank", "confirm_table", "confirm_figure", "replace_asset", "enter_answer", "ignore_with_reason"] }
+        },
+        "details": { "type": "object" }
+      }
+    }
+  }
+}

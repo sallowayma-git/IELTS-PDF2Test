@@ -1,0 +1,101 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-three-column",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-three-column.pdf",
+    "sha256": "472c1920cc8bda2b0c3cc657209dcaff94a17f05e219ddcc1ecd03d5ae0ffd41",
+    "sizeBytes": 1664,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage",
+          "question"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          6
+        ],
+        "kind": "matching",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4",
+          "q5",
+          "q6"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "select"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "select"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "select"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "select"
+      },
+      {
+        "id": "q5",
+        "displayNumber": "5",
+        "responseType": "select"
+      },
+      {
+        "id": "q6",
+        "displayNumber": "6",
+        "responseType": "select"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "Three columns are intentionally ambiguous without geometry-aware ordering."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-three-column.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 16,
+      "groupCount": 1,
+      "slotCount": 6,
+      "assetCount": 0,
+      "answerCount": 6,
+      "warningCount": 0,
+      "groupKinds": [
+        "matching"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5",
+        "q6"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

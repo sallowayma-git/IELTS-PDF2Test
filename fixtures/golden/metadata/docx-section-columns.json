@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "docx-section-columns",
+  "source": {
+    "path": "fixtures/golden/synthetic/docx/docx-section-columns.docx",
+    "sha256": "32ec265d746f6d988c6060a3a261e1570f76dad322a2e7ed0b05a5a60ac152f5",
+    "sizeBytes": 2111,
+    "format": "docx"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage",
+          "question"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          4
+        ],
+        "kind": "matching",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "select"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "select"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "select"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "select"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "Section column settings must survive OOXML extraction."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/docx-section-columns.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 3,
+      "groupCount": 1,
+      "slotCount": 4,
+      "assetCount": 0,
+      "answerCount": 4,
+      "warningCount": 0,
+      "groupKinds": [
+        "matching"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3",
+        "q4"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

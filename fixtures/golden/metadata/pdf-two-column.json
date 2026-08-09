@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-two-column",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-two-column.pdf",
+    "sha256": "552d9b98ada71d3ddd21d063d8539268d5fe87a0051723d65c29274a2ee7b81d",
+    "sizeBytes": 1694,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage",
+          "question"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          4
+        ],
+        "kind": "true_false_not_given",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "radio"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "radio"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "radio"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "radio"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "Two visual columns must remain separate in reading order."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-two-column.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 12,
+      "groupCount": 1,
+      "slotCount": 4,
+      "assetCount": 0,
+      "answerCount": 4,
+      "warningCount": 0,
+      "groupKinds": [
+        "true_false_not_given"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3",
+        "q4"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

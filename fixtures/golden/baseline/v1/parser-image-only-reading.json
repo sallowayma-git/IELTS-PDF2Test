@@ -1,0 +1,168 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "parser-image-only-reading",
+  "source": {
+    "path": "fixtures/parser/image-only-reading.pdf",
+    "sha256": "b878279d1035d8cf93e78600123b3adbe34bb9b3782f43a275eeec8343df8daa",
+    "sizeBytes": 29347
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 1,
+    "blockCount": 1,
+    "groupCount": 0,
+    "slotCount": 0,
+    "assetCount": 0,
+    "answerCount": 0,
+    "warningCount": 1,
+    "groupKinds": [],
+    "questionIds": [],
+    "roles": []
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {},
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No question range heading detected; manual split required.",
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "image-only-reading.pdf",
+            "role": "MainQuestion",
+            "sha256": "b878279d1035d8cf93e78600123b3adbe34bb9b3782f43a275eeec8343df8daa",
+            "sizeBytes": 29347,
+            "storedName": "image-only-reading.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "image only reading"
+      },
+      "groups": [],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>[No extractable text on page 1]</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [],
+        "sourceBlockIds": [
+          "b001"
+        ],
+        "title": "image only reading"
+      },
+      "questionDisplayMap": {},
+      "questionOrder": [],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 1]</p>",
+              "pageIndex": 1,
+              "text": "[No extractable text on page 1]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "image-only-reading.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 1 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {},
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:b878279d1035d8cf93e78600123b3adbe34bb9b3782f43a275eeec8343df8daa;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "image-only-reading.pdf",
+        "questionIntroHtml": "<h3>Questions</h3>",
+        "questionUmbrellaRanges": [],
+        "title": "image only reading"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>[No extractable text on page 1]</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {},
+      "questionGroups": [],
+      "questionOrder": [],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260809143540-b44c2207/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/image-only-reading.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/parser/image-only-reading.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No question range heading detected; manual split required.",
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001"
+          ],
+          "title": "image only reading"
+        }
+      ],
+      "questionGroupCandidates": [],
+      "umbrellaQuestionRanges": []
+    }
+  }
+}

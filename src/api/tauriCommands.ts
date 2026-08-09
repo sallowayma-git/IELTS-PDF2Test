@@ -12,6 +12,7 @@ import type {
   JobFilter,
   JobMetaPatch,
   DiagnosticsSettings,
+  DocumentIrV2OverlayResult,
   EnvironmentPreflightReport,
   LlmProfilePublic,
   LlmSuggestion,
@@ -75,6 +76,13 @@ export async function importSourceFile(
 
 export async function parseDocument(jobId: string, options: ParseOptions): Promise<DocumentIr> {
   return command("parse_document", { jobId, options });
+}
+
+export async function debugDocumentIrV2Overlay(jobId: string): Promise<DocumentIrV2OverlayResult> {
+  if (!isTauriRuntime()) {
+    throw new Error("document_ir_v2_overlay_requires_tauri_runtime");
+  }
+  return command("debug_document_ir_v2_overlay", { jobId });
 }
 
 export async function rerunOcr(jobId: string, pageIndices: number[]): Promise<DocumentIr> {

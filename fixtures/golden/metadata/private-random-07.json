@@ -1,0 +1,199 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "private-random-07",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-07.pdf",
+    "originalName": "51. P2 - The dingo debate 澳洲野犬_澳洲野狗.pdf",
+    "sha256": "e4a4d4f09524ef33c9407c1e989c2d21683d852688ddaa682d85339001a016c2",
+    "sizeBytes": 724778,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "question",
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "needs_review"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          14,
+          20
+        ],
+        "kind": "matching_information",
+        "slotIds": [
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19",
+          "q20"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          21,
+          23
+        ],
+        "kind": "matching",
+        "slotIds": [
+          "q21",
+          "q22",
+          "q23"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          24,
+          26
+        ],
+        "kind": "sentence_completion",
+        "slotIds": [
+          "q24",
+          "q25",
+          "q26"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q14",
+        "displayNumber": "14",
+        "responseType": "select"
+      },
+      {
+        "id": "q15",
+        "displayNumber": "15",
+        "responseType": "select"
+      },
+      {
+        "id": "q16",
+        "displayNumber": "16",
+        "responseType": "select"
+      },
+      {
+        "id": "q17",
+        "displayNumber": "17",
+        "responseType": "select"
+      },
+      {
+        "id": "q18",
+        "displayNumber": "18",
+        "responseType": "select"
+      },
+      {
+        "id": "q19",
+        "displayNumber": "19",
+        "responseType": "select"
+      },
+      {
+        "id": "q20",
+        "displayNumber": "20",
+        "responseType": "select"
+      },
+      {
+        "id": "q21",
+        "displayNumber": "21",
+        "responseType": "select"
+      },
+      {
+        "id": "q22",
+        "displayNumber": "22",
+        "responseType": "select"
+      },
+      {
+        "id": "q23",
+        "displayNumber": "23",
+        "responseType": "select"
+      },
+      {
+        "id": "q24",
+        "displayNumber": "24",
+        "responseType": "text"
+      },
+      {
+        "id": "q25",
+        "displayNumber": "25",
+        "responseType": "text"
+      },
+      {
+        "id": "q26",
+        "displayNumber": "26",
+        "responseType": "text"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "样本使用固定随机种子抽取；V1 派生标注是可复现的初始契约，正式评分前仍需人工确认。",
+    "V1 parser emitted 1 warning(s); warning details remain part of the baseline."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/private-random-07.json",
+    "observed": {
+      "pageCount": 5,
+      "blockCount": 46,
+      "groupCount": 3,
+      "slotCount": 13,
+      "assetCount": 0,
+      "answerCount": 13,
+      "warningCount": 1,
+      "groupKinds": [
+        "matching_information",
+        "matching",
+        "sentence_completion"
+      ],
+      "questionIds": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

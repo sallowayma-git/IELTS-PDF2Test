@@ -7,9 +7,11 @@ use crate::{
         parse_answer_source_candidates, select_llm_profile, vision_transcription_for_job,
     },
     cleanup::minimize_process_artifacts_after_authoring,
+    environment::document_ir_v2_shadow_enabled,
     job_store::{load_job, update_job},
     main_source_file,
     parser::{manual_transcription_document_ir, missing_source_document_ir, parse_source_document},
+    pdf_facts_shadow::{write_pdf_facts_shadow, SHADOW_ARTIFACT_FILE, SHADOW_ERROR_FILE},
     reading_source::{
         answer_key_from_authoring, display_map_from_authoring, question_order_from_authoring,
         render_group_body_html,
@@ -103,6 +105,32 @@ pub(crate) fn parse_document_core(
     } else {
         missing_source_document_ir(&job, mode, "no MainQuestion source file")
     };
+    if document_ir_v2_shadow_enabled() {
+        if let Some(source) = main_source_file(&job).filter(|source| source.file_type == "pdf") {
+            let upload_path = dir.join("uploads").join(&source.stored_name);
+            if upload_path.exists() {
+                let shadow_path = dir.join(SHADOW_ARTIFACT_FILE);
+                let error_path = dir.join(SHADOW_ERROR_FILE);
+                match write_pdf_facts_shadow(&job, source, &upload_path, &shadow_path) {
+                    Ok(_) => {
+                        let _ = fs::remove_file(error_path);
+                    }
+                    Err(error) => {
+                        let _ = write_json(
+                            &error_path,
+                            &json!({
+                                "schemaVersion": "DocumentIRV2ShadowErrorV1",
+                                "jobId": job.job_id,
+                                "sourceFileId": source.file_id,
+                                "error": error,
+                                "recordedAt": Utc::now().to_rfc3339()
+                            }),
+                        );
+                    }
+                }
+            }
+        }
+    }
     archive_current_draft_for_source_replacement(&dir, "parse_document")?;
     write_json(&dir.join("document-ir.json"), &ir)?;
     let _ = write_source_review_status(root, job_id, Some(&ir), false, None)?;

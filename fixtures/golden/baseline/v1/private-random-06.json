@@ -1,0 +1,3425 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "private-random-06",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-06.pdf",
+    "sha256": "c648162b838efeac0d1490704d6be7101dfdab90b38bb78dbefc47b9f0690a85",
+    "sizeBytes": 1058751
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 6,
+    "blockCount": 43,
+    "groupCount": 3,
+    "slotCount": 14,
+    "assetCount": 0,
+    "answerCount": 14,
+    "warningCount": 2,
+    "groupKinds": [
+      "single_choice",
+      "yes_no_not_given",
+      "summary_completion"
+    ],
+    "questionIds": [
+      "q27",
+      "q28",
+      "q29",
+      "q30",
+      "q31",
+      "q32",
+      "q33",
+      "q34",
+      "q35",
+      "q36",
+      "q37",
+      "q38",
+      "q39",
+      "q40"
+    ],
+    "roles": [
+      "passage",
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q27": "",
+        "q28": "",
+        "q29": "",
+        "q30": "",
+        "q31": "",
+        "q32": "",
+        "q33": "",
+        "q34": "",
+        "q35": "",
+        "q36": "",
+        "q37": "",
+        "q38": "",
+        "q39": "",
+        "q40": ""
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "private-random-06.pdf",
+            "role": "MainQuestion",
+            "sha256": "c648162b838efeac0d1490704d6be7101dfdab90b38bb78dbefc47b9f0690a85",
+            "sizeBytes": 1058751,
+            "storedName": "private-random-06.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "private random 06"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b009",
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021"
+          ],
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b009",
+              "reason": "same-section-continuation",
+              "toBlockId": "b010"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b010",
+              "reason": "same-section-continuation",
+              "toBlockId": "b011"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            }
+          ],
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 27-31"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "single_choice",
+          "layout": {
+            "layoutHint": "list",
+            "template": "single_choice_list"
+          },
+          "questionRange": [
+            27,
+            31
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "27",
+              "id": "q27",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "In the opinion of the writer, the biographers Balfour and Crouch A understated the role played by Stevenson’s family. B misunderstood Stevenson’s religious beliefs. C overestimated other writers’ influence on Stevenson. D elevated Stevenson above his true status as a writer.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "28",
+              "id": "q28",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "What is the writer’s main point about Stevenson in the second paragraph? A The public judged him more fairly than the critics. B Recent criticism of him has been justified. C Critics argued that his style covered up his faults. D The ethical nature of his stories was often criticized.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "29",
+              "id": "q29",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "According to the writer, the adventure story A is more appropriate for books than films. B can be used by writers to tell moral stories. C is more fashionable today than in the past. D has been used by other writers but not Stevenson.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "30",
+              "id": "q30",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "What point does the writer make about Stevenson and Scotland? A His ideas contrasted with those of many Scots. B He demonstrated great sympathy for Scotland’s problems. C He was not considered a true Scot as he was not born there. D His unflattering stories about Scotland angered many Scots.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "31",
+              "id": "q31",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "According to the writer, Stevenson’s own lifestyle A was envied by his friends. B was responsible for his early death. C attracted more attention than his books. D did not prepare him for living in Samoa.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [
+            "Option reuse was inferred from question type; source wording did not state it explicitly."
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b009",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 27–31"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b010",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose the correct letter A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter in boxes 27–31 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "27 In the opinion of the writer, the biographers Balfour and Crouch"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A understated the role played by Stevenson’s family. B misunderstood Stevenson’s religious beliefs. C overestimated othe"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "28 What is the writer’s main point about Stevenson in the second paragraph?"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A The public judged him more fairly than the critics. B Recent criticism of him has been justified. C Critics argued tha"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "29 According to the writer, the adventure story"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A is more appropriate for books than films. B can be used by writers to tell moral stories. C is more fashionable today "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "30 What point does the writer make about Stevenson and Scotland?"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A His ideas contrasted with those of many Scots. B He demonstrated great sympathy for Scotland’s problems. C He was not "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "31 According to the writer, Stevenson’s own lifestyle"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A was envied by his friends. B was responsible for his early death. C attracted more attention than his books. D did not"
+            }
+          ],
+          "sourceBlockIds": [
+            "b009",
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 32-35"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "yes_no_not_given",
+          "layout": {
+            "layoutHint": "list",
+            "template": "ynng_list"
+          },
+          "questionRange": [
+            32,
+            35
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "32",
+              "id": "q32",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "YES",
+                  "NO",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Although Oscar Wilde admired Stevenson’s work, he believed Stevenson could have written something better.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "33",
+              "id": "q33",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "YES",
+                  "NO",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Stevenson encouraged Oscar Wilde to start writing.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "34",
+              "id": "q34",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "YES",
+                  "NO",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Galsworthy had greater respect for Hardy than Stevenson.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "35",
+              "id": "q35",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "YES",
+                  "NO",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "More research is needed regarding Stevenson’s influence on Chesterton.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 32–35"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Do the following statements agree with the views of the writer in Reading Passage 3?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In boxes 32–35 on your answer sheet write"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIV"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "32 Although Oscar Wilde admired Stevenson’s work, he believed Stevenson could have written something better."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "33 Stevenson encouraged Oscar Wilde to start writing."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "34 Galsworthy had greater respect for Hardy than Stevenson."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "35 More research is needed regarding Stevenson’s influence on Chesterton."
+            }
+          ],
+          "sourceBlockIds": [
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            }
+          ],
+          "groupId": "group-3",
+          "instruction": [
+            "Questions 36-40"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "summary_completion",
+          "layout": {
+            "layoutHint": "inline_completion",
+            "notes": "Questions 36–40 Complete the summary using the list of words and phrases, A–I below. Write the correct letter, A–I, in boxes 36–40 on your answer sheet. Robert Louis Stevenson and Sir Walter Scott Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be considered Scotland’s best writer. Scott had greater 36 _____, but Stevenson had more 37_____, and the same distinction can be made between the two composers Shostakovich and Prokofiev. It is true that Scott’s books showed more 38 _____ when it came to tragedy, though in an old-fashioned way, while Stevenson’s books are still popular because of his 39 _____. And Stevenson’s understanding of 40 _____ has resulted in the widespread use of an expression from one of his books. A natural ability B critical acclaim C humour D romance E colourful language F technical control G storytelling H depth I human nature",
+            "template": "summary_text_completion"
+          },
+          "questionRange": [
+            36,
+            40
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "36",
+              "id": "q36",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": ", but Stevenson had more",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "37",
+              "id": "q37",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": ", and the same distinction can be made between the two composers Shostakovich and Prokofiev. It is true that Scott’s books showed more",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "38",
+              "id": "q38",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "when it came to tragedy, though in an old-fashioned way, while Stevenson’s books are still popular because of his",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "39",
+              "id": "q39",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "And Stevenson’s understanding of",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "40",
+              "id": "q40",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "has resulted in the widespread use of an expression from one of his books. A natural ability B critical acclaim C humour D romance E colourful language F technical control G storytelling H depth I human nature",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 36–40"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary using the list of words and phrases, A–I below."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A–I, in boxes 36–40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Robert Louis Stevenson and Sir Walter Scott"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "considered Scotland’s best writer. Scott had greater 36 _____, but Stevenson had more"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "37_____, and the same distinction can be made between the two composers"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Shostakovich and Prokofiev. It is true that Scott’s books showed more 38 _____ when it"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "came to tragedy, though in an old-fashioned way, while Stevenson’s books are still"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "popular because of his 39 _____. And Stevenson’s understanding of 40 _____ has"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "resulted in the widespread use of an expression from one of his books."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A natural ability B critical acclaim C humour D romance E colourful language F technical control G storytelling H depth "
+            }
+          ],
+          "sourceBlockIds": [
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   3</p>\n<p>The writer of some of the best-known stories in the English language, including      \nTreasure Island and The Strange Case of Dr. Jekyll and Mr. Hyde</p>\n<p>It is more than 100 years since the death of the Scottish writer Robert Louis Stevenson on \nthe South Pacific island of Samoa, and it seems that time has not been kind to Stevenson’s \nmemory. Immediately after his death, his family and friends set to work to fashion the \nlegend of Robert Louis Stevenson, or R. L. S., as he became known, one of the few writers \nfamiliar from his initials alone. Subsequent works of biography then turned him into a writer \nof almost religious importance. One example was literary critic Balfour, who in 1901 \nportrayed Stevenson’s family as ministering angels to the dying genius during his final \nillness. Similarly, the biographer Crouch absurdly overstated Stevenson’s significance by \nplacing him in the same company as those most revered names in English literature: \nShakespeare and Keats. The reaction to this nonsense was a number of highly critical \nassessments of Stevenson’s legacy in the 1920s.</p>\n<p>Normally, the critical pendulum can be relied on to swing back again, but there are several \naspects of Stevenson’s work that have, until recently, acted against a more balanced \nappraisal. First is the allegation that Stevenson was a mere master of linguistic fireworks, \nwho lacked moral depth. Some critics accused him of being a literary charlatan, of juggling \nwords very prettily to strike effects which overawed an ignorant public, and served to \ndistract from the inadequacy of his ideas.</p>\n<p>Then there has long been a prejudice against the adventure story as the proper medium for \ndeep moral seriousness, a prejudice which is still extremely influential today. It seems that \nwe can accept that an adventure film can successfully express profound moral truths, but \nwe reject the same idea for a book. The absurdity of this becomes apparent when we think \nof writers like Joseph Conrad and Graham Greene, but it is no use pretending that this bias \nagainst adventure stories is not part of our high culture. A further problem is that Stevenson \nhas often not found favour in the land of his birth because his conservatism so often \ncollides with the strong radical tradition in Scotland. His many escapist stories and \npreference for living abroad have led to accusations that he camouflaged Scotland’s \nproblems. Lastly, the high adventure of Stevenson’s own lifestyle has sometimes obscured \nhis output, his life a greater story than any he could devise. This was precisely what his \nfriends feared would happen towards the end of his short life: his art might be overwhelmed \nby the drama of life in Samoa.</p>\n<p>One consequence of this has been that Stevenson’s influence on other writers has too \noften been neglected. The writer and poet Oscar Wilde was deeply influenced by \nStevenson, even though he declared that Stevenson would have produced better work if he \nhad lived in London rather than Samoa. Stevenson tends to stick in the throat even of those \nwriters who would like to spit him out, such as Shaw, who claimed to have learned from him \nthat the romantic hero is always mocked by reality. Likewise, the writer Galsworthy, who \nbegan as a determined critic, later changed his mind and said that the superiority of \nStevenson over the novelist Hardy was that Stevenson was all life and Hardy all death. The \ninfluence on the novelist Chesterton would also repay detailed study, for it was through him \nthat Stevenson has managed to cross the ages, emerging as an influence on the modernist \nmovement and our own contemporary Latin American school of “magical realism”.</p>\n<p>When making an assessment of his life and work one question must inevitably be asked: \nwas Robert Louis Stevenson Scotland’s greatest writer of English prose? For most \ncommentators this honour falls to Sir Walter Scott, author of Ivanhoe among many other \nclassic novels, and it is true that in terms of craftsmanship, precision and the ability to \nminutely regulate language to create the desired effect, Scott takes the prize. However, this \nis not the same thing at all as inherent talent; by way of comparison one may take the \nexample of the two great Russian composers Shostakovich and Prokofiev, of whom the \nformer had learned more precise skills of execution but the latter’s intrinsic genius was \ngreater, and so it seems to be with Scott and Stevenson. Admittedly, Scott’s detailed style \ndoes permit his stories to explore levels of tragedy that are beyond Stevenson’s reach, but \nin this regard they have the musty smell of the museum, somehow artificial and removed \nfrom modern day reality. On the other hand, Stevenson’s skill with plotting and narrative \ngives his books a timeless quality, so that they still live today, and Stevenson was also the \nshrewder judge of behaviour and psychology. For example, his compelling descriptions of a \nman with a split personality in The Strange Case of Dr. Jekyll and Mr. Hyde have proved so \naccessible and accurate that the expression “Jekyll and Hyde” has entered common \nEnglish usage. Even if we do not see a revival of critical interest in this great Scottish writer, \nit is to be hoped that readers go back to Robert Louis Stevenson’s magnificent stories and \nreassess this neglected genius.</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 27-40",
+            "questionRange": [
+              27,
+              40
+            ],
+            "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Robert Louis Stevenson"
+          }
+        ],
+        "sourceBlockIds": [
+          "b001",
+          "b003",
+          "b004",
+          "b005",
+          "b006",
+          "b007",
+          "b008"
+        ],
+        "title": "RE ADI NG P AS S AGE 3"
+      },
+      "questionDisplayMap": {
+        "q27": "27",
+        "q28": "28",
+        "q29": "29",
+        "q30": "30",
+        "q31": "31",
+        "q32": "32",
+        "q33": "33",
+        "q34": "34",
+        "q35": "35",
+        "q36": "36",
+        "q37": "37",
+        "q38": "38",
+        "q39": "39",
+        "q40": "40"
+      },
+      "questionOrder": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>RE ADI NG  P AS S AGE   3</p>",
+              "pageIndex": 1,
+              "text": "RE ADI NG  P AS S AGE   3  "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>You should spend about 20 minutes on Questions 27-40, which are based on Reading \nPassage 3 below. \n Robert Louis Stevenson</p>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading \nPassage 3 below. \n Robert Louis Stevenson "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The writer of some of the best-known stories in the English language, including      \nTreasure Island and The Strange Case of Dr. Jekyll and Mr. Hyde</p>",
+              "pageIndex": 1,
+              "text": "The writer of some of the best-known stories in the English language, including      \nTreasure Island and The Strange Case of Dr. Jekyll and Mr. Hyde "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>It is more than 100 years since the death of the Scottish writer Robert Louis Stevenson on \nthe South Pacific island of Samoa, and it seems that time has not been kind to Stevenson’s \nmemory. Immediately after his death, his family and friends set to work to fashion the \nlegend of Robert Louis Stevenson, or R. L. S., as he became known, one of the few writers \nfamiliar from his initials alone. Subsequent works of biography then turned him into a writer \nof almost religious importance. One example was literary critic Balfour, who in 1901 \nportrayed Stevenson’s family as ministering angels to the dying genius during his final \nillness. Similarly, the biographer Crouch absurdly overstated Stevenson’s significance by \nplacing him in the same company as those most revered names in English literature: \nShakespeare and Keats. The reaction to this nonsense was a number of highly critical \nassessments of Stevenson’s legacy in the 1920s.</p>",
+              "pageIndex": 1,
+              "text": "It is more than 100 years since the death of the Scottish writer Robert Louis Stevenson on \nthe South Pacific island of Samoa, and it seems that time has not been kind to Stevenson’s \nmemory. Immediately after his death, his family and friends set to work to fashion the \nlegend of Robert Louis Stevenson, or R. L. S., as he became known, one of the few writers \nfamiliar from his initials alone. Subsequent works of biography then turned him into a writer \nof almost religious importance. One example was literary critic Balfour, who in 1901 \nportrayed Stevenson’s family as ministering angels to the dying genius during his final \nillness. Similarly, the biographer Crouch absurdly overstated Stevenson’s significance by \nplacing him in the same company as those most revered names in English literature: \nShakespeare and Keats. The reaction to this nonsense was a number of highly critical \nassessments of Stevenson’s legacy in the 1920s. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Normally, the critical pendulum can be relied on to swing back again, but there are several \naspects of Stevenson’s work that have, until recently, acted against a more balanced \nappraisal. First is the allegation that Stevenson was a mere master of linguistic fireworks, \nwho lacked moral depth. Some critics accused him of being a literary charlatan, of juggling \nwords very prettily to strike effects which overawed an ignorant public, and served to \ndistract from the inadequacy of his ideas.</p>",
+              "pageIndex": 1,
+              "text": "Normally, the critical pendulum can be relied on to swing back again, but there are several \naspects of Stevenson’s work that have, until recently, acted against a more balanced \nappraisal. First is the allegation that Stevenson was a mere master of linguistic fireworks, \nwho lacked moral depth. Some critics accused him of being a literary charlatan, of juggling \nwords very prettily to strike effects which overawed an ignorant public, and served to \ndistract from the inadequacy of his ideas. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Then there has long been a prejudice against the adventure story as the proper medium for \ndeep moral seriousness, a prejudice which is still extremely influential today. It seems that \nwe can accept that an adventure film can successfully express profound moral truths, but \nwe reject the same idea for a book. The absurdity of this becomes apparent when we think \nof writers like Joseph Conrad and Graham Greene, but it is no use pretending that this bias \nagainst adventure stories is not part of our high culture. A further problem is that Stevenson \nhas often not found favour in the land of his birth because his conservatism so often \ncollides with the strong radical tradition in Scotland. His many escapist stories and \npreference for living abroad have led to accusations that he camouflaged Scotland’s \nproblems. Lastly, the high adventure of Stevenson’s own lifestyle has sometimes obscured \nhis output, his life a greater story than any he could devise. This was precisely what his \nfriends feared would happen towards the end of his short life: his art might be overwhelmed \nby the drama of life in Samoa.</p>",
+              "pageIndex": 1,
+              "text": "Then there has long been a prejudice against the adventure story as the proper medium for \ndeep moral seriousness, a prejudice which is still extremely influential today. It seems that \nwe can accept that an adventure film can successfully express profound moral truths, but \nwe reject the same idea for a book. The absurdity of this becomes apparent when we think \nof writers like Joseph Conrad and Graham Greene, but it is no use pretending that this bias \nagainst adventure stories is not part of our high culture. A further problem is that Stevenson \nhas often not found favour in the land of his birth because his conservatism so often \ncollides with the strong radical tradition in Scotland. His many escapist stories and \npreference for living abroad have led to accusations that he camouflaged Scotland’s \nproblems. Lastly, the high adventure of Stevenson’s own lifestyle has sometimes obscured \nhis output, his life a greater story than any he could devise. This was precisely what his \nfriends feared would happen towards the end of his short life: his art might be overwhelmed \nby the drama of life in Samoa. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>One consequence of this has been that Stevenson’s influence on other writers has too \noften been neglected. The writer and poet Oscar Wilde was deeply influenced by \nStevenson, even though he declared that Stevenson would have produced better work if he \nhad lived in London rather than Samoa. Stevenson tends to stick in the throat even of those \nwriters who would like to spit him out, such as Shaw, who claimed to have learned from him \nthat the romantic hero is always mocked by reality. Likewise, the writer Galsworthy, who \nbegan as a determined critic, later changed his mind and said that the superiority of \nStevenson over the novelist Hardy was that Stevenson was all life and Hardy all death. The \ninfluence on the novelist Chesterton would also repay detailed study, for it was through him \nthat Stevenson has managed to cross the ages, emerging as an influence on the modernist \nmovement and our own contemporary Latin American school of “magical realism”.</p>",
+              "pageIndex": 2,
+              "text": "One consequence of this has been that Stevenson’s influence on other writers has too \noften been neglected. The writer and poet Oscar Wilde was deeply influenced by \nStevenson, even though he declared that Stevenson would have produced better work if he \nhad lived in London rather than Samoa. Stevenson tends to stick in the throat even of those \nwriters who would like to spit him out, such as Shaw, who claimed to have learned from him \nthat the romantic hero is always mocked by reality. Likewise, the writer Galsworthy, who \nbegan as a determined critic, later changed his mind and said that the superiority of \nStevenson over the novelist Hardy was that Stevenson was all life and Hardy all death. The \ninfluence on the novelist Chesterton would also repay detailed study, for it was through him \nthat Stevenson has managed to cross the ages, emerging as an influence on the modernist \nmovement and our own contemporary Latin American school of “magical realism”. "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>When making an assessment of his life and work one question must inevitably be asked: \nwas Robert Louis Stevenson Scotland’s greatest writer of English prose? For most \ncommentators this honour falls to Sir Walter Scott, author of Ivanhoe among many other \nclassic novels, and it is true that in terms of craftsmanship, precision and the ability to \nminutely regulate language to create the desired effect, Scott takes the prize. However, this \nis not the same thing at all as inherent talent; by way of comparison one may take the \nexample of the two great Russian composers Shostakovich and Prokofiev, of whom the \nformer had learned more precise skills of execution but the latter’s intrinsic genius was \ngreater, and so it seems to be with Scott and Stevenson. Admittedly, Scott’s detailed style \ndoes permit his stories to explore levels of tragedy that are beyond Stevenson’s reach, but \nin this regard they have the musty smell of the museum, somehow artificial and removed \nfrom modern day reality. On the other hand, Stevenson’s skill with plotting and narrative \ngives his books a timeless quality, so that they still live today, and Stevenson was also the \nshrewder judge of behaviour and psychology. For example, his compelling descriptions of a \nman with a split personality in The Strange Case of Dr. Jekyll and Mr. Hyde have proved so \naccessible and accurate that the expression “Jekyll and Hyde” has entered common \nEnglish usage. Even if we do not see a revival of critical interest in this great Scottish writer, \nit is to be hoped that readers go back to Robert Louis Stevenson’s magnificent stories and \nreassess this neglected genius.</p>",
+              "pageIndex": 2,
+              "text": "When making an assessment of his life and work one question must inevitably be asked: \nwas Robert Louis Stevenson Scotland’s greatest writer of English prose? For most \ncommentators this honour falls to Sir Walter Scott, author of Ivanhoe among many other \nclassic novels, and it is true that in terms of craftsmanship, precision and the ability to \nminutely regulate language to create the desired effect, Scott takes the prize. However, this \nis not the same thing at all as inherent talent; by way of comparison one may take the \nexample of the two great Russian composers Shostakovich and Prokofiev, of whom the \nformer had learned more precise skills of execution but the latter’s intrinsic genius was \ngreater, and so it seems to be with Scott and Stevenson. Admittedly, Scott’s detailed style \ndoes permit his stories to explore levels of tragedy that are beyond Stevenson’s reach, but \nin this regard they have the musty smell of the museum, somehow artificial and removed \nfrom modern day reality. On the other hand, Stevenson’s skill with plotting and narrative \ngives his books a timeless quality, so that they still live today, and Stevenson was also the \nshrewder judge of behaviour and psychology. For example, his compelling descriptions of a \nman with a split personality in The Strange Case of Dr. Jekyll and Mr. Hyde have proved so \naccessible and accurate that the expression “Jekyll and Hyde” has entered common \nEnglish usage. Even if we do not see a revival of critical interest in this great Scottish writer, \nit is to be hoped that readers go back to Robert Louis Stevenson’s magnificent stories and \nreassess this neglected genius. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 2,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b009",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 27–31</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 27–31 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b010",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose the correct letter A, B, C or D.</p>",
+              "pageIndex": 3,
+              "text": "Choose the correct letter A, B, C or D. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b011",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter in boxes 27–31 on your answer sheet.</p>",
+              "pageIndex": 3,
+              "text": "Write the correct letter in boxes 27–31 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>27   In the opinion of the writer, the biographers Balfour and Crouch</p>",
+              "pageIndex": 3,
+              "text": "27   In the opinion of the writer, the biographers Balfour and Crouch "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b013",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    understated the role played by Stevenson’s family. \nB    misunderstood Stevenson’s religious beliefs. \nC    overestimated other writers’ influence on Stevenson. \nD    elevated Stevenson above his true status as a writer.</p>",
+              "pageIndex": 3,
+              "text": "A    understated the role played by Stevenson’s family. \nB    misunderstood Stevenson’s religious beliefs. \nC    overestimated other writers’ influence on Stevenson. \nD    elevated Stevenson above his true status as a writer. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b014",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>28   What is the writer’s main point about Stevenson in the second paragraph?</p>",
+              "pageIndex": 3,
+              "text": "28   What is the writer’s main point about Stevenson in the second paragraph? "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b015",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    The public judged him more fairly than the critics. \nB    Recent criticism of him has been justified. \nC    Critics argued that his style covered up his faults. \nD    The ethical nature of his stories was often criticized.</p>",
+              "pageIndex": 3,
+              "text": "A    The public judged him more fairly than the critics. \nB    Recent criticism of him has been justified. \nC    Critics argued that his style covered up his faults. \nD    The ethical nature of his stories was often criticized. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b016",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>29   According to the writer, the adventure story</p>",
+              "pageIndex": 3,
+              "text": "29   According to the writer, the adventure story "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b017",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    is more appropriate for books than films. \nB    can be used by writers to tell moral stories. \nC    is more fashionable today than in the past. \nD    has been used by other writers but not Stevenson.</p>",
+              "pageIndex": 3,
+              "text": "A    is more appropriate for books than films. \nB    can be used by writers to tell moral stories. \nC    is more fashionable today than in the past. \nD    has been used by other writers but not Stevenson. "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b018",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>30   What point does the writer make about Stevenson and Scotland?</p>",
+              "pageIndex": 3,
+              "text": "30   What point does the writer make about Stevenson and Scotland? "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b019",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    His ideas contrasted with those of many Scots. \nB    He demonstrated great sympathy for Scotland’s problems. \nC    He was not considered a true Scot as he was not born there. \nD    His unflattering stories about Scotland angered many Scots.</p>",
+              "pageIndex": 3,
+              "text": "A    His ideas contrasted with those of many Scots. \nB    He demonstrated great sympathy for Scotland’s problems. \nC    He was not considered a true Scot as he was not born there. \nD    His unflattering stories about Scotland angered many Scots. "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b020",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>31   According to the writer, Stevenson’s own lifestyle</p>",
+              "pageIndex": 3,
+              "text": "31   According to the writer, Stevenson’s own lifestyle "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b021",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    was envied by his friends. \nB    was responsible for his early death. \nC    attracted more attention than his books. \nD    did not prepare him for living in Samoa.</p>",
+              "pageIndex": 3,
+              "text": "A    was envied by his friends. \nB    was responsible for his early death. \nC    attracted more attention than his books. \nD    did not prepare him for living in Samoa. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 3,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b022",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 32–35</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 32–35 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Do the following statements agree with the views of the writer in Reading Passage 3?</p>",
+              "pageIndex": 4,
+              "roleHint": "passage",
+              "text": "Do the following statements agree with the views of the writer in Reading Passage 3? "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b024",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>In boxes 32–35 on your answer sheet write</p>",
+              "pageIndex": 4,
+              "text": "In boxes 32–35 on your answer sheet write "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b025",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>YES        if the statement agrees with the views of the writer \nNO        if the statement contradicts the views of the writer \nNOT GIVEN    if it is impossible to say what the writer thinks about this</p>",
+              "pageIndex": 4,
+              "text": "YES        if the statement agrees with the views of the writer \nNO        if the statement contradicts the views of the writer \nNOT GIVEN    if it is impossible to say what the writer thinks about this "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>32  Although Oscar Wilde admired Stevenson’s work, he believed Stevenson could have \nwritten something better.</p>",
+              "pageIndex": 4,
+              "text": "32  Although Oscar Wilde admired Stevenson’s work, he believed Stevenson could have \nwritten something better. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b027",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>33  Stevenson encouraged Oscar Wilde to start writing.</p>",
+              "pageIndex": 4,
+              "text": "33  Stevenson encouraged Oscar Wilde to start writing. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>34  Galsworthy had greater respect for Hardy than Stevenson.</p>",
+              "pageIndex": 4,
+              "text": "34  Galsworthy had greater respect for Hardy than Stevenson. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b029",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>35  More research is needed regarding Stevenson’s influence on Chesterton.</p>",
+              "pageIndex": 4,
+              "text": "35  More research is needed regarding Stevenson’s influence on Chesterton. "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b030",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 36–40</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 36–40 "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Complete the summary using the list of words and phrases, A–I below.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Complete the summary using the list of words and phrases, A–I below. "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter, A–I, in boxes 36–40 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write the correct letter, A–I, in boxes 36–40 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Robert Louis Stevenson and Sir Walter Scott</p>",
+              "pageIndex": 4,
+              "text": " Robert Louis Stevenson and Sir Walter Scott "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b034",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be</p>",
+              "pageIndex": 4,
+              "text": "Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>considered Scotland’s best writer. Scott had greater 36 _____, but Stevenson had more</p>",
+              "pageIndex": 4,
+              "text": "considered Scotland’s best writer. Scott had greater 36 _____, but Stevenson had more "
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>37_____, and the same distinction can be made between the two composers</p>",
+              "pageIndex": 4,
+              "text": "37_____, and the same distinction can be made between the two composers "
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Shostakovich and Prokofiev. It is true that Scott’s books showed more 38 _____ when it</p>",
+              "pageIndex": 4,
+              "text": "Shostakovich and Prokofiev. It is true that Scott’s books showed more 38 _____ when it "
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>came to tragedy, though in an old-fashioned way, while Stevenson’s books are still</p>",
+              "pageIndex": 4,
+              "text": "came to tragedy, though in an old-fashioned way, while Stevenson’s books are still "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>popular because of his 39 _____. And Stevenson’s understanding of 40 _____ has</p>",
+              "pageIndex": 4,
+              "text": "popular because of his 39 _____. And Stevenson’s understanding of 40 _____ has "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>resulted in the widespread use of an expression from one of his books.</p>",
+              "pageIndex": 4,
+              "text": "resulted in the widespread use of an expression from one of his books. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    natural ability      B    critical acclaim        C    humour \nD    romance        E    colourful language      F    technical control \nG    storytelling        H    depth            I    human nature</p>",
+              "pageIndex": 4,
+              "text": "A    natural ability      B    critical acclaim        C    humour \nD    romance        E    colourful language      F    technical control \nG    storytelling        H    depth            I    human nature "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 4,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b042",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 5]</p>",
+              "pageIndex": 5,
+              "text": "[No extractable text on page 5]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 5,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b043",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 6]</p>",
+              "pageIndex": 6,
+              "text": "[No extractable text on page 6]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 6,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "private-random-06.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 5 has no extractable text; OCR/manual review required",
+          "page 6 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q27": "",
+        "q28": "",
+        "q29": "",
+        "q30": "",
+        "q31": "",
+        "q32": "",
+        "q33": "",
+        "q34": "",
+        "q35": "",
+        "q36": "",
+        "q37": "",
+        "q38": "",
+        "q39": "",
+        "q40": ""
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:c648162b838efeac0d1490704d6be7101dfdab90b38bb78dbefc47b9f0690a85;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "private-random-06.pdf",
+        "questionIntroHtml": "<h3>Questions</h3><ul class=\"question-umbrella-ranges\"><li><strong>Questions 27-40</strong><span>Q27-40</span></li></ul>",
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 27-40",
+            "questionRange": [
+              27,
+              40
+            ],
+            "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Robert Louis Stevenson"
+          }
+        ],
+        "title": "private random 06"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   3</p>\n<p>The writer of some of the best-known stories in the English language, including      \nTreasure Island and The Strange Case of Dr. Jekyll and Mr. Hyde</p>\n<p>It is more than 100 years since the death of the Scottish writer Robert Louis Stevenson on \nthe South Pacific island of Samoa, and it seems that time has not been kind to Stevenson’s \nmemory. Immediately after his death, his family and friends set to work to fashion the \nlegend of Robert Louis Stevenson, or R. L. S., as he became known, one of the few writers \nfamiliar from his initials alone. Subsequent works of biography then turned him into a writer \nof almost religious importance. One example was literary critic Balfour, who in 1901 \nportrayed Stevenson’s family as ministering angels to the dying genius during his final \nillness. Similarly, the biographer Crouch absurdly overstated Stevenson’s significance by \nplacing him in the same company as those most revered names in English literature: \nShakespeare and Keats. The reaction to this nonsense was a number of highly critical \nassessments of Stevenson’s legacy in the 1920s.</p>\n<p>Normally, the critical pendulum can be relied on to swing back again, but there are several \naspects of Stevenson’s work that have, until recently, acted against a more balanced \nappraisal. First is the allegation that Stevenson was a mere master of linguistic fireworks, \nwho lacked moral depth. Some critics accused him of being a literary charlatan, of juggling \nwords very prettily to strike effects which overawed an ignorant public, and served to \ndistract from the inadequacy of his ideas.</p>\n<p>Then there has long been a prejudice against the adventure story as the proper medium for \ndeep moral seriousness, a prejudice which is still extremely influential today. It seems that \nwe can accept that an adventure film can successfully express profound moral truths, but \nwe reject the same idea for a book. The absurdity of this becomes apparent when we think \nof writers like Joseph Conrad and Graham Greene, but it is no use pretending that this bias \nagainst adventure stories is not part of our high culture. A further problem is that Stevenson \nhas often not found favour in the land of his birth because his conservatism so often \ncollides with the strong radical tradition in Scotland. His many escapist stories and \npreference for living abroad have led to accusations that he camouflaged Scotland’s \nproblems. Lastly, the high adventure of Stevenson’s own lifestyle has sometimes obscured \nhis output, his life a greater story than any he could devise. This was precisely what his \nfriends feared would happen towards the end of his short life: his art might be overwhelmed \nby the drama of life in Samoa.</p>\n<p>One consequence of this has been that Stevenson’s influence on other writers has too \noften been neglected. The writer and poet Oscar Wilde was deeply influenced by \nStevenson, even though he declared that Stevenson would have produced better work if he \nhad lived in London rather than Samoa. Stevenson tends to stick in the throat even of those \nwriters who would like to spit him out, such as Shaw, who claimed to have learned from him \nthat the romantic hero is always mocked by reality. Likewise, the writer Galsworthy, who \nbegan as a determined critic, later changed his mind and said that the superiority of \nStevenson over the novelist Hardy was that Stevenson was all life and Hardy all death. The \ninfluence on the novelist Chesterton would also repay detailed study, for it was through him \nthat Stevenson has managed to cross the ages, emerging as an influence on the modernist \nmovement and our own contemporary Latin American school of “magical realism”.</p>\n<p>When making an assessment of his life and work one question must inevitably be asked: \nwas Robert Louis Stevenson Scotland’s greatest writer of English prose? For most \ncommentators this honour falls to Sir Walter Scott, author of Ivanhoe among many other \nclassic novels, and it is true that in terms of craftsmanship, precision and the ability to \nminutely regulate language to create the desired effect, Scott takes the prize. However, this \nis not the same thing at all as inherent talent; by way of comparison one may take the \nexample of the two great Russian composers Shostakovich and Prokofiev, of whom the \nformer had learned more precise skills of execution but the latter’s intrinsic genius was \ngreater, and so it seems to be with Scott and Stevenson. Admittedly, Scott’s detailed style \ndoes permit his stories to explore levels of tragedy that are beyond Stevenson’s reach, but \nin this regard they have the musty smell of the museum, somehow artificial and removed \nfrom modern day reality. On the other hand, Stevenson’s skill with plotting and narrative \ngives his books a timeless quality, so that they still live today, and Stevenson was also the \nshrewder judge of behaviour and psychology. For example, his compelling descriptions of a \nman with a split personality in The Strange Case of Dr. Jekyll and Mr. Hyde have proved so \naccessible and accurate that the expression “Jekyll and Hyde” has entered common \nEnglish usage. Even if we do not see a revival of critical interest in this great Scottish writer, \nit is to be hoped that readers go back to Robert Louis Stevenson’s magnificent stories and \nreassess this neglected genius.</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q27": "27",
+        "q28": "28",
+        "q29": "29",
+        "q30": "30",
+        "q31": "31",
+        "q32": "32",
+        "q33": "33",
+        "q34": "34",
+        "q35": "35",
+        "q36": "36",
+        "q37": "37",
+        "q38": "38",
+        "q39": "39",
+        "q40": "40"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 27-31</p></div><ol><li><div><strong>27</strong> In the opinion of the writer, the biographers Balfour and Crouch A understated the role played by Stevenson’s family. B misunderstood Stevenson’s religious beliefs. C overestimated other writers’ influence on Stevenson. D elevated Stevenson above his true status as a writer.</div><div class=\"choice-row\"><label><input name=\"q27\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q27\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q27\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q27\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>28</strong> What is the writer’s main point about Stevenson in the second paragraph? A The public judged him more fairly than the critics. B Recent criticism of him has been justified. C Critics argued that his style covered up his faults. D The ethical nature of his stories was often criticized.</div><div class=\"choice-row\"><label><input name=\"q28\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q28\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q28\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q28\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>29</strong> According to the writer, the adventure story A is more appropriate for books than films. B can be used by writers to tell moral stories. C is more fashionable today than in the past. D has been used by other writers but not Stevenson.</div><div class=\"choice-row\"><label><input name=\"q29\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q29\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q29\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q29\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>30</strong> What point does the writer make about Stevenson and Scotland? A His ideas contrasted with those of many Scots. B He demonstrated great sympathy for Scotland’s problems. C He was not considered a true Scot as he was not born there. D His unflattering stories about Scotland angered many Scots.</div><div class=\"choice-row\"><label><input name=\"q30\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q30\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q30\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q30\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>31</strong> According to the writer, Stevenson’s own lifestyle A was envied by his friends. B was responsible for his early death. C attracted more attention than his books. D did not prepare him for living in Samoa.</div><div class=\"choice-row\"><label><input name=\"q31\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q31\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q31\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q31\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "groupId": "group-1",
+          "kind": "single_choice",
+          "leadHtml": "<p>Questions 27-31</p>",
+          "questionIds": [
+            "q27",
+            "q28",
+            "q29",
+            "q30",
+            "q31"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 32-35</p></div><ol><li><div><strong>32</strong> Although Oscar Wilde admired Stevenson’s work, he believed Stevenson could have written something better.</div><div class=\"choice-row\"><label><input name=\"q32\" type=\"radio\" value=\"YES\"> YES</label><label><input name=\"q32\" type=\"radio\" value=\"NO\"> NO</label><label><input name=\"q32\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>33</strong> Stevenson encouraged Oscar Wilde to start writing.</div><div class=\"choice-row\"><label><input name=\"q33\" type=\"radio\" value=\"YES\"> YES</label><label><input name=\"q33\" type=\"radio\" value=\"NO\"> NO</label><label><input name=\"q33\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>34</strong> Galsworthy had greater respect for Hardy than Stevenson.</div><div class=\"choice-row\"><label><input name=\"q34\" type=\"radio\" value=\"YES\"> YES</label><label><input name=\"q34\" type=\"radio\" value=\"NO\"> NO</label><label><input name=\"q34\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>35</strong> More research is needed regarding Stevenson’s influence on Chesterton.</div><div class=\"choice-row\"><label><input name=\"q35\" type=\"radio\" value=\"YES\"> YES</label><label><input name=\"q35\" type=\"radio\" value=\"NO\"> NO</label><label><input name=\"q35\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "groupId": "group-2",
+          "kind": "yes_no_not_given",
+          "leadHtml": "<p>Questions 32-35</p>",
+          "questionIds": [
+            "q32",
+            "q33",
+            "q34",
+            "q35"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 36-40</p></div><div class=\"notes-completion\">Questions 36–40 Complete the summary using the list of words and phrases, A–I below. Write the correct letter, A–I, in boxes 36–40 on your answer sheet. Robert Louis Stevenson and Sir Walter Scott Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be considered Scotland’s best writer. Scott had greater <span class=\"inline-completion\" data-question-id=\"q36\"><strong>36</strong> <input type=\"text\" id=\"q36_input\" name=\"q36\" placeholder=\"answer\"></span>, but Stevenson had more <span class=\"inline-completion\" data-question-id=\"q37\"><strong>37</strong> <input type=\"text\" id=\"q37_input\" name=\"q37\" placeholder=\"answer\"></span>, and the same distinction can be made between the two composers Shostakovich and Prokofiev. It is true that Scott’s books showed more <span class=\"inline-completion\" data-question-id=\"q38\"><strong>38</strong> <input type=\"text\" id=\"q38_input\" name=\"q38\" placeholder=\"answer\"></span> when it came to tragedy, though in an old-fashioned way, while Stevenson’s books are still popular because of his <span class=\"inline-completion\" data-question-id=\"q39\"><strong>39</strong> <input type=\"text\" id=\"q39_input\" name=\"q39\" placeholder=\"answer\"></span> And Stevenson’s understanding of <span class=\"inline-completion\" data-question-id=\"q40\"><strong>40</strong> <input type=\"text\" id=\"q40_input\" name=\"q40\" placeholder=\"answer\"></span> has resulted in the widespread use of an expression from one of his books. A natural ability B critical acclaim C humour D romance E colourful language F technical control G storytelling H depth I human nature</div></section>",
+          "groupId": "group-3",
+          "kind": "summary_completion",
+          "leadHtml": "<p>Questions 36-40</p>",
+          "questionIds": [
+            "q36",
+            "q37",
+            "q38",
+            "q39",
+            "q40"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260809143544-56336749/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/private-random-06.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/private-real/private-random-06.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001",
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008"
+          ],
+          "title": "RE ADI NG P AS S AGE 3"
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b009",
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021"
+          ],
+          "classification": {
+            "confidence": 0.68,
+            "evidence": [
+              "b009",
+              "b010",
+              "b011",
+              "b012",
+              "b013",
+              "b014",
+              "b015",
+              "b016",
+              "b017",
+              "b018",
+              "b019",
+              "b020",
+              "b021"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D"
+              ],
+              "type": "radio"
+            },
+            "kind": "single_choice",
+            "warnings": [
+              "Option reuse was inferred from question type; source wording did not state it explicitly."
+            ]
+          },
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b009",
+              "reason": "same-section-continuation",
+              "toBlockId": "b010"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b010",
+              "reason": "same-section-continuation",
+              "toBlockId": "b011"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            }
+          ],
+          "groupId": "group-1",
+          "heading": "Questions 27-31",
+          "instructionText": "Questions 27–31",
+          "kindHint": "single_choice",
+          "layoutHint": "list",
+          "questionRange": [
+            27,
+            31
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b009",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 27–31"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b010",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose the correct letter A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter in boxes 27–31 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "27 In the opinion of the writer, the biographers Balfour and Crouch"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A understated the role played by Stevenson’s family. B misunderstood Stevenson’s religious beliefs. C overestimated othe"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "28 What is the writer’s main point about Stevenson in the second paragraph?"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A The public judged him more fairly than the critics. B Recent criticism of him has been justified. C Critics argued tha"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "29 According to the writer, the adventure story"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A is more appropriate for books than films. B can be used by writers to tell moral stories. C is more fashionable today "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "30 What point does the writer make about Stevenson and Scotland?"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A His ideas contrasted with those of many Scots. B He demonstrated great sympathy for Scotland’s problems. C He was not "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "31 According to the writer, Stevenson’s own lifestyle"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A was envied by his friends. B was responsible for his early death. C attracted more attention than his books. D did not"
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b022",
+              "b023",
+              "b024",
+              "b025",
+              "b026",
+              "b027",
+              "b028",
+              "b029"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "YES",
+                "NO",
+                "NOT GIVEN"
+              ],
+              "type": "radio"
+            },
+            "kind": "yes_no_not_given",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 32-35",
+          "instructionText": "Questions 32–35",
+          "kindHint": "yes_no_not_given",
+          "layoutHint": "list",
+          "questionRange": [
+            32,
+            35
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 32–35"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Do the following statements agree with the views of the writer in Reading Passage 3?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In boxes 32–35 on your answer sheet write"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "YES if the statement agrees with the views of the writer NO if the statement contradicts the views of the writer NOT GIV"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "32 Although Oscar Wilde admired Stevenson’s work, he believed Stevenson could have written something better."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "33 Stevenson encouraged Oscar Wilde to start writing."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "34 Galsworthy had greater respect for Hardy than Stevenson."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "35 More research is needed regarding Stevenson’s influence on Chesterton."
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b030",
+              "b031",
+              "b032",
+              "b033",
+              "b034",
+              "b035",
+              "b036",
+              "b037",
+              "b038",
+              "b039",
+              "b040",
+              "b041"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "summary_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            }
+          ],
+          "groupId": "group-3",
+          "heading": "Questions 36-40",
+          "instructionText": "Questions 36–40",
+          "kindHint": "summary_completion",
+          "layoutHint": "inline_completion",
+          "questionRange": [
+            36,
+            40
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 36–40"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary using the list of words and phrases, A–I below."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A–I, in boxes 36–40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Robert Louis Stevenson and Sir Walter Scott"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "considered Scotland’s best writer. Scott had greater 36 _____, but Stevenson had more"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "37_____, and the same distinction can be made between the two composers"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Shostakovich and Prokofiev. It is true that Scott’s books showed more 38 _____ when it"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "came to tragedy, though in an old-fashioned way, while Stevenson’s books are still"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "popular because of his 39 _____. And Stevenson’s understanding of 40 _____ has"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "resulted in the widespread use of an expression from one of his books."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A natural ability B critical acclaim C humour D romance E colourful language F technical control G storytelling H depth "
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": [
+        {
+          "blockId": "b002",
+          "heading": "Questions 27-40",
+          "questionRange": [
+            27,
+            40
+          ],
+          "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Robert Louis Stevenson"
+        }
+      ]
+    }
+  }
+}

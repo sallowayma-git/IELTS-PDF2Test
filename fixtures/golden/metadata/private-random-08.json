@@ -1,0 +1,168 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "private-random-08",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-08.pdf",
+    "originalName": "2. P1 - Sunlight Soap 阳光牌肥皂.pdf",
+    "sha256": "75275001693a300982593a1de71a30b2d4736e523dc8f69908ea9feae41e5786",
+    "sizeBytes": 373519,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "needs_review"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          13
+        ],
+        "kind": "short_answer",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4",
+          "q5",
+          "q6",
+          "q7",
+          "q8",
+          "q9",
+          "q10",
+          "q11",
+          "q12",
+          "q13"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "text"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "text"
+      },
+      {
+        "id": "q5",
+        "displayNumber": "5",
+        "responseType": "text"
+      },
+      {
+        "id": "q6",
+        "displayNumber": "6",
+        "responseType": "text"
+      },
+      {
+        "id": "q7",
+        "displayNumber": "7",
+        "responseType": "text"
+      },
+      {
+        "id": "q8",
+        "displayNumber": "8",
+        "responseType": "text"
+      },
+      {
+        "id": "q9",
+        "displayNumber": "9",
+        "responseType": "text"
+      },
+      {
+        "id": "q10",
+        "displayNumber": "10",
+        "responseType": "text"
+      },
+      {
+        "id": "q11",
+        "displayNumber": "11",
+        "responseType": "text"
+      },
+      {
+        "id": "q12",
+        "displayNumber": "12",
+        "responseType": "text"
+      },
+      {
+        "id": "q13",
+        "displayNumber": "13",
+        "responseType": "text"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "样本使用固定随机种子抽取；V1 派生标注是可复现的初始契约，正式评分前仍需人工确认。"
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/private-random-08.json",
+    "observed": {
+      "pageCount": 4,
+      "blockCount": 25,
+      "groupCount": 1,
+      "slotCount": 13,
+      "assetCount": 0,
+      "answerCount": 13,
+      "warningCount": 0,
+      "groupKinds": [
+        "short_answer"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5",
+        "q6",
+        "q7",
+        "q8",
+        "q9",
+        "q10",
+        "q11",
+        "q12",
+        "q13"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

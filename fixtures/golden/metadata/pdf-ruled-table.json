@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "pdf-ruled-table",
+  "source": {
+    "path": "fixtures/golden/synthetic/pdf/pdf-ruled-table.pdf",
+    "sha256": "64e8acbc4959f323e292337267718080211a397574de82517c519ed89b089cb7",
+    "sizeBytes": 1488,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question",
+          "table"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          4
+        ],
+        "kind": "table_completion",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "text"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "text"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "text"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "text"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "Grid lines provide topology evidence for table reconstruction."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/pdf-ruled-table.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 6,
+      "groupCount": 0,
+      "slotCount": 0,
+      "assetCount": 0,
+      "answerCount": 0,
+      "warningCount": 0,
+      "groupKinds": [],
+      "questionIds": [],
+      "roles": []
+    }
+  }
+}

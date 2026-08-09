@@ -1,0 +1,3716 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "private-random-02",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-02.pdf",
+    "sha256": "ae0017d25606595ea0d870e1fcf88832a1c7e53d7082c9add2149cca2b3cd057",
+    "sizeBytes": 903212
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 7,
+    "blockCount": 49,
+    "groupCount": 3,
+    "slotCount": 14,
+    "assetCount": 0,
+    "answerCount": 14,
+    "warningCount": 2,
+    "groupKinds": [
+      "matching_information",
+      "matching",
+      "single_choice"
+    ],
+    "questionIds": [
+      "q27",
+      "q28",
+      "q29",
+      "q30",
+      "q31",
+      "q32",
+      "q33",
+      "q34",
+      "q35",
+      "q36",
+      "q37",
+      "q38",
+      "q39",
+      "q40"
+    ],
+    "roles": [
+      "passage",
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q27": "",
+        "q28": "",
+        "q29": "",
+        "q30": "",
+        "q31": "",
+        "q32": "",
+        "q33": "",
+        "q34": "",
+        "q35": "",
+        "q36": "",
+        "q37": "",
+        "q38": "",
+        "q39": "",
+        "q40": ""
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "private-random-02.pdf",
+            "role": "MainQuestion",
+            "sha256": "ae0017d25606595ea0d870e1fcf88832a1c7e53d7082c9add2149cca2b3cd057",
+            "sizeBytes": 903212,
+            "storedName": "private-random-02.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "private random 02"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": true,
+          "classificationEvidence": [
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            }
+          ],
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 27-33"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "matching_information",
+          "layout": {
+            "layoutHint": "list",
+            "template": "matching_information"
+          },
+          "questionRange": [
+            27,
+            33
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "27",
+              "id": "q27",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a prediction of the future risk of salt to water supplies.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "28",
+              "id": "q28",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "the reason why technologies must be combined to be effective.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "29",
+              "id": "q29",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a reference to the recent improvements in the accuracy of airborne electromagnetics.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "30",
+              "id": "q30",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "the organization of concerned farmers into an official body.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "31",
+              "id": "q31",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "the estimated length of time salinity is likely to be a problem.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "32",
+              "id": "q32",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a summary of stages in a proposed plan of action to combat the salt problem.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "33",
+              "id": "q33",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G",
+                  "H"
+                ],
+                "type": "matching"
+              },
+              "prompt": "the possibility that current re-vegetation practices are a waste of time.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 27–33"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Reading Passage 3 has eight sections, A–H."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Which section contains the following information?"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A–H, in boxes 27–33 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "NB You may use any letter more than once."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "27 a prediction of the future risk of salt to water supplies."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "28 the reason why technologies must be combined to be effective."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "29 a reference to the recent improvements in the accuracy of airborne electromagnetics."
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "30 the organization of concerned farmers into an official body."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "31 the estimated length of time salinity is likely to be a problem."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "32 a summary of stages in a proposed plan of action to combat the salt problem."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "33 the possibility that current re-vegetation practices are a waste of time."
+            }
+          ],
+          "sourceBlockIds": [
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033"
+          ],
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 34-36"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "matching",
+          "layout": {
+            "layoutHint": "list",
+            "template": "matching_list"
+          },
+          "questionRange": [
+            34,
+            36
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "34",
+              "id": "q34",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Electromagnetic surveys",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "35",
+              "id": "q35",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Radiometric analysis",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "36",
+              "id": "q36",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Airborne electromagnetics List of uses",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [
+            "Option reuse was inferred from question type; source wording did not state it explicitly."
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 34–36"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Look at the list of techniques (Questions 34–36) and the list of uses which follows it."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Match each technique with the correct use, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "34 Electromagnetic surveys"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "35 Radiometric analysis"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "36 Airborne electromagnetics"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "List of uses"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A can help farmers choose the best location for plants. B can show the composition of the top layer of the ground. C can"
+            }
+          ],
+          "sourceBlockIds": [
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045",
+            "b046",
+            "b047"
+          ],
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
+              "toBlockId": "b045"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
+            }
+          ],
+          "groupId": "group-3",
+          "instruction": [
+            "Questions 37-40"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "single_choice",
+          "layout": {
+            "layoutHint": "list",
+            "template": "single_choice_list"
+          },
+          "questionRange": [
+            37,
+            40
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "37",
+              "id": "q37",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "What link does the writer make between salt and gold? A They can both be found in the same locations. B Both have been found to have an impact on the landscape. C The same techniques can be used to find both. D Neither is present in mountainous areas.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "38",
+              "id": "q38",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "What is the ‘process’ referred to in Section B? A the killing of vegetation by salt B salt’s ability to travel below ground C the ability of trees to decrease salt levels D the detection of salt by tracing other minerals",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "39",
+              "id": "q39",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "According to Angus Howell, one problem in the fight against salinity is that A not enough farmers are concerned about the fight. B farmers’ requests for help have been ignored. C some possible measures may cause farmers to lose income. D the government has not provided farmers with sufficient financial support.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "40",
+              "id": "q40",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Which of the following best describes the writer’s view of the salinity problem in Australia? A Farmers are fighting an enemy that moves secretly and hides well. B Farmers have been able to contain this enemy in a small area. C Farmers have already had significant success in fighting this problem. D Farmers need to form more organised groups to solve this problem. Disclaimer Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [
+            "Option reuse was inferred from question type; source wording did not state it explicitly."
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 36–40"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose the correct letter, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter in boxes 36–40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "37 What link does the writer make between salt and gold?"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A They can both be found in the same locations. B Both have been found to have an impact on the landscape. C The same te"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "38 What is the ‘process’ referred to in Section B?"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A the killing of vegetation by salt B salt’s ability to travel below ground C the ability of trees to decrease salt leve"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "39 According to Angus Howell, one problem in the fight against salinity is that"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A not enough farmers are concerned about the fight. B farmers’ requests for help have been ignored. C some possible meas"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "40 Which of the following best describes the writer’s view of the salinity problem in Australia?"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Farmers are fighting an enemy that moves secretly and hides well. B Farmers have been able to contain this enemy in a "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b045",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Disclaimer"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited."
+            }
+          ],
+          "sourceBlockIds": [
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045",
+            "b046",
+            "b047"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>One of the most serious problems facing Australian farmers is an increase in the salt \ncontent in the soil. However, there are new weapons emerging in the fight against salinity.</p>\n<p>A  Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and \ngorges – ancient traps and channels for the deadly salt that is stealthily killing so much \nof the Australian landscape. The war on salt is calling forth new weapons. A suite of \nhigh technologies used by geologists to see underground and prospect for gold and \nminerals is now being used to pinpoint the presence of salt beneath the landscape, and \nto predict where it might move.</p>\n<p>B  Unless this process is clearly understood, warns Chief of Exploration and Mining Dr \nNeil Phillips, the hard work now underway of planning and tree-planting on the surface \nmay be rendered ineffective: salt can still sneak past and erupt, following one of the \nancient river channels formed millions of years ago. The use of airborne \nelectromagnetics to detect salt hidden beneath the landscape has been around for a \ndecade, but the past two years have seen a major development in its precision and \npowers of detection. Like the use of radar in battles, it has the potential to turn the tide \nof the struggle in favour of the defence by helping to pinpoint, plot and predict the \nmovements of the foe.</p>\n<p>C  Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first \noutbreak of salt in 1948. Over the ensuing decades the patches spread and multiplied \nuntil they consumed almost 100 hectares. By the late 1970s, Howell and his fellow \nfarmers had decided it was time for action and established a government-funded \n“Landcare” group in a bid to save Australia’s farmland. But despite a mounting effort by \nscientists, farmers and governments, the “white death” continued to encroach. Small \nsuccesses were eclipsed by larger defeats and fresh outbreaks.</p>\n<p>D  “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are \nthe social and economic solutions. How do you introduce the land-use changes that are \nneeded when people still need to make a living?” Howell asks. There is no satisfactory \nsolution yet. Part of the problem has lain in salt’s ability to mount ambushes, emerging \nsomewhere new, sometimes unexpected and unexplained, beating plans to intercept it. \nOnly now are scientists starting to really disclose its secret subterranean stores and \npassages.</p>\n<p>E  The need for such knowledge is pressing. Salt has already afflicted six million hectares \nof once-productive country. At present rates, it is predicted that, by 2050, it will have \nsterilised a total of 17 million hectares and the waters of Australia’s Murray River will \nregularly exceed the World Health Organisation’s salt limits for drinking water. \nDefeating this assault may take centuries, not decades.</p>\n<p>F  Electromagnetic surveys measure the electrical conductivity of soil to reveal the \ndistribution of salt and the nature and variability of the regolith – the weathered rock \nand sediment that may lie above the bedrock. Magnetic surveys measure small \ndifferences in the Earth’s magnetic field, enabling scientists to probe the deep past and \nreconstruct ancient landscapes – rivers, basins and faults now buried under tens of \nmetres of sediment. These features help to reveal where groundwater is stored, dictate \nthe direction of groundwater movement, and are critical to predicting or ruling out \nsalinity hot-spots.</p>\n<p>G  Radiometric analysis is based on the detection of radiation emitted by elements \ncontained in rocks and soils, allowing scientists to delineate landforms. These factors \ninfluence the mobility of salt through the soil profile and help determine where to plant \nparticular crop species to tackle the problem.</p>\n<p>Using data from the Murray River region, scientists have revealed a network of ancient \ndrainage systems that channelled water beneath the current land-surface. These buried \nchannels may carry salt and sometimes run at right angles to channels on the surface. \nThis implies that the salt could move underground in quite a different direction to what \none would expect by looking at surface slope and drainage.</p>\n<p>H  One of the biggest advances in detection, says Professor Neil Phillips, has come with \nthe integration of different techniques such as magnetics, electromagnetics and \nradiometrics, and ground mapping. Individually, these technologies only gave clues to \nwhat was going on underground. Together they provide a far more revealing picture of \nthe subsurface landscape, several hundred metres deep. Advanced airborne \nelectromagnetics, in particular, enables scientists to take “slices” of the landscape at \ndepths of five metres, ten metres, fifteen metres and so on, to determine where salt \nmay be stored at depth. This is building up a four-dimensional picture of the subsurface \nlandscape, enabling researchers to understand movements of salt in length, breadth, \ndepth and time.</p>\n<p>From such technologies it will be possible to locate salt stores, identify how saline they \nare, look at man-made and natural changes to the landscape that may cause it to \nmobilise, and then predict where it will head to and over what time span. This in turn \nwill give the salt warriors time to model various ways of containing or curbing the \nmenace, see what works best and then try it out on the ground.</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b001",
+            "heading": "Questions 27-40",
+            "questionRange": [
+              27,
+              40
+            ],
+            "text": "RE ADI NG P AS S AGE 3 You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Sea Change for Salinity"
+          }
+        ],
+        "sourceBlockIds": [
+          "b002",
+          "b003",
+          "b004",
+          "b005",
+          "b006",
+          "b007",
+          "b008",
+          "b009",
+          "b010",
+          "b011",
+          "b012"
+        ],
+        "title": "One of the most serious problems facing Australian farmers is an increase in the salt content in the soil. However, there are new weapons emerging in the fight against salinity."
+      },
+      "questionDisplayMap": {
+        "q27": "27",
+        "q28": "28",
+        "q29": "29",
+        "q30": "30",
+        "q31": "31",
+        "q32": "32",
+        "q33": "33",
+        "q34": "34",
+        "q35": "35",
+        "q36": "36",
+        "q37": "37",
+        "q38": "38",
+        "q39": "39",
+        "q40": "40"
+      },
+      "questionOrder": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>RE ADI NG  P AS S AGE   3  \nYou should spend about 20 minutes on Questions 27-40, which are based on Reading \nPassage 3 below. \n Sea Change for Salinity</p>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "RE ADI NG  P AS S AGE   3  \nYou should spend about 20 minutes on Questions 27-40, which are based on Reading \nPassage 3 below. \n Sea Change for Salinity "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>One of the most serious problems facing Australian farmers is an increase in the salt \ncontent in the soil. However, there are new weapons emerging in the fight against salinity.</p>",
+              "pageIndex": 1,
+              "text": "One of the most serious problems facing Australian farmers is an increase in the salt \ncontent in the soil. However, there are new weapons emerging in the fight against salinity. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A  Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and \ngorges – ancient traps and channels for the deadly salt that is stealthily killing so much \nof the Australian landscape. The war on salt is calling forth new weapons. A suite of \nhigh technologies used by geologists to see underground and prospect for gold and \nminerals is now being used to pinpoint the presence of salt beneath the landscape, and \nto predict where it might move.</p>",
+              "pageIndex": 1,
+              "text": "A  Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and \ngorges – ancient traps and channels for the deadly salt that is stealthily killing so much \nof the Australian landscape. The war on salt is calling forth new weapons. A suite of \nhigh technologies used by geologists to see underground and prospect for gold and \nminerals is now being used to pinpoint the presence of salt beneath the landscape, and \nto predict where it might move. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>B  Unless this process is clearly understood, warns Chief of Exploration and Mining Dr \nNeil Phillips, the hard work now underway of planning and tree-planting on the surface \nmay be rendered ineffective: salt can still sneak past and erupt, following one of the \nancient river channels formed millions of years ago. The use of airborne \nelectromagnetics to detect salt hidden beneath the landscape has been around for a \ndecade, but the past two years have seen a major development in its precision and \npowers of detection. Like the use of radar in battles, it has the potential to turn the tide \nof the struggle in favour of the defence by helping to pinpoint, plot and predict the \nmovements of the foe.</p>",
+              "pageIndex": 1,
+              "text": "B  Unless this process is clearly understood, warns Chief of Exploration and Mining Dr \nNeil Phillips, the hard work now underway of planning and tree-planting on the surface \nmay be rendered ineffective: salt can still sneak past and erupt, following one of the \nancient river channels formed millions of years ago. The use of airborne \nelectromagnetics to detect salt hidden beneath the landscape has been around for a \ndecade, but the past two years have seen a major development in its precision and \npowers of detection. Like the use of radar in battles, it has the potential to turn the tide \nof the struggle in favour of the defence by helping to pinpoint, plot and predict the \nmovements of the foe. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>C  Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first \noutbreak of salt in 1948. Over the ensuing decades the patches spread and multiplied \nuntil they consumed almost 100 hectares. By the late 1970s, Howell and his fellow \nfarmers had decided it was time for action and established a government-funded \n“Landcare” group in a bid to save Australia’s farmland. But despite a mounting effort by \nscientists, farmers and governments, the “white death” continued to encroach. Small \nsuccesses were eclipsed by larger defeats and fresh outbreaks.</p>",
+              "pageIndex": 1,
+              "text": "C  Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first \noutbreak of salt in 1948. Over the ensuing decades the patches spread and multiplied \nuntil they consumed almost 100 hectares. By the late 1970s, Howell and his fellow \nfarmers had decided it was time for action and established a government-funded \n“Landcare” group in a bid to save Australia’s farmland. But despite a mounting effort by \nscientists, farmers and governments, the “white death” continued to encroach. Small \nsuccesses were eclipsed by larger defeats and fresh outbreaks. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>D  “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are \nthe social and economic solutions. How do you introduce the land-use changes that are \nneeded when people still need to make a living?” Howell asks. There is no satisfactory \nsolution yet. Part of the problem has lain in salt’s ability to mount ambushes, emerging \nsomewhere new, sometimes unexpected and unexplained, beating plans to intercept it. \nOnly now are scientists starting to really disclose its secret subterranean stores and \npassages.</p>",
+              "pageIndex": 1,
+              "text": "D  “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are \nthe social and economic solutions. How do you introduce the land-use changes that are \nneeded when people still need to make a living?” Howell asks. There is no satisfactory \nsolution yet. Part of the problem has lain in salt’s ability to mount ambushes, emerging \nsomewhere new, sometimes unexpected and unexplained, beating plans to intercept it. \nOnly now are scientists starting to really disclose its secret subterranean stores and \npassages. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>E  The need for such knowledge is pressing. Salt has already afflicted six million hectares \nof once-productive country. At present rates, it is predicted that, by 2050, it will have \nsterilised a total of 17 million hectares and the waters of Australia’s Murray River will \nregularly exceed the World Health Organisation’s salt limits for drinking water. \nDefeating this assault may take centuries, not decades.</p>",
+              "pageIndex": 2,
+              "text": "E  The need for such knowledge is pressing. Salt has already afflicted six million hectares \nof once-productive country. At present rates, it is predicted that, by 2050, it will have \nsterilised a total of 17 million hectares and the waters of Australia’s Murray River will \nregularly exceed the World Health Organisation’s salt limits for drinking water. \nDefeating this assault may take centuries, not decades. "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>F  Electromagnetic surveys measure the electrical conductivity of soil to reveal the \ndistribution of salt and the nature and variability of the regolith – the weathered rock \nand sediment that may lie above the bedrock. Magnetic surveys measure small \ndifferences in the Earth’s magnetic field, enabling scientists to probe the deep past and \nreconstruct ancient landscapes – rivers, basins and faults now buried under tens of \nmetres of sediment. These features help to reveal where groundwater is stored, dictate \nthe direction of groundwater movement, and are critical to predicting or ruling out \nsalinity hot-spots.</p>",
+              "pageIndex": 2,
+              "text": "F  Electromagnetic surveys measure the electrical conductivity of soil to reveal the \ndistribution of salt and the nature and variability of the regolith – the weathered rock \nand sediment that may lie above the bedrock. Magnetic surveys measure small \ndifferences in the Earth’s magnetic field, enabling scientists to probe the deep past and \nreconstruct ancient landscapes – rivers, basins and faults now buried under tens of \nmetres of sediment. These features help to reveal where groundwater is stored, dictate \nthe direction of groundwater movement, and are critical to predicting or ruling out \nsalinity hot-spots. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b009",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>G  Radiometric analysis is based on the detection of radiation emitted by elements \ncontained in rocks and soils, allowing scientists to delineate landforms. These factors \ninfluence the mobility of salt through the soil profile and help determine where to plant \nparticular crop species to tackle the problem.</p>",
+              "pageIndex": 2,
+              "text": "G  Radiometric analysis is based on the detection of radiation emitted by elements \ncontained in rocks and soils, allowing scientists to delineate landforms. These factors \ninfluence the mobility of salt through the soil profile and help determine where to plant \nparticular crop species to tackle the problem. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b010",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Using data from the Murray River region, scientists have revealed a network of ancient \ndrainage systems that channelled water beneath the current land-surface. These buried \nchannels may carry salt and sometimes run at right angles to channels on the surface. \nThis implies that the salt could move underground in quite a different direction to what \none would expect by looking at surface slope and drainage.</p>",
+              "pageIndex": 2,
+              "text": "Using data from the Murray River region, scientists have revealed a network of ancient \ndrainage systems that channelled water beneath the current land-surface. These buried \nchannels may carry salt and sometimes run at right angles to channels on the surface. \nThis implies that the salt could move underground in quite a different direction to what \none would expect by looking at surface slope and drainage. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b011",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>H  One of the biggest advances in detection, says Professor Neil Phillips, has come with \nthe integration of different techniques such as magnetics, electromagnetics and \nradiometrics, and ground mapping. Individually, these technologies only gave clues to \nwhat was going on underground. Together they provide a far more revealing picture of \nthe subsurface landscape, several hundred metres deep. Advanced airborne \nelectromagnetics, in particular, enables scientists to take “slices” of the landscape at \ndepths of five metres, ten metres, fifteen metres and so on, to determine where salt \nmay be stored at depth. This is building up a four-dimensional picture of the subsurface \nlandscape, enabling researchers to understand movements of salt in length, breadth, \ndepth and time.</p>",
+              "pageIndex": 2,
+              "text": "H  One of the biggest advances in detection, says Professor Neil Phillips, has come with \nthe integration of different techniques such as magnetics, electromagnetics and \nradiometrics, and ground mapping. Individually, these technologies only gave clues to \nwhat was going on underground. Together they provide a far more revealing picture of \nthe subsurface landscape, several hundred metres deep. Advanced airborne \nelectromagnetics, in particular, enables scientists to take “slices” of the landscape at \ndepths of five metres, ten metres, fifteen metres and so on, to determine where salt \nmay be stored at depth. This is building up a four-dimensional picture of the subsurface \nlandscape, enabling researchers to understand movements of salt in length, breadth, \ndepth and time. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>From such technologies it will be possible to locate salt stores, identify how saline they \nare, look at man-made and natural changes to the landscape that may cause it to \nmobilise, and then predict where it will head to and over what time span. This in turn \nwill give the salt warriors time to model various ways of containing or curbing the \nmenace, see what works best and then try it out on the ground.</p>",
+              "pageIndex": 2,
+              "text": "From such technologies it will be possible to locate salt stores, identify how saline they \nare, look at man-made and natural changes to the landscape that may cause it to \nmobilise, and then predict where it will head to and over what time span. This in turn \nwill give the salt warriors time to model various ways of containing or curbing the \nmenace, see what works best and then try it out on the ground. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 2,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b013",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 27–33</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 27–33 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b014",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Reading Passage 3 has eight sections, A–H.</h3>",
+              "pageIndex": 3,
+              "roleHint": "passage",
+              "text": "Reading Passage 3 has eight sections, A–H. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b015",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Which section contains the following information?</p>",
+              "pageIndex": 3,
+              "text": "Which section contains the following information? "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b016",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter, A–H, in boxes 27–33 on your answer sheet.</p>",
+              "pageIndex": 3,
+              "text": "Write the correct letter, A–H, in boxes 27–33 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b017",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>NB You may use any letter more than once.</p>",
+              "pageIndex": 3,
+              "text": "NB You may use any letter more than once. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b018",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>27  a prediction of the future risk of salt to water supplies.</p>",
+              "pageIndex": 3,
+              "text": "27  a prediction of the future risk of salt to water supplies. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b019",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>28   the reason why technologies must be combined to be effective.</p>",
+              "pageIndex": 3,
+              "text": "28   the reason why technologies must be combined to be effective. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b020",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>29   a reference to the recent improvements in the accuracy of airborne electromagnetics.</p>",
+              "pageIndex": 3,
+              "text": "29   a reference to the recent improvements in the accuracy of airborne electromagnetics. "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b021",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>30   the organization of concerned farmers into an official body.</p>",
+              "pageIndex": 3,
+              "text": "30   the organization of concerned farmers into an official body. "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>31   the estimated length of time salinity is likely to be a problem.</p>",
+              "pageIndex": 3,
+              "text": "31   the estimated length of time salinity is likely to be a problem. "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>32   a summary of stages in a proposed plan of action to combat the salt problem.</p>",
+              "pageIndex": 3,
+              "text": "32   a summary of stages in a proposed plan of action to combat the salt problem. "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b024",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>33   the possibility that current re-vegetation practices are a waste of time.</p>",
+              "pageIndex": 3,
+              "text": "33   the possibility that current re-vegetation practices are a waste of time. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 3,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b025",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 34–36</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 34–36 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Look at the list of techniques (Questions 34–36) and the list of uses which follows it.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Look at the list of techniques (Questions 34–36) and the list of uses which follows it. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b027",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Match each technique with the correct use, A, B, C or D.</p>",
+              "pageIndex": 4,
+              "text": "Match each technique with the correct use, A, B, C or D. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b029",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>34   Electromagnetic surveys</p>",
+              "pageIndex": 4,
+              "text": "34   Electromagnetic surveys "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b030",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>35   Radiometric analysis</p>",
+              "pageIndex": 4,
+              "text": "35   Radiometric analysis "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>36   Airborne electromagnetics</p>",
+              "pageIndex": 4,
+              "text": "36   Airborne electromagnetics "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>List of uses</p>",
+              "pageIndex": 4,
+              "text": " List of uses "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    can help farmers choose the best location for plants. \nB    can show the composition of the top layer of the ground. \nC    can detect how far below ground the salt is. \nD    can determine how old the salt is in a particular area.</p>",
+              "pageIndex": 4,
+              "text": "A    can help farmers choose the best location for plants. \nB    can show the composition of the top layer of the ground. \nC    can detect how far below ground the salt is. \nD    can determine how old the salt is in a particular area. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 4,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b034",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 36–40</h3>",
+              "pageIndex": 5,
+              "roleHint": "question",
+              "text": "Questions 36–40 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose the correct letter, A, B, C or D.</p>",
+              "pageIndex": 5,
+              "text": "Choose the correct letter, A, B, C or D. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter in boxes 36–40 on your answer sheet.</p>",
+              "pageIndex": 5,
+              "text": "Write the correct letter in boxes 36–40 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>37  What link does the writer make between salt and gold?</p>",
+              "pageIndex": 5,
+              "text": "37  What link does the writer make between salt and gold? "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b038",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    They can both be found in the same locations. \nB    Both have been found to have an impact on the landscape. \nC    The same techniques can be used to find both. \nD    Neither is present in mountainous areas.</p>",
+              "pageIndex": 5,
+              "text": "A    They can both be found in the same locations. \nB    Both have been found to have an impact on the landscape. \nC    The same techniques can be used to find both. \nD    Neither is present in mountainous areas. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b039",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>38   What is the ‘process’ referred to in Section B?</p>",
+              "pageIndex": 5,
+              "text": "38   What is the ‘process’ referred to in Section B? "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b040",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    the killing of vegetation by salt \nB    salt’s ability to travel below ground \nC    the ability of trees to decrease salt levels \nD    the detection of salt by tracing other minerals</p>",
+              "pageIndex": 5,
+              "text": "A    the killing of vegetation by salt \nB    salt’s ability to travel below ground \nC    the ability of trees to decrease salt levels \nD    the detection of salt by tracing other minerals "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b041",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>39   According to Angus Howell, one problem in the fight against salinity is that</p>",
+              "pageIndex": 5,
+              "text": "39   According to Angus Howell, one problem in the fight against salinity is that "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b042",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    not enough farmers are concerned about the fight. \nB    farmers’ requests for help have been ignored. \nC    some possible measures may cause farmers to lose income. \nD    the government has not provided farmers with sufficient financial support.</p>",
+              "pageIndex": 5,
+              "text": "A    not enough farmers are concerned about the fight. \nB    farmers’ requests for help have been ignored. \nC    some possible measures may cause farmers to lose income. \nD    the government has not provided farmers with sufficient financial support. "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b043",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>40   Which of the following best describes the writer’s view of the salinity problem in \nAustralia?</p>",
+              "pageIndex": 5,
+              "text": "40   Which of the following best describes the writer’s view of the salinity problem in \nAustralia? "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b044",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    Farmers are fighting an enemy that moves secretly and hides well. \nB    Farmers have been able to contain this enemy in a small area. \nC    Farmers have already had significant success in fighting this problem. \nD    Farmers need to form more organised groups to solve this problem.</p>",
+              "pageIndex": 5,
+              "text": "A    Farmers are fighting an enemy that moves secretly and hides well. \nB    Farmers have been able to contain this enemy in a small area. \nC    Farmers have already had significant success in fighting this problem. \nD    Farmers need to form more organised groups to solve this problem. "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b045",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Disclaimer</p>",
+              "pageIndex": 5,
+              "text": "Disclaimer "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b046",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks. \nAll copyright in the underlying works remains with the original authors and publishers. \nNo affiliation with or endorsement by any rights holder (including IELTS® owners). \nFor non-commercial educational use only. This notice must remain intact in all copies.</p>",
+              "pageIndex": 5,
+              "text": "Compiled, formatted, and lightly proofread by ZYZ Reading Walks. \nAll copyright in the underlying works remains with the original authors and publishers. \nNo affiliation with or endorsement by any rights holder (including IELTS® owners). \nFor non-commercial educational use only. This notice must remain intact in all copies. "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b047",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
+              "pageIndex": 5,
+              "text": "Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 5,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b048",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 6]</p>",
+              "pageIndex": 6,
+              "text": "[No extractable text on page 6]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 6,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b049",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 7]</p>",
+              "pageIndex": 7,
+              "text": "[No extractable text on page 7]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 7,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "private-random-02.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 6 has no extractable text; OCR/manual review required",
+          "page 7 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q27": "",
+        "q28": "",
+        "q29": "",
+        "q30": "",
+        "q31": "",
+        "q32": "",
+        "q33": "",
+        "q34": "",
+        "q35": "",
+        "q36": "",
+        "q37": "",
+        "q38": "",
+        "q39": "",
+        "q40": ""
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:ae0017d25606595ea0d870e1fcf88832a1c7e53d7082c9add2149cca2b3cd057;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "private-random-02.pdf",
+        "questionIntroHtml": "<h3>Questions</h3><ul class=\"question-umbrella-ranges\"><li><strong>Questions 27-40</strong><span>Q27-40</span></li></ul>",
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b001",
+            "heading": "Questions 27-40",
+            "questionRange": [
+              27,
+              40
+            ],
+            "text": "RE ADI NG P AS S AGE 3 You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Sea Change for Salinity"
+          }
+        ],
+        "title": "private random 02"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>One of the most serious problems facing Australian farmers is an increase in the salt \ncontent in the soil. However, there are new weapons emerging in the fight against salinity.</p>\n<p>A  Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and \ngorges – ancient traps and channels for the deadly salt that is stealthily killing so much \nof the Australian landscape. The war on salt is calling forth new weapons. A suite of \nhigh technologies used by geologists to see underground and prospect for gold and \nminerals is now being used to pinpoint the presence of salt beneath the landscape, and \nto predict where it might move.</p>\n<p>B  Unless this process is clearly understood, warns Chief of Exploration and Mining Dr \nNeil Phillips, the hard work now underway of planning and tree-planting on the surface \nmay be rendered ineffective: salt can still sneak past and erupt, following one of the \nancient river channels formed millions of years ago. The use of airborne \nelectromagnetics to detect salt hidden beneath the landscape has been around for a \ndecade, but the past two years have seen a major development in its precision and \npowers of detection. Like the use of radar in battles, it has the potential to turn the tide \nof the struggle in favour of the defence by helping to pinpoint, plot and predict the \nmovements of the foe.</p>\n<p>C  Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first \noutbreak of salt in 1948. Over the ensuing decades the patches spread and multiplied \nuntil they consumed almost 100 hectares. By the late 1970s, Howell and his fellow \nfarmers had decided it was time for action and established a government-funded \n“Landcare” group in a bid to save Australia’s farmland. But despite a mounting effort by \nscientists, farmers and governments, the “white death” continued to encroach. Small \nsuccesses were eclipsed by larger defeats and fresh outbreaks.</p>\n<p>D  “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are \nthe social and economic solutions. How do you introduce the land-use changes that are \nneeded when people still need to make a living?” Howell asks. There is no satisfactory \nsolution yet. Part of the problem has lain in salt’s ability to mount ambushes, emerging \nsomewhere new, sometimes unexpected and unexplained, beating plans to intercept it. \nOnly now are scientists starting to really disclose its secret subterranean stores and \npassages.</p>\n<p>E  The need for such knowledge is pressing. Salt has already afflicted six million hectares \nof once-productive country. At present rates, it is predicted that, by 2050, it will have \nsterilised a total of 17 million hectares and the waters of Australia’s Murray River will \nregularly exceed the World Health Organisation’s salt limits for drinking water. \nDefeating this assault may take centuries, not decades.</p>\n<p>F  Electromagnetic surveys measure the electrical conductivity of soil to reveal the \ndistribution of salt and the nature and variability of the regolith – the weathered rock \nand sediment that may lie above the bedrock. Magnetic surveys measure small \ndifferences in the Earth’s magnetic field, enabling scientists to probe the deep past and \nreconstruct ancient landscapes – rivers, basins and faults now buried under tens of \nmetres of sediment. These features help to reveal where groundwater is stored, dictate \nthe direction of groundwater movement, and are critical to predicting or ruling out \nsalinity hot-spots.</p>\n<p>G  Radiometric analysis is based on the detection of radiation emitted by elements \ncontained in rocks and soils, allowing scientists to delineate landforms. These factors \ninfluence the mobility of salt through the soil profile and help determine where to plant \nparticular crop species to tackle the problem.</p>\n<p>Using data from the Murray River region, scientists have revealed a network of ancient \ndrainage systems that channelled water beneath the current land-surface. These buried \nchannels may carry salt and sometimes run at right angles to channels on the surface. \nThis implies that the salt could move underground in quite a different direction to what \none would expect by looking at surface slope and drainage.</p>\n<p>H  One of the biggest advances in detection, says Professor Neil Phillips, has come with \nthe integration of different techniques such as magnetics, electromagnetics and \nradiometrics, and ground mapping. Individually, these technologies only gave clues to \nwhat was going on underground. Together they provide a far more revealing picture of \nthe subsurface landscape, several hundred metres deep. Advanced airborne \nelectromagnetics, in particular, enables scientists to take “slices” of the landscape at \ndepths of five metres, ten metres, fifteen metres and so on, to determine where salt \nmay be stored at depth. This is building up a four-dimensional picture of the subsurface \nlandscape, enabling researchers to understand movements of salt in length, breadth, \ndepth and time.</p>\n<p>From such technologies it will be possible to locate salt stores, identify how saline they \nare, look at man-made and natural changes to the landscape that may cause it to \nmobilise, and then predict where it will head to and over what time span. This in turn \nwill give the salt warriors time to model various ways of containing or curbing the \nmenace, see what works best and then try it out on the ground.</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q27": "27",
+        "q28": "28",
+        "q29": "29",
+        "q30": "30",
+        "q31": "31",
+        "q32": "32",
+        "q33": "33",
+        "q34": "34",
+        "q35": "35",
+        "q36": "36",
+        "q37": "37",
+        "q38": "38",
+        "q39": "39",
+        "q40": "40"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": true,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 27-33</p></div><ol><li><div><strong>27</strong> a prediction of the future risk of salt to water supplies.</div><div class=\"choice-row\"><label><input name=\"q27\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q27\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q27\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q27\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q27\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q27\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q27\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q27\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>28</strong> the reason why technologies must be combined to be effective.</div><div class=\"choice-row\"><label><input name=\"q28\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q28\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q28\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q28\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q28\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q28\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q28\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q28\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>29</strong> a reference to the recent improvements in the accuracy of airborne electromagnetics.</div><div class=\"choice-row\"><label><input name=\"q29\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q29\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q29\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q29\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q29\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q29\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q29\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q29\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>30</strong> the organization of concerned farmers into an official body.</div><div class=\"choice-row\"><label><input name=\"q30\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q30\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q30\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q30\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q30\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q30\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q30\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q30\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>31</strong> the estimated length of time salinity is likely to be a problem.</div><div class=\"choice-row\"><label><input name=\"q31\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q31\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q31\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q31\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q31\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q31\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q31\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q31\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>32</strong> a summary of stages in a proposed plan of action to combat the salt problem.</div><div class=\"choice-row\"><label><input name=\"q32\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q32\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q32\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q32\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q32\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q32\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q32\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q32\" type=\"radio\" value=\"H\"> H</label></div></li><li><div><strong>33</strong> the possibility that current re-vegetation practices are a waste of time.</div><div class=\"choice-row\"><label><input name=\"q33\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q33\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q33\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q33\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q33\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q33\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q33\" type=\"radio\" value=\"G\"> G</label><label><input name=\"q33\" type=\"radio\" value=\"H\"> H</label></div></li></ol></section>",
+          "groupId": "group-1",
+          "kind": "matching_information",
+          "leadHtml": "<p>Questions 27-33</p>",
+          "questionIds": [
+            "q27",
+            "q28",
+            "q29",
+            "q30",
+            "q31",
+            "q32",
+            "q33"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 34-36</p></div><ol><li><div><strong>34</strong> Electromagnetic surveys</div><div class=\"choice-row\"><label><input name=\"q34\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q34\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q34\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q34\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>35</strong> Radiometric analysis</div><div class=\"choice-row\"><label><input name=\"q35\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q35\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q35\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q35\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>36</strong> Airborne electromagnetics List of uses</div><div class=\"choice-row\"><label><input name=\"q36\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q36\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q36\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q36\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "groupId": "group-2",
+          "kind": "matching",
+          "leadHtml": "<p>Questions 34-36</p>",
+          "questionIds": [
+            "q34",
+            "q35",
+            "q36"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 37-40</p></div><ol><li><div><strong>37</strong> What link does the writer make between salt and gold? A They can both be found in the same locations. B Both have been found to have an impact on the landscape. C The same techniques can be used to find both. D Neither is present in mountainous areas.</div><div class=\"choice-row\"><label><input name=\"q37\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q37\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q37\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q37\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>38</strong> What is the ‘process’ referred to in Section B? A the killing of vegetation by salt B salt’s ability to travel below ground C the ability of trees to decrease salt levels D the detection of salt by tracing other minerals</div><div class=\"choice-row\"><label><input name=\"q38\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q38\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q38\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q38\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>39</strong> According to Angus Howell, one problem in the fight against salinity is that A not enough farmers are concerned about the fight. B farmers’ requests for help have been ignored. C some possible measures may cause farmers to lose income. D the government has not provided farmers with sufficient financial support.</div><div class=\"choice-row\"><label><input name=\"q39\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q39\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q39\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q39\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>40</strong> Which of the following best describes the writer’s view of the salinity problem in Australia? A Farmers are fighting an enemy that moves secretly and hides well. B Farmers have been able to contain this enemy in a small area. C Farmers have already had significant success in fighting this problem. D Farmers need to form more organised groups to solve this problem. Disclaimer Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</div><div class=\"choice-row\"><label><input name=\"q40\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q40\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q40\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q40\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "groupId": "group-3",
+          "kind": "single_choice",
+          "leadHtml": "<p>Questions 37-40</p>",
+          "questionIds": [
+            "q37",
+            "q38",
+            "q39",
+            "q40"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260809143542-84186cfa/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/private-random-02.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/private-real/private-random-02.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b002",
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009",
+            "b010",
+            "b011",
+            "b012"
+          ],
+          "title": "One of the most serious problems facing Australian farmers is an increase in the salt content in the soil. However, there are new weapons emerging in the fight against salinity."
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b013",
+              "b014",
+              "b015",
+              "b016",
+              "b017",
+              "b018",
+              "b019",
+              "b020",
+              "b021",
+              "b022",
+              "b023",
+              "b024"
+            ],
+            "interaction": {
+              "allowOptionReuse": true,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D",
+                "E",
+                "F",
+                "G",
+                "H"
+              ],
+              "type": "matching"
+            },
+            "kind": "matching_information",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            }
+          ],
+          "groupId": "group-1",
+          "heading": "Questions 27-33",
+          "instructionText": "Questions 27–33",
+          "kindHint": "matching_information",
+          "layoutHint": "list",
+          "questionRange": [
+            27,
+            33
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 27–33"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Reading Passage 3 has eight sections, A–H."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Which section contains the following information?"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A–H, in boxes 27–33 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "NB You may use any letter more than once."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "27 a prediction of the future risk of salt to water supplies."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "28 the reason why technologies must be combined to be effective."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "29 a reference to the recent improvements in the accuracy of airborne electromagnetics."
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "30 the organization of concerned farmers into an official body."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "31 the estimated length of time salinity is likely to be a problem."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "32 a summary of stages in a proposed plan of action to combat the salt problem."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "33 the possibility that current re-vegetation practices are a waste of time."
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033"
+          ],
+          "classification": {
+            "confidence": 0.68,
+            "evidence": [
+              "b025",
+              "b026",
+              "b027",
+              "b028",
+              "b029",
+              "b030",
+              "b031",
+              "b032",
+              "b033"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D"
+              ],
+              "type": "matching"
+            },
+            "kind": "matching",
+            "warnings": [
+              "Option reuse was inferred from question type; source wording did not state it explicitly."
+            ]
+          },
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 34-36",
+          "instructionText": "Questions 34–36",
+          "kindHint": "matching",
+          "layoutHint": "list",
+          "questionRange": [
+            34,
+            36
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 34–36"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Look at the list of techniques (Questions 34–36) and the list of uses which follows it."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Match each technique with the correct use, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "34 Electromagnetic surveys"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "35 Radiometric analysis"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "36 Airborne electromagnetics"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "List of uses"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A can help farmers choose the best location for plants. B can show the composition of the top layer of the ground. C can"
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045",
+            "b046",
+            "b047"
+          ],
+          "classification": {
+            "confidence": 0.68,
+            "evidence": [
+              "b034",
+              "b035",
+              "b036",
+              "b037",
+              "b038",
+              "b039",
+              "b040",
+              "b041",
+              "b042",
+              "b043",
+              "b044",
+              "b045",
+              "b046",
+              "b047"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D"
+              ],
+              "type": "radio"
+            },
+            "kind": "single_choice",
+            "warnings": [
+              "Option reuse was inferred from question type; source wording did not state it explicitly."
+            ]
+          },
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
+              "toBlockId": "b045"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
+            }
+          ],
+          "groupId": "group-3",
+          "heading": "Questions 37-40",
+          "instructionText": "Questions 36–40",
+          "kindHint": "single_choice",
+          "layoutHint": "list",
+          "questionRange": [
+            37,
+            40
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 36–40"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose the correct letter, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter in boxes 36–40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "37 What link does the writer make between salt and gold?"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A They can both be found in the same locations. B Both have been found to have an impact on the landscape. C The same te"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "38 What is the ‘process’ referred to in Section B?"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A the killing of vegetation by salt B salt’s ability to travel below ground C the ability of trees to decrease salt leve"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "39 According to Angus Howell, one problem in the fight against salinity is that"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A not enough farmers are concerned about the fight. B farmers’ requests for help have been ignored. C some possible meas"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "40 Which of the following best describes the writer’s view of the salinity problem in Australia?"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Farmers are fighting an enemy that moves secretly and hides well. B Farmers have been able to contain this enemy in a "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b045",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Disclaimer"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited."
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": [
+        {
+          "blockId": "b001",
+          "heading": "Questions 27-40",
+          "questionRange": [
+            27,
+            40
+          ],
+          "text": "RE ADI NG P AS S AGE 3 You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Sea Change for Salinity"
+        }
+      ]
+    }
+  }
+}

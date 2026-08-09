@@ -1,0 +1,212 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "private-random-06",
+  "source": {
+    "path": "fixtures/golden/private-real/private-random-06.pdf",
+    "originalName": "81. P3 - Robert Louis Stevenson 苏格兰作家.pdf",
+    "sha256": "c648162b838efeac0d1490704d6be7101dfdab90b38bb78dbefc47b9f0690a85",
+    "sizeBytes": 1058751,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question",
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "needs_review"
+        ]
+      },
+      {
+        "pageIndex": 6,
+        "roles": [
+          "needs_review"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          27,
+          31
+        ],
+        "kind": "single_choice",
+        "slotIds": [
+          "q27",
+          "q28",
+          "q29",
+          "q30",
+          "q31"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          32,
+          35
+        ],
+        "kind": "yes_no_not_given",
+        "slotIds": [
+          "q32",
+          "q33",
+          "q34",
+          "q35"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          36,
+          40
+        ],
+        "kind": "summary_completion",
+        "slotIds": [
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q27",
+        "displayNumber": "27",
+        "responseType": "radio"
+      },
+      {
+        "id": "q28",
+        "displayNumber": "28",
+        "responseType": "radio"
+      },
+      {
+        "id": "q29",
+        "displayNumber": "29",
+        "responseType": "radio"
+      },
+      {
+        "id": "q30",
+        "displayNumber": "30",
+        "responseType": "radio"
+      },
+      {
+        "id": "q31",
+        "displayNumber": "31",
+        "responseType": "radio"
+      },
+      {
+        "id": "q32",
+        "displayNumber": "32",
+        "responseType": "radio"
+      },
+      {
+        "id": "q33",
+        "displayNumber": "33",
+        "responseType": "radio"
+      },
+      {
+        "id": "q34",
+        "displayNumber": "34",
+        "responseType": "radio"
+      },
+      {
+        "id": "q35",
+        "displayNumber": "35",
+        "responseType": "radio"
+      },
+      {
+        "id": "q36",
+        "displayNumber": "36",
+        "responseType": "text"
+      },
+      {
+        "id": "q37",
+        "displayNumber": "37",
+        "responseType": "text"
+      },
+      {
+        "id": "q38",
+        "displayNumber": "38",
+        "responseType": "text"
+      },
+      {
+        "id": "q39",
+        "displayNumber": "39",
+        "responseType": "text"
+      },
+      {
+        "id": "q40",
+        "displayNumber": "40",
+        "responseType": "text"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "样本使用固定随机种子抽取；V1 派生标注是可复现的初始契约，正式评分前仍需人工确认。",
+    "V1 parser emitted 2 warning(s); warning details remain part of the baseline."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/private-random-06.json",
+    "observed": {
+      "pageCount": 6,
+      "blockCount": 43,
+      "groupCount": 3,
+      "slotCount": 14,
+      "assetCount": 0,
+      "answerCount": 14,
+      "warningCount": 2,
+      "groupKinds": [
+        "single_choice",
+        "yes_no_not_given",
+        "summary_completion"
+      ],
+      "questionIds": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

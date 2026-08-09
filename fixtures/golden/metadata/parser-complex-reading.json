@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "parser-complex-reading",
+  "source": {
+    "path": "fixtures/parser/complex-reading.pdf",
+    "sha256": "9e0bc61e9f1cdb741675446c26a2240306e1456dba0c909e005efea7d26515aa",
+    "sizeBytes": 1458,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage",
+          "question",
+          "answer"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          3
+        ],
+        "kind": "true_false_not_given",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          4,
+          5
+        ],
+        "kind": "table_completion",
+        "slotIds": [
+          "q4",
+          "q5"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "radio"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "radio"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "radio"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "text"
+      },
+      {
+        "id": "q5",
+        "displayNumber": "5",
+        "responseType": "text"
+      }
+    ],
+    "assets": []
+  },
+  "knownIssues": [
+    "V1 falls back from rust pdf-extract because this tiny fixture has an invalid PDF trailer.",
+    "V1 creates q4/q5 but leaves their prompts empty; this is a baseline defect, not an expected success.",
+    "The answer block is present in the same page and must remain distinguishable from question content."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/parser-complex-reading.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 5,
+      "groupCount": 2,
+      "slotCount": 5,
+      "assetCount": 0,
+      "answerCount": 5,
+      "warningCount": 1,
+      "groupKinds": [
+        "true_false_not_given",
+        "table_completion"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5"
+      ],
+      "roles": [
+        "answer",
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

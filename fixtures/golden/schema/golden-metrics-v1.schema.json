@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ielts-author-studio.local/schema/golden-metrics-v1.schema.json",
+  "title": "GoldenMetricsV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sourcePlanSection", "metricGroups", "hardGates"],
+  "properties": {
+    "schemaVersion": { "const": "GoldenMetricsV1" },
+    "sourcePlanSection": { "type": "string", "minLength": 1 },
+    "metricGroups": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "metrics"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "metrics": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "scope", "unit", "formula"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "scope": { "type": "string", "minLength": 1 },
+                "unit": { "type": "string", "minLength": 1 },
+                "formula": { "type": "string", "minLength": 1 },
+                "auxiliary": { "type": "boolean" },
+                "readyTarget": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["operator", "value"],
+                  "properties": {
+                    "operator": { "enum": ["=", ">=", "<=", ">", "<"] },
+                    "value": { "type": "number" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "hardGates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "metricId", "operator", "value"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "metricId": { "type": "string", "minLength": 1 },
+          "operator": { "enum": ["=", ">=", "<=", ">", "<"] },
+          "value": { "type": "number" }
+        }
+      }
+    }
+  }
+}

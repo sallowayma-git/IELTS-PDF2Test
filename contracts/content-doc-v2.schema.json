@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ielts-author-studio.dev/phase1/content-doc-v2.schema.json",
+  "title": "ContentDocV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "documentId", "root"],
+  "properties": {
+    "schemaVersion": { "const": "ContentDocV2" },
+    "documentId": { "type": "string", "minLength": 1 },
+    "sourceDocumentId": { "type": "string", "minLength": 1 },
+    "root": { "type": "array", "items": { "$ref": "#/$defs/contentNode" } }
+  },
+  "$defs": {
+    "contentAlign": { "type": "string", "enum": ["left", "center", "right"] },
+    "paragraphAlign": { "type": "string", "enum": ["left", "center", "right", "justify"] },
+    "headerScope": { "type": "string", "enum": ["row", "column", "both", "none"] },
+    "provenanceStatus": { "type": "string", "enum": ["source", "derived", "user_edited", "manual"] },
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "widthPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "maxWidthPx": { "type": "integer", "minimum": 0 },
+        "align": { "$ref": "#/$defs/contentAlign" }
+      }
+    },
+    "hotspot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hotspotId", "slotId", "normalizedRect"],
+      "properties": {
+        "hotspotId": { "type": "string", "minLength": 1 },
+        "slotId": { "type": "string", "minLength": 1 },
+        "normalizedRect": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "number", "minimum": 0, "maximum": 1 },
+            { "type": "number", "minimum": 0, "maximum": 1 },
+            { "type": "number", "minimum": 0, "maximum": 1 },
+            { "type": "number", "minimum": 0, "maximum": 1 }
+          ],
+          "items": false,
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "labelAnchor": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "number", "minimum": 0, "maximum": 1 },
+            { "type": "number", "minimum": 0, "maximum": 1 }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    },
+    "contentChildren": { "type": "array", "items": { "$ref": "#/$defs/contentNode" } },
+    "optionContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["optionId", "label", "children", "sourceAnchors"],
+      "properties": {
+        "optionId": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "children": { "$ref": "#/$defs/contentChildren" },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
+      }
+    },
+    "contentNode": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["type", "id", "sourceAnchors", "provenanceStatus"],
+      "properties": {
+            "type": {
+              "enum": ["doc", "paragraph", "heading", "text", "hard_break", "bullet_list", "ordered_list", "list_item", "table", "table_row", "table_cell", "figure", "image", "figcaption", "flowchart", "flow_step", "diagram", "answer_slot", "option_bank", "horizontal_rule"]
+            },
+            "children": { "$ref": "#/$defs/contentChildren" },
+            "items": { "type": "array", "items": { "$ref": "#/$defs/listItem" } },
+            "level": { "type": "integer", "minimum": 1, "maximum": 9 },
+            "text": { "type": "string" },
+            "marks": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  { "type": "string", "enum": ["bold", "italic", "underline"] },
+                  { "type": "object", "additionalProperties": false, "required": ["link"], "properties": { "link": { "type": "string", "format": "uri-reference" } } }
+                ]
+              }
+            },
+            "align": { "oneOf": [{ "$ref": "#/$defs/contentAlign" }, { "$ref": "#/$defs/paragraphAlign" }] },
+            "indentLevel": { "type": "integer", "minimum": 0 },
+            "rows": { "type": "array", "items": { "$ref": "#/$defs/tableRow" } },
+            "cells": { "type": "array", "items": { "$ref": "#/$defs/tableCell" } },
+            "rowSpan": { "type": "integer", "minimum": 1 },
+            "colSpan": { "type": "integer", "minimum": 1 },
+            "headerScope": { "$ref": "#/$defs/headerScope" },
+            "caption": { "$ref": "#/$defs/contentChildren" },
+            "sourceTableId": { "type": "string", "minLength": 1 },
+            "visualFallbackAssetId": { "type": "string", "minLength": 1 },
+            "assetId": { "type": "string", "minLength": 1 },
+            "altText": { "type": "string" },
+            "hotspots": { "type": "array", "items": { "$ref": "#/$defs/hotspot" } },
+            "display": { "$ref": "#/$defs/display" },
+            "steps": { "type": "array", "items": { "$ref": "#/$defs/flowStep" } },
+            "label": { "type": "string" },
+            "slotIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "slotId": { "type": "string", "minLength": 1 },
+            "displayLabel": { "type": "string", "minLength": 1 },
+            "inline": { "type": "boolean" },
+            "placeholder": { "type": "string" },
+            "optionBankId": { "type": "string", "minLength": 1 },
+            "options": { "type": "array", "items": { "$ref": "#/$defs/optionContent" } },
+            "allowReuse": { "type": "boolean" }
+      },
+      "allOf": [
+            { "if": { "properties": { "type": { "const": "doc" } } }, "then": { "required": ["children"] } },
+            { "if": { "properties": { "type": { "const": "paragraph" } } }, "then": { "required": ["children"] } },
+            { "if": { "properties": { "type": { "const": "heading" } } }, "then": { "required": ["level", "children"] } },
+            { "if": { "properties": { "type": { "const": "text" } } }, "then": { "required": ["text"] } },
+            { "if": { "properties": { "type": { "const": "bullet_list" } } }, "then": { "required": ["items"] } },
+            { "if": { "properties": { "type": { "const": "ordered_list" } } }, "then": { "required": ["items"] } },
+            { "if": { "properties": { "type": { "const": "list_item" } } }, "then": { "required": ["children"] } },
+            { "if": { "properties": { "type": { "const": "table" } } }, "then": { "required": ["rows"] } },
+            { "if": { "properties": { "type": { "const": "table_row" } } }, "then": { "required": ["cells"] } },
+            { "if": { "properties": { "type": { "const": "table_cell" } } }, "then": { "required": ["rowSpan", "colSpan", "children"] } },
+            { "if": { "properties": { "type": { "const": "figure" } } }, "then": { "required": ["assetId", "display"] } },
+            { "if": { "properties": { "type": { "const": "image" } } }, "then": { "required": ["assetId", "display"] } },
+            { "if": { "properties": { "type": { "const": "figcaption" } } }, "then": { "required": ["children"] } },
+            { "if": { "properties": { "type": { "const": "flowchart" } } }, "then": { "required": ["steps"] } },
+            { "if": { "properties": { "type": { "const": "flow_step" } } }, "then": { "required": ["children"] } },
+            { "if": { "properties": { "type": { "const": "diagram" } } }, "then": { "required": ["assetId", "display"] } },
+            { "if": { "properties": { "type": { "const": "answer_slot" } } }, "then": { "required": ["slotId", "displayLabel", "inline"] } },
+            { "if": { "properties": { "type": { "const": "option_bank" } } }, "then": { "required": ["optionBankId", "options", "allowReuse"] } }
+      ]
+    },
+    "listItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["type", "id", "sourceAnchors", "provenanceStatus", "children"],
+      "properties": {
+        "type": { "const": "list_item" },
+        "id": { "type": "string", "minLength": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } },
+        "provenanceStatus": { "$ref": "#/$defs/provenanceStatus" },
+        "children": { "$ref": "#/$defs/contentChildren" }
+      }
+    },
+    "tableRow": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["type", "id", "sourceAnchors", "provenanceStatus", "cells"],
+      "properties": {
+        "type": { "const": "table_row" },
+        "id": { "type": "string", "minLength": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } },
+        "provenanceStatus": { "$ref": "#/$defs/provenanceStatus" },
+        "cells": { "type": "array", "items": { "$ref": "#/$defs/tableCell" } }
+      }
+    },
+    "tableCell": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["type", "id", "sourceAnchors", "provenanceStatus", "rowSpan", "colSpan", "children"],
+      "properties": {
+        "type": { "const": "table_cell" },
+        "id": { "type": "string", "minLength": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } },
+        "provenanceStatus": { "$ref": "#/$defs/provenanceStatus" },
+        "rowSpan": { "type": "integer", "minimum": 1 },
+        "colSpan": { "type": "integer", "minimum": 1 },
+        "headerScope": { "$ref": "#/$defs/headerScope" },
+        "children": { "$ref": "#/$defs/contentChildren" }
+      }
+    },
+    "flowStep": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["type", "id", "sourceAnchors", "provenanceStatus", "children"],
+      "properties": {
+        "type": { "const": "flow_step" },
+        "id": { "type": "string", "minLength": 1 },
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } },
+        "provenanceStatus": { "$ref": "#/$defs/provenanceStatus" },
+        "label": { "type": "string" },
+        "children": { "$ref": "#/$defs/contentChildren" },
+        "slotIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

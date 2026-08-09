@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "parser-image-only-reading",
+  "source": {
+    "path": "fixtures/parser/image-only-reading.pdf",
+    "sha256": "b878279d1035d8cf93e78600123b3adbe34bb9b3782f43a275eeec8343df8daa",
+    "sizeBytes": 29347,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "visual_review"
+        ]
+      }
+    ],
+    "taskGroups": [],
+    "slots": [],
+    "assets": [
+      {
+        "id": "page-1-raster",
+        "type": "page_image",
+        "required": true
+      }
+    ]
+  },
+  "knownIssues": [
+    "V1 cannot extract text from the page and requests OCR/manual review.",
+    "V2 must preserve a page or region raster asset instead of silently dropping the visual source."
+  ],
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/parser-image-only-reading.json",
+    "observed": {
+      "pageCount": 1,
+      "blockCount": 1,
+      "groupCount": 0,
+      "slotCount": 0,
+      "assetCount": 0,
+      "answerCount": 0,
+      "warningCount": 1,
+      "groupKinds": [],
+      "questionIds": [],
+      "roles": []
+    }
+  }
+}
