@@ -10,3 +10,6 @@ export * from "./content-doc-v2";
 export * from "./quality-report-v2";
 export * from "./ielts-authoring-v2";
 export * from "./artifact-store-v2";
+export * from "./authoring-editor-v2";
+export * from "./writing";
+export * from "./library";

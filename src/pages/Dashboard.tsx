@@ -1,12 +1,20 @@
+import { useEffect, useState } from "react";
 import { StatusPill } from "../components/StatusPill";
-import { go } from "../app/router";
-import type { ImportJob, JobStatus } from "../types";
+import { go, jobResumePath } from "../app/router";
+import { getLibraryStats } from "../api/tauriCommands";
+import { libraryStatusLabel } from "../utils/displayLabels";
+import type { ImportJob, JobStatus, LibraryStats } from "../types";
 import { jobStatusLabel } from "../utils/displayLabels";
 
 const statusOrder: JobStatus[] = ["Working", "NeedsReview", "DraftSaved", "ExportReady", "Exported", "Cleaned"];
 
 export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () => void }) {
   const counts = statusOrder.map((status) => ({ status, count: jobs.filter((job) => job.status === status).length }));
+  const [stats, setStats] = useState<LibraryStats | null>(null);
+
+  useEffect(() => {
+    getLibraryStats().then(setStats).catch(console.error);
+  }, [jobs]);
 
   return (
     <section className="dashboard page-enter">
@@ -18,6 +26,7 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
         </div>
         <div className="hero-actions">
           <button className="primary" onClick={() => go("/jobs/new")}>新建导题任务</button>
+          <button className="ghost" onClick={() => go("/library")}>题库管理</button>
         </div>
       </div>
 
@@ -30,6 +39,25 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
         ))}
       </div>
 
+      {stats ? (
+        <section className="library-overview">
+          <div className="section-heading spread">
+            <div>
+              <p className="eyebrow">Library</p>
+              <h3>题库概览</h3>
+            </div>
+            <button className="ghost small" onClick={() => go("/library")}>进入题库</button>
+          </div>
+          <div className="metric-row">
+            <div className="metric"><span>总题数</span><strong>{stats.total}</strong></div>
+            <div className="metric"><span>阅读</span><strong>{stats.bySubject.reading ?? 0}</strong></div>
+            <div className="metric"><span>写作</span><strong>{stats.bySubject.writing ?? 0}</strong></div>
+            <div className="metric"><span>已定稿</span><strong>{stats.byStatus.ready ?? 0}</strong></div>
+            <div className="metric"><span>已发布</span><strong>{stats.byStatus.exported ?? 0}</strong></div>
+          </div>
+        </section>
+      ) : null}
+
       <div className="two-column">
         <section>
           <div className="section-heading">
@@ -38,7 +66,7 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
           </div>
           <div className="job-table">
             {jobs.slice(0, 8).map((job) => (
-              <button className="job-row" key={job.jobId} onClick={() => go(`/jobs/${job.jobId}/document`)}>
+              <button className="job-row" key={job.jobId} onClick={() => go(jobResumePath(job))}>
                 <span>
                   <strong>{job.title}</strong>
                   <small>{job.jobId}</small>
@@ -57,9 +85,9 @@ export function Dashboard({ jobs, refresh }: { jobs: ImportJob[]; refresh: () =>
           <ol className="check-list">
             <li>选择本地 PDF、DOCX、TXT 或 MD 文件</li>
             <li>核对解析结果，必要时补充人工转录</li>
-            <li>确认题组、题型和答案</li>
-            <li>编辑可编辑题稿并完成预览校验</li>
-            <li>导出单题文件或加入 Pack</li>
+            <li>仅在识别有风险时确认源文档</li>
+            <li>核对并编辑题组；答案可稍后补充</li>
+            <li>选择 NAS 共享目录并发布给学生端</li>
           </ol>
         </aside>
       </div>

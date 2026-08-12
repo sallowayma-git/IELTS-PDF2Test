@@ -486,15 +486,21 @@ pub(crate) fn environment_preflight_report() -> Value {
             sips,
         ));
     } else if platform == "windows" {
+        let pdfium_ok = crate::pdf_geometry::pdfium_library_path().is_some();
         checks.push(preflight_item(
             "renderer:windows-pdfium",
-            false,
-            "warning",
-            "Windows PDFium page renderer is reserved but not bundled in this runtime; scanned PDFs require cloud PDF vision or manual transcription.".to_string(),
+            pdfium_ok,
+            if pdfium_ok { "info" } else { "warning" },
+            if pdfium_ok {
+                "Bundled PDFium page renderer is available; scanned PDFs use it for vision transcription input.".to_string()
+            } else {
+                "PDFium native library is not bundled; scanned PDFs require cloud PDF vision or manual transcription. Text-layer PDF parsing still works via the pdf-extract fallback.".to_string()
+            },
             json!({
                 "selectedRenderer": renderer,
                 "rendererProvider": "windows-pdfium",
-                "implemented": false
+                "implemented": true,
+                "libraryAvailable": pdfium_ok
             }),
         ));
     }

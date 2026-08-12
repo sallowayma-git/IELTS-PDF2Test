@@ -9,13 +9,14 @@ const defaultTauriConfigPath = path.join(root, "src-tauri", "tauri.conf.json");
 const releaseRoot = path.join(root, "src-tauri", "target", "release");
 const bundleRoot = path.join(releaseRoot, "bundle");
 
-const usage = `Usage: node scripts/package-audit.mjs [--platform macos|windows] [--config <path>]
+const usage = `Usage: node scripts/package-audit.mjs [--platform macos|windows] [--config <path>] [config-path]
 
 Audits release package artifacts for forbidden bundled runtimes and emits a JSON manifest.
 
 Options:
   --platform <name>  Audit target platform. Defaults to the host platform.
   --config <path>    Tauri config or config override to merge over src-tauri/tauri.conf.json.
+  config-path        Positional config path fallback for npm run ... -- --config <path> on Windows.
   -h, --help         Show this help.
 `;
 
@@ -30,12 +31,22 @@ function parseArgs(argv) {
     platform: process.platform === "win32" ? "windows" : "macos",
     configPath: defaultTauriConfigPath,
   };
+  let configExplicitlySet = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === "--") continue;
     if (arg === "-h" || arg === "--help") {
       console.log(usage);
       process.exit(0);
+    }
+    if (!arg.startsWith("-")) {
+      if (configExplicitlySet) {
+        fail(`unexpected positional argument: ${arg}`, usage);
+      }
+      out.configPath = resolveCliPath(arg);
+      configExplicitlySet = true;
+      continue;
     }
     if (arg === "--platform") {
       out.platform = argv[++i];
@@ -47,10 +58,12 @@ function parseArgs(argv) {
     }
     if (arg === "--config") {
       out.configPath = resolveCliPath(argv[++i]);
+      configExplicitlySet = true;
       continue;
     }
     if (arg.startsWith("--config=")) {
       out.configPath = resolveCliPath(arg.slice("--config=".length));
+      configExplicitlySet = true;
       continue;
     }
     fail(`unknown argument: ${arg}`, usage);
@@ -198,21 +211,32 @@ const forbiddenRuntimePatterns = [
   "tesseract",
   "tessdata",
   "ocr engine",
-  "pdfium",
 ];
+
+// pdfium (pdfium.dll / libpdfium.dylib / libpdfium.so) is the BUNDLED native
+// PDF backend — intentionally shipped as a Tauri resource so all PDF features
+// work on machines with no Python. It is allow-listed ONLY under the
+// lib/pdfium-<platform>/ resources path. Python/Node/tesseract stay forbidden.
+const PDFIUM_ALLOW_PATH = /(^|\/)lib\/pdfium-(windows|macos|linux)\/(pdfium\.dll|libpdfium\.dylib|libpdfium\.so)$/i;
+const PDFIUM_LIB_BASENAMES = new Set(["pdfium.dll", "libpdfium.dylib", "libpdfium.so"]);
 
 function forbiddenRuntimeReason(file) {
   const normalized = file.split(path.sep).join("/").toLowerCase();
   const base = path.basename(normalized);
 
+  // Allow-list the bundled pdfium binary in its resources folder.
+  if (PDFIUM_ALLOW_PATH.test(normalized) && PDFIUM_LIB_BASENAMES.has(base)) {
+    return null;
+  }
   if (normalized.includes("/node_modules/")) return "node_modules";
   if (normalized.includes("python.framework")) return "python framework";
   if (/(^|\/)(\.venv|venv)(\/|$)/.test(normalized)) return "python virtualenv";
   if (/(^|\/)tessdata(\/|$)/.test(normalized)) return "tesseract language data";
-  if (/(^|\/)pdfium(\/|$)/.test(normalized) || /^lib?pdfium(\.|$)/.test(base)) return "pdfium";
+  // Any pdfium binary OUTSIDE the allow-listed resources path is still forbidden.
+  if (/(^|\/)pdfium(\/|$)/.test(normalized) || /^(lib)?pdfium(\.|$)/.test(base)) return "pdfium (outside bundled resources path)";
   if (/(^|\/)ocr(engine|_engine)?(\.exe)?$/.test(normalized)) return "ocr engine";
   if (/^lib?tesseract(\.|$)/.test(base)) return "tesseract";
-  if (["node", "node.exe", "python", "python3", "python.exe", "py.exe", "tesseract", "tesseract.exe", "pdfium", "pdfium.dll"].includes(base)) {
+  if (["node", "node.exe", "python", "python3", "python.exe", "py.exe", "tesseract", "tesseract.exe"].includes(base)) {
     return base;
   }
   return null;

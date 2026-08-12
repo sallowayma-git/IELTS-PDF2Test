@@ -7,12 +7,11 @@ use crate::environment::{
     command_failure, find_sidecar, node_validator_diagnostics_enabled, runtime_gate_strict_mode,
 };
 use crate::export_artifacts::build_reading_asset_bundle;
-use crate::job_store::load_job;
 use crate::reading_source::reading_source;
 use crate::source_review::{source_review_issues, source_review_status_for_job};
 use crate::util::{job_dir, validate_path_segment, write_json, write_text};
 use crate::validator::json_issue;
-use crate::{CommandResult, JobStatus};
+use crate::CommandResult;
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -364,25 +363,17 @@ pub(crate) fn publish_readiness_gate(
     ir: &Value,
     mut runtime_report: Value,
 ) -> CommandResult<Value> {
-    let job = load_job(root, job_id)?;
     let dir = job_dir(root, job_id);
     let source_review = source_review_status_for_job(root, job_id)?;
     let human_verified = ir.pointer("/audit/humanVerified").and_then(Value::as_bool) == Some(true);
     let mut issues = Vec::new();
 
-    if job.status == JobStatus::NeedsReview {
-        issues.push(json_issue(
-            "AuthoringIR",
-            "$.job.status",
-            "Job is still marked NeedsReview; complete manual review before publish",
-        ));
-    }
     issues.extend(source_review_issues(&source_review));
     if !human_verified {
         issues.push(json_issue(
             "AuthoringIR",
             "$.audit.humanVerified",
-            "All questions and answers must be human verified before publish",
+            "All questions must be human verified before publish",
         ));
     }
     issues.extend(authoring_review_issues(ir));

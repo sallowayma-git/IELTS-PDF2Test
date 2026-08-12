@@ -886,15 +886,27 @@ fn build_responses_and_slots(
             lines,
             Some(anchor.clone()),
         );
-        let prompt_text = prompt_result.text;
+        let completion_fallback = if prompt_result.text.is_empty() && is_completion_task(task_type)
+        {
+            completion_prompt_fallback(lines)
+        } else {
+            None
+        };
+        let prompt_text = completion_fallback
+            .as_ref()
+            .map(|(text, _)| text.clone())
+            .unwrap_or_else(|| prompt_result.text.clone());
+        let prompt_anchors = completion_fallback
+            .as_ref()
+            .map(|(_, anchors)| anchors.clone())
+            .unwrap_or_else(|| prompt_result.source_anchors.clone());
         let host_id = format!("{task_id}-prompt-{number}");
         let mut children = Vec::new();
         if !prompt_text.is_empty() {
             children.push(text_node(
                 &format!("{host_id}-text"),
                 &prompt_text,
-                prompt_result
-                    .source_anchors
+                prompt_anchors
                     .first()
                     .cloned()
                     .or_else(|| Some(anchor.clone())),
@@ -915,7 +927,7 @@ fn build_responses_and_slots(
             } else {
                 &prompt_text
             },
-            prompt_result.source_anchors.clone(),
+            prompt_anchors,
             children,
         )];
         let slot = slot_value(&slot_id, *number, task_type, &host_id, anchor, signature);
@@ -1309,7 +1321,60 @@ fn shared_prompt(
                     .map(|line| normalize_instruction_text(&line.text))
             })
         })
+        .or_else(|| shared_prompt_from_lines(lines))
         .unwrap_or_else(|| "[shared prompt pending review]".to_string())
+}
+
+fn shared_prompt_from_lines(lines: &[SemanticLine]) -> Option<String> {
+    let option_start = detect_option_runs(lines)
+        .first()
+        .and_then(|run| run.options.first())
+        .and_then(|option| lines.iter().position(|line| line.id == option.line_id))
+        .unwrap_or(lines.len());
+    let prompt = lines
+        .iter()
+        .take(option_start)
+        .map(|line| normalize_instruction_text(&line.text))
+        .filter(|text| !text.is_empty())
+        .filter(|text| !is_shared_prompt_instruction(text))
+        .collect::<Vec<_>>();
+    (!prompt.is_empty()).then(|| prompt.join(" "))
+}
+
+fn is_shared_prompt_instruction(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.starts_with("questions ")
+        || lower.starts_with("question ")
+        || lower.starts_with("choose ")
+        || lower.starts_with("complete ")
+        || lower.starts_with("look at ")
+        || lower.starts_with("match each ")
+        || lower.starts_with("write ")
+        || lower.starts_with("in boxes ")
+        || lower.starts_with("nb ")
+}
+
+fn completion_prompt_fallback(lines: &[SemanticLine]) -> Option<(String, Vec<Value>)> {
+    let mut text = Vec::new();
+    let mut anchors = Vec::new();
+    for line in lines {
+        let normalized = normalize_instruction_text(&line.text);
+        if normalized.is_empty() || !is_completion_prompt_instruction(&normalized) {
+            continue;
+        }
+        text.push(normalized);
+        anchors.push(line.source_anchor.clone());
+    }
+    (!text.is_empty()).then(|| (text.join(" "), anchors))
+}
+
+fn is_completion_prompt_instruction(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.starts_with("complete ")
+        || lower.starts_with("choose ")
+        || lower.starts_with("write ")
+        || lower.starts_with("use no more than ")
+        || lower.starts_with("fill ")
 }
 
 fn build_stimulus(
@@ -2052,6 +2117,55 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(node_ids, vec!["g1", "g2", "g3"]);
+    }
+
+    #[test]
+    fn shared_prompt_recovers_question_text_when_v1_prompt_is_empty() {
+        let lines = vec![
+            semantic_line("heading", "Questions 14 and 15", 0, "heading"),
+            semantic_line("choose", "Choose TWO letters, A-E.", 0, "choose"),
+            semantic_line(
+                "write",
+                "Write the correct letters in boxes 14 and 15.",
+                0,
+                "write",
+            ),
+            semantic_line(
+                "question",
+                "According to the writer, which TWO are characteristics of the approach?",
+                0,
+                "question",
+            ),
+            semantic_line("options", "A first option B second option", 0, "options"),
+        ];
+        let v1_group = json!({"questions":[{"prompt":""}]});
+
+        assert_eq!(
+            shared_prompt(Some(&v1_group), &lines, Some(14)),
+            "According to the writer, which TWO are characteristics of the approach?"
+        );
+    }
+
+    #[test]
+    fn completion_prompt_fallback_preserves_source_instructions() {
+        let lines = vec![
+            semantic_line("heading", "Questions 24-26", 0, "heading"),
+            semantic_line("complete", "Complete the summary below.", 0, "complete"),
+            semantic_line(
+                "choose",
+                "Choose ONE WORD ONLY from the passage for each answer.",
+                0,
+                "choose",
+            ),
+            semantic_line("write", "Write your answers in boxes 24-26.", 0, "write"),
+        ];
+
+        let (text, anchors) = completion_prompt_fallback(&lines).expect("fallback prompt");
+        assert_eq!(
+            text,
+            "Complete the summary below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 24-26."
+        );
+        assert_eq!(anchors.len(), 3);
     }
 
     #[test]

@@ -24,9 +24,21 @@ uuid = { version = "1", features = ["v4", "serde"] }
 fs2 = "0.4"
 thiserror = "2"
 pdf-extract = "0.10"
+pdfium-render = { version = "0.9", default-features = false, features = ["pdfium_latest", "thread_safe"] }
+png = "0.17"
 quick-xml = "0.39"
 zip = { version = "2.4.2", default-features = false, features = ["flate2", "deflate-flate2"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 base64 = "0.22"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+
+[profile.release]
+# Aggressive size optimization for the shipped binary. LTO + single
+# codegen-unit + symbol stripping keep the .exe small despite the pdfium-render
+# and sqlite deps. Tauri's NSIS installer then compresses the .exe further.
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

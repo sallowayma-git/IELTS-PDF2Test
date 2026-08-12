@@ -1,6 +1,5 @@
 import type {
   AuthoringPatch,
-  BuildPackInput,
   CreateJobInput,
   DocumentIr,
   ExportNasLibraryInput,
@@ -21,7 +20,6 @@ import type {
   VisionTranscriptionInput,
   AutoPipelineReport,
   JobArtifactStatusV2,
-  PackBuildResult,
   ParseOptions,
   PreviewAssets,
   ReadingAuthoringIr,
@@ -30,7 +28,20 @@ import type {
   SourceFileRole,
   SourceReview,
   SplitCandidates,
-  ValidationReport
+  ValidationReport,
+  WritingJob,
+  CreateWritingJobInput,
+  WritingJobPatch,
+  WritingJobFilter,
+  ExportWritingLibraryInput,
+  WritingExportResult,
+  LibraryFilter,
+  LibraryExamSummary,
+  LibraryExamDetail,
+  LibraryMetaPatch,
+  LibraryStats,
+  AuthoringEditorSessionV2,
+  ApplyAuthoringV2PatchesInput
 } from "../types";
 import { devFallbackInvoke, type JobDetail } from "../services/devFallbackBackend";
 
@@ -125,6 +136,14 @@ export async function updateAuthoringIr(jobId: string, patch: AuthoringPatch): P
   return command("update_authoring_ir", { jobId, patch });
 }
 
+export async function getAuthoringV2(jobId: string): Promise<AuthoringEditorSessionV2> {
+  return command("get_authoring_v2", { jobId });
+}
+
+export async function applyAuthoringV2Patches(input: ApplyAuthoringV2PatchesInput): Promise<AuthoringEditorSessionV2> {
+  return command("apply_authoring_v2_patches", { input });
+}
+
 export async function renderGroupHtml(jobId: string, groupId: string): Promise<{ groupId: string; bodyHtml: string }> {
   return command("render_group_html", { jobId, groupId });
 }
@@ -189,8 +208,8 @@ export async function runCloudReview(jobId: string, input?: { profileId?: string
   return command("run_cloud_review", { jobId, input });
 }
 
-export async function exportReadingAssets(jobId: string, exportDir = "local://exports"): Promise<ExportResult> {
-  return command("export_reading_assets", { jobId, exportDir });
+export async function exportReadingAssets(jobId: string, exportDir = "local://exports", validationPolicy: "strict" | "force" = "strict"): Promise<ExportResult> {
+  return command("export_reading_assets", { jobId, exportDir, validationPolicy });
 }
 
 export async function exportReadingJs(input: ExportReadingJsInput): Promise<JsExportResult> {
@@ -201,6 +220,60 @@ export async function exportNasLibrary(input: ExportNasLibraryInput): Promise<Na
   return command("export_nas_library", { input });
 }
 
-export async function buildPack(input: BuildPackInput): Promise<PackBuildResult> {
-  return command("build_pack", { input });
+// ---------- 写作题库命令 ----------
+export async function createWritingJob(input: CreateWritingJobInput): Promise<WritingJob> {
+  return command("create_writing_job", { input });
+}
+
+export async function listWritingJobs(filter: WritingJobFilter = {}): Promise<WritingJob[]> {
+  return command("list_writing_jobs", { filter });
+}
+
+export async function getWritingJob(jobId: string): Promise<WritingJob> {
+  return command("get_writing_job", { jobId });
+}
+
+export async function updateWritingJob(jobId: string, patch: WritingJobPatch): Promise<WritingJob> {
+  return command("update_writing_job", { jobId, patch });
+}
+
+export async function deleteWritingJob(jobId: string): Promise<{ deleted: true; jobId: string }> {
+  return command("delete_writing_job", { jobId });
+}
+
+export async function exportWritingLibrary(input: ExportWritingLibraryInput): Promise<WritingExportResult> {
+  return command("export_writing_library", { input });
+}
+
+// ---------- 题库管理命令 ----------
+export async function listLibraryExams(filter: LibraryFilter = {}): Promise<LibraryExamSummary[]> {
+  return command("list_library_exams", { filter });
+}
+
+export async function getLibraryExam(id: string): Promise<LibraryExamDetail | null> {
+  return command("get_library_exam", { id });
+}
+
+export async function updateLibraryExamMeta(id: string, patch: LibraryMetaPatch): Promise<LibraryExamSummary | null> {
+  return command("update_library_exam_meta", { id, patch });
+}
+
+export async function deleteLibraryExam(id: string): Promise<boolean> {
+  return command("delete_library_exam", { id });
+}
+
+export async function searchLibraryExams(query: string): Promise<LibraryExamSummary[]> {
+  return command("search_library_exams", { query });
+}
+
+export async function getLibraryStats(): Promise<LibraryStats> {
+  return command("get_library_stats");
+}
+
+export async function restoreLibraryExam(id: string): Promise<boolean> {
+  return command("restore_library_exam", { id });
+}
+
+export async function listTrashedExams(): Promise<LibraryExamSummary[]> {
+  return command("list_trashed_exams");
 }

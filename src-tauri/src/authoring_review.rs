@@ -46,7 +46,6 @@ pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
     let mut needs_review = 0u32;
     let mut total_questions = 0u32;
     let mut verified_questions = 0u32;
-    let mut empty_answers = 0u32;
 
     if let Some(groups) = ir.get_mut("groups").and_then(Value::as_array_mut) {
         for group in groups {
@@ -59,10 +58,6 @@ pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
                     if value_verified(question) {
                         verified_questions += 1;
                         group_verified_questions += 1;
-                    }
-                    if answer_is_empty(question.get("answer")) {
-                        empty_answers += 1;
-                        needs_review += 1;
                     }
                     if value_confidence(question) < 0.85 && !value_verified(question) {
                         needs_review += 1;
@@ -86,9 +81,7 @@ pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
     if let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) {
         audit.insert(
             "humanVerified".to_string(),
-            json!(
-                total_questions > 0 && total_questions == verified_questions && empty_answers == 0
-            ),
+            json!(total_questions > 0 && total_questions == verified_questions),
         );
         audit.insert("updatedAt".to_string(), json!(Utc::now().to_rfc3339()));
     }
@@ -156,13 +149,6 @@ pub(crate) fn authoring_review_issues(ir: &Value) -> Vec<Value> {
                 .get("id")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown-question");
-            if answer_is_empty(question.get("answer")) {
-                issues.push(json_issue(
-                    "AuthoringIR",
-                    &format!("$.answerKey.{}", qid),
-                    "Question answer is empty; fill or verify the answer before publish",
-                ));
-            }
             if question
                 .get("requiresManualQuestionImport")
                 .and_then(Value::as_bool)

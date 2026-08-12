@@ -1,7 +1,6 @@
 import type {
   AnswerValue,
   AuthoringPatch,
-  BuildPackInput,
   DocumentBlock,
   DocumentIr,
   ExportNasLibraryInput,
@@ -9,6 +8,7 @@ import type {
   ExportResult,
   GroupKind,
   ImportJob,
+  IgnoredValidationIssue,
   JsExportResult,
   NasExportResult,
   JobFilter,
@@ -18,7 +18,6 @@ import type {
   LlmTestResult,
   EnvironmentPreflightReport,
   AutoPipelineReport,
-  PackBuildResult,
   ParseOptions,
   PreviewAssets,
   ReadingAuthoringIr,
@@ -28,10 +27,26 @@ import type {
   SourceReview,
   SplitCandidates,
   ValidationIssue,
-  ValidationReport
+  ValidationPolicy,
+  ValidationReport,
+  WritingJob,
+  CreateWritingJobInput,
+  WritingJobPatch,
+  WritingJobFilter,
+  WritingTaskType,
+  ExportWritingLibraryInput,
+  LibraryFilter,
+  LibraryExamSummary,
+  LibraryExamDetail,
+  LibraryMetaPatch,
+  LibraryStats,
+  LibraryStatus
 } from "../types";
+import type { AuthoringEditorSessionV2, IeltsAuthoringIRV2, ApplyAuthoringV2PatchesInput } from "../types";
 import type { DiagnosticsSettings } from "../types/settings";
 import { buildManifest, buildWrapper, escapeHtml, renderGroupBodyHtml, toReadingExamSource } from "./templateRenderer";
+import { applyAuthoringV2Patches } from "./authoringV2Patches";
+import { createPhase5Fixture } from "./phase5Fixture";
 
 type Store = {
   jobs: ImportJob[];
@@ -39,6 +54,8 @@ type Store = {
   sourceTexts: Record<string, Record<string, string>>;
   splits: Record<string, SplitCandidates>;
   authoring: Record<string, ReadingAuthoringIr>;
+  authoringV2: Record<string, IeltsAuthoringIRV2>;
+  authoringV2Revisions: Record<string, number>;
   validation: Record<string, ValidationReport>;
   previews: Record<string, PreviewAssets>;
   sourceReviews: Record<string, SourceReview>;
@@ -46,8 +63,9 @@ type Store = {
   suggestions: Record<string, LlmSuggestion[]>;
   pipelineReports: Record<string, AutoPipelineReport>;
   revisions: Record<string, Array<Record<string, unknown>>>;
-  packs: PackBuildResult[];
   diagnostics: DiagnosticsSettings;
+  writingJobs: WritingJob[];
+  trashedIds: string[];
 };
 
 export interface JobDetail {
@@ -63,6 +81,21 @@ export interface JobDetail {
 }
 
 const STORE_KEY = "ielts-author-studio.dev-fallback-store.v1";
+const MAX_IMPORT_FILE_BYTES = 128 * 1024 * 1024;
+
+function sourceFileTooLargeMessage(filePath: string, sizeBytes: number, maxBytes = MAX_IMPORT_FILE_BYTES): string {
+  return `source_file_too_large:max_bytes=${maxBytes}:size_bytes=${sizeBytes}:path=${filePath}`;
+}
+
+function estimateBase64Size(value: string): number {
+  if (!value) return 0;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
+}
+
+function isAbsoluteLocalPath(value: string): boolean {
+  return /^([a-zA-Z]:[\\/]|\\\\|\/)/.test(value);
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -73,6 +106,73 @@ function id(prefix: string): string {
   return `${prefix}-${stamp}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// ── 题库投影：从 ImportJob / WritingJob 派生 LibraryExamSummary（与后端 status 映射一致）──
+
+function readingStatusFromLibrary(status: LibraryStatus): ImportJob["status"] {
+  switch (status) {
+    case "draft": return "Working";
+    case "needs_review": return "NeedsReview";
+    case "ready": return "DraftSaved";
+    case "exported": return "Exported";
+  }
+}
+
+function writingStatusFromLibrary(status: LibraryStatus): WritingJob["status"] {
+  switch (status) {
+    case "draft": return "Draft";
+    case "needs_review": return "Draft";
+    case "ready": return "ExportReady";
+    case "exported": return "Exported";
+  }
+}
+
+function readingSummary(job: ImportJob): LibraryExamSummary {
+  const status: LibraryStatus =
+    job.status === "Working" ? "draft"
+    : job.status === "NeedsReview" ? "needs_review"
+    : job.status === "DraftSaved" || job.status === "ExportReady" ? "ready"
+    : "exported";
+  return {
+    id: job.jobId,
+    examId: job.jobId,
+    title: job.title,
+    subject: "reading",
+    category: job.category,
+    frequency: job.frequency,
+    status,
+    taskType: undefined,
+    tags: job.tags,
+    sourceHash: job.sourceFiles[0]?.sha256,
+    issueErrors: job.issueCounts.errors,
+    issueWarnings: job.issueCounts.warnings,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt
+  };
+}
+
+function writingSummary(job: WritingJob): LibraryExamSummary {
+  const status: LibraryStatus =
+    job.status === "Draft" ? "draft"
+    : job.status === "ExportReady" ? "ready"
+    : "exported";
+  return {
+    id: job.jobId,
+    examId: job.examId,
+    title: job.title,
+    subject: "writing",
+    category: job.taskType,
+    frequency: undefined,
+    status,
+    taskType: job.taskType,
+    tags: [],
+    sourceHash: undefined,
+    issueErrors: 0,
+    issueWarnings: 0,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt
+  };
+}
+
 function initialStore(): Store {
   return {
     jobs: [],
@@ -80,6 +180,8 @@ function initialStore(): Store {
     sourceTexts: {},
     splits: {},
     authoring: {},
+    authoringV2: {},
+    authoringV2Revisions: {},
     validation: {},
     previews: {},
     sourceReviews: {},
@@ -100,8 +202,9 @@ function initialStore(): Store {
     suggestions: {},
     pipelineReports: {},
     revisions: {},
-    packs: [],
-    diagnostics: { keepFullProcessArtifacts: false }
+    diagnostics: { keepFullProcessArtifacts: false },
+    writingJobs: [],
+    trashedIds: []
   };
 }
 
@@ -356,8 +459,25 @@ function documentNeedsVisionTranscription(doc?: DocumentIr, requestedMode?: Pars
     || lowConfidenceBlockIds(doc).length > 0;
 }
 
+function layoutHintNumber(layoutHints: Record<string, unknown> | undefined, path: string[]): number | undefined {
+  let value: unknown = layoutHints;
+  for (const key of path) {
+    value = typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+  }
+  return typeof value === "number" ? value : undefined;
+}
+
 function flattenBlocks(doc?: DocumentIr): DocumentBlock[] {
-  type OrderedBlock = DocumentBlock & { pageIndex?: number; __pageWidth: number; __pageHeight: number; __pageRotation: number; __originalOrder: number };
+  type OrderedBlock = DocumentBlock & {
+    pageIndex?: number;
+    __pageWidth: number;
+    __pageHeight: number;
+    __pageRotation: number;
+    __originalOrder: number;
+    __layoutSection?: number;
+    __columnIndex?: number;
+    __sectionColumns?: number;
+  };
   return (doc?.pages.flatMap((page, pagePosition) => {
     const pageIndex = page.pageIndex ?? pagePosition + 1;
     const pageWidth = page.width ?? 595;
@@ -369,22 +489,50 @@ function flattenBlocks(doc?: DocumentIr): DocumentBlock[] {
       __pageWidth: pageWidth,
       __pageHeight: pageHeight,
       __pageRotation: pageRotation,
-      __originalOrder: blockPosition
+      __originalOrder: blockPosition,
+      __layoutSection:
+        typeof (block as DocumentBlock & { _epic8LayoutSection?: number })._epic8LayoutSection === "number"
+          ? (block as DocumentBlock & { _epic8LayoutSection?: number })._epic8LayoutSection
+          : layoutHintNumber(block.layoutHints, ["section", "index"]),
+      __columnIndex:
+        typeof (block as DocumentBlock & { _epic8ColumnIndex?: number })._epic8ColumnIndex === "number"
+          ? (block as DocumentBlock & { _epic8ColumnIndex?: number })._epic8ColumnIndex
+          : layoutHintNumber(block.layoutHints, ["section", "columns", "current"]),
+      __sectionColumns:
+        typeof (block as DocumentBlock & { _epic8SectionColumns?: number })._epic8SectionColumns === "number"
+          ? (block as DocumentBlock & { _epic8SectionColumns?: number })._epic8SectionColumns
+          : layoutHintNumber(block.layoutHints, ["section", "columns", "count"])
     } as OrderedBlock));
   }) ?? []).sort((left, right) => {
     const leftBox = normalizedBlockBbox(left) ?? [0, 0, 0, 0];
     const rightBox = normalizedBlockBbox(right) ?? [0, 0, 0, 0];
     const leftRole = left.roleHint === "answer" ? 3 : left.roleHint === "ignore" ? 4 : 0;
     const rightRole = right.roleHint === "answer" ? 3 : right.roleHint === "ignore" ? 4 : 0;
+    const leftSection = blockLayoutSectionIndex(left) ?? Number.MAX_SAFE_INTEGER;
+    const rightSection = blockLayoutSectionIndex(right) ?? Number.MAX_SAFE_INTEGER;
     const leftColumn = blockColumn(left);
     const rightColumn = blockColumn(right);
+    const hasExplicitLayout = blockLayoutSectionIndex(left) !== undefined || blockLayoutSectionIndex(right) !== undefined;
     return ((left as OrderedBlock).pageIndex ?? 1) - ((right as OrderedBlock).pageIndex ?? 1)
       || leftRole - rightRole
+      || leftSection - rightSection
       || leftColumn - rightColumn
+      || (hasExplicitLayout || (normalizeRotation((left as OrderedBlock).__pageRotation ?? 0) === 0 && normalizeRotation((right as OrderedBlock).__pageRotation ?? 0) === 0)
+        ? (((left as OrderedBlock).__originalOrder ?? 0) - ((right as OrderedBlock).__originalOrder ?? 0))
+        : 0)
       || leftBox[1] - rightBox[1]
       || leftBox[0] - rightBox[0]
       || ((left as typeof left & { __originalOrder?: number }).__originalOrder ?? 0) - ((right as typeof right & { __originalOrder?: number }).__originalOrder ?? 0);
-  }).map(({ __pageWidth: _pageWidth, __pageHeight: _pageHeight, __pageRotation: _pageRotation, __originalOrder: _originalOrder, ...block }) => block as DocumentBlock);
+  }).map(({
+    __pageWidth: _pageWidth,
+    __pageHeight: _pageHeight,
+    __pageRotation: _pageRotation,
+    __originalOrder: _originalOrder,
+    __layoutSection: _layoutSection,
+    __columnIndex: _columnIndex,
+    __sectionColumns: _sectionColumns,
+    ...block
+  }) => block as DocumentBlock);
 }
 
 function blockText(block: DocumentBlock): string {
@@ -421,6 +569,30 @@ function normalizedQuestionContext(text: string): string {
   return text.toLowerCase().split(/\s+/).filter(Boolean).join(" ");
 }
 
+function hasExplicitZeroQuestionGroupMarker(text: string): boolean {
+  const lower = text.toLowerCase();
+  return [
+    "仅原文无题",
+    "仅文章无题",
+    "无题版",
+    "passage-only",
+    "passage_only",
+    "passage only",
+    "no-question-groups",
+    "no question groups",
+    "no questions",
+    "expected-zero-question-groups"
+  ].some((marker) => lower.includes(marker));
+}
+
+function jobExplicitlyDeclaresZeroQuestionGroups(job?: ImportJob): boolean {
+  if (!job) return false;
+  return hasExplicitZeroQuestionGroupMarker(job.title)
+    || job.tags.some(hasExplicitZeroQuestionGroupMarker)
+    || job.sourceFiles.some((source) => hasExplicitZeroQuestionGroupMarker(source.originalName)
+      || hasExplicitZeroQuestionGroupMarker(source.storedName));
+}
+
 function hasUmbrellaQuestionContext(text: string): boolean {
   const lower = normalizedQuestionContext(text);
   if (!lower.includes("reading passage")) return false;
@@ -447,10 +619,39 @@ function isReadingPassageHeading(text: string): boolean {
   return text.trimStart().toUpperCase().startsWith("READING PASSAGE");
 }
 
+function isShortProsePassageBlock(block: DocumentBlock): boolean {
+  const normalized = blockText(block).replace(/\s+/g, " ").trim();
+  if (!normalized
+    || isQuestionBlock(block)
+    || isAnswerBlock(block)
+    || isReadingPassageHeading(normalized)
+    || isHeadingOptionLine(normalized)
+    || isHeadingMatchingInstructionLine(normalized)
+    || isHeadingMatchingAssignmentLine(normalized)
+    || isNonContentPlaceholderText(normalized)
+    || isQuestionOrInstructionLikeText(normalized)) {
+    return false;
+  }
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  const hasLowercase = /[a-z]/.test(normalized);
+  const hasProsePunctuation = normalized.includes(",")
+    || normalized.includes(";")
+    || /[.!?]$/.test(normalized);
+  const sectionColumns = blockSectionColumnCount(block) ?? 1;
+  return hasLowercase
+    && ((wordCount >= 6 && (normalized.length >= 28 || hasProsePunctuation))
+      || (sectionColumns > 1 && wordCount >= 5 && normalized.length >= 24));
+}
+
 function isSubstantivePassageBlock(block: DocumentBlock): boolean {
   const text = blockText(block);
-  return text.length >= 48
-    && (block.roleHint === "passage" || (!isQuestionBlock(block) && !isAnswerBlock(block) && !isReadingPassageHeading(text)));
+  if (block.roleHint === "passage") {
+    return !isQuestionBlock(block) && !isAnswerBlock(block) && !isNonContentPlaceholderText(text);
+  }
+  return (text.length >= 48 || isShortProsePassageBlock(block))
+    && !isQuestionBlock(block)
+    && !isAnswerBlock(block)
+    && !isReadingPassageHeading(text);
 }
 
 function hasOpeningQuestionRangePosition(blocks: DocumentBlock[], index: number): boolean {
@@ -543,23 +744,25 @@ function normalizeGroupRanges(candidates: SplitCandidates["questionGroupCandidat
 
 function detectGroupKind(text: string): GroupKind {
   const lower = text.toLowerCase();
+  const normalized = normalizedInstructionText(text);
   if (lower.includes("true") && lower.includes("false") && lower.includes("not given")) return "true_false_not_given";
   if (lower.includes("yes") && lower.includes("no") && lower.includes("not given")) return "yes_no_not_given";
   if (isMultiChoiceText(text)) return "multi_choice";
-  if (lower.includes("complete the table") || lower.includes("table below") || lower.includes("|") && lower.includes("complete")) return "table_completion";
-  if (lower.includes("complete the flow chart") || lower.includes("complete the flow-chart") || lower.includes("flow chart below") || lower.includes("flow-chart below") || lower.includes("label the diagram")) return "diagram_completion";
-  if (lower.includes("list of headings") || lower.includes("matching headings")) return "heading_matching";
+  if (lower.includes("complete the table") || lower.includes("table below") || lower.includes("complete the form") || lower.includes("form below") || lower.includes("|") && lower.includes("complete")) return "table_completion";
+  if (lower.includes("complete the flow chart") || lower.includes("complete the flow-chart") || lower.includes("flow chart below") || lower.includes("flow-chart below") || lower.includes("label the diagram") || lower.includes("diagram below") || lower.includes("label the map") || lower.includes("map below") || lower.includes("label the plan") || lower.includes("plan below") || lower.includes("process below")) return "diagram_completion";
+  if (lower.includes("list of headings") || lower.includes("matching headings") || lower.includes("correct heading for") && lower.includes("headings")) return "heading_matching";
   if (lower.includes("classify") || lower.includes("classification") || lower.includes("according to which")) return "classification";
-  if (lower.includes("which paragraph contains") || lower.includes("which section contains") || lower.includes("matching information")) return "matching_information";
+  if (lower.includes("which paragraph contains") || lower.includes("which section contains") || lower.includes("which paragraph mentions") || lower.includes("which section mentions") || lower.includes("which paragraph refers to") || lower.includes("which section refers to") || lower.includes("matching information")) return "matching_information";
+  if (isSingleChoiceText(text)) return "single_choice";
   if (isSentenceEndingMatchingText(text)) return "matching";
-  if (isMatchingPromptText(normalizedInstructionText(text))) return "matching";
+  if (normalized.includes("write the correct letter") && hasLetterOptionSpan(normalized)) return "matching";
+  if (isMatchingPromptText(normalized)) return "matching";
   if (lower.includes("match") && lower.includes("letter")) return "matching";
-  if (lower.includes("complete the summary")) return "summary_completion";
+  if (lower.includes("complete the summary") || lower.includes("summary below")) return "summary_completion";
   if (isNotesCompletionText(text)) return "sentence_completion";
   if (isShortAnswerInstructionText(text)) return "short_answer";
   if (lower.includes("complete the sentence") || lower.includes("complete the sentences")) return "sentence_completion";
   if (hasNumberedInlineBlanks(text)) return "sentence_completion";
-  if (isSingleChoiceText(text)) return "single_choice";
   if (lower.includes("short answer")) return "short_answer";
   return "short_answer";
 }
@@ -576,6 +779,27 @@ function isMultiChoiceText(text: string): boolean {
     || normalized.includes("choose three correct letters");
 }
 
+function hasLetterOptionSpan(normalized: string): boolean {
+  return [
+    "a-c",
+    "a-d",
+    "a-e",
+    "a-f",
+    "a-g",
+    "a-h",
+    "a-i",
+    "a-j",
+    "letters a-c",
+    "letters a-d",
+    "letters a-e",
+    "letters a-f",
+    "letters a-g",
+    "letters a-h",
+    "letters a-i",
+    "letters a-j"
+  ].some((marker) => normalized.includes(marker));
+}
+
 function hasSingleChoiceOptionRun(normalized: string): boolean {
   return ["a, b, c or d", "a, b, c, or d", "a, b or c", "a, b, c", "a-d", "a-c"]
     .some((marker) => normalized.includes(marker));
@@ -584,6 +808,10 @@ function hasSingleChoiceOptionRun(normalized: string): boolean {
 function isMatchingPromptText(normalized: string): boolean {
   return normalized.includes("which paragraph contains")
     || normalized.includes("which section contains")
+    || normalized.includes("which paragraph mentions")
+    || normalized.includes("which section mentions")
+    || normalized.includes("which paragraph refers to")
+    || normalized.includes("which section refers to")
     || normalized.includes("match each statement")
     || normalized.includes("match each person")
     || normalized.includes("match each opinion")
@@ -596,6 +824,9 @@ function isMatchingPromptText(normalized: string): boolean {
 
 function isSingleChoiceText(text: string): boolean {
   const normalized = normalizedInstructionText(text);
+  const explicitLetterList = ["a, b, c or d", "a, b, c, or d", "a, b or c", "a, b, or c"]
+    .some((marker) => normalized.includes(marker));
+  if ((normalized.includes("choose the correct letter") || normalized.includes("write the correct letter")) && explicitLetterList) return true;
   if (isMatchingPromptText(normalized)) return false;
   if (normalized.includes("choose the correct letter") && hasSingleChoiceOptionRun(normalized)) return true;
   if (normalized.includes("which of the following") && hasSingleChoiceOptionRun(normalized)) return true;
@@ -696,6 +927,31 @@ function findNumberedBlankMarker(text: string, number: number, from: number): [n
   return undefined;
 }
 
+function previousNonSpaceChar(text: string, start: number): string | undefined {
+  for (let index = Math.min(start, text.length) - 1; index >= 0; index -= 1) {
+    if (!/\s/.test(text[index])) return text[index];
+  }
+  return undefined;
+}
+
+function previousWordLower(text: string, start: number): string {
+  let end = Math.min(start, text.length);
+  while (end > 0 && /\s/.test(text[end - 1])) end -= 1;
+  let begin = end;
+  while (begin > 0 && /[A-Za-z]/.test(text[begin - 1])) begin -= 1;
+  return text.slice(begin, end).toLowerCase();
+}
+
+function isNonQuestionNumberContext(text: string, start: number): boolean {
+  if (["-", "‐", "‑", "‒", "–", "—"].includes(previousNonSpaceChar(text, start) ?? "")) return true;
+  if (["passage", "box", "boxes"].includes(previousWordLower(text, start))) return true;
+  const clause = text.slice(0, start).split(/[\n\r.?!]/).at(-1) ?? "";
+  return clause
+    .split(/\s+/)
+    .map((word) => word.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, "").toLowerCase())
+    .some((word) => ["box", "boxes", "question", "questions"].includes(word));
+}
+
 function findNumberMarker(text: string, number: number, from: number): [number, number] | undefined {
   const needle = String(number);
   let search = Math.min(from, text.length);
@@ -705,6 +961,10 @@ function findNumberMarker(text: string, number: number, from: number): [number, 
     const afterDigits = start + needle.length;
     const before = start > 0 ? text[start - 1] : "";
     if (before && !/[\s([<>]/.test(before)) {
+      search = afterDigits;
+      continue;
+    }
+    if (isNonQuestionNumberContext(text, start)) {
       search = afterDigits;
       continue;
     }
@@ -830,6 +1090,7 @@ function inferGroupRangeEndFromMarkers(text: string, start: number, headingEnd: 
 function letterOptionsForText(text: string): string[] {
   const lower = text.toLowerCase();
   const normalized = lower.replace(/[‐‑‒–—]/g, "-");
+  if (normalized.includes("a-j")) return ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
   if (normalized.includes("a-i")) return ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
   if (normalized.includes("a-h")) return ["A", "B", "C", "D", "E", "F", "G", "H"];
   if (normalized.includes("a-g") || lower.includes("list of headings")) return ["A", "B", "C", "D", "E", "F", "G"];
@@ -868,7 +1129,28 @@ function classifyGroup(text: string, blockIds: string[]): NonNullable<SplitCandi
   return { kind, interaction, confidence: warnings.length ? 0.68 : 0.82, warnings, evidence: blockIds };
 }
 
+function blockLayoutSectionIndex(block: DocumentBlock): number | undefined {
+  const ordered = block as DocumentBlock & { __layoutSection?: number };
+  if (typeof ordered.__layoutSection === "number") return ordered.__layoutSection;
+  return layoutHintNumber(block.layoutHints, ["section", "index"]);
+}
+
+function blockLayoutColumnIndex(block: DocumentBlock): number | undefined {
+  const ordered = block as DocumentBlock & { __columnIndex?: number };
+  if (typeof ordered.__columnIndex === "number") return ordered.__columnIndex;
+  return layoutHintNumber(block.layoutHints, ["section", "columns", "current"]);
+}
+
+function blockSectionColumnCount(block: DocumentBlock): number | undefined {
+  const ordered = block as DocumentBlock & { __sectionColumns?: number };
+  if (typeof ordered.__sectionColumns === "number") return ordered.__sectionColumns;
+  return layoutHintNumber(block.layoutHints, ["section", "columns", "count"]);
+}
+
 function blockColumn(block: DocumentBlock): number {
+  const explicitColumn = blockLayoutColumnIndex(block);
+  if (typeof explicitColumn === "number") return explicitColumn;
+  if (blockSectionColumnCount(block) === 1) return 0;
   const box = normalizedBlockBbox(block);
   const ordered = block as DocumentBlock & { __pageWidth?: number; __pageHeight?: number; __pageRotation?: number };
   const pageWidth = [90, 270].includes(normalizeRotation(ordered.__pageRotation ?? 0)) ? ordered.__pageHeight ?? 842 : ordered.__pageWidth ?? 595;
@@ -937,7 +1219,8 @@ function sectionEvidenceForBlocks(blocks: DocumentBlock[]): NonNullable<SplitCan
     tableMergedCellCount: block.table ? block.table.cells.filter((cell) => (cell.colSpan ?? 1) > 1 || Boolean(cell.verticalMerge)).length : undefined,
     headingLevel: hintNumber(block, ["headingLevel"]),
     numberingLevel: hintNumber(block, ["numbering", "level"]),
-    numberingId: hintString(block, ["numbering", "id"])
+    numberingId: hintString(block, ["numbering", "id"]),
+    sectionColumnCount: hintNumber(block, ["section", "columns", "count"])
   }));
 }
 
@@ -1003,6 +1286,290 @@ function inferPassageTitle(job: ImportJob, passageBlocks: DocumentBlock[]): stri
   return title ?? job.title;
 }
 
+function isHeadingOptionLine(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const lower = normalized.toLowerCase();
+  if (lower.includes("list of headings")) return true;
+  const first = lower.split(/\s+/)[0]?.replace(/^[).:;]+|[).:;]+$/g, "") ?? "";
+  return ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"].includes(first);
+}
+
+function isHeadingMatchingInstructionLine(text: string): boolean {
+  const lower = text.replace(/\s+/g, " ").trim().toLowerCase();
+  return lower.includes("choose the correct heading")
+    || lower.includes("list of headings")
+    || lower.includes("write the correct number")
+    || lower.includes("write the correct letter")
+    || lower.includes("in boxes")
+    || lower.includes("on your answer sheet")
+    || lower.includes("has six sections")
+    || lower.includes("has seven sections")
+    || lower.includes("has eight sections");
+}
+
+function isHeadingMatchingAssignmentLine(text: string): boolean {
+  const tokens = text.replace(/\s+/g, " ").trim().split(/\s+/).filter(Boolean);
+  let index = 0;
+  let assignments = 0;
+  while (index + 2 < tokens.length) {
+    const number = tokens[index]?.replace(/^[().:;,]+|[().:;,]+$/g, "") ?? "";
+    const label = tokens[index + 1]?.replace(/^[().:;,]+|[().:;,]+$/g, "").toLowerCase() ?? "";
+    const section = tokens[index + 2]?.replace(/^[().:;,]+|[().:;,]+$/g, "") ?? "";
+    if (/^\d+$/.test(number) && ["paragraph", "section", "part"].includes(label) && /^[A-Za-z]$/.test(section)) {
+      assignments += 1;
+      index += 3;
+      continue;
+    }
+    index += 1;
+  }
+  return assignments > 0;
+}
+
+function isQuestionOrInstructionLikeText(text: string): boolean {
+  const lower = text.replace(/\s+/g, " ").trim().toLowerCase();
+  return lower.includes("questions ")
+    || lower.includes("question ")
+    || lower.includes("choose ")
+    || lower.includes("label ")
+    || lower.includes("write ")
+    || lower.includes("complete ")
+    || lower.includes("which two")
+    || lower.includes("which three")
+    || lower.includes("answer sheet")
+    || lower.includes("______")
+    || lower.includes("_____");
+}
+
+function isNonContentPlaceholderText(text: string): boolean {
+  return text.replace(/\s+/g, " ").trim().replace(/^\[+|\]+$/g, "").toLowerCase().startsWith("no extractable text on page");
+}
+
+function isNonContentPlaceholderBlock(block: DocumentBlock): boolean {
+  return isNonContentPlaceholderText(blockText(block));
+}
+
+function letteredParagraphLabel(text: string): string | undefined {
+  const first = text.replace(/\s+/g, " ").trim().split(/\s+/)[0]?.replace(/^[().:;,]+|[().:;,]+$/g, "") ?? "";
+  return /^[A-Z]$/.test(first) ? first : undefined;
+}
+
+function standaloneLetterMarkerCount(text: string): number {
+  return text.replace(/\s+/g, " ").trim().split(/\s+/).filter((token) => /^[A-G]$/i.test(token.replace(/^[().:;,]+|[().:;,]+$/g, ""))).length;
+}
+
+function isSubstantiveLetteredArticleBlock(block: DocumentBlock, expectedLabel: string): boolean {
+  const text = blockText(block);
+  return letteredParagraphLabel(text) === expectedLabel
+    && standaloneLetterMarkerCount(text) <= 2
+    && isSubstantivePassageBlock(block);
+}
+
+function findLetteredArticleBlock(blocks: DocumentBlock[], start: number, expectedLabel: string, maxLookahead: number): number | undefined {
+  for (let index = start; index < Math.min(blocks.length, start + maxLookahead); index += 1) {
+    if (isSubstantiveLetteredArticleBlock(blocks[index], expectedLabel)) return index;
+  }
+  return undefined;
+}
+
+function hasLetteredArticleSequence(blocks: DocumentBlock[], firstIndex: number): boolean {
+  const firstLabel = letteredParagraphLabel(blockText(blocks[firstIndex]));
+  if (firstLabel !== "A" || !isSubstantiveLetteredArticleBlock(blocks[firstIndex], "A")) return false;
+  return findLetteredArticleBlock(blocks, firstIndex + 1, "B", 4) !== undefined;
+}
+
+function isLatePassageTailStart(blocks: DocumentBlock[], index: number): boolean {
+  const block = blocks[index];
+  if (!block) return false;
+  const text = blockText(block).replace(/\s+/g, " ").trim();
+  if (!text
+    || isQuestionBlock(block)
+    || isAnswerBlock(block)
+    || isHeadingOptionLine(text)
+    || isHeadingMatchingInstructionLine(text)
+    || isHeadingMatchingAssignmentLine(text)
+    || isNonContentPlaceholderText(text)) {
+    return false;
+  }
+  if (hasLetteredArticleSequence(blocks, index)) return true;
+  if (text.length > 120 || isQuestionOrInstructionLikeText(text) || hasNumberedInlineBlanks(text)) return false;
+  const firstArticleIndex = findLetteredArticleBlock(blocks, index + 1, "A", 3);
+  if (firstArticleIndex === undefined) return false;
+  if (firstArticleIndex > index + 1) {
+    const firstChar = [...text].find((ch) => !/\s/.test(ch));
+    const titleLike = Boolean(firstChar && /[A-Z]/.test(firstChar) && !/[.?!]$/.test(text));
+    if (!titleLike) return false;
+  }
+  return hasLetteredArticleSequence(blocks, firstArticleIndex);
+}
+
+function latePassageQuestionBlockCount(blocks: DocumentBlock[]): number {
+  for (let index = 1; index < blocks.length; index += 1) {
+    if (isLatePassageTailStart(blocks, index)) return Math.max(1, index);
+  }
+  return blocks.length;
+}
+
+function leadingQuestionNumber(text: string): number | undefined {
+  const first = text.replace(/\s+/g, " ").trim().split(/\s+/)[0];
+  if (!first) return undefined;
+  const trimmed = first.replace(/^[([]+/, "");
+  const match = trimmed.match(/^(\d{1,3})([).:;,\]]*)$/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function isExplicitQuestionContentBlock(block: DocumentBlock): boolean {
+  const text = blockText(block).replace(/\s+/g, " ").trim();
+  if (!text || isNonContentPlaceholderText(text)) return false;
+  return isQuestionBlock(block)
+    || isAnswerBlock(block)
+    || Boolean(detectQuestionHeadingRange(text))
+    || isQuestionOrInstructionLikeText(text)
+    || hasNumberedInlineBlanks(text)
+    || leadingQuestionNumber(text) !== undefined
+    || isHeadingOptionLine(text)
+    || isHeadingMatchingInstructionLine(text)
+    || isHeadingMatchingAssignmentLine(text);
+}
+
+function consecutiveSubstantivePassageBlocks(blocks: DocumentBlock[], start: number, maxLookahead: number): number {
+  let count = 0;
+  for (let index = start; index < Math.min(blocks.length, start + maxLookahead); index += 1) {
+    const block = blocks[index];
+    const text = blockText(block).replace(/\s+/g, " ").trim();
+    if (!text
+      || isNonContentPlaceholderText(text)
+      || isExplicitQuestionContentBlock(block)
+      || !isSubstantivePassageBlock(block)) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+function hasPriorQuestionContent(blocks: DocumentBlock[], index: number): boolean {
+  return blocks.slice(1, index).some(isExplicitQuestionContentBlock);
+}
+
+function hasLaterQuestionContent(blocks: DocumentBlock[], start: number): boolean {
+  return blocks.slice(start).some(isExplicitQuestionContentBlock);
+}
+
+function isPassageTailLayoutTransition(blocks: DocumentBlock[], index: number): boolean {
+  const current = blocks[index];
+  const previous = blocks[index - 1];
+  if (!current || !previous) return false;
+  return (current.pageIndex ?? 1) !== (previous.pageIndex ?? 1)
+    || blockLayoutSectionIndex(current) !== blockLayoutSectionIndex(previous)
+    || blockSectionColumnCount(current) !== blockSectionColumnCount(previous)
+    || blockColumn(current) !== blockColumn(previous);
+}
+
+function isPassageTailTitleText(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized
+    || isQuestionOrInstructionLikeText(normalized)
+    || isHeadingOptionLine(normalized)
+    || isHeadingMatchingInstructionLine(normalized)
+    || isHeadingMatchingAssignmentLine(normalized)
+    || leadingQuestionNumber(normalized) !== undefined
+    || /[.?!]$/.test(normalized)) {
+    return false;
+  }
+  const firstChar = [...normalized].find((ch) => !/\s/.test(ch));
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  return Boolean(firstChar && /[A-Z]/.test(firstChar) && wordCount >= 2 && wordCount <= 8);
+}
+
+function prosePassageRunEnd(blocks: DocumentBlock[], index: number): number | undefined {
+  const substantiveRun = consecutiveSubstantivePassageBlocks(blocks, index, 3);
+  const titleFollowedRun = isPassageTailTitleText(blockText(blocks[index]))
+    ? consecutiveSubstantivePassageBlocks(blocks, index + 1, 3)
+    : 0;
+  if (substantiveRun >= 2) return index + substantiveRun;
+  if (substantiveRun >= 1 && (blocks[index].roleHint === "passage" || isPassageTailLayoutTransition(blocks, index))) {
+    return index + substantiveRun;
+  }
+  if (titleFollowedRun >= 2) return index + 1 + titleFollowedRun;
+  if (titleFollowedRun >= 1
+    && (isPassageTailLayoutTransition(blocks, index)
+      || isPassageTailLayoutTransition(blocks, index + 1)
+      || blocks[index + 1]?.roleHint === "passage")) {
+    return index + 1 + titleFollowedRun;
+  }
+  return undefined;
+}
+
+function collectInterleavedPassageRuns(blocks: DocumentBlock[]): Array<[number, number]> {
+  const runs: Array<[number, number]> = [];
+  let index = 1;
+  while (index < blocks.length) {
+    if (!hasPriorQuestionContent(blocks, index)) {
+      index += 1;
+      continue;
+    }
+    const runEnd = prosePassageRunEnd(blocks, index);
+    if (runEnd === undefined) {
+      index += 1;
+      continue;
+    }
+    if (hasLaterQuestionContent(blocks, runEnd)) runs.push([index, runEnd]);
+    index = Math.max(runEnd, index + 1);
+  }
+  return runs;
+}
+
+function findProsePassageTailStart(blocks: DocumentBlock[]): number | undefined {
+  for (let index = 1; index < blocks.length; index += 1) {
+    if (!hasPriorQuestionContent(blocks, index)) continue;
+    const runEnd = prosePassageRunEnd(blocks, index);
+    if (runEnd === undefined) continue;
+    if (!hasLaterQuestionContent(blocks, runEnd)) return index;
+  }
+  return undefined;
+}
+
+function genericPassageTailQuestionBlockCount(blocks: DocumentBlock[]): number {
+  const start = findProsePassageTailStart(blocks);
+  return start === undefined ? blocks.length : Math.max(1, start);
+}
+
+function isProbablePassageTailStart(blocks: DocumentBlock[], index: number): boolean {
+  const block = blocks[index];
+  if (!block) return false;
+  const text = blockText(block).replace(/\s+/g, " ").trim();
+  if (!text
+    || isQuestionBlock(block)
+    || isAnswerBlock(block)
+    || isHeadingOptionLine(text)
+    || isHeadingMatchingInstructionLine(text)
+    || isHeadingMatchingAssignmentLine(text)) {
+    return false;
+  }
+  if (isSubstantivePassageBlock(block)) return true;
+  return text.length >= 8 && blocks.slice(index + 1, index + 4).some(isSubstantivePassageBlock);
+}
+
+function headingMatchingQuestionBlockCount(blocks: DocumentBlock[]): number {
+  let sawHeadingList = false;
+  for (let index = 0; index < blocks.length; index += 1) {
+    const text = blockText(blocks[index]);
+    const lower = text.toLowerCase();
+    if (lower.includes("list of headings")) {
+      sawHeadingList = true;
+      continue;
+    }
+    if (!sawHeadingList || isHeadingOptionLine(text)) continue;
+    if (isProbablePassageTailStart(blocks, index)) return Math.max(1, index);
+  }
+  return blocks.length;
+}
+
+function questionBlockCountForGroup(kind: GroupKind, blocks: DocumentBlock[]): number {
+  const specific = kind === "heading_matching" ? headingMatchingQuestionBlockCount(blocks) : latePassageQuestionBlockCount(blocks);
+  return specific < blocks.length ? specific : genericPassageTailQuestionBlockCount(blocks);
+}
+
 function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandidates {
   const blocks = flattenBlocks(doc);
   if (!blocks.length) {
@@ -1015,30 +1582,36 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
     };
   }
 
-  const firstQuestionIndex = blocks.findIndex(isQuestionBlock);
-  const firstConcreteQuestionIndex = blocks.findIndex((block, index) => {
+  const explicitlyZeroQuestionGroups = jobExplicitlyDeclaresZeroQuestionGroups(job);
+  const firstQuestionIndex = explicitlyZeroQuestionGroups ? -1 : blocks.findIndex(isQuestionBlock);
+  const firstConcreteQuestionIndex = explicitlyZeroQuestionGroups ? -1 : blocks.findIndex((block, index) => {
     const text = blockText(block);
     return Boolean(detectQuestionHeadingRange(text)) && !isUmbrellaQuestionBlock(blocks, index);
   });
   const firstAnswerIndex = blocks.findIndex(isAnswerBlock);
   const passageBlocks =
-    firstConcreteQuestionIndex >= 0
-      ? blocks.filter((block, index) => index < firstConcreteQuestionIndex && !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
-      : blocks.filter((block) => !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore");
-  const allUmbrellaBlocks = blocks.filter((_, index) => isUmbrellaQuestionBlock(blocks, index));
+    explicitlyZeroQuestionGroups
+      ? blocks.filter((block) => !isNonContentPlaceholderBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
+      : firstConcreteQuestionIndex >= 0
+      ? blocks.filter((block, index) => index < firstConcreteQuestionIndex && !isNonContentPlaceholderBlock(block) && !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
+      : blocks.filter((block) => !isNonContentPlaceholderBlock(block) && !isQuestionBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore");
+  const deferredPassageBlocks: DocumentBlock[] = [];
+  const allUmbrellaBlocks = explicitlyZeroQuestionGroups ? [] : blocks.filter((_, index) => isUmbrellaQuestionBlock(blocks, index));
   const questionBlocks =
-    firstConcreteQuestionIndex >= 0
+    explicitlyZeroQuestionGroups
+      ? []
+      : firstConcreteQuestionIndex >= 0
       ? blocks
           .slice(firstConcreteQuestionIndex)
-          .filter((block) => !isAnswerBlock(block) && block.roleHint !== "ignore")
+          .filter((block) => !isNonContentPlaceholderBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
       : allUmbrellaBlocks.length
         ? allUmbrellaBlocks
         : firstQuestionIndex >= 0
           ? blocks
               .slice(firstQuestionIndex)
-              .filter((block) => !isAnswerBlock(block) && block.roleHint !== "ignore")
-          : blocks.filter(isQuestionBlock);
-  const answerBlocks = blocks.filter(isAnswerBlock);
+              .filter((block) => !isNonContentPlaceholderBlock(block) && !isAnswerBlock(block) && block.roleHint !== "ignore")
+          : blocks.filter((block) => !isNonContentPlaceholderBlock(block) && isQuestionBlock(block));
+  const answerBlocks = blocks.filter((block) => !isNonContentPlaceholderBlock(block) && isAnswerBlock(block));
 
   const answerMap = answerBlocks.reduce<Record<string, AnswerValue>>((acc, block) => ({ ...acc, ...parseAnswerText(blockText(block)) }), {});
   const externalAnswerCandidates = answerSourceCandidates(job);
@@ -1070,7 +1643,27 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
         const candidateText = blockText(candidate);
         return candidateIndex > index && Boolean(detectQuestionHeadingRange(candidateText)) && !isKnownUmbrellaBlock(candidate, allUmbrellaBlocks);
       });
-      const included = nextHeadingIndex > -1 ? questionBlocks.slice(index, nextHeadingIndex) : questionBlocks.slice(index);
+      const rawIncluded = nextHeadingIndex > -1 ? questionBlocks.slice(index, nextHeadingIndex) : questionBlocks.slice(index);
+      const interleavedPassageRuns = collectInterleavedPassageRuns(rawIncluded);
+      const deferMask = new Array(rawIncluded.length).fill(false);
+      for (const [runStart, runEnd] of interleavedPassageRuns) {
+        for (let rawIndex = runStart; rawIndex < Math.min(runEnd, rawIncluded.length); rawIndex += 1) {
+          deferMask[rawIndex] = true;
+        }
+      }
+      const preliminaryBlocks = rawIncluded.filter((block, rawIndex) => {
+        if (deferMask[rawIndex]) {
+          deferredPassageBlocks.push(block);
+          return false;
+        }
+        return true;
+      });
+      const rawCombined = preliminaryBlocks.map(blockText).join(" ");
+      const rawBlockIds = preliminaryBlocks.map((item) => item.blockId);
+      const preliminaryClassification = classifyGroup(rawCombined, rawBlockIds);
+      const includedCount = questionBlockCountForGroup(preliminaryClassification.kind, preliminaryBlocks);
+      const included = preliminaryBlocks.slice(0, Math.max(1, Math.min(preliminaryBlocks.length, includedCount)));
+      if (includedCount < preliminaryBlocks.length) deferredPassageBlocks.push(...preliminaryBlocks.slice(includedCount));
       const blockIds = included.map((item) => item.blockId);
       const combined = included.map(blockText).join(" ");
       const classification = classifyGroup(combined, blockIds);
@@ -1131,18 +1724,31 @@ function makeSplit(jobId: string, doc?: DocumentIr, job?: ImportJob): SplitCandi
   }
   normalizeGroupRanges(questionGroupCandidates);
 
+  if (deferredPassageBlocks.length) {
+    const seen = new Set(passageBlocks.map((block) => block.blockId));
+    for (const block of deferredPassageBlocks) {
+      if (isNonContentPlaceholderBlock(block)) continue;
+      if (block.blockId && seen.has(block.blockId)) continue;
+      if (block.blockId) seen.add(block.blockId);
+      passageBlocks.push(block);
+    }
+  }
+  const filteredPassageBlocks = passageBlocks.filter((block) => !isNonContentPlaceholderBlock(block));
+
   const fallbackPassageRange = firstQuestionIndex > 0 ? blocks.slice(0, firstQuestionIndex).map((block) => block.blockId) : blocks.slice(0, Math.max(1, Math.min(3, blocks.length))).map((block) => block.blockId);
-  const passageRange = passageBlocks.length ? passageBlocks.map((block) => block.blockId) : fallbackPassageRange;
+  const passageRange = filteredPassageBlocks.length ? filteredPassageBlocks.map((block) => block.blockId) : fallbackPassageRange;
   const issues = [
-    ...(questionGroupCandidates.length ? [] : ["未识别到题号范围，请手动切分。"]),
+    ...(explicitlyZeroQuestionGroups && !questionGroupCandidates.length
+      ? ["源文件已标记为仅文章无题，未创建题组。"]
+      : questionGroupCandidates.length ? [] : ["未识别到题号范围，请手动切分。"]),
     ...(questionGroupCandidates.some((candidate) => candidate.requiresManualQuestionImport) ? ["仅识别到总题号范围，请导入或手动填写每道题题干。"] : []),
-    ...(Object.keys(answerMap).length ? [] : ["未识别到答案，请手动填写。"]),
+    ...(Object.keys(answerMap).length || explicitlyZeroQuestionGroups && !questionGroupCandidates.length ? [] : ["未识别到答案，请手动填写。"]),
     ...(firstAnswerIndex >= 0 && firstQuestionIndex >= 0 && firstAnswerIndex < firstQuestionIndex ? ["答案内容出现在题目前，请确认切分顺序。"] : [])
   ];
 
   return {
     jobId,
-    passageCandidates: [{ range: passageRange, title: inferPassageTitle(job ?? { title: "Untitled Reading" } as ImportJob, passageBlocks), categoryHint: job?.category ?? "P1" }],
+    passageCandidates: [{ range: passageRange, title: inferPassageTitle(job ?? { title: "Untitled Reading" } as ImportJob, filteredPassageBlocks), categoryHint: job?.category ?? "P1" }],
     questionGroupCandidates,
     umbrellaQuestionRanges,
     answerKeyCandidates: [
@@ -1203,13 +1809,40 @@ function promptForQuestion(groupText: string, number: number, _fallbackHeading: 
   return "";
 }
 
+function findAsciiSectionMarker(text: string, from: number, marker: string): number | undefined {
+  const lower = text.toLowerCase();
+  let search = Math.min(from, text.length);
+  while (search < text.length) {
+    const relative = lower.slice(search).indexOf(marker);
+    if (relative < 0) return undefined;
+    const start = search + relative;
+    const end = start + marker.length;
+    const before = text[start - 1] ?? "";
+    const after = text[end] ?? "";
+    const beforeOk = !before || /[\s:;.\])]/.test(before);
+    const afterOk = !after || /[\s:;.\-–—]/.test(after);
+    const startsLine = !text.slice(0, start).split(/[\n\r]/).at(-1)?.trim();
+    const followedByColon = after === ":";
+    const followedByAnswerNumber = marker === "answers" && /^\s+\d{1,3}\b/.test(text.slice(end));
+    // "answers" is also an ordinary verb. It is a terminal marker only in
+    // heading form, with a colon, or immediately before a numbered key.
+    const headingLike = marker !== "answers" || startsLine || followedByColon || followedByAnswerNumber;
+    if (beforeOk && afterOk && headingLike) return start;
+    search = end;
+  }
+  return undefined;
+}
+
 function findFinalPromptBoundary(text: string, from: number): number {
   const lower = text.toLowerCase();
-  return [" questions ", " answers", " answer key"]
-    .map((marker) => lower.slice(from).indexOf(marker))
-    .filter((index) => index >= 0)
-    .map((index) => from + index)
-    .sort((a, b) => a - b)[0] ?? text.length;
+  let boundary = text.length;
+  const nextQuestions = lower.slice(from).search(/\squestions?\s+\d{1,3}\b/);
+  if (nextQuestions >= 0) boundary = Math.min(boundary, from + nextQuestions);
+  for (const marker of ["answer key", "answers", "disclaimer"]) {
+    const index = findAsciiSectionMarker(text, from, marker);
+    if (index !== undefined) boundary = Math.min(boundary, index);
+  }
+  return boundary;
 }
 
 function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr): ReadingAuthoringIr {
@@ -1222,7 +1855,7 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
     const kind = candidate.kindHint ?? "short_answer";
     const requiresManualQuestionImport = candidate.requiresManualQuestionImport === true;
     const groupBlocks = candidate.blockIds.map((blockId) => blocksById.get(blockId)).filter(Boolean) as DocumentBlock[];
-    const groupText = groupBlocks.map(blockText).join(" ") || candidate.instructionText;
+    const groupText = groupBlocks.map(blockText).join("\n") || candidate.instructionText;
     const [start, end] = candidate.questionRange;
     const layoutHint = candidate.layoutHint ?? layoutHintForGroup(kind, groupText);
     const questions = Array.from({ length: Math.max(0, end - start + 1) }, (_, offset) => start + offset).map((number) => {
@@ -1244,7 +1877,9 @@ function makeAuthoring(job: ImportJob, split: SplitCandidates, doc?: DocumentIr)
       groupId: candidate.groupId || `group-${index + 1}`,
       kind,
       questionRange: candidate.questionRange,
-      instruction: [candidate.heading],
+      instruction: candidate.instructionText && candidate.instructionText.trim() !== candidate.heading.trim()
+        ? [candidate.heading, candidate.instructionText]
+        : [candidate.heading],
       questions,
       layout: {
         template: templateForKind(kind),
@@ -1368,8 +2003,8 @@ function buildVisionTranscriptionAuditIssue(
 
 function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): ValidationReport {
   const issues: ValidationIssue[] = [];
-  const add = (layer: ValidationIssue["layer"], path: string, message: string, fixHint?: string) => {
-    issues.push({ issueId: id("issue"), severity: "error", layer, path, message, fixHint });
+  const add = (layer: ValidationIssue["layer"], path: string, message: string, fixHint?: string, severity: ValidationIssue["severity"] = "error") => {
+    issues.push({ issueId: id("issue"), severity, layer, path, message, fixHint });
   };
 
   if (!ir) {
@@ -1384,8 +2019,8 @@ function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): Validati
       }
       for (const question of group.questions) {
         if (!question.interaction?.type) add("AuthoringIR", `$.groups.${group.groupId}.${question.id}`, "题目缺少作答方式。");
-        if (!question.answer || (Array.isArray(question.answer) && !question.answer.length)) {
-          add("AuthoringIR", `$.answerKey.${question.id}`, "每道题导出前都需要答案。");
+        if (answerIsEmpty(question.answer)) {
+          add("AuthoringIR", `$.answerKey.${question.id}`, "题目未设置答案；该题将作为未评分题导出。", undefined, "warning");
         }
         if (question.requiresManualQuestionImport && !question.verified) {
           add("AuthoringIR", `$.groups.${group.groupId}.${question.id}.prompt`, "发布前需要从源文档补齐题干并确认。");
@@ -1395,7 +2030,7 @@ function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): Validati
 
     const source = toReadingExamSource(ir);
     if (source.schemaVersion !== "ReadingExamSourceV1") add("ReadingExamSourceV1", "$.schemaVersion", "导出数据版本不正确。");
-    if (!source.answerKey || !Object.keys(source.answerKey).length) add("ReadingExamSourceV1", "$.answerKey", "答案不能为空。");
+    if (!source.answerKey || !Object.keys(source.answerKey).length) add("ReadingExamSourceV1", "$.answerKey", "当前没有标准答案；所有题目将作为未评分题导出。", undefined, "warning");
 
     for (const group of source.questionGroups) {
       for (const qid of group.questionIds) {
@@ -1411,10 +2046,12 @@ function validateIr(jobId: string, ir: ReadingAuthoringIr | undefined): Validati
   const layers = layerNames.map((layer) => ({
     layer,
     issueCount: issues.filter((issue) => issue.layer === layer).length,
-    passed: issues.every((issue) => issue.layer !== layer)
+    errorCount: issues.filter((issue) => issue.layer === layer && issue.severity === "error").length,
+    warningCount: issues.filter((issue) => issue.layer === layer && issue.severity === "warning").length,
+    passed: issues.every((issue) => issue.layer !== layer || issue.severity !== "error")
   }));
 
-  return { jobId, passed: issues.length === 0, layers, issues, generatedAt: now() };
+  return { jobId, passed: issues.every((issue) => issue.severity !== "error"), layers, issues, generatedAt: now() };
 }
 
 function answerIsEmpty(answer: AnswerValue | undefined): boolean {
@@ -1425,7 +2062,6 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
   let needsReview = 0;
   let total = 0;
   let verified = 0;
-  let emptyAnswers = 0;
   const groups = ir.groups.map((group) => {
     let groupTotal = 0;
     let groupVerified = 0;
@@ -1435,10 +2071,6 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
       if (question.verified) {
         verified += 1;
         groupVerified += 1;
-      }
-      if (answerIsEmpty(question.answer)) {
-        emptyAnswers += 1;
-        needsReview += 1;
       }
       if (question.confidence < 0.85 && !question.verified) needsReview += 1;
       return question;
@@ -1455,7 +2087,7 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
       ...refreshAuthoringDerivedFields({ ...ir, groups }),
       audit: {
         ...ir.audit,
-        humanVerified: total > 0 && total === verified && emptyAnswers === 0,
+        humanVerified: total > 0 && total === verified,
         updatedAt: now()
       }
     },
@@ -1464,14 +2096,13 @@ function refreshReviewState(ir: ReadingAuthoringIr): { ir: ReadingAuthoringIr; n
 }
 
 function publishReadinessReport(store: Store, jobId: string, ir: ReadingAuthoringIr, report: ValidationReport): ValidationReport {
-  const job = requireJob(store, jobId);
+  requireJob(store, jobId);
   const issues: ValidationIssue[] = [...report.issues];
   const add = (path: string, message: string) => issues.push({ issueId: id("issue"), severity: "error", layer: "AuthoringIR", path, message });
   const humanVerified = ir.audit.humanVerified === true;
-  if (job.status === "NeedsReview") add("$.job.status", "任务仍需审核；请完成所有人工确认后再发布。");
   issues.push(...sourceReviewIssues(sourceReviewStatus(store, jobId)));
   if (!humanVerified) {
-    add("$.audit.humanVerified", "所有题目和答案都需要人工确认后才能发布。");
+    add("$.audit.humanVerified", "所有题目都需要人工确认后才能发布。");
   }
   for (const group of ir.groups) {
     if (group.confidence < 0.85 && !group.verified) add(`$.groups.${group.groupId}.verified`, "低置信题组需要人工确认后才能发布。");
@@ -1480,7 +2111,6 @@ function publishReadinessReport(store: Store, jobId: string, ir: ReadingAuthorin
     }
     if (group.requiresManualQuestionImport && !group.verified) add(`$.groups.${group.groupId}.questions`, "仅有总题号范围，发布前需要手动补齐具体题干。");
     for (const question of group.questions) {
-      if (answerIsEmpty(question.answer)) add(`$.answerKey.${question.id}`, "题目答案为空；请填写或确认答案后再发布。");
       if (question.confidence < 0.85 && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.verified`, "低置信题目需要人工确认后才能发布。");
       if (question.requiresManualQuestionImport && !question.verified) add(`$.groups.${group.groupId}.questions.${question.id}.prompt`, "发布前需要从源文档补齐题干并确认。");
     }
@@ -1488,12 +2118,14 @@ function publishReadinessReport(store: Store, jobId: string, ir: ReadingAuthorin
   const layerNames: ValidationIssue["layer"][] = ["AuthoringIR", "ReadingExamSourceV1", "DomProtocol", "RuntimePreview"];
   return {
     ...report,
-    passed: issues.length === 0,
+    passed: issues.every((issue) => issue.severity !== "error"),
     issues,
     layers: layerNames.map((layer) => ({
       layer,
       issueCount: issues.filter((issue) => issue.layer === layer).length,
-      passed: issues.every((issue) => issue.layer !== layer)
+      errorCount: issues.filter((issue) => issue.layer === layer && issue.severity === "error").length,
+      warningCount: issues.filter((issue) => issue.layer === layer && issue.severity === "warning").length,
+      passed: issues.every((issue) => issue.layer !== layer || issue.severity !== "error")
     })),
     generatedAt: now()
   };
@@ -1612,8 +2244,9 @@ function controlsFor(html: string, qid: string): Array<Record<string, string>> {
 }
 
 function score(source: ReturnType<typeof toReadingExamSource>, collected: Record<string, AnswerValue>): { total: number; correct: number; percent: number } {
-  const total = source.questionOrder.length;
-  const correct = source.questionOrder.filter((qid) => normalizeAnswer(collected[qid]) === normalizeAnswer(source.answerKey[qid])).length;
+  const scoredQuestionIds = source.questionOrder.filter((qid) => !answerIsEmpty(source.answerKey[qid]));
+  const total = scoredQuestionIds.length;
+  const correct = scoredQuestionIds.filter((qid) => normalizeAnswer(collected[qid]) === normalizeAnswer(source.answerKey[qid])).length;
   return { total, correct, percent: total ? Math.round((correct / total) * 10000) / 100 : 0 };
 }
 
@@ -1655,6 +2288,7 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
         continue;
       }
       const answer = source.answerKey[qid];
+      if (answerIsEmpty(answer)) continue;
       const first = controls[0];
       const type = (first.type || "text").toLowerCase();
       if (type === "radio" || type === "checkbox") {
@@ -1672,7 +2306,7 @@ function runtimePreviewReport(jobId: string, assets: PreviewAssets | undefined, 
 
   const scoreInfo = score(source, collected);
   const wrongAnswers = { ...source.answerKey };
-  const firstQid = source.questionOrder[0];
+  const firstQid = source.questionOrder.find((qid) => !answerIsEmpty(source.answerKey[qid]));
   if (firstQid) wrongAnswers[firstQid] = Array.isArray(wrongAnswers[firstQid]) ? ["__wrong__"] : `${wrongAnswers[firstQid] ?? ""}__wrong__`;
   const wrongScoreInfo = score(source, wrongAnswers);
   if (scoreInfo.total > 0 && scoreInfo.percent !== 100) add("runtime.scoreInfo", `正确答案检查应为 100%，当前为 ${scoreInfo.percent}%。`);
@@ -1708,42 +2342,17 @@ function mergeValidationReports(base: ValidationReport, sidecar: ValidationRepor
   return {
     ...base,
     runtime: sidecar.runtime ?? base.runtime,
-    passed: issues.length === 0,
+    passed: issues.every((issue) => issue.severity !== "error"),
     issues,
     layers: layerNames.map((layer) => ({
       layer,
       issueCount: issues.filter((issue) => issue.layer === layer).length,
-      passed: issues.every((issue) => issue.layer !== layer)
+      errorCount: issues.filter((issue) => issue.layer === layer && issue.severity === "error").length,
+      warningCount: issues.filter((issue) => issue.layer === layer && issue.severity === "warning").length,
+      passed: issues.every((issue) => issue.layer !== layer || issue.severity !== "error")
     })),
     generatedAt: now()
   };
-}
-
-function packManifest(input: BuildPackInput, sources: ReturnType<typeof toReadingExamSource>[]) {
-  return {
-    schemaVersion: "ReadingExamPackV1",
-    packId: input.packId,
-    version: input.version,
-    institution: input.institution,
-    description: input.description,
-    validFrom: input.validFrom ?? null,
-    validTo: input.validTo ?? null,
-    generatedAt: now(),
-    assetsRoot: "reading-exams",
-    exams: sources.map((source, index) => ({
-      order: index + 1,
-      examId: source.examId,
-      title: source.meta.title,
-      category: source.meta.category,
-      frequency: source.meta.frequency,
-      script: `reading-exams/${source.examId}.js`
-    }))
-  };
-}
-
-function estimateStoredZipSize(entries: Array<{ path: string; content: string }>): number {
-  // Dev fallback does not write files; this mirrors the Rust stored-zip envelope closely enough for UI smoke tests.
-  return entries.reduce((total, entry) => total + entry.path.length * 2 + entry.content.length + 128, 22);
 }
 
 function cleanupDevArtifacts(store: Store, jobId: string, exportSummary: unknown): Record<string, unknown> {
@@ -1785,6 +2394,39 @@ function minimizeDevProcessArtifacts(store: Store, jobId: string): void {
   delete store.pipelineReports[jobId];
 }
 
+function normalizeValidationPolicy(value: unknown): ValidationPolicy {
+  return value === "force" ? "force" : "strict";
+}
+
+function blockingIssueCount(report: ValidationReport): number {
+  return report.issues.filter((issue) => issue.severity === "error").length;
+}
+
+function enforceValidationPolicy(report: ValidationReport, policy: ValidationPolicy, prefix: string, jobId?: string): number {
+  const blockingCount = blockingIssueCount(report);
+  if (policy === "strict" && blockingCount > 0) {
+    const suffix = jobId ? `:${jobId}` : "";
+    throw new Error(`${prefix}${suffix}:${report.issues.map((issue) => issue.message).join(";")}`);
+  }
+  return blockingCount;
+}
+
+function ignoredValidationIssues(report: ValidationReport, policy: ValidationPolicy, jobId: string): IgnoredValidationIssue[] {
+  if (policy !== "force") return [];
+  return report.issues
+    .filter((issue) => issue.severity === "error")
+    .map((issue) => ({ ...issue, jobId }));
+}
+
+function validationExportMeta(policy: ValidationPolicy, ignoredIssues: IgnoredValidationIssue[]) {
+  return {
+    validationPolicy: policy,
+    validationOverridden: policy === "force" && ignoredIssues.length > 0,
+    ignoredIssueCount: ignoredIssues.length,
+    ignoredIssues
+  };
+}
+
 function recordGroupLlmReview(
   ir: ReadingAuthoringIr,
   groupId: string,
@@ -1809,6 +2451,41 @@ function recordGroupLlmReview(
         recordedAt: now()
       }
     } : group)
+  };
+}
+
+function phase5RevisionRecords(jobId: string, revision: number) {
+  return Array.from({ length: revision }, (_, index) => ({
+    schemaVersion: "AuthoringRevisionRecordV1" as const,
+    layoutVersion: "JobArtifactLayoutV1" as const,
+    jobId,
+    revision: index + 1,
+    parentRevision: index,
+    source: "user" as const,
+    createdAt: now(),
+    artifactPath: `authoring/revisions/${index + 1}.json`,
+    artifactSha256: "dev-fallback",
+    patchPath: `authoring/patches/${index + 1}.jsonl`,
+    patchSha256: "dev-fallback"
+  }));
+}
+
+function phase5Session(store: Store, jobId: string): AuthoringEditorSessionV2 {
+  if (jobId === "phase5-editor-fixture" && !store.authoringV2[jobId]) {
+    store.authoringV2[jobId] = createPhase5Fixture(jobId);
+    store.authoringV2Revisions[jobId] = 0;
+  }
+  const authoring = store.authoringV2[jobId];
+  if (!authoring) throw new Error(`AUTHORING_V2_NOT_AVAILABLE:${jobId}`);
+  const revision = store.authoringV2Revisions[jobId] ?? 0;
+  return {
+    schemaVersion: "AuthoringEditorSessionV1",
+    jobId,
+    authoring,
+    revision,
+    source: revision > 0 ? "revision" : "fixture",
+    revisions: phase5RevisionRecords(jobId, revision),
+    v1FilesRemainReadable: true
   };
 }
 
@@ -1845,7 +2522,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       return jobs as T;
     }
 
-	    case "get_job": {
+    case "get_job": {
 	      const jobId = args.jobId as string;
 	      const detail: JobDetail = {
 	        job: requireJob(store, jobId),
@@ -1861,6 +2538,37 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       return detail as T;
     }
 
+    case "get_authoring_v2": {
+      const session = phase5Session(store, args.jobId as string);
+      save(store);
+      return session as T;
+    }
+
+    case "apply_authoring_v2_patches": {
+      const input = args.input as ApplyAuthoringV2PatchesInput;
+      const session = phase5Session(store, input.jobId);
+      if (session.revision !== input.baseRevision) {
+        throw new Error(`revision_conflict:current=${session.revision}:base=${input.baseRevision}`);
+      }
+      const nextAuthoring = applyAuthoringV2Patches(session.authoring, input.patches);
+      const nextRevision = session.revision + 1;
+      store.authoringV2[input.jobId] = {
+        ...nextAuthoring,
+        audit: {
+          ...nextAuthoring.audit,
+          revision: nextRevision,
+          source: "user",
+          updatedAt: now()
+        }
+      };
+      store.authoringV2Revisions[input.jobId] = nextRevision;
+      save(store);
+      return {
+        ...phase5Session(store, input.jobId),
+        savedPatchCount: input.patches.length
+      } as T;
+    }
+
     case "update_job_meta": {
       const { status: _status, currentStep: _currentStep, ...patch } = args.patch as JobMetaPatch & Partial<ImportJob>;
       const job = updateJob(store, args.jobId as string, patch);
@@ -1874,6 +2582,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       delete store.documents[jobId];
       delete store.splits[jobId];
       delete store.authoring[jobId];
+      delete store.authoringV2[jobId];
+      delete store.authoringV2Revisions[jobId];
       delete store.validation[jobId];
       delete store.previews[jobId];
       save(store);
@@ -1884,24 +2594,33 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const jobId = args.jobId as string;
       const filePath = (args.filePath as string) || "source.pdf";
       const role = (args.role as SourceFileRole) ?? "MainQuestion";
+      const textContent = typeof args.textContent === "string" ? args.textContent.trim() : "";
+      const binaryContentBase64 = typeof args.binaryContentBase64 === "string" ? args.binaryContentBase64 : "";
+      const declaredSizeBytes = Math.max(0, Number(args.sizeBytes ?? 0));
+      const inferredSizeBytes = Math.max(
+        declaredSizeBytes,
+        textContent ? new TextEncoder().encode(textContent).length : 0,
+        estimateBase64Size(binaryContentBase64)
+      );
+      if (inferredSizeBytes > MAX_IMPORT_FILE_BYTES) {
+        throw new Error(sourceFileTooLargeMessage(filePath, inferredSizeBytes));
+      }
       const source: SourceFile = {
         fileId: id("file"),
         originalName: filePath.split(/[\\/]/).pop() || filePath,
         storedName: `${Math.random().toString(36).slice(2, 8)}-${filePath.split(/[\\/]/).pop() || "source.pdf"}`,
         fileType: detectFileType(filePath),
         sha256: Math.random().toString(16).slice(2).padEnd(64, "0"),
-        sizeBytes: Number(args.sizeBytes ?? 0),
+        sizeBytes: declaredSizeBytes || inferredSizeBytes,
         role,
         importedAt: now()
       };
       const job = requireJob(store, jobId);
       updateJob(store, jobId, { sourceFiles: [...job.sourceFiles, source], status: "Working", currentStep: "DocumentReview" });
-      const textContent = typeof args.textContent === "string" ? args.textContent.trim() : "";
       if (textContent) {
         store.sourceTexts[jobId] = { ...(store.sourceTexts[jobId] ?? {}), [source.fileId]: textContent };
       }
-      const binaryContentBase64 = typeof args.binaryContentBase64 === "string" ? args.binaryContentBase64 : "";
-      const canUseLocalPath = filePath.startsWith("/") && (source.fileType === "pdf" || source.fileType === "docx");
+      const canUseLocalPath = isAbsoluteLocalPath(filePath) && (source.fileType === "pdf" || source.fileType === "docx");
       if (role === "MainQuestion" && (binaryContentBase64 || canUseLocalPath) && (source.fileType === "pdf" || source.fileType === "docx")) {
         store.documents[jobId] = await parseUploadedDocumentInDev({
           jobId,
@@ -2534,6 +3253,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 
     case "export_reading_assets": {
       const jobId = args.jobId as string;
+      const validationPolicy = normalizeValidationPolicy(args.validationPolicy);
       const ir = store.authoring[jobId];
       if (!ir) throw new Error("authoring_ir_missing");
       const source = toReadingExamSource(ir);
@@ -2551,14 +3271,12 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
       const readiness = publishReadinessReport(store, jobId, ir, report);
       store.validation[jobId] = readiness;
-      if (!report.passed) {
+      const ignoredIssueCount = blockingIssueCount(readiness);
+      if (validationPolicy === "strict" && ignoredIssueCount > 0) {
         save(store);
-        throw new Error(`export_validation_failed:${report.issues.map((issue) => issue.message).join(";")}`);
+        enforceValidationPolicy(readiness, validationPolicy, "export_validation_failed");
       }
-      if (!readiness.passed) {
-        save(store);
-        throw new Error(`export_validation_failed:${readiness.issues.map((issue) => issue.message).join(";")}`);
-      }
+      const validationMeta = validationExportMeta(validationPolicy, ignoredValidationIssues(readiness, validationPolicy, jobId));
       const result: ExportResult = {
         examId: source.examId,
         files: [
@@ -2568,7 +3286,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           { name: "preview.html", content: previewHtml(source) }
         ],
         outputDir: "local://exports",
-        exportSummary: { type: "reading-assets", examId: source.examId, exportedAt: now() }
+        ...validationMeta,
+        exportSummary: { type: "reading-assets", examId: source.examId, ...validationMeta, exportedAt: now() }
       };
       updateJob(store, jobId, { status: "Exported", currentStep: "Export" });
       result.cleanup = cleanupDevArtifacts(store, jobId, result.exportSummary);
@@ -2579,6 +3298,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "export_reading_js": {
       const input = args.input as ExportReadingJsInput;
       if (!input?.jobIds?.length) throw new Error("js_export_requires_at_least_one_job");
+      const validationPolicy = normalizeValidationPolicy(input.validationPolicy);
+      const ignoredIssues: IgnoredValidationIssue[] = [];
       const sources = input.jobIds.map((jobId) => {
         const ir = store.authoring[jobId];
         if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
@@ -2597,10 +3318,11 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
         const readiness = publishReadinessReport(store, jobId, ir, report);
         store.validation[jobId] = readiness;
-        if (!report.passed) throw new Error(`js_export_validation_failed:${jobId}:${report.issues.map((issue) => issue.message).join(";")}`);
-        if (!readiness.passed) throw new Error(`js_export_validation_failed:${jobId}:${readiness.issues.map((issue) => issue.message).join(";")}`);
+        enforceValidationPolicy(readiness, validationPolicy, "js_export_validation_failed", jobId);
+        ignoredIssues.push(...ignoredValidationIssues(readiness, validationPolicy, jobId));
         return source;
       });
+      const validationMeta = validationExportMeta(validationPolicy, ignoredIssues);
       const files = sources.map((source) => ({ name: `${source.examId}.js`, content: buildWrapper(source) }));
       const manifest = { name: "manifest.js", content: buildManifest(sources) };
       const result: JsExportResult = {
@@ -2609,11 +3331,13 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         jobIds: [...input.jobIds],
         files: [...files, manifest],
         outputDir: input.exportDir ?? "local://exports",
+        ...validationMeta,
         exportSummary: {
           type: "reading-js",
           mode: input.jobIds.length > 1 ? "batch" : "single",
           examIds: sources.map((source) => source.examId),
           jobIds: [...input.jobIds],
+          ...validationMeta,
           exportedAt: now()
         },
         cleanup: input.jobIds.map((jobId) => {
@@ -2632,6 +3356,8 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "export_nas_library": {
       const input = args.input as ExportNasLibraryInput;
       if (!input?.jobIds?.length) throw new Error("nas_export_requires_at_least_one_job");
+      const validationPolicy = normalizeValidationPolicy(input.validationPolicy);
+      const ignoredIssues: IgnoredValidationIssue[] = [];
       const sources = input.jobIds.map((jobId) => {
         const ir = store.authoring[jobId];
         if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
@@ -2650,12 +3376,14 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
         const readiness = publishReadinessReport(store, jobId, ir, report);
         store.validation[jobId] = readiness;
-        if (!report.passed) throw new Error(`nas_export_validation_failed:${jobId}:${report.issues.map((issue) => issue.message).join(";")}`);
-        if (!readiness.passed) throw new Error(`nas_export_validation_failed:${jobId}:${readiness.issues.map((issue) => issue.message).join(";")}`);
+        enforceValidationPolicy(readiness, validationPolicy, "nas_export_validation_failed", jobId);
+        ignoredIssues.push(...ignoredValidationIssues(readiness, validationPolicy, jobId));
         return source;
       });
+      const validationMeta = validationExportMeta(validationPolicy, ignoredIssues);
       const version = input.version || now().replace(/[:TZ]/g, "-").slice(0, 19);
       const libraryRoot = input.exportDir ?? "local://exports/nas-library";
+      const readingExamsDir = libraryRoot;
       const runtimeFiles = [
         ...sources.map((source) => ({
           name: `${source.examId}.js`,
@@ -2684,8 +3412,9 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         examIds: sources.map((source) => source.examId),
         assetCount: sources.length,
         libraryRoot,
-        readingExamsDir: libraryRoot,
+        readingExamsDir,
         version,
+        ...validationMeta,
         files: runtimeFiles,
         report: reportPayload,
         exportSummary: {
@@ -2695,8 +3424,9 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
           examIds: sources.map((source) => source.examId),
           version,
           outputDir: libraryRoot,
-          readingExamsDir: libraryRoot,
+          readingExamsDir,
           assetCount: sources.length,
+          ...validationMeta,
           exportedAt: now()
         },
         cleanup: input.jobIds.map((jobId) => {
@@ -2714,56 +3444,262 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       return result as T;
     }
 
-    case "build_pack": {
-      const input = args.input as BuildPackInput;
-      const sources = input.jobIds.map((jobId) => {
-        const ir = store.authoring[jobId];
-        if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
-        const source = toReadingExamSource(ir);
-        const assets = store.previews[jobId] ?? {
-          examId: source.examId,
-          manifestPath: `local://${jobId}/preview/manifest.js`,
-          scriptPath: `local://${jobId}/preview/${source.examId}.js`,
-          previewUrl: `local-preview://${source.examId}`,
-          source,
-          wrapperJs: buildWrapper(source),
-          manifestJs: buildManifest([source]),
-          runtimeHtml: previewHtml(source)
-        };
-        store.previews[jobId] = assets;
-        const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
-        const readiness = publishReadinessReport(store, jobId, ir, report);
-        store.validation[jobId] = readiness;
-        if (!report.passed) throw new Error(`pack_validation_failed:${jobId}:${report.issues.map((issue) => issue.message).join(";")}`);
-        if (!readiness.passed) throw new Error(`pack_validation_failed:${jobId}:${readiness.issues.map((issue) => issue.message).join(";")}`);
-        return source;
-      });
-      const manifest = packManifest(input, sources);
-      const entries = [
-        { path: "pack.json", content: JSON.stringify(manifest, null, 2) },
-        { path: "reading-exams/manifest.js", content: buildManifest(sources) },
-        ...sources.map((source) => ({ path: `reading-exams/${source.examId}.js`, content: buildWrapper(source) }))
-      ];
-      const result: PackBuildResult = {
-        packId: input.packId,
-        outputPath: `local://packs/${input.packId}.zip`,
-        files: entries.map((entry) => entry.path),
-        zipSizeBytes: estimateStoredZipSize(entries),
-        entryCount: entries.length,
-        manifest,
-        exportSummary: { type: "pack", packId: input.packId, outputPath: `local://packs/${input.packId}.zip`, exportedAt: now() },
-        createdAt: manifest.generatedAt
-      };
-      store.packs.unshift(result);
-      input.jobIds.forEach((jobId) => updateJob(store, jobId, { status: "Exported", currentStep: "Pack" }));
-      result.cleanup = input.jobIds.map((jobId) => cleanupDevArtifacts(store, jobId, result.exportSummary));
-      save(store);
-      return result as T;
-    }
-
     case "reveal_job_folder":
     case "choose_export_dir": {
       return "local://exports" as T;
+    }
+
+    // ---------- 写作题库 fallback ----------
+    case "create_writing_job": {
+      const input = (args.input ?? {}) as CreateWritingJobInput;
+      const taskType: WritingTaskType = input.taskType === "task2" ? "task2" : "task1";
+      const suggestedWordCount = input.suggestedWordCount && input.suggestedWordCount > 0
+        ? input.suggestedWordCount
+        : (taskType === "task2" ? 250 : 150);
+      const job: WritingJob = {
+        jobId: id("writing"),
+        title: input.title?.trim() || `Untitled Writing ${taskType}`,
+        taskType,
+        examId: `wt-${taskType}-${Date.now()}`,
+        promptText: input.promptText ?? "",
+        suggestedWordCount,
+        status: "Draft",
+        createdAt: now(),
+        updatedAt: now()
+      };
+      store.writingJobs.push(job);
+      save(store);
+      return job as T;
+    }
+
+    case "list_writing_jobs": {
+      const filter = (args.filter ?? {}) as WritingJobFilter;
+      let list = [...store.writingJobs];
+      if (filter.taskType) list = list.filter((j) => j.taskType === filter.taskType);
+      if (filter.search?.trim()) {
+        const q = filter.search.toLowerCase();
+        list = list.filter((j) => j.title.toLowerCase().includes(q) || j.jobId.toLowerCase().includes(q) || j.examId.toLowerCase().includes(q));
+      }
+      list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return list as T;
+    }
+
+    case "get_writing_job": {
+      const jobId = String(args.jobId ?? "");
+      const job = store.writingJobs.find((j) => j.jobId === jobId);
+      if (!job) throw new Error(`writing_job_not_found:${jobId}`);
+      return job as T;
+    }
+
+    case "update_writing_job": {
+      const jobId = String(args.jobId ?? "");
+      const patch = (args.patch ?? {}) as WritingJobPatch;
+      const job = store.writingJobs.find((j) => j.jobId === jobId);
+      if (!job) throw new Error(`writing_job_not_found:${jobId}`);
+      if (patch.title !== undefined) job.title = patch.title;
+      if (patch.taskType === "task1" || patch.taskType === "task2") job.taskType = patch.taskType;
+      if (patch.examId !== undefined) job.examId = patch.examId;
+      if (patch.promptText !== undefined) job.promptText = patch.promptText;
+      if (patch.suggestedWordCount !== undefined) job.suggestedWordCount = patch.suggestedWordCount;
+      if (patch.status !== undefined) job.status = patch.status;
+      job.updatedAt = now();
+      save(store);
+      return job as T;
+    }
+
+    case "delete_writing_job": {
+      const jobId = String(args.jobId ?? "");
+      store.writingJobs = store.writingJobs.filter((j) => j.jobId !== jobId);
+      save(store);
+      return { deleted: true, jobId } as T;
+    }
+
+    case "export_writing_library": {
+      const input = (args.input ?? {}) as ExportWritingLibraryInput;
+      const jobIds = Array.isArray(input.jobIds) ? input.jobIds : [];
+      if (jobIds.length !== 2) throw new Error("writing_export_requires_two_jobs:task1+task2");
+      const tasks: WritingJob[] = [];
+      for (const jid of jobIds) {
+        const found = store.writingJobs.find((j) => j.jobId === jid);
+        if (!found) throw new Error(`writing_job_not_found:${jid}`);
+        if (!found.promptText.trim()) throw new Error(`writing_export_prompt_empty:${jid}`);
+        tasks.push(found);
+      }
+      const taskTypes = new Set(tasks.map((t) => t.taskType));
+      if (!taskTypes.has("task1") || !taskTypes.has("task2")) {
+        throw new Error("writing_export_requires_both_tasks");
+      }
+      const buildWritingWrapper = (task: WritingJob): string => {
+        const payload = {
+          schemaVersion: "WritingExamSourceV1",
+          examId: task.examId,
+          taskType: task.taskType,
+          promptText: task.promptText,
+          suggestedWordCount: task.suggestedWordCount,
+          meta: { title: task.title, taskType: task.taskType }
+        };
+        return `(function registerWritingExamData(global) {\n  'use strict';\n  if (!global.__WRITING_EXAM_DATA__ || typeof global.__WRITING_EXAM_DATA__.register !== "function") {\n    throw new Error("writing_exam_registry_missing");\n  }\n  global.__WRITING_EXAM_DATA__.register(${JSON.stringify(task.taskType)}, ${JSON.stringify(payload, null, 2)});\n})(typeof window !== "undefined" ? window : globalThis);\n`;
+      };
+      const manifestObj: Record<string, unknown> = {};
+      for (const task of tasks) {
+        manifestObj[task.taskType] = {
+          taskType: task.taskType,
+          examId: task.examId,
+          dataKey: task.taskType,
+          script: `./${task.taskType}.js`,
+          title: task.title
+        };
+      }
+      const manifestJs = `window.__WRITING_EXAM_MANIFEST__ = ${JSON.stringify(manifestObj, null, 2)};\n`;
+      const libraryRoot = input.exportDir ?? "local://exports/nas-library";
+      const writingExamsDir = `${libraryRoot}/writing-exams`;
+      const files = tasks.map((task) => ({
+        name: `${task.taskType}.js`,
+        content: buildWritingWrapper(task)
+      }));
+      files.push({ name: "manifest.js", content: manifestJs });
+      for (const task of tasks) {
+        task.status = "Exported";
+        task.updatedAt = now();
+      }
+      save(store);
+      const version = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+      return {
+        mode: "writing-library",
+        jobIds: tasks.map((t) => t.jobId),
+        taskTypes: tasks.map((t) => t.taskType),
+        assetCount: tasks.length,
+        libraryRoot,
+        writingExamsDir,
+        version,
+        files,
+        report: { status: "ok", version, generatedAt: now(), summary: { runtime: "nas-js-direct", writingTaskCount: tasks.length, manifestFileCount: 1 }, errors: [] },
+        exportSummary: { type: "writing-library", runtime: "nas-js-direct", jobIds, version, outputDir: libraryRoot, writingExamsDir, assetCount: tasks.length, exportedAt: now() },
+        cleanup: tasks.map((t) => ({ jobId: t.jobId, taskType: t.taskType, status: "Exported" }))
+      } as T;
+    }
+
+    // ---------- 题库管理命令（library）----------
+    // dev 模式下题库 = 现有 jobs + writingJobs 的投影，与后端「全部 job 入库」一致。
+
+    case "list_library_exams": {
+      const filter = (args.filter ?? {}) as LibraryFilter;
+      let list = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)];
+      // 排除已软删除项。
+      list = list.filter((e) => !store.trashedIds.includes(e.id));
+      if (filter.subject) list = list.filter((e) => e.subject === filter.subject);
+      if (filter.status) list = list.filter((e) => e.status === filter.status);
+      if (filter.category) list = list.filter((e) => e.category === filter.category);
+      list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const offset = filter.offset ?? 0;
+      const limit = filter.limit ?? 200;
+      return list.slice(offset, offset + limit) as T;
+    }
+
+    case "get_library_exam": {
+      const id = String(args.id ?? "");
+      if (store.trashedIds.includes(id)) return null as T;
+      const reading = store.jobs.find((j) => j.jobId === id);
+      if (reading) {
+        const ir = store.authoring[id];
+        return { summary: readingSummary(reading), payload: ir ?? reading } as T as LibraryExamDetail as T;
+      }
+      const writing = store.writingJobs.find((j) => j.jobId === id);
+      if (writing) return { summary: writingSummary(writing), payload: writing } as T as LibraryExamDetail as T;
+      return null as T;
+    }
+
+    case "update_library_exam_meta": {
+      const id = String(args.id ?? "");
+      const patch = (args.patch ?? {}) as LibraryMetaPatch;
+      const reading = store.jobs.find((j) => j.jobId === id);
+      if (reading) {
+        if (patch.title !== undefined) reading.title = patch.title;
+        if (patch.category !== undefined) reading.category = patch.category as ImportJob["category"];
+        if (patch.frequency !== undefined) reading.frequency = patch.frequency as ImportJob["frequency"];
+        if (patch.tags !== undefined) reading.tags = patch.tags;
+        if (patch.status !== undefined) {
+          // exported 是 Exported|Cleaned 的合并态；若任务已是 Cleaned，保留 Cleaned 语义，避免降级。
+          if (patch.status === "exported" && reading.status === "Cleaned") {
+            // 保留 Cleaned
+          } else {
+            reading.status = readingStatusFromLibrary(patch.status);
+          }
+        }
+        reading.updatedAt = now();
+        save(store);
+        return readingSummary(reading) as T;
+      }
+      const writing = store.writingJobs.find((j) => j.jobId === id);
+      if (writing) {
+        if (patch.title !== undefined) writing.title = patch.title;
+        if (patch.taskType === "task1" || patch.taskType === "task2") writing.taskType = patch.taskType;
+        if (patch.status !== undefined) writing.status = writingStatusFromLibrary(patch.status);
+        writing.updatedAt = now();
+        save(store);
+        return writingSummary(writing) as T;
+      }
+      return null as T;
+    }
+
+    case "delete_library_exam": {
+      // Phase 1：软删除（置入 trashedIds），不物理删源 job，可恢复。
+      const id = String(args.id ?? "");
+      if (!store.trashedIds.includes(id)) store.trashedIds.push(id);
+      save(store);
+      return true as T;
+    }
+
+    case "restore_library_exam": {
+      const id = String(args.id ?? "");
+      const before = store.trashedIds.length;
+      store.trashedIds = store.trashedIds.filter((t) => t !== id);
+      const restored = store.trashedIds.length !== before;
+      if (restored) save(store);
+      return restored as T;
+    }
+
+    case "list_trashed_exams": {
+      const trashed = [
+        ...store.jobs.filter((j) => store.trashedIds.includes(j.jobId)).map(readingSummary),
+        ...store.writingJobs.filter((j) => store.trashedIds.includes(j.jobId)).map(writingSummary)
+      ];
+      trashed.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return trashed as T;
+    }
+
+    case "search_library_exams": {
+      const query = String(args.query ?? "").trim().toLowerCase();
+      if (!query) return [] as T;
+      const all = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)]
+        .filter((e) => !store.trashedIds.includes(e.id));
+      const hits = all.filter(
+        (e) =>
+          e.title.toLowerCase().includes(query) ||
+          (e.examId ?? "").toLowerCase().includes(query) ||
+          e.tags.some((t) => t.toLowerCase().includes(query))
+      );
+      hits.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return hits.slice(0, 200) as T;
+    }
+
+    case "get_library_stats": {
+      const all = [...store.jobs.map(readingSummary), ...store.writingJobs.map(writingSummary)]
+        .filter((e) => !store.trashedIds.includes(e.id));
+      const by = (key: keyof LibraryExamSummary) => {
+        const map: Record<string, number> = {};
+        for (const e of all) {
+          const k = String((e[key] as string | undefined) ?? "(none)");
+          map[k] = (map[k] ?? 0) + 1;
+        }
+        return map;
+      };
+      return {
+        total: all.length,
+        bySubject: by("subject"),
+        byStatus: by("status"),
+        byCategory: by("category")
+      } as T as LibraryStats as T;
     }
 
     default:

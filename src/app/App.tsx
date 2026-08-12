@@ -7,9 +7,14 @@ import { JobList } from "../pages/JobList";
 import { Settings } from "../pages/Settings";
 import { UnifiedPreview } from "../pages/UnifiedPreview";
 import { ExportPage } from "../pages/ExportPage";
+import { WritingStudio } from "../pages/WritingStudio";
+import { LibraryPage } from "../pages/LibraryPage";
+import { LibraryExamDetail } from "../pages/LibraryExamDetail";
+import { StructuredAuthoringEditorV2 } from "../pages/StructuredAuthoringEditorV2";
 import { getJob, listJobs } from "../api/tauriCommands";
 import type { ImportJob } from "../types";
 import { parseRoute, type RouteState } from "./router";
+import { isPhase5EditorEnabled } from "../config/featureFlags";
 
 export function App() {
   const [route, setRoute] = useState<RouteState>(() => parseRoute());
@@ -50,8 +55,17 @@ export function App() {
       return <UnifiedPreview jobId={route.jobId} {...common} />;
     }
     if (route.jobId && route.name === "preview") return <UnifiedPreview jobId={route.jobId} {...common} />;
+    if (route.jobId && route.name === "authoring-v2") return isPhase5EditorEnabled()
+      ? <StructuredAuthoringEditorV2 jobId={route.jobId} refresh={refresh} />
+      : <UnifiedPreview jobId={route.jobId} {...common} />;
+    if (route.name === "phase5") return isPhase5EditorEnabled()
+      ? <StructuredAuthoringEditorV2 jobId="phase5-editor-fixture" refresh={refresh} />
+      : <Dashboard jobs={jobs} refresh={refresh} />;
     if (route.jobId && route.name === "export") return <ExportPage jobId={route.jobId} jobs={jobs} {...common} />;
-    if (route.name === "packs") return <ExportPage jobs={jobs} {...common} />;
+    if (route.name === "export") return <ExportPage jobs={jobs} {...common} />;
+    if (route.name === "writing") return <WritingStudio {...common} />;
+    if (route.name === "library") return <LibraryPage {...common} />;
+    if (route.name === "libraryExam" && route.examId) return <LibraryExamDetail examId={route.examId} {...common} />;
     if (route.name === "settings") return <Settings refresh={refresh} />;
     return <Dashboard jobs={jobs} refresh={refresh} />;
   }, [jobs, route, refreshToken]);

@@ -54,3 +54,30 @@ export function resolvePhase1FeatureFlags(
     pdfPerQuestionLlmRepair: false
   };
 }
+
+export interface Phase5FeatureFlags extends Phase1FeatureFlags {
+  authoringEditorV2: boolean;
+}
+
+export const DEFAULT_PHASE5_FEATURE_FLAGS: Readonly<Phase5FeatureFlags> = Object.freeze({
+  ...DEFAULT_PHASE1_FEATURE_FLAGS,
+  authoringEditorV2: false
+});
+
+export type Phase5FeatureFlagName = keyof Phase5FeatureFlags;
+
+export function resolvePhase5FeatureFlags(
+  overrides: Partial<Phase5FeatureFlags> = {}
+): Phase5FeatureFlags {
+  return {
+    ...DEFAULT_PHASE5_FEATURE_FLAGS,
+    ...overrides,
+    pdfPerQuestionLlmRepair: false
+  };
+}
+
+export function isPhase5EditorEnabled(): boolean {
+  if (import.meta.env.DEV) return true;
+  return typeof window !== "undefined"
+    && window.localStorage.getItem("ielts-author-studio.feature.authoringEditorV2") === "1";
+}

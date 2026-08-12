@@ -1,4 +1,28 @@
-# Current Active Goal: Settings Preflight Slimdown + 100-PDF Live LLM Regression
+# Current Active Goal: IELTS 文档识别重构 Phase 5 结构化编辑器纵向切片
+
+## Goal
+
+依据 [Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md](Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md) 第 16.6 节，先交付一个可运行的结构化编辑器纵向切片：普通用户可以直接编辑 V2 内容节点、题组、共享答案位、选项库和答案；问题可以定位到源锚点；同一份草稿可以切换学生预览；编辑通过防抖 patch 保存，并具备版本冲突和本地崩溃恢复能力。
+
+- [complete] S1 建立 Phase 5 V2 session、patch 协议与 immutable revision 保存；保留 V1 文件可读。
+- [complete] S2 完成结构化编辑器页面、题组/共享答案位/选项库/答案编辑与 issue rail/source overlay。
+- [complete] S3 接通 student parity preview、650ms autosave、乐观版本冲突提示和 localStorage recovery。
+- [complete] S4 增加 `/phase5` fixture 路由、现有 job 的 `authoring-v2` 路由与生产默认关闭的 feature flag。
+- [complete] S5 完成前端构建、Phase 1 schema 回归、Rust check/test 与 Phase 5 专用验证。
+- [pending] S6 扩展完整节点增删移动、table/asset/hotspot 编辑、undo/redo、原生 Tiptap schema 适配与真实 PDF 端到端验收。
+
+## Current Decisions
+
+- 本轮以“可验证的第一条纵向切片”为 Phase 5 目标，不宣称已完成 4–6 周全部工作量。
+- 编辑器当前采用 V2 schema-driven React 编辑器，先稳定 patch/revision/source/preview 契约；Tiptap 适配留在 S6。
+- V2 编辑只写 `authoring-ir-v2.shadow.json` 对应的 revision 命名空间，不重写 V1 `authoring-ir.json`；逐题 PDF LLM repair 继续关闭。
+
+## Tracking Files
+
+- [Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md](Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md)
+- [Files/IELTS_Document_Recognition_Phase_5_Progress_CN.md](Files/IELTS_Document_Recognition_Phase_5_Progress_CN.md)
+
+# Previous Active Goal: Settings Preflight Slimdown + 100-PDF Live LLM Regression
 
 ## Goal
 

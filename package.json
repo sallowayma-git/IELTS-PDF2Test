@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Epic 8 Tauri authoring studio for IELTS reading import, review, preview, and pack export.",
+  "description": "Epic 8 Tauri authoring studio for IELTS reading import, review, preview, and NAS publishing.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -22,6 +22,7 @@
     "verify:phase3:docx-package": "node scripts/verify-phase3-docx-package.mjs",
     "verify:phase3:docx": "node scripts/verify-phase3-docx.mjs",
     "verify:phase4:grammar": "node scripts/verify-phase4-grammar.mjs",
+    "verify:phase5:editor": "node scripts/verify-phase5-editor.mjs",
     "capture:phase0-baseline": "node scripts/phase0-golden.mjs capture",
     "register:phase0:private": "node scripts/register-phase0-private-sample.mjs",
     "register:phase0:plan-corpus": "node scripts/register-phase0-plan-corpus.mjs",
@@ -29,6 +30,9 @@
     "generate:phase0-synthetic": "python scripts/generate-phase0-synthetic-fixtures.py",
     "register:phase0-synthetic": "python scripts/register-phase0-synthetic-fixtures.py",
     "index:phase0-legacy": "node scripts/index-legacy-corpus.mjs",
+    "clean": "node scripts/clean-generated.mjs",
+    "clean:deep": "node scripts/clean-generated.mjs --deep",
+    "fetch:pdfium": "node scripts/fetch-pdfium.mjs",
     "e2e:ui-flow": "node sidecars/ui-flow-e2e/ui-flow-e2e.mjs",
     "test:pdf-regression": "node scripts/pdf-regression-sample.mjs",
     "test:pdf-regression:smoke": "node scripts/pdf-regression-sample.mjs --smoke",
@@ -40,9 +44,9 @@
     "audit:windows:signatures": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/audit-windows-signatures.ps1",
     "repack:macos-dmg": "node scripts/repack-macos-dmg.mjs",
     "verify:release": "npm run verify:release:macos",
-    "verify:release:macos": "npm run tauri -- build --bundles app,dmg && npm run repack:macos-dmg && npm run audit:package:macos",
-    "verify:release:windows": "npm run tauri -- build --bundles nsis && npm run audit:package:windows",
-    "verify:release:windows:offline": "npm run tauri -- build --bundles nsis --config src-tauri/tauri.windows.offline.conf.json && npm run audit:package:windows -- --config src-tauri/tauri.windows.offline.conf.json"
+    "verify:release:macos": "npm run fetch:pdfium && npm run tauri -- build --bundles app,dmg --config src-tauri/tauri.macos.conf.json && npm run repack:macos-dmg && npm run audit:package:macos",
+    "verify:release:windows": "npm run fetch:pdfium && npm run tauri -- build --bundles nsis --config src-tauri/tauri.windows.conf.json && npm run audit:package:windows -- src-tauri/tauri.windows.conf.json",
+    "verify:release:windows:offline": "npm run fetch:pdfium && npm run tauri -- build --bundles nsis --config src-tauri/tauri.windows.offline.conf.json && npm run audit:package:windows -- src-tauri/tauri.windows.offline.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",
