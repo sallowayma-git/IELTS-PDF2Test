@@ -4,6 +4,7 @@ import type {
   DocumentBlock,
   DocumentIr,
   ExportNasLibraryInput,
+  ExportNasPackageV2Input,
   ExportReadingJsInput,
   ExportResult,
   GroupKind,
@@ -11,6 +12,7 @@ import type {
   IgnoredValidationIssue,
   JsExportResult,
   NasExportResult,
+  NasPackageV2PublishResult,
   JobFilter,
   JobMetaPatch,
   LlmProfilePublic,
@@ -3471,6 +3473,25 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         })
       };
       save(store);
+      return result as T;
+    }
+
+    case "publish_nas_package_v2": {
+      // Browser/dev fallback cannot exercise filesystem locking, so it emits
+      // the same receipt shape while the real Tauri command remains the only
+      // implementation used by the desktop application.
+      const input = (args.input ?? {}) as ExportNasPackageV2Input;
+      if (!input.libraryRoot || !input.sourcePath) throw new Error("nas_package_v2_requires_library_and_source");
+      const result: NasPackageV2PublishResult = {
+        schemaVersion: "NasPackagePublishReportV2",
+        status: "committed",
+        examId: input.examId ?? "reading-v2-preview",
+        manifestPath: `${input.libraryRoot}/manifest.js`,
+        reportPath: `${input.libraryRoot}/publish/reports/dev-fallback.json`,
+        assetCount: 0,
+        exportId: `dev-${Date.now()}`,
+        probe: { passed: true, checkedAssetIds: [], referencedAssetIds: [], errors: [], warnings: ["dev_fallback_no_filesystem_probe"] }
+      };
       return result as T;
     }
 

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "ListeningOfficialFamiliesFixtureV1",
+  "scope": "partial_practice",
+  "families": [
+    { "taskType": "note_completion", "interaction": "text", "label": "Notes" },
+    { "taskType": "table_completion", "interaction": "text", "label": "Table" },
+    { "taskType": "multiple_choice", "interaction": "radio", "label": "Multiple choice" },
+    { "taskType": "matching_features", "interaction": "select", "label": "Matching" },
+    { "taskType": "plan_map_label_completion", "interaction": "hotspot", "label": "Plan/map", "keyboardAlternative": ["A", "B", "C"] },
+    { "taskType": "diagram_label_completion", "interaction": "hotspot", "label": "Diagram", "keyboardAlternative": ["A", "B", "C"] },
+    { "taskType": "short_answer", "interaction": "text", "label": "Shared short answer", "sharedSlots": 2 }
+  ]
+}

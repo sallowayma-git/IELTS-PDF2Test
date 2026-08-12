@@ -11,16 +11,18 @@ use crate::artifact_store::{
     recover_current_revision, write_artifact_json, write_canonical_json_atomic, RevisionSourceV2,
 };
 use crate::reading_source_v2::compile_reading_source_v2;
+use crate::schema::common::AssetDescriptorV2;
 use crate::schema::ielts_authoring_v2::AnswerValueV2;
 use crate::schema::IeltsAuthoringIRV2;
-use crate::util::{job_dir, read_json_opt, safe_job_dir};
+use crate::util::{is_safe_path_segment, job_dir, read_json_opt, safe_job_dir, stage_file_with_hash};
 use crate::CommandResult;
 use chrono::Utc;
 use fs2::FileExt;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use std::path::Path;
+use std::path::{Component, Path};
 use std::{fs, fs::OpenOptions, path::PathBuf};
+use std::collections::BTreeSet;
 use uuid::Uuid;
 
 const AUTHORING_V2_SHADOW_FILE: &str = "authoring-ir-v2.shadow.json";
@@ -222,6 +224,7 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
         let authoring_receipt = write_canonical_json_atomic(&authoring_path, &authoring_value)?;
         let runtime_value = serde_json::to_value(&runtime).map_err(|error| error.to_string())?;
         let runtime_receipt = write_canonical_json_atomic(&runtime_path, &runtime_value)?;
+        materialize_authoring_assets(&artifact_layout.job_dir, &staging_dir, &authoring.assets)?;
         let manifest_value = json!({
             "schemaVersion": "AuthoringV2ExportReceiptV1",
             "jobId": input.job_id,
@@ -232,6 +235,14 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
             "authoringSha256": authoring_receipt.sha256,
             "runtimeSha256": runtime_receipt.sha256,
             "assetCount": authoring.assets.len(),
+            "assets": authoring.assets.iter().map(|asset| json!({
+                "assetId": &asset.asset_id,
+                "kind": &asset.kind,
+                "mime": &asset.mime,
+                "relativePath": &asset.relative_path,
+                "sha256": &asset.sha256,
+                "byteLength": asset.byte_length
+            })).collect::<Vec<_>>(),
             "v1FilesRemainReadable": true,
             "pdfPerQuestionLlmRepair": false,
             "reviewRequired": false
@@ -285,6 +296,84 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
         "revision": revision,
         "examId": authoring.exam.exam_id
     }))
+}
+
+fn safe_asset_relative_path(raw: &str) -> CommandResult<PathBuf> {
+    let path = PathBuf::from(raw.trim());
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!("authoring_v2_asset_path_unsafe:{raw}"));
+    }
+    for component in path.components() {
+        if let Component::Normal(value) = component {
+            let segment = value.to_string_lossy();
+            if !is_safe_path_segment(&segment) {
+                return Err(format!("authoring_v2_asset_path_unsafe:{raw}"));
+            }
+        }
+    }
+    Ok(path)
+}
+
+fn materialize_authoring_assets(
+    source_root: &Path,
+    staging_dir: &Path,
+    assets: &[AssetDescriptorV2],
+) -> CommandResult<()> {
+    if assets.is_empty() {
+        return Ok(());
+    }
+    let source_root = fs::canonicalize(source_root)
+        .map_err(|error| format!("authoring_v2_asset_root_unavailable:{error}"))?;
+    let mut seen_paths = BTreeSet::new();
+    for asset in assets {
+        let relative = safe_asset_relative_path(&asset.relative_path)?;
+        if !seen_paths.insert(relative.clone()) {
+            return Err(format!(
+                "authoring_v2_asset_relative_path_duplicate:{}",
+                asset.relative_path
+            ));
+        }
+        let source = source_root.join(&relative);
+        let source_real = fs::canonicalize(&source).map_err(|error| {
+            format!(
+                "authoring_v2_asset_source_missing:{}:{error}",
+                asset.asset_id
+            )
+        })?;
+        if !source_real.starts_with(&source_root) {
+            return Err(format!(
+                "authoring_v2_asset_source_escape:{}",
+                asset.asset_id
+            ));
+        }
+        let target = staging_dir.join(&relative);
+        let (actual_hash, actual_size) = stage_file_with_hash(&source_real, &target).map_err(|error| {
+            format!("authoring_v2_asset_stage:{}:{error}", asset.asset_id)
+        })?;
+        if actual_size != asset.byte_length {
+            let _ = fs::remove_file(&target);
+            return Err(format!(
+                "authoring_v2_asset_size_mismatch:{}:expected={}:actual={}",
+                asset.asset_id, asset.byte_length, actual_size
+            ));
+        }
+        if !actual_hash.eq_ignore_ascii_case(&asset.sha256) {
+            let _ = fs::remove_file(&target);
+            return Err(format!(
+                "authoring_v2_asset_hash_mismatch:{}:expected={}:actual={}",
+                asset.asset_id, asset.sha256, actual_hash
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn safe_export_component(value: &str) -> String {
@@ -1355,8 +1444,24 @@ fn parse_number_array(value: Option<&Value>) -> CommandResult<Vec<u64>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_patch, expand_question_expression};
+    use super::{apply_patch, expand_question_expression, materialize_authoring_assets};
+    use crate::schema::common::{AssetDescriptorV2, AssetExtractionModeV2, AssetKindV2};
     use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_asset_dirs() -> (PathBuf, PathBuf) {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ielts-authoring-v2-assets-{suffix}"));
+        let staging = root.join("staging");
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        (root, staging)
+    }
 
     fn text_document() -> serde_json::Value {
         json!({
@@ -1613,5 +1718,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(document["children"][0]["provenanceStatus"], "source");
+    }
+
+    #[test]
+    fn export_materializes_and_verifies_non_empty_assets() {
+        let (source_root, staging) = temp_asset_dirs();
+        let bytes = b"diagram-bytes";
+        let relative_path = "assets/diagram.png";
+        fs::write(source_root.join(relative_path), bytes).unwrap();
+        let descriptor = AssetDescriptorV2 {
+            asset_id: "diagram-1".to_string(),
+            kind: AssetKindV2::RasterImage,
+            mime: "image/png".to_string(),
+            relative_path: relative_path.to_string(),
+            sha256: crate::hash_bytes(bytes),
+            byte_length: bytes.len() as u64,
+            width_px: Some(10),
+            height_px: Some(10),
+            duration_ms: None,
+            extraction_mode: AssetExtractionModeV2::Embedded,
+            alt_text: None,
+            decorative: Some(false),
+            source_anchor: None,
+        };
+        materialize_authoring_assets(&source_root, &staging, &[descriptor.clone()]).unwrap();
+        assert_eq!(fs::read(staging.join(relative_path)).unwrap(), bytes);
+
+        let mut bad = descriptor;
+        bad.sha256 = "0".repeat(64);
+        let error = materialize_authoring_assets(&source_root, &staging.join("bad"), &[bad])
+            .expect_err("asset hash mismatch must fail closed");
+        assert!(error.contains("authoring_v2_asset_hash_mismatch"));
+        let _ = fs::remove_dir_all(source_root);
     }
 }

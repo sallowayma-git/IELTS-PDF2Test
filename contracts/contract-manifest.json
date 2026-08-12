@@ -16,15 +16,31 @@
     },
     "IeltsAuthoringIRV2": {
       "path": "ielts-authoring-ir-v2.schema.json",
-      "sha256": "270a0bf75c4a12cec3c372c78a9a900038bcc1607e2f25ad135d4163d955b14d"
+      "sha256": "ee09788cc01074eef9dd79c6bf9dbd87036e11f137fd52ae945c885b4a648271"
     },
     "QualityReportV2": {
       "path": "quality-report-v2.schema.json",
       "sha256": "9578abd47920fc491166b16b3ca25cf52f80245ca02db0ebc92ea7dd27e88fe7"
+    },
+    "ReadingExamSourceV2": {
+      "path": "reading-exam-source-v2.schema.json",
+      "sha256": "172bd2f129071a1fd81186bf5c15a9d5752686d43976745d3588179fa5286ac3"
+    },
+    "ListeningExamSourceV1": {
+      "path": "listening-exam-source-v1.schema.json",
+      "sha256": "4d5872434e21a13ab1a78637b02be0d019fb3fa0d12ccd91d0e0dbac906d8d91"
+    },
+    "ListeningAttemptV1": {
+      "path": "listening-attempt-v1.schema.json",
+      "sha256": "51a2fa2717aa293711fd63a34b9cf86b7437d1a1c0bd87d28edee2107c1c0c43"
+    },
+    "ListeningAudioProbeResultV1": {
+      "path": "listening-audio-probe-result-v1.schema.json",
+      "sha256": "37e9c21a6a0e4d2b1475ad084be98f69eff1781066efa96bc00f2efedabb2355"
     }
   },
   "compatibility": {
-    "readableInputVersions": ["DocumentIRV1", "ReadingAuthoringIRV1", "DocumentIRV2", "ContentDocV2", "IeltsAuthoringIRV2", "QualityReportV2"],
+    "readableInputVersions": ["DocumentIRV1", "ReadingAuthoringIRV1", "DocumentIRV2", "ContentDocV2", "IeltsAuthoringIRV2", "QualityReportV2", "ReadingExamSourceV2", "ListeningExamSourceV1", "ListeningAttemptV1", "ListeningAudioProbeResultV1"],
     "v1ArtifactsMutable": false,
     "v1ToV2Disposition": "needs_review",
     "v2ToV1Disposition": "blocked_until_lossless_compiler",

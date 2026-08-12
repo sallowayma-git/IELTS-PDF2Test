@@ -8,6 +8,10 @@ The stable schema identifiers are:
 - `ContentDocV2` — editable rich-content AST.
 - `IeltsAuthoringIRV2` — IELTS task, response-group, answer-slot, and answer-key semantics.
 - `QualityReportV2` — readiness, hard failures, source coverage, and review issues.
+- `ReadingExamSourceV2` — the student-runtime reading source compiled from an immutable V2 authoring revision.
+- `ListeningExamSourceV1` — the first structured Listening runtime source, including explicit scope, audio probe metadata, Parts, cues, playback policy, tasks, and slots.
+- `ListeningAttemptV1` — a revision-bound Listening attempt with serializable playback state; controller policy is never inferred from the DOM.
+- `ListeningAudioProbeResultV1` — a persisted local decode/hash/duration/signal-quality result; `passed` is only valid with complete decoded media facts and zero issue codes.
 
 `contract-manifest.json` pins the bundle version (`2026.08.0`) and the exact SHA-256 of every JSON Schema file. The schema files use relative `$ref` paths so the same bytes can be copied into the NAS repository later.
 
@@ -20,6 +24,18 @@ The stable schema identifiers are:
 - The Phase 1 artifact store uses `jobs/<jobId>/sources`, `extraction`, `authoring/revisions`, `authoring/patches`, `assets`, `preview`, `export-history`, and `legacy`. Canonical V2 JSON is written through a same-directory temp file, flush/sync, and replace sequence; revision commits use an optimistic base revision and keep immutable prior artifacts.
 - Existing V1 paths (`job.json`, `uploads`, `document-ir.json`, `authoring-ir.json`, and the current V1 export paths) remain readable and are not rewritten by the V2 store.
 - V2 runtime routing, V2 semantic parsing, and feature-flag enablement remain outside Phase 1.
+
+## Phase 6 runtime contract
+
+`ReadingExamSourceV2` is validated in the same contract bundle and references the existing typed task, answer-slot, content-node, and asset definitions. Cross-field rules that JSON Schema cannot express—slot assignment, question order, response-group closure, and source/asset exam identity—are enforced by the runtime compiler/probe. The source is deliberately separate from the legacy `ReadingExamSourceV1`; V1 payloads remain opaque to the V2 interaction model.
+
+## Phase 7 Listening contract
+
+The former open-ended `listening.sections` placeholder is replaced by typed media, Part, cue, playback-policy, transcript, and explicit scope fields. `complete_exam` enforces four Parts and forty scoring slots in the semantic gate; `partial_practice` validates only its declared Part/task/slot closure. Cues are optional, but any published cue must be confirmed, monotonic, non-overlapping, and inside the probed duration. `ListeningExamSourceV1` requires a passed audio probe and a content-addressed audio asset; `ListeningAttemptV1` binds recovery to the exact exam, authoring revision, media asset, and playback policy.
+
+Playback policy explicitly carries pause, seek, replay/max-play, refresh, and crash-recovery behavior. Mock mode is fail-closed to one play with no pause/seek/replay and `resume_from_snapshot` recovery. The serialized controller rejects reset snapshots, preserves consumed play count across refresh/crash, and uses `restart_pending` so an allowed recovery restart consumes a new play before audio resumes.
+
+The audio probe is a pure-Rust Symphonia 0.6 path with WAV/PCM, MP3, and AAC-in-ISO-MP4 decoder features compiled in. It streams SHA-256 computation and fully decodes the audio to derive duration, channel/rate, RMS, peak, and clipped-sample ratio. Open/decode failure, unsupported MIME, hash mismatch, near-silence, and severe clipping produce stable blocking issue codes.
 
 ## PR-02 PDF facts shadow extraction
 

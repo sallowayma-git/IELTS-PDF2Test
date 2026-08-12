@@ -70,8 +70,10 @@ mod pdf_facts_shadow;
 mod pdf_geometry;
 mod pdf_ingest;
 mod preview_commands;
+mod reading_runtime_v2;
 mod reading_source;
 mod reading_source_v2;
+mod nas_package_v2;
 mod runtime_compiler;
 mod runtime_validation;
 pub mod schema;
@@ -1161,6 +1163,16 @@ async fn export_nas_library(input: Value, app: AppHandle) -> CommandResult<Value
     export_nas_library_core(&root, &input, true)
 }
 
+/// Opt-in Reading V2 package publisher.  The command is intentionally kept
+/// separate from the legacy export command so the V1 manifest path remains
+/// untouched while the lock/CAS/journal/manifest-last protocol is callable by
+/// the real authoring application (not only by unit tests).
+#[tauri::command]
+async fn publish_nas_package_v2(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    nas_package_v2::publish_nas_package_v2_core(&root, input)
+}
+
 // ---------- 写作题库命令（独立模型，不污染阅读 ImportJob）----------
 #[tauri::command]
 async fn create_writing_job(input: Value, app: AppHandle) -> CommandResult<Value> {
@@ -1405,6 +1417,7 @@ pub fn run() {
             export_reading_assets,
             export_reading_js,
             export_nas_library,
+            publish_nas_package_v2,
             export_writing_library,
             create_writing_job,
             list_writing_jobs,

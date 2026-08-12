@@ -2,12 +2,15 @@ pub mod common;
 pub mod content_doc_v2;
 pub mod document_ir_v2;
 pub mod ielts_authoring_v2;
+pub mod listening_runtime_v1;
+pub mod listening_audio_probe_v1;
 pub mod migration_v1;
 pub mod quality_report_v2;
 
 pub use content_doc_v2::{ContentDocV2, ContentNodeV2};
 pub use document_ir_v2::DocumentIRV2;
 pub use ielts_authoring_v2::IeltsAuthoringIRV2;
+pub use listening_runtime_v1::{ListeningAttemptV1, ListeningExamSourceV1};
 pub use quality_report_v2::QualityReportV2;
 
 #[cfg(test)]

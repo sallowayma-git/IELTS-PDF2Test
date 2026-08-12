@@ -32,6 +32,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 base64 = "0.22"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
+symphonia = { version = "0.6.0", default-features = false, features = ["aac", "isomp4", "mp3", "pcm", "wav"] }
 
 [profile.release]
 # Aggressive size optimization for the shipped binary. LTO + single

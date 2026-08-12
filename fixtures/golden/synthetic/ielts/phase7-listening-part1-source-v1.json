@@ -1,0 +1,280 @@
+{
+  "schemaVersion": "ListeningExamSourceV1",
+  "examId": "phase7-listening-part1",
+  "meta": {
+    "title": "Listening Part 1 Contract Fixture",
+    "language": "en",
+    "scope": "partial_practice"
+  },
+  "assets": {
+    "examId": "phase7-listening-part1",
+    "assets": [
+      {
+        "assetId": "audio-part1",
+        "kind": "audio",
+        "mime": "audio/wav",
+        "relativePath": "audio/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.wav",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "byteLength": 44,
+        "durationMs": 1000,
+        "extractionMode": "user_upload"
+      }
+    ]
+  },
+  "media": {
+    "assetId": "audio-part1",
+    "mime": "audio/wav",
+    "codec": "pcm_s16le",
+    "container": "wav",
+    "durationMs": 1000,
+    "channels": 1,
+    "sampleRateHz": 16000,
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "probe": {
+      "status": "passed",
+      "provider": "phase7-contract-fixture",
+      "providerVersion": "1.0.0",
+      "probedAt": "2026-08-12T00:00:00Z",
+      "issueCodes": []
+    }
+  },
+  "parts": [
+    {
+      "partId": "part-1",
+      "displayLabel": "PART 1",
+      "expectedQuestionNumbers": [1],
+      "taskIds": ["part1-form"],
+      "cue": {
+        "startMs": 0,
+        "endMs": 1000,
+        "origin": "manual",
+        "confidence": 1,
+        "confirmed": true,
+        "sourceAnchors": []
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": ["part-heading"],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    }
+  ],
+  "playbackPolicy": {
+    "mode": "practice",
+    "autoplay": false,
+    "allowPause": true,
+    "allowSeek": true,
+    "allowReplay": true,
+    "refreshBehavior": "resume_from_snapshot",
+    "crashRecoveryBehavior": "resume_from_snapshot",
+    "showCurrentTime": true,
+    "showDuration": true
+  },
+  "taskGroups": [
+    {
+      "taskId": "part1-form",
+      "displayRange": {
+        "kind": "set",
+        "values": [1]
+      },
+      "taskType": "form_completion",
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "part1-instruction",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": ["instruction-line"],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "part1-instruction-text",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": ["instruction-line"],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Write ONE WORD ONLY."
+            }
+          ]
+        }
+      ],
+      "instructionSignature": {
+        "normalizedText": "Write ONE WORD ONLY.",
+        "taskType": "form_completion",
+        "expectedQuestionNumbers": [1],
+        "expectedSlotCount": 1,
+        "selectionCardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "answerAssignment": "per_slot",
+        "wordLimit": {
+          "maxWords": 1,
+          "maxNumbers": 0,
+          "wordsAndOrNumber": false
+        },
+        "evidenceAnchors": [
+          {
+            "sourceFileId": "question-paper",
+            "pageIndex": 0,
+            "nodeIds": ["instruction-line"],
+            "extractionMode": "pdf_native",
+            "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "confidence": 1
+      },
+      "stimulus": [
+        {
+          "type": "paragraph",
+          "id": "form-line-1",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": ["form-line-1"],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "form-label-1",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": ["form-line-1"],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Family name: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "form-slot-node-1",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": ["slot-1"],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q1",
+              "displayLabel": "1",
+              "inline": true
+            }
+          ]
+        }
+      ],
+      "responseGroups": [
+        {
+          "responseGroupId": "part1-form-response",
+          "kind": "text_entry",
+          "slotIds": ["q1"],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "ignore_duplicates",
+          "allowOptionReuse": false,
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": ["form-line-1", "slot-1"],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ],
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": ["instruction-line", "form-line-1", "slot-1"],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "quality": {
+        "score": 1,
+        "sourceCoverage": 1,
+        "hardFailures": []
+      },
+      "reviewState": "confirmed"
+    }
+  ],
+  "answerSlots": {
+    "q1": {
+      "slotId": "q1",
+      "questionNumber": 1,
+      "displayLabel": "1",
+      "hostNodeId": "form-line-1",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": ["slot-1", "form-line-1"],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    }
+  },
+  "answerKey": {
+    "q1": {
+      "kind": "text",
+      "values": ["Jones"],
+      "normalization": "ielts_default"
+    }
+  },
+  "questionOrder": ["q1"],
+  "questionDisplayMap": {
+    "q1": "1"
+  },
+  "audit": {
+    "sourceSchemaVersion": "IeltsAuthoringIRV2",
+    "sourceDocumentId": "phase7-listening-document",
+    "sourceRevision": 1,
+    "sourceRevisionKind": "user",
+    "minimumRuntimeVersion": "1.0.0"
+  }
+}

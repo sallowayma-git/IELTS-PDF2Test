@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ielts-author-studio.dev/phase1/listening-exam-source-v1.schema.json",
+  "title": "ListeningExamSourceV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "examId",
+    "meta",
+    "assets",
+    "media",
+    "parts",
+    "playbackPolicy",
+    "taskGroups",
+    "answerSlots",
+    "answerKey",
+    "questionOrder",
+    "questionDisplayMap",
+    "audit"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "ListeningExamSourceV1" },
+    "examId": { "type": "string", "minLength": 1 },
+    "meta": { "$ref": "#/$defs/runtimeExamMeta" },
+    "assets": { "$ref": "#/$defs/runtimeAssetManifestRef" },
+    "media": { "$ref": "#/$defs/runtimeMedia" },
+    "parts": {
+      "type": "array",
+      "items": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/listeningPart" },
+      "minItems": 1,
+      "maxItems": 4
+    },
+    "playbackPolicy": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/listeningPlaybackPolicy" },
+    "transcript": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/listeningTranscript" },
+    "taskGroups": {
+      "type": "array",
+      "items": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/taskGroup" },
+      "minItems": 1
+    },
+    "answerSlots": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/answerSlot" }
+    },
+    "answerKey": {
+      "type": "object",
+      "additionalProperties": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/answerValue" }
+    },
+    "questionOrder": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "questionDisplayMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "audit": { "$ref": "#/$defs/runtimeAudit" }
+  },
+  "$defs": {
+    "runtimeExamMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "language", "scope"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "language": { "type": "string", "minLength": 1 },
+        "scope": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/listeningScope" }
+      }
+    },
+    "runtimeAssetManifestRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["examId", "assets"],
+      "properties": {
+        "examId": { "type": "string", "minLength": 1 },
+        "assets": {
+          "type": "array",
+          "items": { "$ref": "./common-v2.schema.json#/$defs/assetDescriptor" }
+        }
+      }
+    },
+    "audioProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "provider", "providerVersion", "probedAt", "issueCodes"],
+      "properties": {
+        "status": { "type": "string", "enum": ["passed", "blocked"] },
+        "provider": { "type": "string", "minLength": 1 },
+        "providerVersion": { "type": "string", "minLength": 1 },
+        "probedAt": { "type": "string", "minLength": 1 },
+        "issueCodes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "AUDIO_DECODE_FAILED",
+              "AUDIO_CODEC_UNSUPPORTED",
+              "AUDIO_HASH_MISMATCH",
+              "AUDIO_SEVERE_CLIPPING",
+              "AUDIO_NEAR_SILENT",
+              "AUDIO_CUE_INVALID",
+              "AUDIO_POLICY_MISSING"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "runtimeMedia": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "mime", "codec", "container", "durationMs", "sha256", "probe"],
+      "properties": {
+        "assetId": { "type": "string", "minLength": 1 },
+        "mime": { "type": "string", "pattern": "^audio/" },
+        "codec": { "type": "string", "minLength": 1 },
+        "container": { "type": "string", "minLength": 1 },
+        "durationMs": { "type": "integer", "exclusiveMinimum": 0 },
+        "channels": { "type": "integer", "minimum": 1 },
+        "sampleRateHz": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "probe": { "$ref": "#/$defs/audioProbe" }
+      }
+    },
+    "runtimeAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceSchemaVersion",
+        "sourceDocumentId",
+        "sourceRevision",
+        "sourceRevisionKind",
+        "minimumRuntimeVersion"
+      ],
+      "properties": {
+        "sourceSchemaVersion": { "const": "IeltsAuthoringIRV2" },
+        "sourceDocumentId": { "type": "string", "minLength": 1 },
+        "sourceRevision": { "type": "integer", "minimum": 0 },
+        "sourceRevisionKind": { "type": "string", "enum": ["auto_extract", "user", "migration"] },
+        "minimumRuntimeVersion": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -46,9 +46,29 @@ for (const token of [
   "moveNode",
   "undo",
   "redo",
-  "exportAuthoringV2"
+  "exportAuthoringV2",
+  "setQuestionExpression",
+  "setResponseCardinality",
+  "setResponseGroup",
+  "structured-expression-editor",
+  "cardinality-editor",
+  "optionBankRef",
+  "scoringPolicy",
+  "duplicatePolicy",
+  "allowOptionReuse",
+  "VITE_IELTS_NAS_PACKAGE_V2"
 ]) {
   if (!editor.includes(token)) throw new Error("Phase 5 editor is missing " + token);
+}
+for (const token of [
+  "activeTasks.map((task) => renderTaskEditor(task))",
+  "task.responseGroups.length ? task.responseGroups.map((group) => renderResponseGroup(task, group))"
+]) {
+  if (!editor.includes(token)) throw new Error("Phase 6 editor coverage contract is missing " + token);
+}
+const exportPage = readFileSync("src/pages/ExportPage.tsx", "utf8");
+if (!exportPage.includes("!NAS_PACKAGE_V2_ENABLED") || !exportPage.includes('data-testid="force-export"')) {
+  throw new Error("V2 export must hide the unsupported force-publish action while preserving V1 force export");
 }
 const importWizard = readFileSync("src/pages/ImportWizard.tsx", "utf8");
 for (const token of ["getAuthoringV2", 'destination = "authoring-v2"', "legacy preview as a safe fallback"]) {

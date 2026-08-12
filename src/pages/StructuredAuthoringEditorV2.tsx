@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { applyAuthoringV2Patches, exportAuthoringV2, getAuthoringV2 } from "../api/tauriCommands";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { applyAuthoringV2Patches, exportAuthoringV2, exportNasPackageV2, getAuthoringV2 } from "../api/tauriCommands";
 import { go } from "../app/router";
 import { chooseExportDirectory } from "../api/desktopDialogs";
 import { answerValueForSelection, applyAuthoringV2Patches as applyLocalPatches, inverseAuthoringPatch, locateContentNode, taskTypeLabel } from "../services/authoringV2Patches";
@@ -15,6 +15,7 @@ import type {
   ContentNodeV2,
   IeltsAuthoringIRV2,
   OptionV2,
+  QuestionNumberExpressionV2,
   ResponseGroupV2,
   SourceAnchorV2,
   TaskGroupV2,
@@ -22,6 +23,7 @@ import type {
 } from "../types";
 
 const RECOVERY_KEY_PREFIX = "ielts-author-studio.phase5-recovery.";
+const NAS_PACKAGE_V2_ENABLED = import.meta.env.VITE_IELTS_NAS_PACKAGE_V2 === "1";
 const TASK_TYPES: TaskTypeV2[] = [
   "multiple_choice",
   "single_choice",
@@ -29,10 +31,17 @@ const TASK_TYPES: TaskTypeV2[] = [
   "yes_no_not_given",
   "matching_headings",
   "matching_information",
+  "matching_features",
+  "matching_sentence_endings",
+  "classification",
+  "sentence_completion",
   "summary_completion",
   "note_completion",
   "table_completion",
+  "form_completion",
+  "flowchart_completion",
   "diagram_label_completion",
+  "plan_map_label_completion",
   "short_answer"
 ];
 
@@ -210,7 +219,11 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
   const [undoDepth, setUndoDepth] = useState(0);
   const [redoDepth, setRedoDepth] = useState(0);
   const [exporting, setExporting] = useState(false);
-  const [exportResult, setExportResult] = useState<{ outputDir: string; revision: number }>();
+  const [exportResult, setExportResult] = useState<{
+    outputDir: string;
+    revision: number;
+    package?: { manifestPath: string; reportPath: string; assetCount: number; probePassed: boolean };
+  }>();
   const undoRef = useRef<Array<{ patch: AuthoringPatchV2; inverse: AuthoringPatchV2 }>>([]);
   const redoRef = useRef<Array<{ patch: AuthoringPatchV2; inverse: AuthoringPatchV2 }>>([]);
 
@@ -289,10 +302,34 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
     setExporting(true);
     setError(undefined);
     try {
+      if (!NAS_PACKAGE_V2_ENABLED) {
+        setError("NAS V2 发布功能当前未启用，请使用 V1 发布入口。");
+        return;
+      }
       const exportDir = await chooseExportDirectory();
       if (!exportDir) return;
       const result = await exportAuthoringV2({ jobId, exportDir, revision: session.revision });
-      setExportResult({ outputDir: result.outputDir, revision: result.revision });
+      // The materialized runtime source is the only input to the NAS V2
+      // publisher. It performs the lock/CAS/staging/probe/manifest-last
+      // transaction and returns a durable report, so the visible editor
+      // action now exercises the same production path as the student loader.
+      const packageResult = await exportNasPackageV2({
+        libraryRoot: exportDir,
+        sourcePath: result.receipt.runtimePath,
+        assetRoot: result.receipt.outputDir,
+        examId: result.examId,
+        minimumRuntimeVersion: "0.2.0"
+      });
+      setExportResult({
+        outputDir: result.outputDir,
+        revision: result.revision,
+        package: {
+          manifestPath: String(packageResult.manifestPath),
+          reportPath: String(packageResult.reportPath),
+          assetCount: Number(packageResult.assetCount || 0),
+          probePassed: packageResult.probe?.passed === true
+        }
+      });
     } catch (caught) {
       setStatus("error");
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -367,7 +404,7 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
     }, 0);
   }, []);
 
-  const activeTask = useMemo(() => draft?.taskGroups[0], [draft]);
+  const activeTasks = draft?.taskGroups ?? [];
   const issues = draft?.quality.issues ?? [];
   const selectedIssue = selectedId ? issues.find((issue) => issue.targetId === selectedId || issue.issueId === selectedId) : undefined;
   const selectedAnchors = selectedIssue?.sourceAnchors?.length ? selectedIssue.sourceAnchors : draft && selectedId ? sourceAnchorsFor(draft, selectedId) : [];
@@ -447,6 +484,95 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
     queuePatch({ op: "setHotspot", nodeId, hotspot });
   }
 
+  function expressionNumbers(expression: QuestionNumberExpressionV2): number[] {
+    if (expression.kind === "range") {
+      return Array.from({ length: expression.end - expression.start + 1 }, (_, index) => expression.start + index);
+    }
+    return expression.values.flatMap((value) => typeof value === "number"
+      ? [value]
+      : Array.from({ length: value.end - value.start + 1 }, (_, index) => value.start + index));
+  }
+
+  function expressionInput(expression: QuestionNumberExpressionV2): string {
+    if (expression.kind === "range") return `${expression.start}-${expression.end}`;
+    return expression.values.map((value) => typeof value === "number" ? String(value) : `${value.start}-${value.end}`).join(",");
+  }
+
+  function parseExpressionValues(raw: string, allowRanges: boolean): Array<number | { start: number; end: number }> | undefined {
+    const tokens = raw.split(",").map((token) => token.trim()).filter(Boolean);
+    if (!tokens.length) return undefined;
+    const values: Array<number | { start: number; end: number }> = [];
+    for (const token of tokens) {
+      const range = token.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (range) {
+        if (!allowRanges) return undefined;
+        const start = Number(range[1]);
+        const end = Number(range[2]);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start || end - start > 200) return undefined;
+        values.push({ start, end });
+        continue;
+      }
+      if (!/^\d+$/.test(token)) return undefined;
+      const number = Number(token);
+      if (!Number.isInteger(number) || number < 1) return undefined;
+      values.push(number);
+    }
+    const expanded = values.flatMap((value) => typeof value === "number"
+      ? [value]
+      : Array.from({ length: value.end - value.start + 1 }, (_, index) => value.start + index));
+    return new Set(expanded).size === expanded.length ? values : undefined;
+  }
+
+  function updateQuestionExpression(task: TaskGroupV2, expression: QuestionNumberExpressionV2) {
+    if (expression.kind === "range" && (!Number.isInteger(expression.start) || !Number.isInteger(expression.end) || expression.start < 1 || expression.end < expression.start || expression.end - expression.start > 200)) return;
+    if (expression.kind === "set" && (!expression.values.length || expression.values.some((value) => !Number.isInteger(value) || value < 1) || new Set(expression.values).size !== expression.values.length)) return;
+    if (expression.kind === "mixed" && (!expression.values.length || expression.values.some((value) => typeof value === "number" ? !Number.isInteger(value) || value < 1 : !Number.isInteger(value.start) || !Number.isInteger(value.end) || value.start < 1 || value.end < value.start || value.end - value.start > 200))) return;
+    queuePatch({ op: "setQuestionExpression", taskId: task.taskId, expression });
+  }
+
+  function changeExpressionKind(task: TaskGroupV2, kind: QuestionNumberExpressionV2["kind"]) {
+    if (kind === task.displayRange.kind) return;
+    const values = expressionNumbers(task.displayRange);
+    if (!values.length) return;
+    if (kind === "range") {
+      updateQuestionExpression(task, { kind, start: Math.min(...values), end: Math.max(...values) });
+    } else if (kind === "set") {
+      updateQuestionExpression(task, { kind, values });
+    } else {
+      updateQuestionExpression(task, { kind, values });
+    }
+  }
+
+  function updateResponseCardinality(task: TaskGroupV2, group: ResponseGroupV2, field: "min" | "max" | "exact", raw: string) {
+    if (field === "exact" && raw.trim() === "") {
+      const { exact: _exact, ...withoutExact } = group.cardinality;
+      queuePatch({ op: "setResponseCardinality", taskId: task.taskId, responseGroupId: group.responseGroupId, cardinality: withoutExact });
+      return;
+    }
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 0) return;
+    const next = { ...group.cardinality, [field]: value } as ResponseGroupV2["cardinality"];
+    if (next.min > next.max) {
+      if (field === "min") next.max = next.min;
+      else next.min = next.max;
+    }
+    if (next.exact !== undefined) next.exact = Math.max(next.min, Math.min(next.max, next.exact));
+    queuePatch({
+      op: "setResponseCardinality",
+      taskId: task.taskId,
+      responseGroupId: group.responseGroupId,
+      cardinality: next
+    });
+  }
+
+  function updateResponseGroup(task: TaskGroupV2, group: ResponseGroupV2, changes: Partial<ResponseGroupV2>) {
+    queuePatch({
+      op: "setResponseGroup",
+      taskId: task.taskId,
+      responseGroup: { ...group, ...changes }
+    });
+  }
+
   function renderSelectedContentInspector() {
     if (!selectedContent) return null;
     const canMove = Boolean(locateContentNode(draft!, selectedContent.id));
@@ -473,8 +599,29 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
 
   function renderResponseGroup(task: TaskGroupV2, group: ResponseGroupV2) {
     const bank = task.optionBank;
-    return <section className={"structured-response-card " + (selectedId === group.responseGroupId ? "selected" : "")} data-editor-id={group.responseGroupId} onClick={() => setSelectedId(group.responseGroupId)}>
+    return <section key={group.responseGroupId} className={"structured-response-card " + (selectedId === group.responseGroupId ? "selected" : "")} data-editor-id={group.responseGroupId} onClick={() => setSelectedId(group.responseGroupId)}>
       <div className="structured-card-heading"><div><span className="node-kicker">Response group</span><h4>{group.slotIds.map((slotId) => draft?.answerSlots[slotId]?.displayLabel).join("、")} · 共享题干</h4></div><small>{group.allowOptionReuse ? "选项可复用" : "选项不可复用"}</small></div>
+      <div className="structured-response-controls" onClick={(event) => event.stopPropagation()}>
+        <label>答案分配<select value={group.assignment} onChange={(event) => updateResponseGroup(task, group, { assignment: event.target.value as ResponseGroupV2["assignment"] })}>
+          <option value="per_slot">每题独立</option>
+          <option value="unordered_set">无序集合</option>
+          <option value="ordered_slots">按序分配</option>
+        </select></label>
+        <label>评分策略<select value={group.scoringPolicy} onChange={(event) => updateResponseGroup(task, group, { scoringPolicy: event.target.value as ResponseGroupV2["scoringPolicy"] })}>
+          <option value="per_slot_binary">每题二元</option>
+          <option value="per_slot_ielts_normalized">IELTS 归一化</option>
+          <option value="exact_set">集合完全匹配</option>
+          <option value="all_or_nothing">全对才得分</option>
+        </select></label>
+        <label>重复策略<select value={group.duplicatePolicy} onChange={(event) => updateResponseGroup(task, group, { duplicatePolicy: event.target.value as ResponseGroupV2["duplicatePolicy"] })}>
+          <option value="reject_submission">拒绝重复</option>
+          <option value="ignore_duplicates">忽略重复</option>
+        </select></label>
+        <label className="checkbox-field"><input type="checkbox" checked={group.allowOptionReuse} onChange={(event) => updateResponseGroup(task, group, { allowOptionReuse: event.target.checked })} />选项可复用</label>
+        <label>optionBankRef<input list={`option-bank-${task.taskId}`} value={group.optionBankRef ?? ""} placeholder={bank?.optionBankId ?? "可选"} onChange={(event) => updateResponseGroup(task, group, { optionBankRef: event.target.value.trim() || undefined })} /></label>
+        <datalist id={`option-bank-${task.taskId}`}>{bank ? <option value={bank.optionBankId} /> : null}</datalist>
+        <div className="cardinality-editor"><span>答案数量</span><label>min<input type="number" min={0} value={group.cardinality.min} onChange={(event) => updateResponseCardinality(task, group, "min", event.target.value)} /></label><label>max<input type="number" min={0} value={group.cardinality.max} onChange={(event) => updateResponseCardinality(task, group, "max", event.target.value)} /></label><label>exact<input type="number" min={0} value={group.cardinality.exact ?? ""} placeholder="—" onChange={(event) => updateResponseCardinality(task, group, "exact", event.target.value)} /></label></div>
+      </div>
       <div className="shared-prompt"><span className="node-kicker">Prompt</span><AuthoringTiptapEditor nodes={group.prompt ?? []} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "responsePrompt", responseGroupId: group.responseGroupId }, nodes)} ariaLabel="共享题干编辑器" /></div>
       {bank ? <div className="option-bank-editor" data-editor-id={bank.optionBankId}><div className="option-bank-heading"><strong>{nodeText(bank.title)}</strong><small>{bank.options.length} 个公共选项</small></div>{bank.options.map((option) => <div className="option-editor-row" key={option.optionId} data-editor-id={option.optionId}><b>{option.label}</b><AuthoringTiptapEditor nodes={option.content} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "option", optionId: option.optionId }, nodes)} ariaLabel={`选项 ${option.label} 编辑器`} /></div>)}</div> : null}
       <div className="slot-editor-grid">{group.slotIds.map((slotId) => {
@@ -491,13 +638,22 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
   }
 
   function renderTaskEditor(task: TaskGroupV2) {
-    const group = task.responseGroups[0];
-    return <section className="structured-task-card" data-editor-id={task.taskId}>
+    const responseRules = task.responseGroups.map((group) => `${group.cardinality.exact ?? group.cardinality.max ?? 1} 个答案 · ${group.assignment === "unordered_set" ? "无序集合" : "按序"}`).join("；");
+    const expression = task.displayRange;
+    return <section key={task.taskId} className="structured-task-card" data-editor-id={task.taskId}>
       <div className="structured-card-heading"><div><span className="node-kicker">Task group</span><h3>{expressionLabel(task)}</h3></div><span className={"editor-review-state " + task.reviewState}>{task.reviewState === "confirmed" ? "已确认" : "待确认"}</span></div>
-      <div className="structured-task-controls"><label>题型<select value={task.taskType} onChange={(event) => queuePatch({ op: "setTaskType", taskId: task.taskId, taskType: event.target.value as TaskTypeV2 })}>{TASK_TYPES.map((type) => <option key={type} value={type}>{taskTypeLabel(type)}</option>)}</select></label><div className="semantic-rule"><span>选择规则</span><strong>{group?.cardinality.exact ?? group?.cardinality.max ?? 1} 个答案 · {group?.assignment === "unordered_set" ? "无序集合" : "按序"}</strong></div></div>
+      <div className="structured-task-controls"><label>题型<select value={task.taskType} onChange={(event) => queuePatch({ op: "setTaskType", taskId: task.taskId, taskType: event.target.value as TaskTypeV2 })}>{TASK_TYPES.map((type) => <option key={type} value={type}>{taskTypeLabel(type)}</option>)}</select></label><div className="semantic-rule"><span>选择规则</span><strong>{responseRules || "暂无 response group"}</strong></div></div>
+      <div className="structured-expression-editor" onClick={(event) => event.stopPropagation()}>
+        <label>题号表达式<select value={expression.kind} onChange={(event) => changeExpressionKind(task, event.target.value as QuestionNumberExpressionV2["kind"])}>
+          <option value="range">连续范围</option>
+          <option value="set">题号集合</option>
+          <option value="mixed">混合范围/集合</option>
+        </select></label>
+        {expression.kind === "range" ? <><label>start<input type="number" min={1} value={expression.start} onChange={(event) => updateQuestionExpression(task, { kind: "range", start: Number(event.target.value), end: expression.end })} /></label><label>end<input type="number" min={1} value={expression.end} onChange={(event) => updateQuestionExpression(task, { kind: "range", start: expression.start, end: Number(event.target.value) })} /></label></> : <label>题号（逗号分隔；mixed 支持 14-16）<input value={expressionInput(expression)} onChange={(event) => { const values = parseExpressionValues(event.target.value, expression.kind === "mixed"); if (!values) return; updateQuestionExpression(task, expression.kind === "set" ? { kind: "set", values: values as number[] } : { kind: "mixed", values }); }} /></label>}
+      </div>
       <div className="structured-instruction"><span className="node-kicker">Instruction</span><AuthoringTiptapEditor nodes={task.instructions} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "taskInstructions", taskId: task.taskId }, nodes)} ariaLabel="题组说明编辑器" /></div>
       {task.stimulus?.length ? <div className="structured-stimulus"><span className="node-kicker">Stimulus</span><AuthoringTiptapEditor nodes={task.stimulus} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "taskStimulus", taskId: task.taskId }, nodes)} ariaLabel="题组刺激材料编辑器" /></div> : null}
-      {group ? renderResponseGroup(task, group) : <div className="empty">当前题组没有 response group。</div>}
+      {task.responseGroups.length ? task.responseGroups.map((group) => renderResponseGroup(task, group)) : <div className="empty">当前题组没有 response group。</div>}
     </section>;
   }
 
@@ -505,8 +661,8 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
   if (!draft || !session) return <section className="page-enter phase5-empty"><p className="eyebrow">Phase 5 · 结构化编辑器</p><h2>当前任务还没有 V2 编辑稿</h2><p>{error ?? "需要先生成 authoring-ir-v2.shadow.json，或从 Phase 5 架构 fixture 开始。"}</p><div className="button-row"><button className="ghost" onClick={() => go("/jobs")}>返回任务列表</button><button className="primary" onClick={() => go("/phase5")}>打开 Phase 5 fixture</button></div></section>;
 
   return <section className="page-enter phase5-editor" data-testid="structured-authoring-editor-v2">
-    <header className="phase5-editor-header"><div><p className="eyebrow">Phase 5 · Schema-driven authoring</p><h2>{draft.exam.title}</h2><p>编辑结构化题源；学生预览、答案位和发布输入都来自同一棵文档树。</p></div><div className="phase5-header-actions"><span className={"editor-save-state " + status}>{status === "saving" ? "自动保存中" : status === "dirty" ? "有未保存修改" : status === "saved" ? "已保存" : "revision " + session.revision}</span><button className="ghost small" disabled={!undoDepth} onClick={undo}>撤销 {undoDepth ? `(${undoDepth})` : ""}</button><button className="ghost small" disabled={!redoDepth} onClick={redo}>重做 {redoDepth ? `(${redoDepth})` : ""}</button><button className="ghost" disabled={exporting || Boolean(pendingPatches.length) || exportBlocked} title={exportBlocked ? "请先处理导出阻断项" : undefined} onClick={runExport}>{exporting ? "导出中…" : "导出 V2 包"}</button><button className="ghost" onClick={() => go(jobId === "phase5-editor-fixture" ? "/phase5" : "/jobs/" + jobId + "/preview")}>退出编辑</button><button className="primary" onClick={() => setViewMode(viewMode === "edit" ? "preview" : "edit")}>{viewMode === "edit" ? "学生端预览" : "返回编辑"}</button></div></header>
-    {exportResult ? <div className="info-box phase5-recovery-banner"><strong>V2 导出完成 · revision {exportResult.revision}</strong><p>学生预览与导出使用同一份 authoring V2：{exportResult.outputDir}</p><button className="ghost small" onClick={() => setExportResult(undefined)}>关闭</button></div> : null}
+    <header className="phase5-editor-header"><div><p className="eyebrow">Phase 5 · Schema-driven authoring</p><h2>{draft.exam.title}</h2><p>编辑结构化题源；学生预览、答案位和发布输入都来自同一棵文档树。</p></div><div className="phase5-header-actions"><span className={"editor-save-state " + status}>{status === "saving" ? "自动保存中" : status === "dirty" ? "有未保存修改" : status === "saved" ? "已保存" : "revision " + session.revision}</span><button className="ghost small" disabled={!undoDepth} onClick={undo}>撤销 {undoDepth ? `(${undoDepth})` : ""}</button><button className="ghost small" disabled={!redoDepth} onClick={redo}>重做 {redoDepth ? `(${redoDepth})` : ""}</button><button className="ghost" disabled={exporting || Boolean(pendingPatches.length) || exportBlocked || !NAS_PACKAGE_V2_ENABLED} title={!NAS_PACKAGE_V2_ENABLED ? "NAS V2 rollout 未启用" : exportBlocked ? "请先处理导出阻断项" : undefined} onClick={runExport}>{exporting ? "导出中…" : "导出 V2 包"}</button><button className="ghost" onClick={() => go(jobId === "phase5-editor-fixture" ? "/phase5" : "/jobs/" + jobId + "/preview")}>退出编辑</button><button className="primary" onClick={() => setViewMode(viewMode === "edit" ? "preview" : "edit")}>{viewMode === "edit" ? "学生端预览" : "返回编辑"}</button></div></header>
+    {exportResult ? <div className="info-box phase5-recovery-banner"><strong>V2 NAS 发布完成 · revision {exportResult.revision}</strong><p>学生预览与导出使用同一份 authoring V2：{exportResult.outputDir}</p><p>probe：{exportResult.package?.probePassed ? "通过" : "未通过"} · assets：{exportResult.package?.assetCount ?? 0}</p><small>manifest：{exportResult.package?.manifestPath}<br />report：{exportResult.package?.reportPath}</small><button className="ghost small" onClick={() => setExportResult(undefined)}>关闭</button></div> : null}
     {recoveryCandidate ? <div className={"info-box phase5-recovery-banner " + (recoveryCandidate.baseRevision === session.revision ? "" : "warning-box")}><strong>{recoveryCandidate.baseRevision === session.revision ? "发现未提交的本地修改" : "发现与服务器 revision 冲突的本地修改"}</strong><p>浏览器关闭前留下 {recoveryCandidate.patches.length} 个 patch，基于 revision {recoveryCandidate.baseRevision}；当前服务器 revision 为 {session.revision}。恢复会尝试在当前版本上重放，失败时不会覆盖服务器稿。</p><div className="button-row"><button className="primary small" onClick={() => { try { const recovered = applyLocalPatches(draft, recoveryCandidate.patches); draftRef.current = recovered; setDraft(recovered); pendingRef.current = recoveryCandidate.patches; setPendingPatches(recoveryCandidate.patches); setRecoveryCandidate(undefined); } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); } }}>恢复并尝试重放</button><button className="ghost small" onClick={() => { window.localStorage.removeItem(recoveryKey(jobId)); setRecoveryCandidate(undefined); }}>放弃</button></div></div> : null}
     {status === "conflict" ? <div className="warning-box phase5-recovery-banner"><strong>保存冲突：服务器已有新 revision</strong><p>为避免覆盖另一窗口的修改，当前本地 patch 已保留。请重新加载后手工合并。</p><div className="button-row"><button className="primary small" onClick={() => void load()}>重新加载服务器版本</button></div></div> : null}
     {error && status !== "conflict" ? <div className="warning-box phase5-recovery-banner"><strong>编辑器提示</strong><p>{error}</p></div> : null}
@@ -514,7 +670,7 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
     <div className="phase5-editor-toolbar"><div className="phase5-stat"><span>Task groups</span><strong>{draft.taskGroups.length}</strong></div><div className="phase5-stat"><span>Answer slots</span><strong>{Object.keys(draft.answerSlots).length}</strong></div><div className="phase5-stat"><span>Issues</span><strong>{issues.length}</strong></div><div className="phase5-stat"><span>Source coverage</span><strong>{Math.round(draft.quality.sourceCoverage * 100)}%</strong></div><small>来源：{session.source} · V1 文件保持可读</small></div>
     {viewMode === "preview" ? <StudentPreview authoring={draft} /> : <div className="phase5-editor-grid">
       <aside className="phase5-outline"><div className="inspector-section-heading"><span>文档结构</span><small>点击定位</small></div><button className={"outline-row " + (selectedId === draft.passage?.content[0]?.id ? "active" : "")} onClick={() => setSelectedId(draft.passage?.content[0]?.id)}><strong>Passage</strong><small>{draft.passage?.content.length ?? 0} 个内容节点</small></button>{draft.taskGroups.map((task) => <div key={task.taskId} className="outline-group"><button className={"outline-row " + (selectedId === task.taskId ? "active" : "")} onClick={() => setSelectedId(task.taskId)}><strong>{expressionLabel(task)}</strong><small>{taskTypeLabel(task.taskType)}</small></button>{task.responseGroups.map((group) => <button key={group.responseGroupId} className={"outline-row nested " + (selectedId === group.responseGroupId ? "active" : "")} onClick={() => setSelectedId(group.responseGroupId)}>共享 response group <small>{group.slotIds.map((slotId) => draft.answerSlots[slotId]?.displayLabel).join("、")}</small></button>)}{task.optionBank ? <button className={"outline-row nested " + (selectedId === task.optionBank.optionBankId ? "active" : "")} onClick={() => setSelectedId(task.optionBank?.optionBankId)}>公共选项池 <small>{task.optionBank.options.length} 项</small></button> : null}</div>)}<div className="issue-rail"><div className="inspector-section-heading"><span>需要确认</span><small>{issues.length} 项</small></div>{issues.map((issue) => <button key={issue.issueId} className={"issue-rail-item " + issue.severity} onClick={() => selectIssue(issue)}><strong>{issue.code}</strong><span>{issue.message}</span></button>)}</div></aside>
-      <main className="phase5-editor-canvas"><article className="structured-paper" data-editor-id={draft.passage?.content[0]?.id}><div className="structured-paper-label">PASSAGE · 可编辑节点树 · Tiptap schema</div><h3>{draft.passage?.title}</h3><AuthoringTiptapEditor nodes={draft.passage?.content ?? []} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "passage" }, nodes)} ariaLabel="阅读文章编辑器" /></article>{activeTask ? renderTaskEditor(activeTask) : <div className="empty">暂无题组。</div>}</main>
+      <main className="phase5-editor-canvas"><article className="structured-paper" data-editor-id={draft.passage?.content[0]?.id}><div className="structured-paper-label">PASSAGE · 可编辑节点树 · Tiptap schema</div><h3>{draft.passage?.title}</h3><AuthoringTiptapEditor nodes={draft.passage?.content ?? []} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "passage" }, nodes)} ariaLabel="阅读文章编辑器" /></article>{activeTasks.length ? activeTasks.map((task) => renderTaskEditor(task)) : <div className="empty">暂无题组。</div>}</main>
       <aside className="phase5-inspector"><div className="inspector-section-heading"><span>节点检查器</span><small>{selectedId ?? "未选择"}</small></div>{selectedId ? <><p className="selected-node-name">{String(findEntity(draft, selectedId)?.type ?? "semantic entity")}</p><p className="source-summary">{sourceSummary(selectedAnchors)}</p><dl className="phase5-detail-list"><dt>节点 / 实体</dt><dd>{selectedId}</dd><dt>来源模式</dt><dd>{selectedAnchors[0]?.extractionMode ?? "unknown"}</dd><dt>来源节点</dt><dd>{selectedAnchors.flatMap((anchor) => anchor.nodeIds).join("、") || "—"}</dd></dl>{renderSelectedContentInspector()}</> : <p className="empty">从左侧结构、题干或选项开始。</p>}<SourceOverlay authoring={draft} selectedId={selectedId} anchorsOverride={selectedAnchors} /><div className="inspector-section-heading"><span>编辑协议</span><small>V2 patch</small></div><p className="inspector-note">Tiptap 事务会映射成 replaceContent；节点操作、表格、资源裁剪和热点均以 append-only revision 保存。服务器按 base revision 拒绝并发覆盖。</p></aside>
     </div>}
   </section>;
