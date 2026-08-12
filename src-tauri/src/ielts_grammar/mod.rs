@@ -347,10 +347,42 @@ fn build_passage(
         .filter_map(Value::as_str)
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+    let range_ids = range.iter().cloned().collect::<BTreeSet<_>>();
+    let passage_pages = v1_lines
+        .iter()
+        .filter(|line| range_ids.contains(&line.id))
+        .map(|line| line.page_index)
+        .collect::<BTreeSet<_>>();
+    let question_pages = split
+        .get("questionGroupCandidates")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|candidate| {
+            candidate
+                .get("sectionEvidence")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|evidence| evidence.get("pageIndex").and_then(Value::as_i64))
+                .map(|page| if page > 0 { page - 1 } else { page } as i64)
+                .filter_map(|page| i32::try_from(page).ok())
+        })
+        .collect::<BTreeSet<_>>();
     let mut passage_lines = v1_lines
         .iter()
-        .filter(|line| range.contains(&line.id))
-        .cloned()
+        .filter(|line| {
+            range_ids.contains(&line.id)
+                || (passage_pages.contains(&line.page_index)
+                    && !question_pages.contains(&line.page_index))
+        })
+        .filter_map(|line| {
+            let mut line = line.clone();
+            if !range_ids.contains(&line.id) {
+                line.text = trim_passage_preamble(&line.text);
+            }
+            (!line.text.trim().is_empty()).then_some(line)
+        })
         .collect::<Vec<_>>();
     passage_lines.retain(|line| {
         !is_paper_section_header(&normalize_instruction_text(&line.text).to_ascii_lowercase())
@@ -446,6 +478,21 @@ fn build_passage(
         "paragraphMap": {},
         "sourceAnchors": anchors
     })
+}
+
+fn trim_passage_preamble(text: &str) -> String {
+    let normalized = normalize_instruction_text(text);
+    let lower = normalized.to_ascii_lowercase();
+    if !lower.starts_with("you should spend about") {
+        return normalized;
+    }
+    lower
+        .find("below")
+        .and_then(|index| normalized.get(index + "below".len()..))
+        .map(str::trim)
+        .filter(|suffix| !suffix.is_empty())
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn group_lines(

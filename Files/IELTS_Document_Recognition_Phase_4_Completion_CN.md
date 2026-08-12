@@ -1,6 +1,6 @@
 # IELTS Document Recognition Phase 4 完成记录
 
-> 真实语料状态补充：独立的 8-PDF 可执行验收门见 `Files/IELTS_Document_Recognition_Phase_4_8_PDF_Acceptance_CN.md`。该门禁已运行真实 PDF → V1 → physical V2 → authoring V2 → QualityReportV2 链路，当前因 Chili image、Petri shared bank、Western question-before-passage、metadata response/option contract 与 Organisational compiler probe 等缺口返回非绿色。因此本文此前的“完成”结论仅适用于合成 grammar shadow，不代表 8 份真实 PDF 已通过 acceptance，也不代表 V2 可进入生产。
+> 真实语料状态补充：独立的 8-PDF 可执行验收门见 `Files/IELTS_Document_Recognition_Phase_4_8_PDF_Acceptance_CN.md`。2026-08-12 已重新运行真实 PDF → V1 → physical V2 → authoring V2 → QualityReportV2 链路，8/8 fixtures、0 failures；此前首轮缺口已由物理 bbox 回绑、passage 页面补全和物理伪结构/扫描答案说明的有理由 coverage ledger 处理。该结果仍只证明 shadow acceptance，不等于 V2 已进入生产。
 
 ## 范围
 
@@ -63,5 +63,7 @@ Phase 4 实现 IELTS Reading 题面 grammar 与可靠性 shadow layer，首个 P
 ## 当前状态与后续 promotion 条件
 
 本阶段产物已足够生成可比较、可审阅且不会误报 Ready 的 V2 shadow。它仍不是 V1 替换，也没有把 table/figure 编辑器、V2 renderer 或 NAS exporter 提前引入。
+
+2026-08-12 复核结果：`npm run verify:phase4:grammar` 通过，Rust 75 tests 中 73 passed、2 ignored、0 failed；其中 8 份真实 PDF acceptance 为 8/8 passed，NAS PR-06 reading vertical slice 通过。Phase 4 主体可以收尾，但必须继续保持 V1 authoritative、V2 flags 默认关闭和 image-only answer page 的 unresolved/blocked 诚实策略。
 
 正式打开任何 V2 flag 前，还必须在冻结的 8 份 Reading 样例及扩展 corpus 上补齐 question/prompt/option/slot/answer/asset 覆盖统计，并人工审核所有 `blocked` 与 `review_required` 报告；未达到门槛时继续保持 shadow-only。

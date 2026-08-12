@@ -1,6 +1,8 @@
 # IELTS 文档识别重构 Phase 0-4 审计报告
 
-审计日期：2026-08-10
+历史审计日期：2026-08-10
+
+复核日期：2026-08-12
 
 审计基线：`main` / `06f2ddf feat: complete phase 1 artifact and compatibility skeleton`
 
@@ -8,9 +10,30 @@
 
 审计方式：完整阅读总任务书和阶段完成记录；并发只读代码审计；运行专项门禁、构建、Rust 测试及跨仓库 vertical slice；核对未提交工作树
 
-> 本报告只新增审计结论。未修改、重置、检出或清理 Phase 2-4 的实现、fixture 和完成记录；V1 仍保持 authoritative，V2 flags 仍默认关闭。
+> 原始审计说明（2026-08-10）：未修改、重置、检出或清理 Phase 2-4 的实现、fixture 和完成记录；V1 仍保持 authoritative，V2 flags 仍默认关闭。
 
-## 1. 总结论
+> 2026-08-10 的下文 findings/gate 表是历史快照。2026-08-12 已在新的检查点上完成复核和 Phase 4 修复；当前状态以本报告第 1 节的复核结论及总任务书为准。
+
+## 2026-08-12 复核结论
+
+检查点已分别提交：PDF2TEST `ac0a68c`，NAS `4ea798b`。随后修复并验证了三项 Phase 4 根因：物理 bbox 对象到语义行的回绑、passage 候选跨同页正文的补全、以及窄空表格/扫描答案说明文字的有理由 coverage ledger。
+
+当前门禁结果：
+
+| 范围 | 当前判定 | 证据 |
+|---|---|---|
+| Phase 0 | **通过** | strict 0 errors，2 个 repository baseline drift warnings |
+| Phase 1 | **通过** | local schema/peer contract 0 errors |
+| Phase 2 | **通过** | PDF physical shadow 27/27 tests |
+| Phase 3 | **通过** | DOCX package/docx gates 27/36 tests，全绿 |
+| Phase 4 | **通过** | 8/8 real-PDF acceptance，0 failures；grammar gate 73 passed、2 ignored |
+| PR-06 | **通过（vertical slice）** | NAS cross-repo reading-v2 PASS |
+
+因此，按总任务书，Phase 0-4 的主体实现和当前验收链可以收尾；但这不是 Phase 5 已开始，也不是 V2 production promotion。V1 继续 authoritative，所有 V2 flags 继续默认关闭，image-only answer page 继续保持 unresolved/blocked，后续若推进需按总任务书进入 Phase 5/PR-08 及其独立验收。
+
+以下原有章节保留为 2026-08-10 的历史审计证据，不应覆盖上述复核状态。
+
+## 1. 历史总结论（2026-08-10）
 
 **Phase 0-4 当前不能整体判定完成，也不应进入 Phase 5。**
 
@@ -282,7 +305,7 @@ append 前在锁内恢复最大 revision，并以 create-new/不可覆盖方式�
 
 这些不等同于 Phase 4 新回归，但“全部门禁通过”的完成表述在当前工作树不成立。
 
-## 3. 门禁结果
+## 3. 历史门禁结果（2026-08-10）
 
 | 命令/检查 | 结果 | 审计解释 |
 |---|---:|---|
@@ -348,6 +371,6 @@ append 前在锁内恢复最大 revision，并以 create-new/不可覆盖方式�
 - PR-07 的 hard invariants 和真实 8 PDF acceptance 通过；
 - V1 authoritative 和所有 V2 默认关闭约束继续保持。
 
-## 6. 工作树保全说明
+## 6. 历史工作树保全说明（2026-08-10）
 
-审计开始与报告落盘前均核对了 `git status`。当前分支仍为 `main`，HEAD 仍为 `06f2ddf`。Phase 2、3、4 的 tracked 修改和 untracked 文件均完整保留；审计过程没有执行 `reset`、`checkout`、`clean`、提交或暂存操作。测试生成内容仅位于被忽略的 `tmp/`，本报告是审计新增的唯一预期文件。
+审计开始与报告落盘前均核对了 `git status`。当时分支为 `main`，HEAD 为 `06f2ddf`。Phase 2、3、4 的 tracked 修改和 untracked 文件均完整保留；当时审计过程没有执行 `reset`、`checkout`、`clean`、提交或暂存操作。测试生成内容仅位于被忽略的 `tmp/`。该段只描述 2026-08-10 的历史工作树。

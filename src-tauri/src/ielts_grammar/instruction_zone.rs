@@ -309,15 +309,23 @@ fn parse_leading_number(text: &str) -> Option<u32> {
 }
 
 fn parse_bbox(value: Option<&Value>) -> Option<[f64; 4]> {
-    let items = value?.as_array()?;
-    (items.len() == 4).then(|| {
-        [
-            items[0].as_f64().unwrap_or(0.0),
-            items[1].as_f64().unwrap_or(0.0),
-            items[2].as_f64().unwrap_or(0.0),
-            items[3].as_f64().unwrap_or(0.0),
-        ]
-    })
+    if let Some(items) = value.and_then(Value::as_array) {
+        return (items.len() == 4).then(|| {
+            [
+                items[0].as_f64().unwrap_or(0.0),
+                items[1].as_f64().unwrap_or(0.0),
+                items[2].as_f64().unwrap_or(0.0),
+                items[3].as_f64().unwrap_or(0.0),
+            ]
+        });
+    }
+    let object = value?.as_object()?;
+    Some([
+        object.get("x")?.as_f64()?,
+        object.get("y")?.as_f64()?,
+        object.get("width")?.as_f64()?,
+        object.get("height")?.as_f64()?,
+    ])
 }
 
 fn json_source_anchor(id: &str, page_index: i32, bbox: Option<&Vec<Value>>) -> Value {
@@ -441,5 +449,22 @@ mod tests {
             lines[0].source_anchor["bbox"],
             shadow["pages"][0]["lines"][0]["bbox"]
         );
+    }
+
+    #[test]
+    fn physical_line_conversion_accepts_object_bboxes() {
+        let shadow = serde_json::json!({
+            "pages": [{
+                "pageIndex": 0,
+                "lines": [{
+                    "id": "p001-l0001",
+                    "text": "A physical line",
+                    "bbox": {"x": 10.0, "y": 20.0, "width": 30.0, "height": 4.0},
+                    "sourceAnchors": [{"nodeIds": ["g1"]}]
+                }]
+            }]
+        });
+        let lines = semantic_lines_from_v2_shadow(&shadow);
+        assert_eq!(lines[0].bbox, Some([10.0, 20.0, 30.0, 4.0]));
     }
 }

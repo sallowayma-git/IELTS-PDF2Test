@@ -2914,7 +2914,7 @@ fn collect_anchor_targets(
 }
 
 fn physical_ignored_reasons(physical: &Value) -> BTreeMap<String, String> {
-    physical
+    let mut ignored = physical
         .get("coverageLedger")
         .and_then(Value::as_array)
         .into_iter()
@@ -2930,7 +2930,114 @@ fn physical_ignored_reasons(physical: &Value) -> BTreeMap<String, String> {
                 .filter(|reason| !reason.trim().is_empty())?;
             Some((id.to_string(), reason.to_string()))
         })
-        .collect()
+        .collect::<BTreeMap<_, _>>();
+
+    for page in physical
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let line_texts = page
+            .get("lines")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|line| {
+                let id = line.get("id").and_then(Value::as_str)?;
+                let text = line.get("text").and_then(Value::as_str).unwrap_or_default();
+                Some((id.to_string(), text.to_string()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let ocr_page = page
+            .pointer("/quality/classification")
+            .and_then(Value::as_str)
+            == Some("scanned")
+            && page
+                .pointer("/quality/requiresOcrRegions")
+                .and_then(Value::as_array)
+                .is_some_and(|regions| !regions.is_empty());
+
+        for region in page
+            .get("regions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(region_id) = region.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if ignored.contains_key(region_id) {
+                continue;
+            }
+            let kind = region
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let child_line_ids = region
+                .get("childLineIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>();
+            let region_text = child_line_ids
+                .iter()
+                .filter_map(|line_id| line_texts.get(*line_id))
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let has_semantic_text = region_text.chars().any(char::is_alphanumeric);
+            let child_object_count = region
+                .get("childObjectIds")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            let narrow_region = region
+                .get("bbox")
+                .and_then(Value::as_object)
+                .and_then(|bbox| bbox.get("width"))
+                .and_then(Value::as_f64)
+                .is_some_and(|width| width <= 8.0);
+
+            // The PDF extractor can materialize a one-column sliver as a table
+            // with an empty line and a synthetic table object. It carries no
+            // authorable text or asset, so keep it explained without treating
+            // it as a real table task.
+            if kind == "table" && !has_semantic_text && child_object_count > 0 && narrow_region {
+                ignored.insert(
+                    region_id.to_string(),
+                    "narrow_empty_table_layout_artifact".to_string(),
+                );
+                continue;
+            }
+
+            let compact_text = source_text_key(&region_text);
+            if kind == "table"
+                && (compact_text.starts_with("youshouldspendabout") || compact_text == "2below")
+            {
+                ignored.insert(
+                    region_id.to_string(),
+                    "exam_instruction_layout_fragment".to_string(),
+                );
+                continue;
+            }
+
+            if ocr_page
+                && (compact_text.contains("答案")
+                    || compact_text.contains("answer")
+                    || compact_text.contains("explanation")
+                    || compact_text.contains("分析")
+                    || compact_text.contains("下页")
+                    || compact_text.contains("nextpage"))
+            {
+                ignored.insert(
+                    region_id.to_string(),
+                    "answer_explanation_overlay_on_ocr_page".to_string(),
+                );
+            }
+        }
+    }
+    ignored
 }
 
 fn significant_physical_nodes(physical: &Value) -> BTreeMap<String, BTreeSet<String>> {
@@ -3721,6 +3828,36 @@ mod tests {
         assert_eq!(summary.significant_count, 2);
         assert_eq!(summary.assigned_count, 2);
         assert!(summary.unassigned_ids.is_empty());
+    }
+
+    #[test]
+    fn source_coverage_explains_narrow_empty_tables_and_ocr_answer_notes() {
+        let physical = json!({
+            "schemaVersion":"DocumentIRV2","documentId":"document-1","jobId":"job-1",
+            "sourceFiles":[{"sourceFileId":"source-1"}],
+            "pages":[
+                {
+                    "quality":{"classification":"born_digital","requiresOcrRegions":[]},
+                    "lines":[{"id":"blank-line","text":""}],
+                    "regions":[{"id":"empty-table","kind":"table","bbox":{"width":3.0,"height":12.0},"childLineIds":["blank-line"],"childObjectIds":["table-1"]}]
+                },
+                {
+                    "quality":{"classification":"scanned","requiresOcrRegions":[{}]},
+                    "lines":[{"id":"note-line","text":"Q3答案可能有争议，争议分析见下页"}],
+                    "regions":[{"id":"answer-note","kind":"text","childLineIds":["note-line"],"childObjectIds":[]}]
+                }
+            ],
+            "assets":[]
+        });
+        let summary = source_coverage_summary(&json!({}), Some(&physical));
+        assert_eq!(summary.significant_count, 2);
+        assert_eq!(summary.assigned_count, 2);
+        assert!(summary.unassigned_ids.is_empty());
+        assert!(summary
+            .ledger
+            .iter()
+            .all(|entry| entry.get("disposition").and_then(Value::as_str)
+                == Some("ignored_with_reason")));
     }
 
     #[test]

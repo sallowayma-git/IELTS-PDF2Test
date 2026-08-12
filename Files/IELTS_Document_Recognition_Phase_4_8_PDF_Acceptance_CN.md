@@ -22,7 +22,7 @@
 
 如果结构真值失败，门禁会先完整写出 8 份证据，再以非零状态退出。若 QualityReportV2 在验收失败时声称 `ready`，会额外产生 `FALSE_READY_FORBIDDEN` 失败；因此本门禁不会伪造 Ready。
 
-## 2026-08-10 首次执行状态
+## 2026-08-10 首次执行状态（历史记录）
 
 门禁已真实执行 8/8 PDF，physical shadow、V2 authoring 和 QualityReportV2 均有产物；所有 quality state 均为 `blocked`，没有出现 false Ready。当前门禁按设计返回失败，明确暴露了尚未达到 Phase 4 真实语料验收标准的缺口：
 
@@ -35,6 +35,19 @@
 - Ocean Q9–13 的每个单选 response 都保留了严格 A–D，此专项事实已通过。
 
 机器可读的精确失败码和 actual/expected 值位于 `tmp/phase4-real-pdf-acceptance/report.json`。这些结果表明真实 physical → authoring → quality 链路可执行，但当前 Phase 4 架构证明尚未全部通过；在上述缺口修复前，不应把 Phase 4 真实语料状态标为完成或 Ready。
+
+## 2026-08-12 修复后复核状态
+
+已在检查点提交后重建最新 Rust CLI，并重新执行完整 acceptance。结果：
+
+- 8/8 真实 PDF 全部通过，`failureCount=0`；
+- Phase 4 Rust grammar/quality suite：73 passed、2 ignored、0 failed；
+- 海洋正文的同页/后续正文段落均纳入 passage source evidence；
+- Organisational 四个 `Choose TWO` 共享 prompt/two slots 结构保持通过；
+- narrow empty table layout artifact 与扫描答案说明文字进入带稳定 reason 的 `ignored_with_reason` ledger，不再伪装成未覆盖题目；
+- V1 仍是 authoritative，V2 flags 仍关闭，image-only answer page 仍不注入人工 OCR/answer oracle。
+
+机器可读结果：`tmp/phase4-real-pdf-acceptance/report.json`，其中 `passed=true`、`fixtureCount=8`、`failureCount=0`。
 
 ## 命令
 
