@@ -101,6 +101,18 @@
             "visualFallbackAssetId": { "type": "string", "minLength": 1 },
             "assetId": { "type": "string", "minLength": 1 },
             "altText": { "type": "string" },
+            "crop": {
+              "type": "array",
+              "prefixItems": [
+                { "type": "number", "minimum": 0, "maximum": 1 },
+                { "type": "number", "minimum": 0, "maximum": 1 },
+                { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+              ],
+              "items": false,
+              "minItems": 4,
+              "maxItems": 4
+            },
             "hotspots": { "type": "array", "items": { "$ref": "#/$defs/hotspot" } },
             "display": { "$ref": "#/$defs/display" },
             "steps": { "type": "array", "items": { "$ref": "#/$defs/flowStep" } },

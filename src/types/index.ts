@@ -11,5 +11,8 @@ export * from "./quality-report-v2";
 export * from "./ielts-authoring-v2";
 export * from "./artifact-store-v2";
 export * from "./authoring-editor-v2";
+export * from "./runtime-view-model-v2";
+export * from "./listening-runtime-v1";
+export * from "./listening-audio-probe-v1";
 export * from "./writing";
 export * from "./library";

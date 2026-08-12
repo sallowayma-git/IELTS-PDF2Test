@@ -1,20 +1,21 @@
-# Current Active Goal: IELTS 文档识别重构 Phase 5 结构化编辑器纵向切片
+# Current Active Goal: IELTS 文档识别重构 Phase 5 全量交付
 
 ## Goal
 
-依据 [Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md](Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md) 第 16.6 节，先交付一个可运行的结构化编辑器纵向切片：普通用户可以直接编辑 V2 内容节点、题组、共享答案位、选项库和答案；问题可以定位到源锚点；同一份草稿可以切换学生预览；编辑通过防抖 patch 保存，并具备版本冲突和本地崩溃恢复能力。
+依据 [Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md](Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md) 第 16.6、20.4、24.10 和 24.11 节，完成结构化编辑器 Phase 5 全部范围：普通用户可直接编辑 V2 内容节点、题组、共享答案位、选项库、表格、资源、热点和答案；问题可定位到源锚点；同一份草稿可切换学生预览；编辑具备防抖 patch、immutable revision、版本冲突、本地崩溃恢复、undo/redo 和 V2 bundle export；真实 PDF 从导入到导出通过端到端验收。
 
 - [complete] S1 建立 Phase 5 V2 session、patch 协议与 immutable revision 保存；保留 V1 文件可读。
 - [complete] S2 完成结构化编辑器页面、题组/共享答案位/选项库/答案编辑与 issue rail/source overlay。
 - [complete] S3 接通 student parity preview、650ms autosave、乐观版本冲突提示和 localStorage recovery。
 - [complete] S4 增加 `/phase5` fixture 路由、现有 job 的 `authoring-v2` 路由与生产默认关闭的 feature flag。
 - [complete] S5 完成前端构建、Phase 1 schema 回归、Rust check/test 与 Phase 5 专用验证。
-- [pending] S6 扩展完整节点增删移动、table/asset/hotspot 编辑、undo/redo、原生 Tiptap schema 适配与真实 PDF 端到端验收。
+- [complete] S6 扩展完整节点增删移动、table/asset/hotspot 编辑、undo/redo、原生 Tiptap schema 适配与真实 PDF 端到端验收。
+- [complete] S7 修复最终审计发现：答案位 undo 安全、issue target/bbox 定位、同源 runtime interaction model、导出失败回滚、真实流水线 V2 shadow 受控写入与显式 editor opt-in；独立只读复审已通过。
 
 ## Current Decisions
 
-- 本轮以“可验证的第一条纵向切片”为 Phase 5 目标，不宣称已完成 4–6 周全部工作量。
-- 编辑器当前采用 V2 schema-driven React 编辑器，先稳定 patch/revision/source/preview 契约；Tiptap 适配留在 S6。
+- Phase 5 编辑层采用 Tiptap 3 + custom node/schema，将编辑事务映射为 canonical V2 content nodes 和 append-only patch/revision。
+- V2 导出与既有 V1 NAS/export 并行；本阶段不提前承诺 Phase 6 的 NAS V2 runtime/student 双读迁移。
 - V2 编辑只写 `authoring-ir-v2.shadow.json` 对应的 revision 命名空间，不重写 V1 `authoring-ir.json`；逐题 PDF LLM repair 继续关闭。
 
 ## Tracking Files

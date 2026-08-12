@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ielts-author-studio.dev/phase1/listening-audio-probe-result-v1.schema.json",
+  "title": "ListeningAudioProbeResultV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "fileName",
+    "byteLength",
+    "sha256",
+    "probe",
+    "details"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "ListeningAudioProbeResultV1" },
+    "fileName": { "type": "string", "minLength": 1 },
+    "byteLength": { "type": "integer", "minimum": 0 },
+    "sha256": { "type": "string", "pattern": "^(?:|[a-fA-F0-9]{64})$" },
+    "mime": { "type": "string", "minLength": 1 },
+    "container": { "type": "string", "minLength": 1 },
+    "codec": { "type": "string", "minLength": 1 },
+    "durationMs": { "type": "integer", "minimum": 1 },
+    "channels": { "type": "integer", "minimum": 1 },
+    "sampleRateHz": { "type": "integer", "minimum": 1 },
+    "signal": { "$ref": "#/$defs/signalMetrics" },
+    "probe": { "$ref": "./listening-exam-source-v1.schema.json#/$defs/audioProbe" },
+    "details": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "signalMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decodedSampleCount",
+        "peakAmplitude",
+        "rmsAmplitude",
+        "clippedSampleRatio"
+      ],
+      "properties": {
+        "decodedSampleCount": { "type": "integer", "minimum": 1 },
+        "peakAmplitude": { "type": "number", "minimum": 0 },
+        "rmsAmplitude": { "type": "number", "minimum": 0 },
+        "clippedSampleRatio": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "probe": {
+            "type": "object",
+            "properties": { "status": { "const": "passed" } },
+            "required": ["status"]
+          }
+        },
+        "required": ["probe"]
+      },
+      "then": {
+        "required": [
+          "mime",
+          "container",
+          "codec",
+          "durationMs",
+          "channels",
+          "sampleRateHz",
+          "signal"
+        ],
+        "properties": {
+          "byteLength": { "type": "integer", "minimum": 1 },
+          "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+          "probe": {
+            "type": "object",
+            "properties": {
+              "issueCodes": { "type": "array", "maxItems": 0 }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

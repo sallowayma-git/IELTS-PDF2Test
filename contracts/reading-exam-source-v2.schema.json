@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ielts-author-studio.dev/phase1/reading-exam-source-v2.schema.json",
+  "title": "ReadingExamSourceV2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "examId",
+    "meta",
+    "assets",
+    "passage",
+    "taskGroups",
+    "answerSlots",
+    "answerKey",
+    "questionOrder",
+    "questionDisplayMap",
+    "audit"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "ReadingExamSourceV2" },
+    "examId": { "type": "string", "minLength": 1 },
+    "meta": { "$ref": "#/$defs/runtimeExamMeta" },
+    "assets": { "$ref": "#/$defs/runtimeAssetManifestRef" },
+    "passage": { "$ref": "#/$defs/runtimePassage" },
+    "taskGroups": {
+      "type": "array",
+      "items": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/taskGroup" }
+    },
+    "answerSlots": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/answerSlot"
+      }
+    },
+    "answerKey": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/answerValue"
+      }
+    },
+    "questionOrder": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "questionDisplayMap": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "audit": { "$ref": "#/$defs/runtimeAudit" }
+  },
+  "$defs": {
+    "runtimeExamMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "language"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "language": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "enum": ["P1", "P2", "P3"] }
+      }
+    },
+    "runtimeAssetManifestRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["examId", "assets"],
+      "properties": {
+        "examId": { "type": "string", "minLength": 1 },
+        "assets": {
+          "type": "array",
+          "items": { "$ref": "./common-v2.schema.json#/$defs/assetDescriptor" }
+        }
+      }
+    },
+    "runtimePassage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content"],
+      "properties": {
+        "content": {
+          "type": "array",
+          "items": { "$ref": "./content-doc-v2.schema.json#/$defs/contentNode" }
+        },
+        "paragraphMap": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "runtimeAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceSchemaVersion",
+        "sourceDocumentId",
+        "sourceRevision",
+        "sourceRevisionKind"
+      ],
+      "properties": {
+        "sourceSchemaVersion": { "const": "IeltsAuthoringIRV2" },
+        "sourceDocumentId": { "type": "string", "minLength": 1 },
+        "sourceRevision": { "type": "integer", "minimum": 0 },
+        "sourceRevisionKind": {
+          "type": "string",
+          "enum": ["auto_extract", "user", "migration"]
+        }
+      }
+    }
+  }
+}

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../api/desktopDialogs";
-import { exportNasLibrary, exportWritingLibrary, listWritingJobs } from "../api/tauriCommands";
+import { exportAuthoringV2, exportNasLibrary, exportNasPackageV2, exportWritingLibrary, getAuthoringV2, listWritingJobs } from "../api/tauriCommands";
 import { StatusPill } from "../components/StatusPill";
-import type { ImportJob, NasExportResult, ValidationIssue, ValidationPolicy, WritingExportResult, WritingJob } from "../types";
+import type { ImportJob, NasExportResult, NasPackageV2PublishResult, ValidationIssue, ValidationPolicy, WritingExportResult, WritingJob } from "../types";
 import { validationIssueDisplay } from "../utils/displayLabels";
 import { takePublishIntent } from "../utils/publishIntent";
 
@@ -11,6 +11,7 @@ type ExportMode = "nas-library" | "writing-library";
 const EXPORTABLE_STATUSES = new Set(["Working", "NeedsReview", "DraftSaved", "ExportReady", "Exported", "Cleaned"]);
 const DEFAULT_NAS_STATUSES = new Set(["DraftSaved", "ExportReady", "Exported", "Cleaned"]);
 const NAS_EXPORT_DIR_KEY = "ielts-author-studio.confirmed-nas-export-dir.v1";
+const NAS_PACKAGE_V2_ENABLED = import.meta.env.VITE_IELTS_NAS_PACKAGE_V2 === "1";
 
 function isLocalPlaceholder(path: string): boolean {
   return path.trim().toLowerCase().startsWith("local://");
@@ -91,6 +92,7 @@ export function ExportPage({
 }) {
   const [mode, setMode] = useState<ExportMode>("nas-library");
   const [nasResult, setNasResult] = useState<NasExportResult | undefined>();
+  const [nasPackageResult, setNasPackageResult] = useState<NasPackageV2PublishResult | undefined>();
   const [exportDir, setExportDir] = useState<string>(restoredNasDirectory);
   const [selected, setSelected] = useState<string[]>(jobId ? [jobId] : []);
   const [error, setError] = useState<string | undefined>();
@@ -114,6 +116,7 @@ export function ExportPage({
     setSelected(jobId ? [jobId] : []);
     setError(undefined);
     setNasResult(undefined);
+    setNasPackageResult(undefined);
     setDiagnostics(undefined);
   }, [jobId]);
 
@@ -163,9 +166,23 @@ export function ExportPage({
     setRunning(true);
     setError(undefined);
     setNasResult(undefined);
+    setNasPackageResult(undefined);
     setDiagnostics(undefined);
     try {
-      setNasResult(await exportNasLibrary({ jobIds: selected, exportDir, validationPolicy }));
+      if (NAS_PACKAGE_V2_ENABLED) {
+        if (selected.length !== 1) throw new Error("nas_package_v2_requires_single_authoring_job");
+        const session = await getAuthoringV2(selected[0]);
+        const materialized = await exportAuthoringV2({ jobId: selected[0], exportDir, revision: session.revision });
+        setNasPackageResult(await exportNasPackageV2({
+          libraryRoot: exportDir,
+          sourcePath: materialized.receipt.runtimePath,
+          assetRoot: materialized.receipt.outputDir,
+          examId: materialized.examId,
+          minimumRuntimeVersion: "0.2.0"
+        }));
+      } else {
+        setNasResult(await exportNasLibrary({ jobIds: selected, exportDir, validationPolicy }));
+      }
       refresh();
     } catch (caught) {
       const nextDiagnostics = buildExportDiagnostics(caught);
@@ -267,16 +284,18 @@ export function ExportPage({
                 disabled={running || !selected.length || !hasConfirmedExportDir}
                 onClick={() => void run("strict")}
               >
-                {running ? "正在发布..." : `发布 ${selected.length} 道题到 NAS`}
+                {running ? "正在发布..." : NAS_PACKAGE_V2_ENABLED ? "发布 Reading V2 包到 NAS" : `发布 ${selected.length} 道题到 NAS`}
               </button>
-              <button
-                className="ghost"
-                data-testid="force-export"
-                disabled={running || !selected.length || !hasConfirmedExportDir}
-                onClick={() => void run("force")}
-              >
-                忽略内容检查并发布
-              </button>
+              {!NAS_PACKAGE_V2_ENABLED ? (
+                <button
+                  className="ghost"
+                  data-testid="force-export"
+                  disabled={running || !selected.length || !hasConfirmedExportDir}
+                  onClick={() => void run("force")}
+                >
+                  忽略内容检查并发布
+                </button>
+              ) : null}
             </>
           ) : null}
         </div>
@@ -289,7 +308,7 @@ export function ExportPage({
               ? "阅读题统一发布到 NAS 题库目录；再次发布会更新同名题目，并保留目录中未选中的旧题。"
               : "写作题库会发布到同一 NAS 根目录下的 writing-exams 子目录。"}
           </p>
-          {mode === "nas-library" ? <p className="muted-inline">“忽略内容检查并发布”只跳过题稿与审核门禁；目录、写入和数据生成错误仍会停止。</p> : null}
+          {mode === "nas-library" && !NAS_PACKAGE_V2_ENABLED ? <p className="muted-inline">“忽略内容检查并发布”只跳过题稿与审核门禁；目录、写入和数据生成错误仍会停止。</p> : null}
           <div className="button-row">
             <button
               className={mode === "nas-library" ? "primary" : "ghost"}
@@ -424,6 +443,14 @@ export function ExportPage({
             >
               {cleanupMessage}
             </p>
+          ) : null}
+          {mode === "nas-library" && nasPackageResult ? (
+            <div className="warning-box" data-testid="nas-package-v2-export-result">
+              <strong>Reading V2 NAS 发布完成</strong>
+              <p>exam：<code>{nasPackageResult.examId}</code> · assets：{nasPackageResult.assetCount}</p>
+              <p>student probe：{nasPackageResult.probe.passed ? "通过" : "失败"}</p>
+              <small>manifest：<code>{nasPackageResult.manifestPath}</code><br />report：<code>{nasPackageResult.reportPath}</code></small>
+            </div>
           ) : null}
           {mode === "nas-library" && nasResult?.version ? (
             <div className="warning-box" data-testid="nas-export-result">

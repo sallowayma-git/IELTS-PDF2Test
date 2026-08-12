@@ -111,6 +111,39 @@ function validateFixtureValue(compiled, schemaName, value, label, verificationEr
   return true;
 }
 
+function buildReadingRuntimeSource(authoring) {
+  const slots = Object.values(authoring.answerSlots ?? {});
+  const questionOrder = [...slots]
+    .sort((left, right) => left.questionNumber - right.questionNumber || left.slotId.localeCompare(right.slotId))
+    .map((slot) => slot.slotId);
+  const questionDisplayMap = Object.fromEntries(slots.map((slot) => [slot.slotId, slot.displayLabel]));
+  return {
+    schemaVersion: "ReadingExamSourceV2",
+    examId: authoring.exam.examId,
+    meta: {
+      title: authoring.exam.title,
+      language: authoring.exam.language,
+      ...(authoring.exam.category ? { category: authoring.exam.category } : {})
+    },
+    assets: { examId: authoring.exam.examId, assets: authoring.assets ?? [] },
+    passage: {
+      content: authoring.passage?.content ?? [],
+      ...(authoring.passage?.paragraphMap ? { paragraphMap: authoring.passage.paragraphMap } : {})
+    },
+    taskGroups: authoring.taskGroups ?? [],
+    answerSlots: authoring.answerSlots ?? {},
+    answerKey: authoring.answerKey ?? {},
+    questionOrder,
+    questionDisplayMap,
+    audit: {
+      sourceSchemaVersion: authoring.schemaVersion,
+      sourceDocumentId: authoring.sourceDocumentId,
+      sourceRevision: authoring.audit?.revision ?? 0,
+      sourceRevisionKind: authoring.audit?.source ?? "auto_extract"
+    }
+  };
+}
+
 async function validateStableContractFixtures(compiled, verificationErrors, verificationResults) {
   const fixtureSpecs = [
     {
@@ -129,6 +162,14 @@ async function validateStableContractFixtures(compiled, verificationErrors, veri
       schemaName: "QualityReportV2",
       path: join(repoRoot, "fixtures", "golden", "synthetic", "ielts", "early-approaches-authoring-v2.json"),
       pointer: "/quality"
+    },
+    {
+      schemaName: "ListeningExamSourceV1",
+      path: join(repoRoot, "fixtures", "golden", "synthetic", "ielts", "phase7-listening-part1-source-v1.json")
+    },
+    {
+      schemaName: "ListeningAudioProbeResultV1",
+      path: join(repoRoot, "fixtures", "golden", "synthetic", "ielts", "phase7-listening-audio-probe-result-v1.json")
     }
   ];
   const values = new Map();
@@ -147,6 +188,39 @@ async function validateStableContractFixtures(compiled, verificationErrors, veri
     } catch (error) {
       verificationErrors.push(`stable_fixture_read_failed:${label}:${error.message}`);
     }
+  }
+  const authoring = values.get("IeltsAuthoringIRV2");
+  if (authoring) {
+    const runtime = buildReadingRuntimeSource(authoring);
+    if (validateFixtureValue(compiled, "ReadingExamSourceV2", runtime, "derived:early-approaches:reading-source-v2", verificationErrors, verificationResults)) {
+      values.set("ReadingExamSourceV2", runtime);
+    }
+  } else {
+    verificationErrors.push("reading_runtime_fixture_prerequisite_missing:IeltsAuthoringIRV2");
+  }
+  const listening = values.get("ListeningExamSourceV1");
+  if (listening) {
+    const attempt = {
+      schemaVersion: "ListeningAttemptV1",
+      examId: listening.examId,
+      sourceRevision: listening.audit.sourceRevision,
+      answers: {},
+      playback: {
+        mediaAssetId: listening.media.assetId,
+        policyMode: listening.playbackPolicy.mode,
+        playsStarted: 0,
+        positionMs: 0,
+        status: "ready",
+        lastTransitionAt: "2026-08-12T00:00:00Z"
+      },
+      state: "not_started",
+      updatedAt: "2026-08-12T00:00:00Z"
+    };
+    if (validateFixtureValue(compiled, "ListeningAttemptV1", attempt, "derived:phase7-listening-part1:attempt-v1", verificationErrors, verificationResults)) {
+      values.set("ListeningAttemptV1", attempt);
+    }
+  } else {
+    verificationErrors.push("listening_attempt_fixture_prerequisite_missing:ListeningExamSourceV1");
   }
   return values;
 }
@@ -247,6 +321,34 @@ function runNegativeContractProbes(compiled, stableValues, verificationErrors, v
       mutate(value) {
         value.state = "green";
       }
+    },
+    {
+      id: "reading-runtime-rejects-unknown-schema-version",
+      schemaName: "ReadingExamSourceV2",
+      mutate(value) {
+        value.schemaVersion = "ReadingExamSourceV99";
+      }
+    },
+    {
+      id: "listening-runtime-rejects-unconfirmed-cue-shape-change",
+      schemaName: "ListeningExamSourceV1",
+      mutate(value) {
+        value.parts[0].cue.startMs = -1;
+      }
+    },
+    {
+      id: "listening-attempt-rejects-unknown-playback-state",
+      schemaName: "ListeningAttemptV1",
+      mutate(value) {
+        value.playback.status = "recovered_without_policy";
+      }
+    },
+    {
+      id: "listening-audio-probe-rejects-passed-with-issues",
+      schemaName: "ListeningAudioProbeResultV1",
+      mutate(value) {
+        value.probe.issueCodes.push("AUDIO_NEAR_SILENT");
+      }
     }
   ];
 
@@ -345,7 +447,11 @@ const expectedRootVersions = {
   DocumentIRV2: "DocumentIRV2",
   ContentDocV2: "ContentDocV2",
   IeltsAuthoringIRV2: "IeltsAuthoringIRV2",
-  QualityReportV2: "QualityReportV2"
+  QualityReportV2: "QualityReportV2",
+  ReadingExamSourceV2: "ReadingExamSourceV2",
+  ListeningExamSourceV1: "ListeningExamSourceV1",
+  ListeningAttemptV1: "ListeningAttemptV1",
+  ListeningAudioProbeResultV1: "ListeningAudioProbeResultV1"
 };
 const expectedSchemaNames = ["CommonV2", ...Object.keys(expectedRootVersions)];
 if (manifest.schemaBundleVersion !== "2026.08.0") {

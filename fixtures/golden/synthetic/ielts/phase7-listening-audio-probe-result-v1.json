@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "ListeningAudioProbeResultV1",
+  "fileName": "phase7-synthetic-part1.wav",
+  "byteLength": 32044,
+  "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "mime": "audio/wav",
+  "container": "wav",
+  "codec": "pcm_s16le",
+  "durationMs": 1000,
+  "channels": 1,
+  "sampleRateHz": 16000,
+  "signal": {
+    "decodedSampleCount": 16000,
+    "peakAmplitude": 0.244140625,
+    "rmsAmplitude": 0.172633,
+    "clippedSampleRatio": 0
+  },
+  "probe": {
+    "status": "passed",
+    "provider": "symphonia",
+    "providerVersion": "0.6.0",
+    "probedAt": "2026-08-12T00:00:00Z",
+    "issueCodes": []
+  },
+  "details": []
+}

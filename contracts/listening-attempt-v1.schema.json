@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.ielts-author-studio.dev/phase1/listening-attempt-v1.schema.json",
+  "title": "ListeningAttemptV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "examId",
+    "sourceRevision",
+    "answers",
+    "playback",
+    "state",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "ListeningAttemptV1" },
+    "examId": { "type": "string", "minLength": 1 },
+    "sourceRevision": { "type": "integer", "minimum": 0 },
+    "answers": {
+      "type": "object",
+      "additionalProperties": { "$ref": "./ielts-authoring-ir-v2.schema.json#/$defs/answerValue" }
+    },
+    "playback": { "$ref": "#/$defs/playbackSnapshot" },
+    "state": { "type": "string", "enum": ["not_started", "in_progress", "submitted"] },
+    "updatedAt": { "type": "string", "minLength": 1 },
+    "submittedAt": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "playbackSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mediaAssetId",
+        "policyMode",
+        "playsStarted",
+        "positionMs",
+        "status",
+        "lastTransitionAt"
+      ],
+      "properties": {
+        "mediaAssetId": { "type": "string", "minLength": 1 },
+        "policyMode": { "type": "string", "enum": ["practice", "mock"] },
+        "playsStarted": { "type": "integer", "minimum": 0 },
+        "positionMs": { "type": "integer", "minimum": 0 },
+        "status": { "type": "string", "enum": ["ready", "playing", "paused", "ended", "restart_pending", "failed"] },
+        "lastTransitionAt": { "type": "string", "minLength": 1 },
+        "failureCode": {
+          "type": "string",
+          "enum": ["AUDIO_DECODE_FAILED", "AUDIO_CODEC_UNSUPPORTED", "AUDIO_HASH_MISMATCH", "AUDIO_RECOVERY_BLOCKED"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "failed" } },
+            "required": ["status"]
+          },
+          "then": { "required": ["failureCode"] },
+          "else": { "not": { "required": ["failureCode"] } }
+        }
+      ]
+    }
+  }
+}

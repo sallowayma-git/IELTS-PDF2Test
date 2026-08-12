@@ -57,9 +57,170 @@
     },
     "listeningStructure": {
       "type": "object",
-      "required": ["sections"],
-      "properties": { "sections": { "type": "array" } },
-      "additionalProperties": true
+      "additionalProperties": false,
+      "required": ["scope", "media", "parts", "playbackPolicy"],
+      "properties": {
+        "scope": { "$ref": "#/$defs/listeningScope" },
+        "media": { "$ref": "#/$defs/listeningMedia" },
+        "parts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/listeningPart" },
+          "minItems": 1,
+          "maxItems": 4
+        },
+        "playbackPolicy": { "$ref": "#/$defs/listeningPlaybackPolicy" },
+        "transcript": { "$ref": "#/$defs/listeningTranscript" }
+      }
+    },
+    "listeningScope": {
+      "type": "string",
+      "enum": ["complete_exam", "partial_practice"]
+    },
+    "listeningMedia": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "mime", "durationMs", "sha256"],
+      "properties": {
+        "assetId": { "type": "string", "minLength": 1 },
+        "mime": { "type": "string", "pattern": "^audio/" },
+        "durationMs": { "type": "integer", "exclusiveMinimum": 0 },
+        "channels": { "type": "integer", "minimum": 1 },
+        "sampleRateHz": { "type": "integer", "minimum": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "listeningCue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startMs", "endMs", "origin", "confidence", "confirmed"],
+      "properties": {
+        "startMs": { "type": "integer", "minimum": 0 },
+        "endMs": { "type": "integer", "exclusiveMinimum": 0 },
+        "origin": { "type": "string", "enum": ["manual", "timestamped_transcript"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "confirmed": { "type": "boolean" },
+        "sourceAnchors": {
+          "type": "array",
+          "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
+        }
+      }
+    },
+    "listeningPart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["partId", "displayLabel", "expectedQuestionNumbers", "taskIds", "sourceAnchors"],
+      "properties": {
+        "partId": { "type": "string", "minLength": 1 },
+        "displayLabel": { "type": "string", "minLength": 1 },
+        "expectedQuestionNumbers": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1, "maximum": 40 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "taskIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "cue": { "$ref": "#/$defs/listeningCue" },
+        "sourceAnchors": {
+          "type": "array",
+          "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
+        }
+      }
+    },
+    "listeningPlaybackPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "allowPause",
+        "allowSeek",
+        "allowReplay",
+        "refreshBehavior",
+        "crashRecoveryBehavior",
+        "showCurrentTime",
+        "showDuration"
+      ],
+      "properties": {
+        "mode": { "type": "string", "enum": ["practice", "mock"] },
+        "autoplay": { "type": "boolean" },
+        "allowPause": { "type": "boolean" },
+        "allowSeek": { "type": "boolean" },
+        "allowReplay": { "type": "boolean" },
+        "maxPlays": { "type": "integer", "minimum": 1 },
+        "refreshBehavior": {
+          "type": "string",
+          "enum": ["resume_from_snapshot", "restart_if_allowed", "block"]
+        },
+        "crashRecoveryBehavior": {
+          "type": "string",
+          "enum": ["resume_from_snapshot", "restart_if_allowed", "block"]
+        },
+        "showCurrentTime": { "type": "boolean" },
+        "showDuration": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "allowReplay": { "const": false } },
+            "required": ["allowReplay"]
+          },
+          "then": {
+            "required": ["maxPlays"],
+            "properties": { "maxPlays": { "type": "integer", "const": 1 } }
+          },
+          "else": {
+            "properties": { "maxPlays": { "type": "integer", "minimum": 2 } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "mock" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": ["maxPlays"],
+            "properties": {
+              "allowPause": { "type": "boolean", "const": false },
+              "allowSeek": { "type": "boolean", "const": false },
+              "allowReplay": { "type": "boolean", "const": false },
+              "maxPlays": { "type": "integer", "const": 1 },
+              "refreshBehavior": { "type": "string", "const": "resume_from_snapshot" },
+              "crashRecoveryBehavior": { "type": "string", "const": "resume_from_snapshot" }
+            }
+          }
+        }
+      ]
+    },
+    "listeningTranscriptSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "startMs": { "type": "integer", "minimum": 0 },
+        "endMs": { "type": "integer", "minimum": 0 },
+        "speaker": { "type": "string" },
+        "text": { "type": "string", "minLength": 1 },
+        "sourceAnchors": {
+          "type": "array",
+          "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
+        }
+      }
+    },
+    "listeningTranscript": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providedByUser", "segments"],
+      "properties": {
+        "providedByUser": { "type": "boolean" },
+        "segments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/listeningTranscriptSegment" }
+        }
+      }
     },
     "taskType": {
       "type": "string",

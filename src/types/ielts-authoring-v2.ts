@@ -44,8 +44,71 @@ export interface ReadingPassageV2 {
 }
 
 export interface ListeningStructureV2 {
-  sections: unknown[];
-  [key: string]: unknown;
+  scope: ListeningScopeV2;
+  media: ListeningMediaV2;
+  parts: ListeningPartV2[];
+  playbackPolicy: ListeningPlaybackPolicyV2;
+  transcript?: ListeningTranscriptV2;
+}
+
+export type ListeningScopeV2 = "complete_exam" | "partial_practice";
+
+export interface ListeningMediaV2 {
+  assetId: string;
+  mime: string;
+  durationMs: number;
+  channels?: number;
+  sampleRateHz?: number;
+  sha256: string;
+}
+
+export type ListeningCueOriginV2 = "manual" | "timestamped_transcript";
+
+export interface ListeningCueV2 {
+  startMs: number;
+  endMs: number;
+  origin: ListeningCueOriginV2;
+  confidence: number;
+  confirmed: boolean;
+  sourceAnchors?: SourceAnchorV2[];
+}
+
+export interface ListeningPartV2 {
+  partId: string;
+  displayLabel: string;
+  expectedQuestionNumbers: number[];
+  taskIds: string[];
+  cue?: ListeningCueV2;
+  sourceAnchors: SourceAnchorV2[];
+}
+
+export type ListeningPlaybackModeV2 = "practice" | "mock";
+export type ListeningRecoveryBehaviorV2 = "resume_from_snapshot" | "restart_if_allowed" | "block";
+
+export interface ListeningPlaybackPolicyV2 {
+  mode: ListeningPlaybackModeV2;
+  autoplay?: boolean;
+  allowPause: boolean;
+  allowSeek: boolean;
+  allowReplay: boolean;
+  maxPlays?: number;
+  refreshBehavior: ListeningRecoveryBehaviorV2;
+  crashRecoveryBehavior: ListeningRecoveryBehaviorV2;
+  showCurrentTime: boolean;
+  showDuration: boolean;
+}
+
+export interface ListeningTranscriptSegmentV2 {
+  startMs?: number;
+  endMs?: number;
+  speaker?: string;
+  text: string;
+  sourceAnchors?: SourceAnchorV2[];
+}
+
+export interface ListeningTranscriptV2 {
+  providedByUser: boolean;
+  segments: ListeningTranscriptSegmentV2[];
 }
 
 export type TaskTypeV2 =

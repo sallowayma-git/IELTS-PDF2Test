@@ -2,7 +2,6 @@ use super::common::{AssetDescriptorV2, SourceAnchorV2};
 use super::content_doc_v2::{ContentNodeV2, ProvenanceStatusV2};
 use super::quality_report_v2::QualityReportV2;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const IELTS_AUTHORING_IR_V2_SCHEMA_VERSION: &str = "IeltsAuthoringIRV2";
@@ -78,11 +77,125 @@ pub struct ReadingPassageV2 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ListeningScopeV2 {
+    CompleteExam,
+    PartialPractice,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ListeningMediaV2 {
+    pub asset_id: String,
+    pub mime: String,
+    pub duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channels: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_rate_hz: Option<u32>,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ListeningCueOriginV2 {
+    Manual,
+    TimestampedTranscript,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ListeningCueV2 {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub origin: ListeningCueOriginV2,
+    pub confidence: f64,
+    pub confirmed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_anchors: Option<Vec<SourceAnchorV2>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ListeningPartV2 {
+    pub part_id: String,
+    pub display_label: String,
+    pub expected_question_numbers: Vec<u32>,
+    pub task_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cue: Option<ListeningCueV2>,
+    pub source_anchors: Vec<SourceAnchorV2>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ListeningPlaybackModeV2 {
+    Practice,
+    Mock,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ListeningRecoveryBehaviorV2 {
+    ResumeFromSnapshot,
+    RestartIfAllowed,
+    Block,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ListeningPlaybackPolicyV2 {
+    pub mode: ListeningPlaybackModeV2,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autoplay: Option<bool>,
+    pub allow_pause: bool,
+    pub allow_seek: bool,
+    pub allow_replay: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_plays: Option<u32>,
+    pub refresh_behavior: ListeningRecoveryBehaviorV2,
+    pub crash_recovery_behavior: ListeningRecoveryBehaviorV2,
+    pub show_current_time: bool,
+    pub show_duration: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ListeningTranscriptSegmentV2 {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_anchors: Option<Vec<SourceAnchorV2>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ListeningTranscriptV2 {
+    pub provided_by_user: bool,
+    pub segments: Vec<ListeningTranscriptSegmentV2>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ListeningStructureV2 {
-    pub sections: Vec<Value>,
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, Value>,
+    pub scope: ListeningScopeV2,
+    pub media: ListeningMediaV2,
+    pub parts: Vec<ListeningPartV2>,
+    pub playback_policy: ListeningPlaybackPolicyV2,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<ListeningTranscriptV2>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

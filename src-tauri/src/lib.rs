@@ -4,7 +4,9 @@ use authoring_commands::{
     parse_document_core, render_group_html_core, resolve_source_review_core, run_rule_split_core,
     save_split_adjustments_core, update_authoring_ir_core,
 };
-use authoring_v2_commands::{apply_authoring_v2_patches_core, get_authoring_v2_core};
+use authoring_v2_commands::{
+    apply_authoring_v2_patches_core, export_authoring_v2_core, get_authoring_v2_core,
+};
 use auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
 use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
@@ -68,8 +70,10 @@ mod pdf_facts_shadow;
 mod pdf_geometry;
 mod pdf_ingest;
 mod preview_commands;
+mod reading_runtime_v2;
 mod reading_source;
 mod reading_source_v2;
+mod nas_package_v2;
 mod runtime_compiler;
 mod runtime_validation;
 pub mod schema;
@@ -1009,6 +1013,12 @@ async fn apply_authoring_v2_patches(input: Value, app: AppHandle) -> CommandResu
 }
 
 #[tauri::command]
+async fn export_authoring_v2(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    export_authoring_v2_core(&root, input)
+}
+
+#[tauri::command]
 async fn render_group_html(
     job_id: String,
     group_id: String,
@@ -1151,6 +1161,16 @@ async fn export_reading_js(input: Value, app: AppHandle) -> CommandResult<Value>
 async fn export_nas_library(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     export_nas_library_core(&root, &input, true)
+}
+
+/// Opt-in Reading V2 package publisher.  The command is intentionally kept
+/// separate from the legacy export command so the V1 manifest path remains
+/// untouched while the lock/CAS/journal/manifest-last protocol is callable by
+/// the real authoring application (not only by unit tests).
+#[tauri::command]
+async fn publish_nas_package_v2(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    nas_package_v2::publish_nas_package_v2_core(&root, input)
 }
 
 // ---------- 写作题库命令（独立模型，不污染阅读 ImportJob）----------
@@ -1376,6 +1396,7 @@ pub fn run() {
             update_authoring_ir,
             get_authoring_v2,
             apply_authoring_v2_patches,
+            export_authoring_v2,
             render_group_html,
             list_llm_profiles,
             run_environment_preflight,
@@ -1396,6 +1417,7 @@ pub fn run() {
             export_reading_assets,
             export_reading_js,
             export_nas_library,
+            publish_nas_package_v2,
             export_writing_library,
             create_writing_job,
             list_writing_jobs,

@@ -137,3 +137,30 @@ export interface NasExportResult {
     [key: string]: unknown;
   }>;
 }
+
+export interface ExportNasPackageV2Input {
+  libraryRoot: string;
+  sourcePath: string;
+  assetRoot?: string;
+  examId?: string;
+  minimumRuntimeVersion?: string;
+  expectedManifestSha256?: string;
+  fault?: "after_assets" | "after_source" | "before_manifest" | "manifest_rename";
+}
+
+export interface NasPackageV2PublishResult {
+  schemaVersion: "NasPackagePublishReportV2";
+  status: "committed";
+  examId: string;
+  manifestPath: string;
+  reportPath: string;
+  assetCount: number;
+  exportId: string;
+  probe: {
+    passed: boolean;
+    checkedAssetIds: string[];
+    referencedAssetIds: string[];
+    errors: string[];
+    warnings: string[];
+  };
+}
