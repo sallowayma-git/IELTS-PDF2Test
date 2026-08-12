@@ -1,0 +1,2989 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "fishbourne-roman-palace",
+  "source": {
+    "path": "fixtures/golden/private-real/fishbourne-roman-palace.pdf",
+    "sha256": "1c8897dd32e095c727d490d132a8d5a3024800f1ab480c71be88361a6b8eae02",
+    "sizeBytes": 309511
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 5,
+    "blockCount": 38,
+    "groupCount": 2,
+    "slotCount": 13,
+    "assetCount": 0,
+    "answerCount": 13,
+    "warningCount": 1,
+    "groupKinds": [
+      "true_false_not_given",
+      "sentence_completion"
+    ],
+    "questionIds": [
+      "q1",
+      "q2",
+      "q3",
+      "q4",
+      "q5",
+      "q6",
+      "q7",
+      "q8",
+      "q9",
+      "q10",
+      "q11",
+      "q12",
+      "q13"
+    ],
+    "roles": [
+      "passage",
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q1": "",
+        "q10": "",
+        "q11": "",
+        "q12": "",
+        "q13": "",
+        "q2": "",
+        "q3": "",
+        "q4": "",
+        "q5": "",
+        "q6": "",
+        "q7": "",
+        "q8": "",
+        "q9": ""
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "fishbourne-roman-palace.pdf",
+            "role": "MainQuestion",
+            "sha256": "1c8897dd32e095c727d490d132a8d5a3024800f1ab480c71be88361a6b8eae02",
+            "sizeBytes": 309511,
+            "storedName": "fishbourne-roman-palace.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "fishbourne roman palace"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b010",
+              "reason": "same-section-continuation",
+              "toBlockId": "b011"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            }
+          ],
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 1-6"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "true_false_not_given",
+          "layout": {
+            "layoutHint": "list",
+            "template": "tfng_list"
+          },
+          "questionRange": [
+            1,
+            6
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "1",
+              "id": "q1",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Fishbourne Palace was the first structure to be built on its site.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "2",
+              "id": "q2",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Fishbourne Palace was renovated more than once.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "3",
+              "id": "q3",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Fishbourne Palace was large in comparison with Roman palaces in Italy.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "4",
+              "id": "q4",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Research is continuing in the area close to Fishbourne Palace.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "5",
+              "id": "q5",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Researchers agree on the identity of the person for whom Fishbourne Palace was constructed.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "6",
+              "id": "q6",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Fishbourne Palace was burnt down by local people.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b010",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 1–6"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In boxes 1–6 on your answer sheet, write"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "1 Fishbourne Palace was the first structure to be built on its site."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "2 Fishbourne Palace was renovated more than once."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "3 Fishbourne Palace was large in comparison with Roman palaces in Italy."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "4 Research is continuing in the area close to Fishbourne Palace."
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "5 Researchers agree on the identity of the person for whom Fishbourne Palace was constructed."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "6 Fishbourne Palace was burnt down by local people."
+            }
+          ],
+          "sourceBlockIds": [
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 7-13"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "sentence_completion",
+          "layout": {
+            "layoutHint": "inline_completion",
+            "notes": "Questions 7–13 Complete the notes below. Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. Fishbourne Palace Construction • The first buildings on the site contained food for the 7 __________ • The palace building surrounded 8 __________ • In the 2nd and 3rd centuries colour was added to the 9 __________of the palace. Discovery • The first part of the palace to be found was part of a 10 __________ Possible inhabitants • Cogidubnus - he is named in several writings. • Sallustius Lucullus - he may have lived there until approximately 11 __________AD. • Verica - a British king. • Catuarus - his 12 __________was found there. Present Day • A 13 __________has been built on the site to help protect it.",
+            "template": "inline_text_completion"
+          },
+          "questionRange": [
+            7,
+            13
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "7",
+              "id": "q7",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "• The palace building surrounded",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "8",
+              "id": "q8",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "• In the 2nd and 3rd centuries colour was added to the",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "9",
+              "id": "q9",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "of the palace. Discovery • The first part of the palace to be found was part of a",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "10",
+              "id": "q10",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "Possible inhabitants • Cogidubnus - he is named in several writings. • Sallustius Lucullus - he may have lived there until approximately",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "11",
+              "id": "q11",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "AD. • Verica - a British king. • Catuarus - his",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "12",
+              "id": "q12",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "was found there. Present Day • A",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "13",
+              "id": "q13",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "has been built on the site to help protect it.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 7–13"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the notes below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 7–13 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Fishbourne Palace"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Construction"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• The first buildings on the site contained food for the 7 __________"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• The palace building surrounded 8 __________"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• In the 2nd and 3rd centuries colour was added to the 9 __________of the palace."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Discovery"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• The first part of the palace to be found was part of a 10 __________"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Possible inhabitants"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Cogidubnus - he is named in several writings."
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Sallustius Lucullus - he may have lived there until approximately 11 __________AD."
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Verica - a British king."
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Catuarus - his 12 __________was found there."
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Present Day"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• A 13 __________has been built on the site to help protect it."
+            }
+          ],
+          "sourceBlockIds": [
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  PAS S AGE   1</p>\n<p>Fishbourne Roman Palace is in the village of Fishbourne in West Sussex, England. This \nlarge palace was built in the 1st century AD, around thirty years after the Roman conquest \nof Britain, on the site of Roman army grain stores that had been established after the \ninvasion during the reign of the Roman Emperor Claudius in 43 AD. The rectangular palace \nwas built around formal gardens, the northern half of which has been reconstructed. There \nwere extensive alterations in the 2nd and 3rd centuries AD, with many of the original black-\nand-white mosaic floors being overlaid with more sophisticated coloured ones, including a \nperfectly preserved mosaic of a dolphin in the north wing. More alterations were in progress \nwhen the palace burnt down in around 270 AD, after which it was abandoned.</p>\n<p>Local people had long believed that a Roman palace once existed in the area. However, it \nwas not until 1960 that the archaeologist Barry Cunliffe of Oxford University first \nsystematically excavated the site, after workmen had accidentally uncovered a wall while \nthey were laying a water main. The Roman villa excavated by Cunliffe’s team was so grand \nthat it became known as Fishbourne Roman Palace, and a museum was erected to \npreserve some of the remains. This is administered by the Sussex Archaeological Society.</p>\n<p>In its day, the completed palace would have comprised four large wings with colonnaded \nfronts. The north and east wings consisted of suites of private rooms built around \ncourtyards, with a monumental entrance in the middle of the east wing. In the north-east \ncorner there was an assembly hall. The west wing contained state rooms, a large \nceremonial reception room and a gallery. The south wing contained the owner’s private \napartments. The palace included as many as fifty mosaic floors, under-floor central heating \nand a bathhouse. In size, Fishbourne Palace would have been approximately equivalent to \nsome of the great Roman palaces of Italy, and was by far the largest known Roman \nresidence north of the European Alps, at about 500 feet (150 m) square. A team of \nvolunteers and professional archaeologists is involved in an ongoing archaeological \nexcavation on the site of nearby, possibly military, buildings.</p>\n<p>The first buildings to be erected on the site were constructed in the early part of the \nconquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar \nfloors and plaster walls, which appears to have been a house of some comfort. These \nbuildings were demolished in the 60s AD and replaced by a substantial stone house, which \nincluded colonnades and a bath suite. It has been suggested that the palace itself, \nincorporating the previous house in its south-east corner, was constructed around 73–75 \nAD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan \nand the collection of objects found, and has suggested that, given the extremely close \nparallels with the imperial palace of Domitian in Rome, its construction may more plausibly \ndate to after 92 AD.</p>\n<p>With regard to who lived in Fishbourne Palace, there are a number of theories. For \nexample, one proposed by Professor Cunliffe is that, in its early phase, the palace was the \nresidence of Tiberius Claudius Cogidubnus, a local chieftain who supported the Romans \nand who may have been installed as king of a number of territories following the first stage \nof the conquest. Cogidubnus is known from a reference to his loyalty in Agricola, a work by \nthe Roman writer Tacitus, and from an inscription commemorating a temple dedicated to \nthe gods Neptune and Minerva found in the nearby city of Chichester. Another theory is that \nit was built for Sallustius Lucullus, a Roman governor of Britain in the late 1st century, who \nmay have been the son of the British prince Adminius. Two inscriptions recording the \npresence of Lucullus have been found in Chichester, and the redating by Miles Russell \nsuggests that, if the palace was designed for Lucullus, then it may have been in use for only \na few years, as the Roman historian Suetonius records that Lucullus was executed by the \nEmperor Domitian in or shortly after 93 AD.</p>\n<p>Additional theories suggest that either Verica, a British king of the Roman Empire in the \nyears preceding the Claudian invasion, was the owner of the palace, or Tiberius Claudius \nCatuarus, following the recent discovery of a gold ring belonging to him. The palace \noutlasted the original owner, whoever he was, and was extensively re-planned early in the \n2nd century AD and subdivided into a series of smaller apartments. Further redevelopment \nwas begun in the late 3rd century AD, but these alterations were incomplete when the north \nwing was destroyed in a fire in around 270 AD. The damage was too great to repair, and \nthe palace was abandoned and later dismantled.</p>\n<p>A modern museum has been built by the Sussex Archaeological Society, incorporating \nmost of the visible remains, including one wing of the palace. The gardens have been \nreplanted using authentic plants from the Roman period.</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 1-13",
+            "questionRange": [
+              1,
+              13
+            ],
+            "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below. Fishbourne Roman Palace"
+          }
+        ],
+        "sourceBlockIds": [
+          "b001",
+          "b003",
+          "b004",
+          "b005",
+          "b006",
+          "b007",
+          "b008",
+          "b009"
+        ],
+        "title": "RE ADI NG PAS S AGE 1"
+      },
+      "questionDisplayMap": {
+        "q1": "1",
+        "q10": "10",
+        "q11": "11",
+        "q12": "12",
+        "q13": "13",
+        "q2": "2",
+        "q3": "3",
+        "q4": "4",
+        "q5": "5",
+        "q6": "6",
+        "q7": "7",
+        "q8": "8",
+        "q9": "9"
+      },
+      "questionOrder": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5",
+        "q6",
+        "q7",
+        "q8",
+        "q9",
+        "q10",
+        "q11",
+        "q12",
+        "q13"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>RE ADI NG  PAS S AGE   1</p>",
+              "pageIndex": 1,
+              "text": "RE ADI NG  PAS S AGE   1  "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>You should spend about 20 minutes on Questions 1–13, which are based on Reading \nPassage 1 below. \n Fishbourne Roman Palace</p>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading \nPassage 1 below. \n Fishbourne Roman Palace "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Fishbourne Roman Palace is in the village of Fishbourne in West Sussex, England. This \nlarge palace was built in the 1st century AD, around thirty years after the Roman conquest \nof Britain, on the site of Roman army grain stores that had been established after the \ninvasion during the reign of the Roman Emperor Claudius in 43 AD. The rectangular palace \nwas built around formal gardens, the northern half of which has been reconstructed. There \nwere extensive alterations in the 2nd and 3rd centuries AD, with many of the original black-\nand-white mosaic floors being overlaid with more sophisticated coloured ones, including a \nperfectly preserved mosaic of a dolphin in the north wing. More alterations were in progress \nwhen the palace burnt down in around 270 AD, after which it was abandoned.</p>",
+              "pageIndex": 1,
+              "text": "Fishbourne Roman Palace is in the village of Fishbourne in West Sussex, England. This \nlarge palace was built in the 1st century AD, around thirty years after the Roman conquest \nof Britain, on the site of Roman army grain stores that had been established after the \ninvasion during the reign of the Roman Emperor Claudius in 43 AD. The rectangular palace \nwas built around formal gardens, the northern half of which has been reconstructed. There \nwere extensive alterations in the 2nd and 3rd centuries AD, with many of the original black-\nand-white mosaic floors being overlaid with more sophisticated coloured ones, including a \nperfectly preserved mosaic of a dolphin in the north wing. More alterations were in progress \nwhen the palace burnt down in around 270 AD, after which it was abandoned. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Local people had long believed that a Roman palace once existed in the area. However, it \nwas not until 1960 that the archaeologist Barry Cunliffe of Oxford University first \nsystematically excavated the site, after workmen had accidentally uncovered a wall while \nthey were laying a water main. The Roman villa excavated by Cunliffe’s team was so grand \nthat it became known as Fishbourne Roman Palace, and a museum was erected to \npreserve some of the remains. This is administered by the Sussex Archaeological Society.</p>",
+              "pageIndex": 1,
+              "text": "Local people had long believed that a Roman palace once existed in the area. However, it \nwas not until 1960 that the archaeologist Barry Cunliffe of Oxford University first \nsystematically excavated the site, after workmen had accidentally uncovered a wall while \nthey were laying a water main. The Roman villa excavated by Cunliffe’s team was so grand \nthat it became known as Fishbourne Roman Palace, and a museum was erected to \npreserve some of the remains. This is administered by the Sussex Archaeological Society. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>In its day, the completed palace would have comprised four large wings with colonnaded \nfronts. The north and east wings consisted of suites of private rooms built around \ncourtyards, with a monumental entrance in the middle of the east wing. In the north-east \ncorner there was an assembly hall. The west wing contained state rooms, a large \nceremonial reception room and a gallery. The south wing contained the owner’s private \napartments. The palace included as many as fifty mosaic floors, under-floor central heating \nand a bathhouse. In size, Fishbourne Palace would have been approximately equivalent to \nsome of the great Roman palaces of Italy, and was by far the largest known Roman \nresidence north of the European Alps, at about 500 feet (150 m) square. A team of \nvolunteers and professional archaeologists is involved in an ongoing archaeological \nexcavation on the site of nearby, possibly military, buildings.</p>",
+              "pageIndex": 1,
+              "text": "In its day, the completed palace would have comprised four large wings with colonnaded \nfronts. The north and east wings consisted of suites of private rooms built around \ncourtyards, with a monumental entrance in the middle of the east wing. In the north-east \ncorner there was an assembly hall. The west wing contained state rooms, a large \nceremonial reception room and a gallery. The south wing contained the owner’s private \napartments. The palace included as many as fifty mosaic floors, under-floor central heating \nand a bathhouse. In size, Fishbourne Palace would have been approximately equivalent to \nsome of the great Roman palaces of Italy, and was by far the largest known Roman \nresidence north of the European Alps, at about 500 feet (150 m) square. A team of \nvolunteers and professional archaeologists is involved in an ongoing archaeological \nexcavation on the site of nearby, possibly military, buildings. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The first buildings to be erected on the site were constructed in the early part of the \nconquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar \nfloors and plaster walls, which appears to have been a house of some comfort. These \nbuildings were demolished in the 60s AD and replaced by a substantial stone house, which \nincluded colonnades and a bath suite. It has been suggested that the palace itself, \nincorporating the previous house in its south-east corner, was constructed around 73–75 \nAD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan \nand the collection of objects found, and has suggested that, given the extremely close \nparallels with the imperial palace of Domitian in Rome, its construction may more plausibly \ndate to after 92 AD.</p>",
+              "pageIndex": 2,
+              "text": "The first buildings to be erected on the site were constructed in the early part of the \nconquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar \nfloors and plaster walls, which appears to have been a house of some comfort. These \nbuildings were demolished in the 60s AD and replaced by a substantial stone house, which \nincluded colonnades and a bath suite. It has been suggested that the palace itself, \nincorporating the previous house in its south-east corner, was constructed around 73–75 \nAD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan \nand the collection of objects found, and has suggested that, given the extremely close \nparallels with the imperial palace of Domitian in Rome, its construction may more plausibly \ndate to after 92 AD. "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>With regard to who lived in Fishbourne Palace, there are a number of theories. For \nexample, one proposed by Professor Cunliffe is that, in its early phase, the palace was the \nresidence of Tiberius Claudius Cogidubnus, a local chieftain who supported the Romans \nand who may have been installed as king of a number of territories following the first stage \nof the conquest. Cogidubnus is known from a reference to his loyalty in Agricola, a work by \nthe Roman writer Tacitus, and from an inscription commemorating a temple dedicated to \nthe gods Neptune and Minerva found in the nearby city of Chichester. Another theory is that \nit was built for Sallustius Lucullus, a Roman governor of Britain in the late 1st century, who \nmay have been the son of the British prince Adminius. Two inscriptions recording the \npresence of Lucullus have been found in Chichester, and the redating by Miles Russell \nsuggests that, if the palace was designed for Lucullus, then it may have been in use for only \na few years, as the Roman historian Suetonius records that Lucullus was executed by the \nEmperor Domitian in or shortly after 93 AD.</p>",
+              "pageIndex": 2,
+              "text": "With regard to who lived in Fishbourne Palace, there are a number of theories. For \nexample, one proposed by Professor Cunliffe is that, in its early phase, the palace was the \nresidence of Tiberius Claudius Cogidubnus, a local chieftain who supported the Romans \nand who may have been installed as king of a number of territories following the first stage \nof the conquest. Cogidubnus is known from a reference to his loyalty in Agricola, a work by \nthe Roman writer Tacitus, and from an inscription commemorating a temple dedicated to \nthe gods Neptune and Minerva found in the nearby city of Chichester. Another theory is that \nit was built for Sallustius Lucullus, a Roman governor of Britain in the late 1st century, who \nmay have been the son of the British prince Adminius. Two inscriptions recording the \npresence of Lucullus have been found in Chichester, and the redating by Miles Russell \nsuggests that, if the palace was designed for Lucullus, then it may have been in use for only \na few years, as the Roman historian Suetonius records that Lucullus was executed by the \nEmperor Domitian in or shortly after 93 AD. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Additional theories suggest that either Verica, a British king of the Roman Empire in the \nyears preceding the Claudian invasion, was the owner of the palace, or Tiberius Claudius \nCatuarus, following the recent discovery of a gold ring belonging to him. The palace \noutlasted the original owner, whoever he was, and was extensively re-planned early in the \n2nd century AD and subdivided into a series of smaller apartments. Further redevelopment \nwas begun in the late 3rd century AD, but these alterations were incomplete when the north \nwing was destroyed in a fire in around 270 AD. The damage was too great to repair, and \nthe palace was abandoned and later dismantled.</p>",
+              "pageIndex": 2,
+              "text": "Additional theories suggest that either Verica, a British king of the Roman Empire in the \nyears preceding the Claudian invasion, was the owner of the palace, or Tiberius Claudius \nCatuarus, following the recent discovery of a gold ring belonging to him. The palace \noutlasted the original owner, whoever he was, and was extensively re-planned early in the \n2nd century AD and subdivided into a series of smaller apartments. Further redevelopment \nwas begun in the late 3rd century AD, but these alterations were incomplete when the north \nwing was destroyed in a fire in around 270 AD. The damage was too great to repair, and \nthe palace was abandoned and later dismantled. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b009",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A modern museum has been built by the Sussex Archaeological Society, incorporating \nmost of the visible remains, including one wing of the palace. The gardens have been \nreplanted using authentic plants from the Roman period.</p>",
+              "pageIndex": 2,
+              "text": "A modern museum has been built by the Sussex Archaeological Society, incorporating \nmost of the visible remains, including one wing of the palace. The gardens have been \nreplanted using authentic plants from the Roman period. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 2,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b010",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 1–6</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 1–6 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b011",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Do the following statements agree with the information given in Reading Passage 1?</p>",
+              "pageIndex": 3,
+              "roleHint": "passage",
+              "text": "Do the following statements agree with the information given in Reading Passage 1? "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>In boxes 1–6 on your answer sheet, write</p>",
+              "pageIndex": 3,
+              "text": "In boxes 1–6 on your answer sheet, write "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b013",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>TRUE        if the statement agrees with the information \nFALSE      if the statement contradicts the information \nNOT GIVEN    if there is no information on this</p>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "TRUE        if the statement agrees with the information \nFALSE      if the statement contradicts the information \nNOT GIVEN    if there is no information on this "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b014",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>1  Fishbourne Palace was the first structure to be built on its site.</p>",
+              "pageIndex": 3,
+              "text": "1  Fishbourne Palace was the first structure to be built on its site. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b015",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>2  Fishbourne Palace was renovated more than once.</p>",
+              "pageIndex": 3,
+              "text": "2  Fishbourne Palace was renovated more than once. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b016",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>3  Fishbourne Palace was large in comparison with Roman palaces in Italy.</p>",
+              "pageIndex": 3,
+              "text": "3  Fishbourne Palace was large in comparison with Roman palaces in Italy. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b017",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>4  Research is continuing in the area close to Fishbourne Palace.</p>",
+              "pageIndex": 3,
+              "text": "4  Research is continuing in the area close to Fishbourne Palace. "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b018",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>5  Researchers agree on the identity of the person for whom Fishbourne Palace was \nconstructed.</p>",
+              "pageIndex": 3,
+              "text": "5  Researchers agree on the identity of the person for whom Fishbourne Palace was \nconstructed. "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b019",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>6    Fishbourne Palace was burnt down by local people.</p>",
+              "pageIndex": 3,
+              "text": "6    Fishbourne Palace was burnt down by local people. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 3,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b020",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 7–13</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 7–13 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b021",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Complete the notes below.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Complete the notes below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each \nanswer.</p>",
+              "pageIndex": 4,
+              "text": "Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each \nanswer. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write your answers in boxes 7–13 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write your answers in boxes 7–13 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b024",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Fishbourne Palace</p>",
+              "pageIndex": 4,
+              "text": " Fishbourne Palace "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b025",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Construction</p>",
+              "pageIndex": 4,
+              "text": "Construction "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  The first buildings on the site contained food for the 7 __________</p>",
+              "pageIndex": 4,
+              "text": "•  The first buildings on the site contained food for the 7 __________ "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b027",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  The palace building surrounded 8 __________</p>",
+              "pageIndex": 4,
+              "text": "•  The palace building surrounded 8 __________ "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  In the 2nd and 3rd centuries colour was added to the 9 __________of the palace.</p>",
+              "pageIndex": 4,
+              "text": "•  In the 2nd and 3rd centuries colour was added to the 9 __________of the palace. "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b029",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Discovery</p>",
+              "pageIndex": 4,
+              "text": "Discovery "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b030",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  The first part of the palace to be found was part of a 10 __________</p>",
+              "pageIndex": 4,
+              "text": "•  The first part of the palace to be found was part of a 10 __________ "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Possible inhabitants</p>",
+              "pageIndex": 4,
+              "text": "Possible inhabitants "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  Cogidubnus - he is named in several writings.</p>",
+              "pageIndex": 4,
+              "text": "•  Cogidubnus - he is named in several writings. "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  Sallustius Lucullus - he may have lived there until approximately 11 __________AD.</p>",
+              "pageIndex": 4,
+              "text": "•  Sallustius Lucullus - he may have lived there until approximately 11 __________AD. "
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b034",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  Verica - a British king.</p>",
+              "pageIndex": 4,
+              "text": "•  Verica - a British king. "
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  Catuarus - his 12 __________was found there.</p>",
+              "pageIndex": 4,
+              "text": "•  Catuarus - his 12 __________was found there. "
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Present Day</p>",
+              "pageIndex": 4,
+              "text": "Present Day "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  A 13 __________has been built on the site to help protect it.</p>",
+              "pageIndex": 4,
+              "text": "•  A 13 __________has been built on the site to help protect it. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 4,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 5]</p>",
+              "pageIndex": 5,
+              "text": "[No extractable text on page 5]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 5,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "fishbourne-roman-palace.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 5 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q1": "",
+        "q10": "",
+        "q11": "",
+        "q12": "",
+        "q13": "",
+        "q2": "",
+        "q3": "",
+        "q4": "",
+        "q5": "",
+        "q6": "",
+        "q7": "",
+        "q8": "",
+        "q9": ""
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:1c8897dd32e095c727d490d132a8d5a3024800f1ab480c71be88361a6b8eae02;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "fishbourne-roman-palace.pdf",
+        "questionIntroHtml": "<h3>Questions</h3><ul class=\"question-umbrella-ranges\"><li><strong>Questions 1-13</strong><span>Q1-13</span></li></ul>",
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 1-13",
+            "questionRange": [
+              1,
+              13
+            ],
+            "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below. Fishbourne Roman Palace"
+          }
+        ],
+        "title": "fishbourne roman palace"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  PAS S AGE   1</p>\n<p>Fishbourne Roman Palace is in the village of Fishbourne in West Sussex, England. This \nlarge palace was built in the 1st century AD, around thirty years after the Roman conquest \nof Britain, on the site of Roman army grain stores that had been established after the \ninvasion during the reign of the Roman Emperor Claudius in 43 AD. The rectangular palace \nwas built around formal gardens, the northern half of which has been reconstructed. There \nwere extensive alterations in the 2nd and 3rd centuries AD, with many of the original black-\nand-white mosaic floors being overlaid with more sophisticated coloured ones, including a \nperfectly preserved mosaic of a dolphin in the north wing. More alterations were in progress \nwhen the palace burnt down in around 270 AD, after which it was abandoned.</p>\n<p>Local people had long believed that a Roman palace once existed in the area. However, it \nwas not until 1960 that the archaeologist Barry Cunliffe of Oxford University first \nsystematically excavated the site, after workmen had accidentally uncovered a wall while \nthey were laying a water main. The Roman villa excavated by Cunliffe’s team was so grand \nthat it became known as Fishbourne Roman Palace, and a museum was erected to \npreserve some of the remains. This is administered by the Sussex Archaeological Society.</p>\n<p>In its day, the completed palace would have comprised four large wings with colonnaded \nfronts. The north and east wings consisted of suites of private rooms built around \ncourtyards, with a monumental entrance in the middle of the east wing. In the north-east \ncorner there was an assembly hall. The west wing contained state rooms, a large \nceremonial reception room and a gallery. The south wing contained the owner’s private \napartments. The palace included as many as fifty mosaic floors, under-floor central heating \nand a bathhouse. In size, Fishbourne Palace would have been approximately equivalent to \nsome of the great Roman palaces of Italy, and was by far the largest known Roman \nresidence north of the European Alps, at about 500 feet (150 m) square. A team of \nvolunteers and professional archaeologists is involved in an ongoing archaeological \nexcavation on the site of nearby, possibly military, buildings.</p>\n<p>The first buildings to be erected on the site were constructed in the early part of the \nconquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar \nfloors and plaster walls, which appears to have been a house of some comfort. These \nbuildings were demolished in the 60s AD and replaced by a substantial stone house, which \nincluded colonnades and a bath suite. It has been suggested that the palace itself, \nincorporating the previous house in its south-east corner, was constructed around 73–75 \nAD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan \nand the collection of objects found, and has suggested that, given the extremely close \nparallels with the imperial palace of Domitian in Rome, its construction may more plausibly \ndate to after 92 AD.</p>\n<p>With regard to who lived in Fishbourne Palace, there are a number of theories. For \nexample, one proposed by Professor Cunliffe is that, in its early phase, the palace was the \nresidence of Tiberius Claudius Cogidubnus, a local chieftain who supported the Romans \nand who may have been installed as king of a number of territories following the first stage \nof the conquest. Cogidubnus is known from a reference to his loyalty in Agricola, a work by \nthe Roman writer Tacitus, and from an inscription commemorating a temple dedicated to \nthe gods Neptune and Minerva found in the nearby city of Chichester. Another theory is that \nit was built for Sallustius Lucullus, a Roman governor of Britain in the late 1st century, who \nmay have been the son of the British prince Adminius. Two inscriptions recording the \npresence of Lucullus have been found in Chichester, and the redating by Miles Russell \nsuggests that, if the palace was designed for Lucullus, then it may have been in use for only \na few years, as the Roman historian Suetonius records that Lucullus was executed by the \nEmperor Domitian in or shortly after 93 AD.</p>\n<p>Additional theories suggest that either Verica, a British king of the Roman Empire in the \nyears preceding the Claudian invasion, was the owner of the palace, or Tiberius Claudius \nCatuarus, following the recent discovery of a gold ring belonging to him. The palace \noutlasted the original owner, whoever he was, and was extensively re-planned early in the \n2nd century AD and subdivided into a series of smaller apartments. Further redevelopment \nwas begun in the late 3rd century AD, but these alterations were incomplete when the north \nwing was destroyed in a fire in around 270 AD. The damage was too great to repair, and \nthe palace was abandoned and later dismantled.</p>\n<p>A modern museum has been built by the Sussex Archaeological Society, incorporating \nmost of the visible remains, including one wing of the palace. The gardens have been \nreplanted using authentic plants from the Roman period.</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q1": "1",
+        "q10": "10",
+        "q11": "11",
+        "q12": "12",
+        "q13": "13",
+        "q2": "2",
+        "q3": "3",
+        "q4": "4",
+        "q5": "5",
+        "q6": "6",
+        "q7": "7",
+        "q8": "8",
+        "q9": "9"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-6</p></div><ol><li><div><strong>1</strong> Fishbourne Palace was the first structure to be built on its site.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> Fishbourne Palace was renovated more than once.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> Fishbourne Palace was large in comparison with Roman palaces in Italy.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>4</strong> Research is continuing in the area close to Fishbourne Palace.</div><div class=\"choice-row\"><label><input name=\"q4\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q4\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q4\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>5</strong> Researchers agree on the identity of the person for whom Fishbourne Palace was constructed.</div><div class=\"choice-row\"><label><input name=\"q5\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q5\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q5\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>6</strong> Fishbourne Palace was burnt down by local people.</div><div class=\"choice-row\"><label><input name=\"q6\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q6\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q6\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "groupId": "group-1",
+          "kind": "true_false_not_given",
+          "leadHtml": "<p>Questions 1-6</p>",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "q5",
+            "q6"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 7-13</p></div><div class=\"notes-completion\">Questions 7–13 Complete the notes below. Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. Fishbourne Palace Construction • The first buildings on the site contained food for the <span class=\"inline-completion\" data-question-id=\"q7\"><strong>7</strong> <input type=\"text\" id=\"q7_input\" name=\"q7\" placeholder=\"answer\"></span> • The palace building surrounded <span class=\"inline-completion\" data-question-id=\"q8\"><strong>8</strong> <input type=\"text\" id=\"q8_input\" name=\"q8\" placeholder=\"answer\"></span> • In the 2nd and 3rd centuries colour was added to the <span class=\"inline-completion\" data-question-id=\"q9\"><strong>9</strong> <input type=\"text\" id=\"q9_input\" name=\"q9\" placeholder=\"answer\"></span>of the palace. Discovery • The first part of the palace to be found was part of a <span class=\"inline-completion\" data-question-id=\"q10\"><strong>10</strong> <input type=\"text\" id=\"q10_input\" name=\"q10\" placeholder=\"answer\"></span> Possible inhabitants • Cogidubnus - he is named in several writings. • Sallustius Lucullus - he may have lived there until approximately <span class=\"inline-completion\" data-question-id=\"q11\"><strong>11</strong> <input type=\"text\" id=\"q11_input\" name=\"q11\" placeholder=\"answer\"></span>AD. • Verica - a British king. • Catuarus - his <span class=\"inline-completion\" data-question-id=\"q12\"><strong>12</strong> <input type=\"text\" id=\"q12_input\" name=\"q12\" placeholder=\"answer\"></span>was found there. Present Day • A <span class=\"inline-completion\" data-question-id=\"q13\"><strong>13</strong> <input type=\"text\" id=\"q13_input\" name=\"q13\" placeholder=\"answer\"></span>has been built on the site to help protect it.</div></section>",
+          "groupId": "group-2",
+          "kind": "sentence_completion",
+          "leadHtml": "<p>Questions 7-13</p>",
+          "questionIds": [
+            "q7",
+            "q8",
+            "q9",
+            "q10",
+            "q11",
+            "q12",
+            "q13"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5",
+        "q6",
+        "q7",
+        "q8",
+        "q9",
+        "q10",
+        "q11",
+        "q12",
+        "q13"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260810092235-26a525de/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/fishbourne-roman-palace.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/private-real/fishbourne-roman-palace.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001",
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009"
+          ],
+          "title": "RE ADI NG PAS S AGE 1"
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b010",
+              "b011",
+              "b012",
+              "b013",
+              "b014",
+              "b015",
+              "b016",
+              "b017",
+              "b018",
+              "b019"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "TRUE",
+                "FALSE",
+                "NOT GIVEN"
+              ],
+              "type": "radio"
+            },
+            "kind": "true_false_not_given",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b010",
+              "reason": "same-section-continuation",
+              "toBlockId": "b011"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            }
+          ],
+          "groupId": "group-1",
+          "heading": "Questions 1-6",
+          "instructionText": "Questions 1–6",
+          "kindHint": "true_false_not_given",
+          "layoutHint": "list",
+          "questionRange": [
+            1,
+            6
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b010",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 1–6"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In boxes 1–6 on your answer sheet, write"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "1 Fishbourne Palace was the first structure to be built on its site."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "2 Fishbourne Palace was renovated more than once."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "3 Fishbourne Palace was large in comparison with Roman palaces in Italy."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "4 Research is continuing in the area close to Fishbourne Palace."
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "5 Researchers agree on the identity of the person for whom Fishbourne Palace was constructed."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "6 Fishbourne Palace was burnt down by local people."
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b020",
+              "b021",
+              "b022",
+              "b023",
+              "b024",
+              "b025",
+              "b026",
+              "b027",
+              "b028",
+              "b029",
+              "b030",
+              "b031",
+              "b032",
+              "b033",
+              "b034",
+              "b035",
+              "b036",
+              "b037"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "sentence_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 7-13",
+          "instructionText": "Questions 7–13",
+          "kindHint": "sentence_completion",
+          "layoutHint": "inline_completion",
+          "questionRange": [
+            7,
+            13
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 7–13"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the notes below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 7–13 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Fishbourne Palace"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Construction"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• The first buildings on the site contained food for the 7 __________"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• The palace building surrounded 8 __________"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• In the 2nd and 3rd centuries colour was added to the 9 __________of the palace."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Discovery"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• The first part of the palace to be found was part of a 10 __________"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Possible inhabitants"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Cogidubnus - he is named in several writings."
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Sallustius Lucullus - he may have lived there until approximately 11 __________AD."
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Verica - a British king."
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Catuarus - his 12 __________was found there."
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Present Day"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• A 13 __________has been built on the site to help protect it."
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": [
+        {
+          "blockId": "b002",
+          "heading": "Questions 1-13",
+          "questionRange": [
+            1,
+            13
+          ],
+          "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below. Fishbourne Roman Palace"
+        }
+      ]
+    }
+  }
+}

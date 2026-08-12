@@ -3,42 +3,29 @@
   "fixtureId": "docx-table-merged-cells",
   "source": {
     "path": "fixtures/golden/synthetic/docx/docx-table-merged-cells.docx",
-    "sha256": "7c8c28e736464025ad036cc488d7155cedad9895dc5d22f7c5aab028928ab1aa",
-    "sizeBytes": 2147
+    "sha256": "b16ac45a0d925fbbf01b24c386339346f70ada3adb100d722e5234b9df82f2f9",
+    "sizeBytes": 1977
   },
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 1,
-    "blockCount": 3,
-    "groupCount": 1,
-    "slotCount": 4,
+    "blockCount": 1,
+    "groupCount": 0,
+    "slotCount": 0,
     "assetCount": 0,
-    "answerCount": 4,
+    "answerCount": 0,
     "warningCount": 0,
-    "groupKinds": [
-      "short_answer"
-    ],
-    "questionIds": [
-      "q1",
-      "q2",
-      "q3",
-      "q4"
-    ],
-    "roles": [
-      "question"
-    ]
+    "groupKinds": [],
+    "questionIds": [],
+    "roles": []
   },
   "payload": {
     "authoringIr": {
-      "answerKey": {
-        "q1": "",
-        "q2": "",
-        "q3": "",
-        "q4": ""
-      },
+      "answerKey": {},
       "audit": {
         "humanVerified": false,
         "issues": [
+          "No question range heading detected; manual split required.",
           "No answer key detected; answers must be entered manually."
         ],
         "llmUsed": false,
@@ -53,8 +40,8 @@
             "fileType": "docx",
             "originalName": "docx-table-merged-cells.docx",
             "role": "MainQuestion",
-            "sha256": "7c8c28e736464025ad036cc488d7155cedad9895dc5d22f7c5aab028928ab1aa",
-            "sizeBytes": 2147,
+            "sha256": "b16ac45a0d925fbbf01b24c386339346f70ada3adb100d722e5234b9df82f2f9",
+            "sizeBytes": 1977,
             "storedName": "docx-table-merged-cells.docx"
           }
         ],
@@ -63,153 +50,22 @@
         ],
         "title": "docx table merged cells"
       },
-      "groups": [
-        {
-          "allowOptionReuse": false,
-          "classificationEvidence": [
-            "b003"
-          ],
-          "confidence": 0.82,
-          "groupId": "group-1",
-          "instruction": [
-            "Questions 1-4"
-          ],
-          "isUmbrellaRange": false,
-          "kind": "short_answer",
-          "layout": {
-            "layoutHint": "list",
-            "template": "short_answer_list"
-          },
-          "questionRange": [
-            1,
-            4
-          ],
-          "questions": [
-            {
-              "answer": "",
-              "confidence": 0.82,
-              "displayNumber": "1",
-              "id": "q1",
-              "interaction": {
-                "allowOptionReuse": false,
-                "options": [],
-                "type": "text"
-              },
-              "prompt": "",
-              "requiresManualQuestionImport": false,
-              "sourceBlockIds": [
-                "b003"
-              ],
-              "verified": false
-            },
-            {
-              "answer": "",
-              "confidence": 0.82,
-              "displayNumber": "2",
-              "id": "q2",
-              "interaction": {
-                "allowOptionReuse": false,
-                "options": [],
-                "type": "text"
-              },
-              "prompt": "",
-              "requiresManualQuestionImport": false,
-              "sourceBlockIds": [
-                "b003"
-              ],
-              "verified": false
-            },
-            {
-              "answer": "",
-              "confidence": 0.82,
-              "displayNumber": "3",
-              "id": "q3",
-              "interaction": {
-                "allowOptionReuse": false,
-                "options": [],
-                "type": "text"
-              },
-              "prompt": "",
-              "requiresManualQuestionImport": false,
-              "sourceBlockIds": [
-                "b003"
-              ],
-              "verified": false
-            },
-            {
-              "answer": "",
-              "confidence": 0.82,
-              "displayNumber": "4",
-              "id": "q4",
-              "interaction": {
-                "allowOptionReuse": false,
-                "options": [],
-                "type": "text"
-              },
-              "prompt": "",
-              "requiresManualQuestionImport": false,
-              "sourceBlockIds": [
-                "b003"
-              ],
-              "verified": false
-            }
-          ],
-          "requiresManualQuestionImport": false,
-          "reviewWarnings": [],
-          "sectionEvidence": [
-            {
-              "bbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "blockId": "b003",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "question",
-              "textPreview": "Questions 1-4 complete the merged-cell table."
-            }
-          ],
-          "sourceBlockIds": [
-            "b003"
-          ],
-          "verified": false
-        }
-      ],
+      "groups": [],
       "passage": {
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic table-merged-cells DOCX fixture.</p>\n<table><tr><td>Merged heading cell</td><td></td></tr><tr><td>1</td><td>__________</td></tr><tr><td>2</td><td>__________</td></tr></table>"
+            "html": "<table><tr><td>filled</td><td></td></tr><tr><td>second</td><td>cell</td></tr></table>"
           }
         ],
         "questionUmbrellaRanges": [],
         "sourceBlockIds": [
-          "b001",
-          "b002"
+          "b001"
         ],
-        "title": "Synthetic table-merged-cells DOCX fixture."
+        "title": "filled second cell"
       },
-      "questionDisplayMap": {
-        "q1": "1",
-        "q2": "2",
-        "q3": "3",
-        "q4": "4"
-      },
-      "questionOrder": [
-        "q1",
-        "q2",
-        "q3",
-        "q4"
-      ],
+      "questionDisplayMap": {},
+      "questionOrder": [],
       "schemaVersion": "ReadingAuthoringIRV1"
     },
     "documentIr": {
@@ -225,36 +81,12 @@
                 108
               ],
               "blockId": "b001",
-              "blockType": "paragraph",
-              "confidence": 0.99,
-              "html": "<p>Synthetic table-merged-cells DOCX fixture.</p>",
-              "layoutHints": {
-                "basedOnStyleId": null,
-                "headingLevel": null,
-                "numbering": null,
-                "resolvedStyleId": "Normal",
-                "section": null,
-                "source": "docx-ooxml-paragraph",
-                "styleId": "Normal",
-                "styleName": "Normal"
-              },
-              "pageIndex": 1,
-              "text": "Synthetic table-merged-cells DOCX fixture."
-            },
-            {
-              "bbox": [
-                72,
-                114,
-                520,
-                150
-              ],
-              "blockId": "b002",
               "blockType": "table",
               "confidence": 0.99,
-              "html": "<table><tr><td>Merged heading cell</td><td></td></tr><tr><td>1</td><td>__________</td></tr><tr><td>2</td><td>__________</td></tr></table>",
+              "html": "<table><tr><td>filled</td><td></td></tr><tr><td>second</td><td>cell</td></tr></table>",
               "layoutHints": {
                 "cols": 2,
-                "rows": 3,
+                "rows": 2,
                 "source": "docx-ooxml-table"
               },
               "pageIndex": 1,
@@ -262,69 +94,37 @@
                 "cells": [
                   {
                     "col": 0,
-                    "colSpan": 2,
+                    "colSpan": null,
                     "row": 0,
-                    "text": "Merged heading cell",
+                    "text": "filled",
+                    "verticalMerge": null
+                  },
+                  {
+                    "col": 1,
+                    "colSpan": null,
+                    "row": 0,
+                    "text": "",
                     "verticalMerge": null
                   },
                   {
                     "col": 0,
                     "colSpan": null,
                     "row": 1,
-                    "text": "1",
+                    "text": "second",
                     "verticalMerge": null
                   },
                   {
                     "col": 1,
                     "colSpan": null,
                     "row": 1,
-                    "text": "__________",
-                    "verticalMerge": null
-                  },
-                  {
-                    "col": 0,
-                    "colSpan": null,
-                    "row": 2,
-                    "text": "2",
-                    "verticalMerge": null
-                  },
-                  {
-                    "col": 1,
-                    "colSpan": null,
-                    "row": 2,
-                    "text": "__________",
+                    "text": "cell",
                     "verticalMerge": null
                   }
                 ],
                 "cols": 2,
-                "rows": 3
+                "rows": 2
               },
-              "text": "Merged heading cell\n1\t__________\n2\t__________"
-            },
-            {
-              "bbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "blockId": "b003",
-              "blockType": "header",
-              "confidence": 0.99,
-              "html": "<h3>Questions 1-4 complete the merged-cell table.</h3>",
-              "layoutHints": {
-                "basedOnStyleId": null,
-                "headingLevel": null,
-                "numbering": null,
-                "resolvedStyleId": "Normal",
-                "section": null,
-                "source": "docx-ooxml-paragraph",
-                "styleId": "Normal",
-                "styleName": "Normal"
-              },
-              "pageIndex": 1,
-              "roleHint": "question",
-              "text": "Questions 1-4 complete the merged-cell table."
+              "text": "filled\t\nsecond\tcell"
             }
           ],
           "height": 842,
@@ -343,16 +143,11 @@
       "schemaVersion": "DocumentIRV1"
     },
     "readingSource": {
-      "answerKey": {
-        "q1": "",
-        "q2": "",
-        "q3": "",
-        "q4": ""
-      },
+      "answerKey": {},
       "audit": {
         "matchConfidence": 0,
         "matchStatus": "needs_review",
-        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:7c8c28e736464025ad036cc488d7155cedad9895dc5d22f7c5aab028928ab1aa;signature:radio,text,table",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:b16ac45a0d925fbbf01b24c386339346f70ada3adb100d722e5234b9df82f2f9;signature:radio,text,table",
         "verifiedAt": null
       },
       "meta": {
@@ -369,42 +164,18 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic table-merged-cells DOCX fixture.</p>\n<table><tr><td>Merged heading cell</td><td></td></tr><tr><td>1</td><td>__________</td></tr><tr><td>2</td><td>__________</td></tr></table>",
+            "html": "<table><tr><td>filled</td><td></td></tr><tr><td>second</td><td>cell</td></tr></table>",
             "kind": "html"
           }
         ]
       },
-      "questionDisplayMap": {
-        "q1": "1",
-        "q2": "2",
-        "q3": "3",
-        "q4": "4"
-      },
-      "questionGroups": [
-        {
-          "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-4</p></div><ol><li><label><strong>1</strong>  <input type=\"text\" id=\"q1_input\" name=\"q1\"></label></li><li><label><strong>2</strong>  <input type=\"text\" id=\"q2_input\" name=\"q2\"></label></li><li><label><strong>3</strong>  <input type=\"text\" id=\"q3_input\" name=\"q3\"></label></li><li><label><strong>4</strong>  <input type=\"text\" id=\"q4_input\" name=\"q4\"></label></li></ol></section>",
-          "groupId": "group-1",
-          "kind": "short_answer",
-          "leadHtml": "<p>Questions 1-4</p>",
-          "questionIds": [
-            "q1",
-            "q2",
-            "q3",
-            "q4"
-          ]
-        }
-      ],
-      "questionOrder": [
-        "q1",
-        "q2",
-        "q3",
-        "q4"
-      ],
+      "questionDisplayMap": {},
+      "questionGroups": [],
+      "questionOrder": [],
       "schemaVersion": "ReadingExamSourceV1",
       "sourceRefs": {
         "ieltsHtml": null,
-        "primaryHtml": "author-imports/import-20260809143539-4bec8c7c/intermediate.html",
+        "primaryHtml": "author-imports/<import>/intermediate.html",
         "primaryProvider": "author_web",
         "shuiHtml": null,
         "shuiPdf": "uploads/docx-table-merged-cells.docx"
@@ -415,70 +186,19 @@
     "splitCandidates": {
       "answerKeyCandidates": [],
       "issues": [
+        "No question range heading detected; manual split required.",
         "No answer key detected; answers must be entered manually."
       ],
       "passageCandidates": [
         {
           "categoryHint": "P1",
           "range": [
-            "b001",
-            "b002"
+            "b001"
           ],
-          "title": "Synthetic table-merged-cells DOCX fixture."
+          "title": "filled second cell"
         }
       ],
-      "questionGroupCandidates": [
-        {
-          "blockIds": [
-            "b003"
-          ],
-          "classification": {
-            "confidence": 0.82,
-            "evidence": [
-              "b003"
-            ],
-            "interaction": {
-              "allowOptionReuse": false,
-              "options": [],
-              "type": "text"
-            },
-            "kind": "short_answer",
-            "warnings": []
-          },
-          "confidence": 0.82,
-          "groupId": "group-1",
-          "heading": "Questions 1-4",
-          "instructionText": "Questions 1-4 complete the merged-cell table.",
-          "kindHint": "short_answer",
-          "layoutHint": "list",
-          "questionRange": [
-            1,
-            4
-          ],
-          "sectionEvidence": [
-            {
-              "bbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "blockId": "b003",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "question",
-              "textPreview": "Questions 1-4 complete the merged-cell table."
-            }
-          ]
-        }
-      ],
+      "questionGroupCandidates": [],
       "umbrellaQuestionRanges": []
     }
   }

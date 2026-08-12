@@ -3,13 +3,13 @@
   "fixtureId": "docx-external-image",
   "source": {
     "path": "fixtures/golden/synthetic/docx/docx-external-image.docx",
-    "sha256": "c4df41c183508292ec6153181ecf3b9f4137cccdd6a8d18be5b2ec416057ddca",
-    "sizeBytes": 2293
+    "sha256": "159086c86df69395b2920a809282a743717c8dbca7a18ac7816a6e2255343d93",
+    "sizeBytes": 2492
   },
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 1,
-    "blockCount": 2,
+    "blockCount": 1,
     "groupCount": 0,
     "slotCount": 0,
     "assetCount": 0,
@@ -40,8 +40,8 @@
             "fileType": "docx",
             "originalName": "docx-external-image.docx",
             "role": "MainQuestion",
-            "sha256": "c4df41c183508292ec6153181ecf3b9f4137cccdd6a8d18be5b2ec416057ddca",
-            "sizeBytes": 2293,
+            "sha256": "159086c86df69395b2920a809282a743717c8dbca7a18ac7816a6e2255343d93",
+            "sizeBytes": 2492,
             "storedName": "docx-external-image.docx"
           }
         ],
@@ -55,15 +55,14 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic external-image DOCX fixture.</p>\n<p>External image must be reported as missing; do not publish silently.</p>"
+            "html": "<p>fixture</p>"
           }
         ],
         "questionUmbrellaRanges": [],
         "sourceBlockIds": [
-          "b001",
-          "b002"
+          "b001"
         ],
-        "title": "Synthetic external-image DOCX fixture."
+        "title": "fixture"
       },
       "questionDisplayMap": {},
       "questionOrder": [],
@@ -84,43 +83,9 @@
               "blockId": "b001",
               "blockType": "paragraph",
               "confidence": 0.99,
-              "html": "<p>Synthetic external-image DOCX fixture.</p>",
-              "layoutHints": {
-                "basedOnStyleId": null,
-                "headingLevel": null,
-                "numbering": null,
-                "resolvedStyleId": "Normal",
-                "section": null,
-                "source": "docx-ooxml-paragraph",
-                "styleId": "Normal",
-                "styleName": "Normal"
-              },
+              "html": "<p>fixture</p>",
               "pageIndex": 1,
-              "text": "Synthetic external-image DOCX fixture."
-            },
-            {
-              "bbox": [
-                72,
-                114,
-                520,
-                150
-              ],
-              "blockId": "b002",
-              "blockType": "paragraph",
-              "confidence": 0.99,
-              "html": "<p>External image must be reported as missing; do not publish silently.</p>",
-              "layoutHints": {
-                "basedOnStyleId": null,
-                "headingLevel": null,
-                "numbering": null,
-                "resolvedStyleId": "Normal",
-                "section": null,
-                "source": "docx-ooxml-paragraph",
-                "styleId": "Normal",
-                "styleName": "Normal"
-              },
-              "pageIndex": 1,
-              "text": "External image must be reported as missing; do not publish silently."
+              "text": "fixture"
             }
           ],
           "height": 842,
@@ -143,7 +108,7 @@
       "audit": {
         "matchConfidence": 0,
         "matchStatus": "needs_review",
-        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:c4df41c183508292ec6153181ecf3b9f4137cccdd6a8d18be5b2ec416057ddca;signature:radio,text,table",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:159086c86df69395b2920a809282a743717c8dbca7a18ac7816a6e2255343d93;signature:radio,text,table",
         "verifiedAt": null
       },
       "meta": {
@@ -160,7 +125,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic external-image DOCX fixture.</p>\n<p>External image must be reported as missing; do not publish silently.</p>",
+            "html": "<p>fixture</p>",
             "kind": "html"
           }
         ]
@@ -171,7 +136,7 @@
       "schemaVersion": "ReadingExamSourceV1",
       "sourceRefs": {
         "ieltsHtml": null,
-        "primaryHtml": "author-imports/import-20260809143539-3fc7a3d2/intermediate.html",
+        "primaryHtml": "author-imports/<import>/intermediate.html",
         "primaryProvider": "author_web",
         "shuiHtml": null,
         "shuiPdf": "uploads/docx-external-image.docx"
@@ -189,10 +154,9 @@
         {
           "categoryHint": "P1",
           "range": [
-            "b001",
-            "b002"
+            "b001"
           ],
-          "title": "Synthetic external-image DOCX fixture."
+          "title": "fixture"
         }
       ],
       "questionGroupCandidates": [],

@@ -2,7 +2,7 @@
 
 > 来源：[IELTS_Document_Recognition_Overhaul_Plan_CN.md](IELTS_Document_Recognition_Overhaul_Plan_CN.md)
 >
-> 状态：执行中
+> 状态：修复完成，等待全局 Rust build 与 strict 复验（2026-08-12 最终审计）
 >
 > 本计划只冻结事实和测试契约，不修改生产解析链，也不启用 PDF 逐题 LLM repair。
 
@@ -43,8 +43,13 @@
 npm run register:phase0:private -- --source-root "C:\Users\lenovo\Desktop\working space\0.3.1 working\ReadingPractice\PDF" --seed 20260809 --count 8
 npm run capture:phase0-baseline
 npm run annotate:phase0:private
+cargo build --manifest-path src-tauri/Cargo.toml --bin ielts-author-studio
 npm run verify:phase0:strict
 ```
+
+严格门会先确认用于 V1 baseline 对比的 debug CLI 不早于任何 Rust/Cargo 输入；CLI
+缺失或陈旧时直接失败，避免用旧二进制对当前源码产生假绿。CI contract 模式只验证
+tracked corpus 契约，不依赖未入库私有 PDF 或本地 debug CLI。
 
 合成 fixture 可重复生成：
 
@@ -69,3 +74,8 @@ npm run register:phase0-synthetic
 - 2026-08-09：捕获 8 份随机私有 PDF 的 V1 baseline；工作区 fixture 总数达到 31。
 - 2026-08-09：根据实际 V1 输出初始化随机样本的页面、题组、答案位和资源标注，并保留人工复核已知问题。
 - 2026-08-09：`npm run verify:phase0:strict` 通过，报告 31 个 fixture、0 个缺失私有样本、0 个待生成合成样本、0 个错误。
+- 2026-08-12：最终审计修复 strict gate 的 CLI 新鲜度缺口；严格门现在 fail-closed
+  拒绝缺失或早于 Rust/Cargo 输入的 V1 比较二进制。
+- 2026-08-12：Phase 0/1 feature flag 门改为读取 TypeScript AST，断言全部必需默认
+  项存在且为 `false` 字面量；缺失、`true`、间接表达式、重复属性和未知 spread 均
+  fail-closed。`pdfPerQuestionLlmRepair` 仍不可被 caller 覆盖为开启。

@@ -1,0 +1,383 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "conformity",
+  "source": {
+    "path": "fixtures/golden/private-real/conformity.pdf",
+    "originalName": "138. P3 - Conformity 从众心理.pdf",
+    "sha256": "60dbf15365da522b15ba35729af145bc5b99ea9c598e615691ee5fc405e3d3fd",
+    "sizeBytes": 670950,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "answer"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          27,
+          30
+        ],
+        "kind": "yes_no_not_given",
+        "slotIds": [
+          "q27",
+          "q28",
+          "q29",
+          "q30"
+        ],
+        "responseGroupIds": [
+          "group-1-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          31,
+          35
+        ],
+        "kind": "summary_completion",
+        "slotIds": [
+          "q31",
+          "q32",
+          "q33",
+          "q34",
+          "q35"
+        ],
+        "responseGroupIds": [
+          "group-2-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          36,
+          40
+        ],
+        "kind": "note_completion",
+        "slotIds": [
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40"
+        ],
+        "responseGroupIds": [
+          "group-3-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q27",
+        "displayNumber": "27",
+        "responseType": "radio"
+      },
+      {
+        "id": "q28",
+        "displayNumber": "28",
+        "responseType": "radio"
+      },
+      {
+        "id": "q29",
+        "displayNumber": "29",
+        "responseType": "radio"
+      },
+      {
+        "id": "q30",
+        "displayNumber": "30",
+        "responseType": "radio"
+      },
+      {
+        "id": "q31",
+        "displayNumber": "31",
+        "responseType": "text"
+      },
+      {
+        "id": "q32",
+        "displayNumber": "32",
+        "responseType": "text"
+      },
+      {
+        "id": "q33",
+        "displayNumber": "33",
+        "responseType": "text"
+      },
+      {
+        "id": "q34",
+        "displayNumber": "34",
+        "responseType": "text"
+      },
+      {
+        "id": "q35",
+        "displayNumber": "35",
+        "responseType": "text"
+      },
+      {
+        "id": "q36",
+        "displayNumber": "36",
+        "responseType": "text"
+      },
+      {
+        "id": "q37",
+        "displayNumber": "37",
+        "responseType": "text"
+      },
+      {
+        "id": "q38",
+        "displayNumber": "38",
+        "responseType": "text"
+      },
+      {
+        "id": "q39",
+        "displayNumber": "39",
+        "responseType": "text"
+      },
+      {
+        "id": "q40",
+        "displayNumber": "40",
+        "responseType": "text"
+      }
+    ],
+    "assets": [
+      {
+        "id": "answer-page-raster",
+        "type": "answer_page_raster",
+        "required": true
+      }
+    ],
+    "optionBanks": [
+      {
+        "id": "group-1-option-bank",
+        "taskGroupId": "group-1",
+        "scope": "task_group",
+        "labels": [
+          "YES",
+          "NO",
+          "NOT GIVEN"
+        ],
+        "allowReuse": true,
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      }
+    ],
+    "responseGroups": [
+      {
+        "id": "group-1-responses",
+        "taskGroupId": "group-1",
+        "slotIds": [
+          "q27",
+          "q28",
+          "q29",
+          "q30"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-1-option-bank"
+        },
+        "reusePolicy": "allowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-responses",
+        "taskGroupId": "group-2",
+        "slotIds": [
+          "q31",
+          "q32",
+          "q33",
+          "q34",
+          "q35"
+        ],
+        "promptMode": "embedded",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "none"
+        },
+        "reusePolicy": "not_applicable",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3-responses",
+        "taskGroupId": "group-3",
+        "slotIds": [
+          "q36",
+          "q37",
+          "q38",
+          "q39",
+          "q40"
+        ],
+        "promptMode": "embedded",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "none"
+        },
+        "reusePolicy": "not_applicable",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      }
+    ],
+    "sourceEvidence": [
+      {
+        "id": "group-1-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          3
+        ],
+        "references": [
+          "fixtures/golden/private-real/conformity.pdf#page=3"
+        ]
+      },
+      {
+        "id": "group-2-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          4
+        ],
+        "references": [
+          "fixtures/golden/private-real/conformity.pdf#page=4"
+        ]
+      },
+      {
+        "id": "group-3-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          4
+        ],
+        "references": [
+          "fixtures/golden/private-real/conformity.pdf#page=4"
+        ]
+      }
+    ],
+    "runtimeExpectations": {
+      "authoritativeVersion": "v1",
+      "artifactMode": "shadow_only",
+      "compileExpectation": "structure_must_compile",
+      "loaderExpectation": "test_only",
+      "rendererExpectation": "test_only",
+      "scoringExpectation": "per_slot",
+      "productionExposure": "disabled",
+      "requiredFeatureFlags": {
+        "documentIrV2Shadow": false,
+        "authoringV2Shadow": false,
+        "qualityGateV2": false,
+        "runtimeSourceV2": false,
+        "nasPackageV2": false
+      }
+    }
+  },
+  "knownIssues": [
+    "Adjacent groups switch between YNNG, summary completion, and notes completion."
+  ],
+  "review": {
+    "status": "approved",
+    "reviewedBy": "phase0-source-audit",
+    "reviewedAt": "2026-08-10",
+    "method": "source-text-and-overhaul-plan-evidence",
+    "evidence": [
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#2.1",
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#23.2",
+      "fixtures/golden/private/legacy-reference.json"
+    ]
+  },
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/conformity.json",
+    "observed": {
+      "pageCount": 5,
+      "blockCount": 48,
+      "groupCount": 3,
+      "slotCount": 14,
+      "assetCount": 0,
+      "answerCount": 14,
+      "warningCount": 1,
+      "groupKinds": [
+        "yes_no_not_given",
+        "summary_completion",
+        "sentence_completion"
+      ],
+      "questionIds": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

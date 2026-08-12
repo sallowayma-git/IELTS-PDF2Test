@@ -1,0 +1,4139 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "western-celebrity",
+  "source": {
+    "path": "fixtures/golden/private-real/western-celebrity.pdf",
+    "sha256": "07b0906358c30c05f6c5efff955a120f8d57e679a5529bbec5a9d25f12435f74",
+    "sizeBytes": 546921
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 5,
+    "blockCount": 64,
+    "groupCount": 3,
+    "slotCount": 13,
+    "assetCount": 0,
+    "answerCount": 13,
+    "warningCount": 1,
+    "groupKinds": [
+      "heading_matching",
+      "matching",
+      "summary_completion"
+    ],
+    "questionIds": [
+      "q14",
+      "q15",
+      "q16",
+      "q17",
+      "q18",
+      "q19",
+      "q20",
+      "q21",
+      "q22",
+      "q23",
+      "q24",
+      "q25",
+      "q26"
+    ],
+    "roles": [
+      "passage",
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q14": "",
+        "q15": "",
+        "q16": "",
+        "q17": "",
+        "q18": "",
+        "q19": "",
+        "q20": "",
+        "q21": "",
+        "q22": "",
+        "q23": "",
+        "q24": "",
+        "q25": "",
+        "q26": ""
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "western-celebrity.pdf",
+            "role": "MainQuestion",
+            "sha256": "07b0906358c30c05f6c5efff955a120f8d57e679a5529bbec5a9d25f12435f74",
+            "sizeBytes": 546921,
+            "storedName": "western-celebrity.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "western celebrity"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009",
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023"
+          ],
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b003",
+              "reason": "same-section-continuation",
+              "toBlockId": "b004"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b004",
+              "reason": "same-section-continuation",
+              "toBlockId": "b005"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b005",
+              "reason": "same-section-continuation",
+              "toBlockId": "b006"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b006",
+              "reason": "same-section-continuation",
+              "toBlockId": "b007"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b007",
+              "reason": "same-section-continuation",
+              "toBlockId": "b008"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b008",
+              "reason": "same-section-continuation",
+              "toBlockId": "b009"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b009",
+              "reason": "same-section-continuation",
+              "toBlockId": "b010"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b010",
+              "reason": "same-section-continuation",
+              "toBlockId": "b011"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            }
+          ],
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 14-20"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "heading_matching",
+          "layout": {
+            "layoutHint": "list",
+            "template": "heading_matching"
+          },
+          "questionRange": [
+            14,
+            20
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "14",
+              "id": "q14",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Paragraph A",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b003",
+                "b004",
+                "b005",
+                "b006",
+                "b007",
+                "b008",
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "15",
+              "id": "q15",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Paragraph B",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b003",
+                "b004",
+                "b005",
+                "b006",
+                "b007",
+                "b008",
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "16",
+              "id": "q16",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Paragraph C",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b003",
+                "b004",
+                "b005",
+                "b006",
+                "b007",
+                "b008",
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "17",
+              "id": "q17",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Paragraph D",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b003",
+                "b004",
+                "b005",
+                "b006",
+                "b007",
+                "b008",
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "18",
+              "id": "q18",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Paragraph E",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b003",
+                "b004",
+                "b005",
+                "b006",
+                "b007",
+                "b008",
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "19",
+              "id": "q19",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Paragraph F",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b003",
+                "b004",
+                "b005",
+                "b006",
+                "b007",
+                "b008",
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "20",
+              "id": "q20",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F",
+                  "G"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Paragraph G",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b003",
+                "b004",
+                "b005",
+                "b006",
+                "b007",
+                "b008",
+                "b009",
+                "b010",
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [
+            "Option reuse was inferred from question type; source wording did not state it explicitly."
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 14–20"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Reading Passage 2 has seven paragraphs, A–G."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose the correct heading for each paragraph from the list of headings below."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct number, i–x, in boxes 14–20 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b007",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "14 Paragraph A"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b008",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "15 Paragraph B"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b009",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "16 Paragraph C"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b010",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "17 Paragraph D"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "18 Paragraph E"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "19 Paragraph F"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "20 Paragraph G List of Headings"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "i Why it is necessary to explain the meaning of the word celebrity"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "ii The influence of non-human celebrities on societies"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "iii The impact of broadcasting on concepts of celebrity"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "iv Creativity having greater value"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "v Admiration for physical achievement"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "vi The advantages of celebrity status in the ancient world"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "vii A result of hardship"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "viii Literacy and widespread celebrity"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "ix Attitudes of celebrities towards the media"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "x The original definition of celebrity"
+            }
+          ],
+          "sourceBlockIds": [
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009",
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b046",
+            "b047",
+            "b048",
+            "b049",
+            "b050",
+            "b051",
+            "b052"
+          ],
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b047",
+              "reason": "same-section-continuation",
+              "toBlockId": "b048"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b048",
+              "reason": "same-section-continuation",
+              "toBlockId": "b049"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b049",
+              "reason": "same-section-continuation",
+              "toBlockId": "b050"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b050",
+              "reason": "same-section-continuation",
+              "toBlockId": "b051"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b051",
+              "reason": "same-section-continuation",
+              "toBlockId": "b052"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 21-23"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "matching",
+          "layout": {
+            "layoutHint": "list",
+            "template": "matching_list"
+          },
+          "questionRange": [
+            21,
+            23
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "21",
+              "id": "q21",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "A wide variety of people achieve a brief period of fame.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b046",
+                "b047",
+                "b048",
+                "b049",
+                "b050",
+                "b051",
+                "b052"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "22",
+              "id": "q22",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Stories are invented about celebrities’ lives.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b046",
+                "b047",
+                "b048",
+                "b049",
+                "b050",
+                "b051",
+                "b052"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.68,
+              "displayNumber": "23",
+              "id": "q23",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "The fame of rulers is starting to diminish.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b046",
+                "b047",
+                "b048",
+                "b049",
+                "b050",
+                "b051",
+                "b052"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [
+            "Option reuse was inferred from question type; source wording did not state it explicitly."
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 21–23"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Look at the following statements (Questions 21–23) and the list of historical periods in Europe below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b048",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Match each statement with the correct historical period, A, B, C, or D."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b049",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A, B, C, or D, in boxes 21–23 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b050",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "21 A wide variety of people achieve a brief period of fame."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b051",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "22 Stories are invented about celebrities’ lives."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b052",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "23 The fame of rulers is starting to diminish."
+            }
+          ],
+          "sourceBlockIds": [
+            "b046",
+            "b047",
+            "b048",
+            "b049",
+            "b050",
+            "b051",
+            "b052"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b053",
+            "b054",
+            "b055",
+            "b056",
+            "b057",
+            "b058",
+            "b059",
+            "b060",
+            "b061",
+            "b062",
+            "b063"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b053",
+              "reason": "same-section-continuation",
+              "toBlockId": "b054"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b054",
+              "reason": "same-section-continuation",
+              "toBlockId": "b055"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b055",
+              "reason": "same-section-continuation",
+              "toBlockId": "b056"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b056",
+              "reason": "same-section-continuation",
+              "toBlockId": "b057"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b057",
+              "reason": "same-section-continuation",
+              "toBlockId": "b058"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b058",
+              "reason": "same-section-continuation",
+              "toBlockId": "b059"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b059",
+              "reason": "same-section-continuation",
+              "toBlockId": "b060"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b060",
+              "reason": "same-section-continuation",
+              "toBlockId": "b061"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b061",
+              "reason": "same-section-continuation",
+              "toBlockId": "b062"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b062",
+              "reason": "same-section-continuation",
+              "toBlockId": "b063"
+            }
+          ],
+          "groupId": "group-3",
+          "instruction": [
+            "Questions 24-26"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "summary_completion",
+          "layout": {
+            "layoutHint": "inline_completion",
+            "notes": "Questions 24–26 Complete the summary below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 24–26 on your answer sheet. Celebrities achieve a global status The development of the publishing industry in the 1700s signalled the beginning of international fame. A growing number of people could read, which meant they had the chance to become informed about their favourite figures by reading 24………… . This exposure to celebrities expanded further when radio and television became popular, and it was mass media attention that resulted in higher status and fame for some celebrities. The recent rise of reality television has also meant that a person’s 25 ………… rather than their talent can bring fame. With this type of television programme, fame may be entirely dependent on the response of the 26………… . List of historical periods in Europe A Ancient times B Dark Ages C Renaissance D Modern era",
+            "template": "summary_text_completion"
+          },
+          "questionRange": [
+            24,
+            26
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "24",
+              "id": "q24",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": ". This exposure to celebrities expanded further when radio and television became popular, and it was mass media attention that resulted in higher status and fame for some celebrities. The recent rise of reality television has also meant that a person’s",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b053",
+                "b054",
+                "b055",
+                "b056",
+                "b057",
+                "b058",
+                "b059",
+                "b060",
+                "b061",
+                "b062",
+                "b063"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "25",
+              "id": "q25",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "rather than their talent can bring fame. With this type of television programme, fame may be entirely dependent on the response of the",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b053",
+                "b054",
+                "b055",
+                "b056",
+                "b057",
+                "b058",
+                "b059",
+                "b060",
+                "b061",
+                "b062",
+                "b063"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "26",
+              "id": "q26",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": ". List of historical periods in Europe A Ancient times B Dark Ages C Renaissance D Modern era",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b053",
+                "b054",
+                "b055",
+                "b056",
+                "b057",
+                "b058",
+                "b059",
+                "b060",
+                "b061",
+                "b062",
+                "b063"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b053",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 24–26"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b054",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary below."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b055",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b056",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 24–26 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b057",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Celebrities achieve a global status"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b058",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "The development of the publishing industry in the 1700s signalled the beginning of international fame. A growing number "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b059",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "List of historical periods in Europe"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b060",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Ancient times"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b061",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "B Dark Ages"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b062",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "C Renaissance"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b063",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "D Modern era"
+            }
+          ],
+          "sourceBlockIds": [
+            "b053",
+            "b054",
+            "b055",
+            "b056",
+            "b057",
+            "b058",
+            "b059",
+            "b060",
+            "b061",
+            "b062",
+            "b063"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   2</p>\n<p>A study of western celebrity</p>\n<p>In our celebrity-obsessed culture, TV shows, internet blogs, and even newspapers are often full of \nthe latest news, gossip and scandals about current celebrities</p>\n<p>A  It seems that our current society cannot get enough information about the daily lives of \ncelebrities. But how did celebrities become such an important force in our culture? While \npeople have always shared a certain obsession with the fantastic and the famous, the notion</p>\n<p>of celebrity, as well as the types of people termed ‘celebrities’, has evolved greatly throughout \nthe ages. The word ‘celebrity’ has its roots in the language of the ancient Roman civilization. \nThe word we now know to mean ‘a condition of being famous’ or ‘a famous person’ is derived</p>\n<p>from the Latin word ‘celeber’, meaning ‘frequented or populous’.</p>\n<p>B  The celebrities of the ancient world were the powerful and awesome deities of Greece and \nRome, and the citizens of these civilizations believed in a vast number of immortals who had a</p>\n<p>direct impact on their lives. It was, therefore, important to know about these figures’ personal \nlives. This need to know led to the creation of myths, which personalized the gods and \ninvolved them in ancient celebrity scandals that thrilled and excited the common people.</p>\n<p>C  During ancient times, amateur and professional athletes also began to make an impact on the \ncelebrity culture. Victors in the ancient Olympic Games were treated as heroes and were often</p>\n<p>elevated to god-like status. In the ancient Roman civilization, gladiators – the equivalent of \ntoday’s professional athletes – were also revered by the common people for their heroics and \nseemingly superhuman strength.</p>\n<p>D  As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a \ntime when athletics and the arts were largely forgotten, monarchs and rulers continued to \nmaintain celebrity status, while religious figures took on newfound fame. The miraculous lives</p>\n<p>and fascinating deaths of spiritual figures lent excitement to the lives of common people when \nthere was often little else to be excited about, as they faced war, disease and food shortages.</p>\n<p>E  During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling</p>\n<p>figures faded. As Europe emerged from its long neglect of the arts, there was greater \nappreciation for portraits, statues and stone carvings. This period of appreciation for the arts \nlent a sense of celebrity to artists who were noted for their works and their personal</p>\n<p>achievements. It was a time when artists began to surpass political and religious individuals \nfor supreme celebrity – a trend that would continue into later centuries.</p>\n<p>F  While the figures of the ancient and early modern civilizations were able to achieve moderate \nand sometimes lasting celebrity within particular cultures, the global reach of their fame was</p>\n<p>limited. It was not until the 1700s, when technological advances made publishing \ncommercially viable, that the extent of a person’s fame could spread further. The increase in \nthe availability of the written word was accompanied by a huge rise in the number of common \npeople who could read, allowing a mass audience to find out about celebrities for the first time.</p>\n<p>Suddenly, the lives of authors, politicians, war heroes, and other celebrities could now be read \nabout in newspapers around the world. These gave ordinary people the opportunity to become \nintimately knowledgeable about the figures they most admired.</p>\n<p>G  In the modern era, particularly as radio and film took off in the 1900s, things really began to \nchange. First, radio began to make its way into the average home in the 1920s and 1930s. \nProfessional athletes also began to be regarded as stars, as their games and exploits could</p>\n<p>be broadcast over the air for an entirely new audience. Then, the rise of television in the \n1950s only cemented the premier level of celebrity that film stars, athletes and television \nactors were beginning to share. This also meant a huge increase in the individual salaries of</p>\n<p>these celebrities. Even a few animals gained fame through children’s TV shows. The \nemergence of reality television shows in the late 1990s allowed all kinds of people with little \nability to enjoy a short burst of fame on the television screen. All you needed, it seemed, was</p>\n<p>an attractive appearance. Today, reality television programmers make it possible to be famous \nnot for doing anything in particular, but simply for being, with the audience deciding whether \nsomeone deserves to become a celebrity or not. As the meaning of celebrity continues to \nevolve and redefine itself in a quickly changing world, there is no telling who will become of</p>\n<p>interest next.</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 14-26",
+            "questionRange": [
+              14,
+              26
+            ],
+            "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading Passage 2 below."
+          }
+        ],
+        "sourceBlockIds": [
+          "b001",
+          "b024",
+          "b025",
+          "b026",
+          "b027",
+          "b028",
+          "b029",
+          "b030",
+          "b031",
+          "b032",
+          "b033",
+          "b034",
+          "b035",
+          "b036",
+          "b037",
+          "b038",
+          "b039",
+          "b040",
+          "b041",
+          "b042",
+          "b043",
+          "b044",
+          "b045"
+        ],
+        "title": "RE ADI NG P AS S AGE 2"
+      },
+      "questionDisplayMap": {
+        "q14": "14",
+        "q15": "15",
+        "q16": "16",
+        "q17": "17",
+        "q18": "18",
+        "q19": "19",
+        "q20": "20",
+        "q21": "21",
+        "q22": "22",
+        "q23": "23",
+        "q24": "24",
+        "q25": "25",
+        "q26": "26"
+      },
+      "questionOrder": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>RE ADI NG  P AS S AGE   2</p>",
+              "pageIndex": 1,
+              "text": "RE ADI NG  P AS S AGE   2  "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>You should spend about 20 minutes on Questions 14–26, which are based on Reading Passage \n2 below.</p>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading Passage \n2 below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 14–20</h3>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "Questions 14–20 "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Reading Passage 2 has seven paragraphs, A–G.</h3>",
+              "pageIndex": 1,
+              "roleHint": "passage",
+              "text": "Reading Passage 2 has seven paragraphs, A–G. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose the correct heading for each paragraph from the list of headings below.</p>",
+              "pageIndex": 1,
+              "text": "Choose the correct heading for each paragraph from the list of headings below. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct number, i–x, in boxes 14–20 on your answer sheet.</p>",
+              "pageIndex": 1,
+              "text": "Write the correct number, i–x, in boxes 14–20 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>14   Paragraph A</p>",
+              "pageIndex": 1,
+              "text": "14   Paragraph A "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>15   Paragraph B</p>",
+              "pageIndex": 1,
+              "text": "15   Paragraph B "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b009",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>16   Paragraph C</p>",
+              "pageIndex": 1,
+              "text": "16   Paragraph C "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b010",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>17   Paragraph D</p>",
+              "pageIndex": 1,
+              "text": "17   Paragraph D "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b011",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>18   Paragraph E</p>",
+              "pageIndex": 1,
+              "text": "18   Paragraph E "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>19   Paragraph F</p>",
+              "pageIndex": 1,
+              "text": "19   Paragraph F "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b013",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>20   Paragraph G \n List of Headings</p>",
+              "pageIndex": 1,
+              "text": "20   Paragraph G \n List of Headings "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b014",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>i       Why it is necessary to explain the meaning of the word celebrity</p>",
+              "pageIndex": 1,
+              "text": "i       Why it is necessary to explain the meaning of the word celebrity "
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b015",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>ii      The influence of non-human celebrities on societies</p>",
+              "pageIndex": 1,
+              "text": "ii      The influence of non-human celebrities on societies "
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b016",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>iii     The impact of broadcasting on concepts of celebrity</p>",
+              "pageIndex": 1,
+              "text": "iii     The impact of broadcasting on concepts of celebrity "
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b017",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>iv     Creativity having greater value</p>",
+              "pageIndex": 1,
+              "text": "iv     Creativity having greater value "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b018",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>v      Admiration for physical achievement</p>",
+              "pageIndex": 1,
+              "text": "v      Admiration for physical achievement "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b019",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>vi     The advantages of celebrity status in the ancient world</p>",
+              "pageIndex": 1,
+              "text": "vi     The advantages of celebrity status in the ancient world "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b020",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>vii    A result of hardship</p>",
+              "pageIndex": 1,
+              "text": "vii    A result of hardship "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b021",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>viii    Literacy and widespread celebrity</p>",
+              "pageIndex": 1,
+              "text": "viii    Literacy and widespread celebrity "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>ix     Attitudes of celebrities towards the media</p>",
+              "pageIndex": 1,
+              "text": "ix     Attitudes of celebrities towards the media "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>x      The original definition of celebrity</p>",
+              "pageIndex": 1,
+              "text": "x      The original definition of celebrity "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b024",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A study of western celebrity</p>",
+              "pageIndex": 2,
+              "text": "A study of western celebrity "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b025",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>In our celebrity-obsessed culture, TV shows, internet blogs, and even newspapers are often full of \nthe latest news, gossip and scandals about current celebrities</p>",
+              "pageIndex": 2,
+              "text": "In our celebrity-obsessed culture, TV shows, internet blogs, and even newspapers are often full of \nthe latest news, gossip and scandals about current celebrities "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A  It seems that our current society cannot get enough information about the daily lives of \ncelebrities. But how did celebrities become such an important force in our culture? While \npeople have always shared a certain obsession with the fantastic and the famous, the notion</p>",
+              "pageIndex": 2,
+              "text": "A  It seems that our current society cannot get enough information about the daily lives of \ncelebrities. But how did celebrities become such an important force in our culture? While \npeople have always shared a certain obsession with the fantastic and the famous, the notion "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b027",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>of celebrity, as well as the types of people termed ‘celebrities’, has evolved greatly throughout \nthe ages. The word ‘celebrity’ has its roots in the language of the ancient Roman civilization. \nThe word we now know to mean ‘a condition of being famous’ or ‘a famous person’ is derived</p>",
+              "pageIndex": 2,
+              "text": "of celebrity, as well as the types of people termed ‘celebrities’, has evolved greatly throughout \nthe ages. The word ‘celebrity’ has its roots in the language of the ancient Roman civilization. \nThe word we now know to mean ‘a condition of being famous’ or ‘a famous person’ is derived "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>from the Latin word ‘celeber’, meaning ‘frequented or populous’.</p>",
+              "pageIndex": 2,
+              "text": "from the Latin word ‘celeber’, meaning ‘frequented or populous’. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b029",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>B  The celebrities of the ancient world were the powerful and awesome deities of Greece and \nRome, and the citizens of these civilizations believed in a vast number of immortals who had a</p>",
+              "pageIndex": 2,
+              "text": "B  The celebrities of the ancient world were the powerful and awesome deities of Greece and \nRome, and the citizens of these civilizations believed in a vast number of immortals who had a "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b030",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>direct impact on their lives. It was, therefore, important to know about these figures’ personal \nlives. This need to know led to the creation of myths, which personalized the gods and \ninvolved them in ancient celebrity scandals that thrilled and excited the common people.</p>",
+              "pageIndex": 2,
+              "text": "direct impact on their lives. It was, therefore, important to know about these figures’ personal \nlives. This need to know led to the creation of myths, which personalized the gods and \ninvolved them in ancient celebrity scandals that thrilled and excited the common people. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>C  During ancient times, amateur and professional athletes also began to make an impact on the \ncelebrity culture. Victors in the ancient Olympic Games were treated as heroes and were often</p>",
+              "pageIndex": 2,
+              "text": "C  During ancient times, amateur and professional athletes also began to make an impact on the \ncelebrity culture. Victors in the ancient Olympic Games were treated as heroes and were often "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>elevated to god-like status. In the ancient Roman civilization, gladiators – the equivalent of \ntoday’s professional athletes – were also revered by the common people for their heroics and \nseemingly superhuman strength.</p>",
+              "pageIndex": 2,
+              "text": "elevated to god-like status. In the ancient Roman civilization, gladiators – the equivalent of \ntoday’s professional athletes – were also revered by the common people for their heroics and \nseemingly superhuman strength. "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>D  As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a \ntime when athletics and the arts were largely forgotten, monarchs and rulers continued to \nmaintain celebrity status, while religious figures took on newfound fame. The miraculous lives</p>",
+              "pageIndex": 2,
+              "text": "D  As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a \ntime when athletics and the arts were largely forgotten, monarchs and rulers continued to \nmaintain celebrity status, while religious figures took on newfound fame. The miraculous lives "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b034",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>and fascinating deaths of spiritual figures lent excitement to the lives of common people when \nthere was often little else to be excited about, as they faced war, disease and food shortages.</p>",
+              "pageIndex": 2,
+              "text": "and fascinating deaths of spiritual figures lent excitement to the lives of common people when \nthere was often little else to be excited about, as they faced war, disease and food shortages. "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>E  During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling</p>",
+              "pageIndex": 2,
+              "text": "E  During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>figures faded. As Europe emerged from its long neglect of the arts, there was greater \nappreciation for portraits, statues and stone carvings. This period of appreciation for the arts \nlent a sense of celebrity to artists who were noted for their works and their personal</p>",
+              "pageIndex": 2,
+              "text": "figures faded. As Europe emerged from its long neglect of the arts, there was greater \nappreciation for portraits, statues and stone carvings. This period of appreciation for the arts \nlent a sense of celebrity to artists who were noted for their works and their personal "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>achievements. It was a time when artists began to surpass political and religious individuals \nfor supreme celebrity – a trend that would continue into later centuries.</p>",
+              "pageIndex": 2,
+              "text": "achievements. It was a time when artists began to surpass political and religious individuals \nfor supreme celebrity – a trend that would continue into later centuries. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 2,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b038",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>F  While the figures of the ancient and early modern civilizations were able to achieve moderate \nand sometimes lasting celebrity within particular cultures, the global reach of their fame was</p>",
+              "pageIndex": 3,
+              "text": "F  While the figures of the ancient and early modern civilizations were able to achieve moderate \nand sometimes lasting celebrity within particular cultures, the global reach of their fame was "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b039",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>limited. It was not until the 1700s, when technological advances made publishing \ncommercially viable, that the extent of a person’s fame could spread further. The increase in \nthe availability of the written word was accompanied by a huge rise in the number of common \npeople who could read, allowing a mass audience to find out about celebrities for the first time.</p>",
+              "pageIndex": 3,
+              "text": "limited. It was not until the 1700s, when technological advances made publishing \ncommercially viable, that the extent of a person’s fame could spread further. The increase in \nthe availability of the written word was accompanied by a huge rise in the number of common \npeople who could read, allowing a mass audience to find out about celebrities for the first time. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b040",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Suddenly, the lives of authors, politicians, war heroes, and other celebrities could now be read \nabout in newspapers around the world. These gave ordinary people the opportunity to become \nintimately knowledgeable about the figures they most admired.</p>",
+              "pageIndex": 3,
+              "text": "Suddenly, the lives of authors, politicians, war heroes, and other celebrities could now be read \nabout in newspapers around the world. These gave ordinary people the opportunity to become \nintimately knowledgeable about the figures they most admired. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b041",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>G  In the modern era, particularly as radio and film took off in the 1900s, things really began to \nchange. First, radio began to make its way into the average home in the 1920s and 1930s. \nProfessional athletes also began to be regarded as stars, as their games and exploits could</p>",
+              "pageIndex": 3,
+              "text": "G  In the modern era, particularly as radio and film took off in the 1900s, things really began to \nchange. First, radio began to make its way into the average home in the 1920s and 1930s. \nProfessional athletes also began to be regarded as stars, as their games and exploits could "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b042",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>be broadcast over the air for an entirely new audience. Then, the rise of television in the \n1950s only cemented the premier level of celebrity that film stars, athletes and television \nactors were beginning to share. This also meant a huge increase in the individual salaries of</p>",
+              "pageIndex": 3,
+              "text": "be broadcast over the air for an entirely new audience. Then, the rise of television in the \n1950s only cemented the premier level of celebrity that film stars, athletes and television \nactors were beginning to share. This also meant a huge increase in the individual salaries of "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b043",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>these celebrities. Even a few animals gained fame through children’s TV shows. The \nemergence of reality television shows in the late 1990s allowed all kinds of people with little \nability to enjoy a short burst of fame on the television screen. All you needed, it seemed, was</p>",
+              "pageIndex": 3,
+              "text": "these celebrities. Even a few animals gained fame through children’s TV shows. The \nemergence of reality television shows in the late 1990s allowed all kinds of people with little \nability to enjoy a short burst of fame on the television screen. All you needed, it seemed, was "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b044",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>an attractive appearance. Today, reality television programmers make it possible to be famous \nnot for doing anything in particular, but simply for being, with the audience deciding whether \nsomeone deserves to become a celebrity or not. As the meaning of celebrity continues to \nevolve and redefine itself in a quickly changing world, there is no telling who will become of</p>",
+              "pageIndex": 3,
+              "text": "an attractive appearance. Today, reality television programmers make it possible to be famous \nnot for doing anything in particular, but simply for being, with the audience deciding whether \nsomeone deserves to become a celebrity or not. As the meaning of celebrity continues to \nevolve and redefine itself in a quickly changing world, there is no telling who will become of "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b045",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>interest next.</p>",
+              "pageIndex": 3,
+              "text": "interest next.   "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 3,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b046",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 21–23</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 21–23 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b047",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Look at the following statements (Questions 21–23) and the list of historical periods in Europe \nbelow.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Look at the following statements (Questions 21–23) and the list of historical periods in Europe \nbelow.   "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b048",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Match each statement with the correct historical period, A, B, C, or D.</p>",
+              "pageIndex": 4,
+              "text": "Match each statement with the correct historical period, A, B, C, or D. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b049",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter, A, B, C, or D, in boxes 21–23 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write the correct letter, A, B, C, or D, in boxes 21–23 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b050",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>21   A wide variety of people achieve a brief period of fame.</p>",
+              "pageIndex": 4,
+              "text": "21   A wide variety of people achieve a brief period of fame. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b051",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>22   Stories are invented about celebrities’ lives.</p>",
+              "pageIndex": 4,
+              "text": "22   Stories are invented about celebrities’ lives. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b052",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>23   The fame of rulers is starting to diminish.</p>",
+              "pageIndex": 4,
+              "text": "23   The fame of rulers is starting to diminish. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b053",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 24–26</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 24–26 "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b054",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Complete the summary below.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Complete the summary below. "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b055",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose ONE WORD ONLY from the passage for each answer.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Choose ONE WORD ONLY from the passage for each answer. "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b056",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write your answers in boxes 24–26 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write your answers in boxes 24–26 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b057",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Celebrities achieve a global status</p>",
+              "pageIndex": 4,
+              "text": "Celebrities achieve a global status "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b058",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The development of the publishing industry in the 1700s signalled the beginning of international \nfame. A growing number of people could read, which meant they had the chance to become \ninformed about their favourite figures by reading 24………… . This exposure to celebrities \nexpanded further when radio and television became popular, and it was mass media attention that \nresulted in higher status and fame for some celebrities. The recent rise of reality television has \nalso meant that a person’s 25 ………… rather than their talent can bring fame. With this type of \ntelevision programme, fame may be entirely dependent on the response of the 26………… .</p>",
+              "pageIndex": 4,
+              "text": "The development of the publishing industry in the 1700s signalled the beginning of international \nfame. A growing number of people could read, which meant they had the chance to become \ninformed about their favourite figures by reading 24………… . This exposure to celebrities \nexpanded further when radio and television became popular, and it was mass media attention that \nresulted in higher status and fame for some celebrities. The recent rise of reality television has \nalso meant that a person’s 25 ………… rather than their talent can bring fame. With this type of \ntelevision programme, fame may be entirely dependent on the response of the 26………… . "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b059",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>List of historical periods in Europe</p>",
+              "pageIndex": 4,
+              "text": " List of historical periods in Europe "
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b060",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A      Ancient times</p>",
+              "pageIndex": 4,
+              "text": "A      Ancient times "
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b061",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>B      Dark Ages</p>",
+              "pageIndex": 4,
+              "text": "B      Dark Ages "
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b062",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>C      Renaissance</p>",
+              "pageIndex": 4,
+              "text": "C      Renaissance "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b063",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>D      Modern era</p>",
+              "pageIndex": 4,
+              "text": "D      Modern era "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 4,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b064",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 5]</p>",
+              "pageIndex": 5,
+              "text": "[No extractable text on page 5]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 5,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "western-celebrity.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 5 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q14": "",
+        "q15": "",
+        "q16": "",
+        "q17": "",
+        "q18": "",
+        "q19": "",
+        "q20": "",
+        "q21": "",
+        "q22": "",
+        "q23": "",
+        "q24": "",
+        "q25": "",
+        "q26": ""
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:07b0906358c30c05f6c5efff955a120f8d57e679a5529bbec5a9d25f12435f74;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "western-celebrity.pdf",
+        "questionIntroHtml": "<h3>Questions</h3><ul class=\"question-umbrella-ranges\"><li><strong>Questions 14-26</strong><span>Q14-26</span></li></ul>",
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 14-26",
+            "questionRange": [
+              14,
+              26
+            ],
+            "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading Passage 2 below."
+          }
+        ],
+        "title": "western celebrity"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   2</p>\n<p>A study of western celebrity</p>\n<p>In our celebrity-obsessed culture, TV shows, internet blogs, and even newspapers are often full of \nthe latest news, gossip and scandals about current celebrities</p>\n<p>A  It seems that our current society cannot get enough information about the daily lives of \ncelebrities. But how did celebrities become such an important force in our culture? While \npeople have always shared a certain obsession with the fantastic and the famous, the notion</p>\n<p>of celebrity, as well as the types of people termed ‘celebrities’, has evolved greatly throughout \nthe ages. The word ‘celebrity’ has its roots in the language of the ancient Roman civilization. \nThe word we now know to mean ‘a condition of being famous’ or ‘a famous person’ is derived</p>\n<p>from the Latin word ‘celeber’, meaning ‘frequented or populous’.</p>\n<p>B  The celebrities of the ancient world were the powerful and awesome deities of Greece and \nRome, and the citizens of these civilizations believed in a vast number of immortals who had a</p>\n<p>direct impact on their lives. It was, therefore, important to know about these figures’ personal \nlives. This need to know led to the creation of myths, which personalized the gods and \ninvolved them in ancient celebrity scandals that thrilled and excited the common people.</p>\n<p>C  During ancient times, amateur and professional athletes also began to make an impact on the \ncelebrity culture. Victors in the ancient Olympic Games were treated as heroes and were often</p>\n<p>elevated to god-like status. In the ancient Roman civilization, gladiators – the equivalent of \ntoday’s professional athletes – were also revered by the common people for their heroics and \nseemingly superhuman strength.</p>\n<p>D  As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a \ntime when athletics and the arts were largely forgotten, monarchs and rulers continued to \nmaintain celebrity status, while religious figures took on newfound fame. The miraculous lives</p>\n<p>and fascinating deaths of spiritual figures lent excitement to the lives of common people when \nthere was often little else to be excited about, as they faced war, disease and food shortages.</p>\n<p>E  During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling</p>\n<p>figures faded. As Europe emerged from its long neglect of the arts, there was greater \nappreciation for portraits, statues and stone carvings. This period of appreciation for the arts \nlent a sense of celebrity to artists who were noted for their works and their personal</p>\n<p>achievements. It was a time when artists began to surpass political and religious individuals \nfor supreme celebrity – a trend that would continue into later centuries.</p>\n<p>F  While the figures of the ancient and early modern civilizations were able to achieve moderate \nand sometimes lasting celebrity within particular cultures, the global reach of their fame was</p>\n<p>limited. It was not until the 1700s, when technological advances made publishing \ncommercially viable, that the extent of a person’s fame could spread further. The increase in \nthe availability of the written word was accompanied by a huge rise in the number of common \npeople who could read, allowing a mass audience to find out about celebrities for the first time.</p>\n<p>Suddenly, the lives of authors, politicians, war heroes, and other celebrities could now be read \nabout in newspapers around the world. These gave ordinary people the opportunity to become \nintimately knowledgeable about the figures they most admired.</p>\n<p>G  In the modern era, particularly as radio and film took off in the 1900s, things really began to \nchange. First, radio began to make its way into the average home in the 1920s and 1930s. \nProfessional athletes also began to be regarded as stars, as their games and exploits could</p>\n<p>be broadcast over the air for an entirely new audience. Then, the rise of television in the \n1950s only cemented the premier level of celebrity that film stars, athletes and television \nactors were beginning to share. This also meant a huge increase in the individual salaries of</p>\n<p>these celebrities. Even a few animals gained fame through children’s TV shows. The \nemergence of reality television shows in the late 1990s allowed all kinds of people with little \nability to enjoy a short burst of fame on the television screen. All you needed, it seemed, was</p>\n<p>an attractive appearance. Today, reality television programmers make it possible to be famous \nnot for doing anything in particular, but simply for being, with the audience deciding whether \nsomeone deserves to become a celebrity or not. As the meaning of celebrity continues to \nevolve and redefine itself in a quickly changing world, there is no telling who will become of</p>\n<p>interest next.</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q14": "14",
+        "q15": "15",
+        "q16": "16",
+        "q17": "17",
+        "q18": "18",
+        "q19": "19",
+        "q20": "20",
+        "q21": "21",
+        "q22": "22",
+        "q23": "23",
+        "q24": "24",
+        "q25": "25",
+        "q26": "26"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 14-20</p></div><ol><li><div><strong>14</strong> Paragraph A</div><div class=\"choice-row\"><label><input name=\"q14\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q14\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q14\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q14\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q14\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q14\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q14\" type=\"radio\" value=\"G\"> G</label></div></li><li><div><strong>15</strong> Paragraph B</div><div class=\"choice-row\"><label><input name=\"q15\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q15\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q15\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q15\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q15\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q15\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q15\" type=\"radio\" value=\"G\"> G</label></div></li><li><div><strong>16</strong> Paragraph C</div><div class=\"choice-row\"><label><input name=\"q16\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q16\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q16\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q16\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q16\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q16\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q16\" type=\"radio\" value=\"G\"> G</label></div></li><li><div><strong>17</strong> Paragraph D</div><div class=\"choice-row\"><label><input name=\"q17\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q17\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q17\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q17\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q17\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q17\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q17\" type=\"radio\" value=\"G\"> G</label></div></li><li><div><strong>18</strong> Paragraph E</div><div class=\"choice-row\"><label><input name=\"q18\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q18\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q18\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q18\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q18\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q18\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q18\" type=\"radio\" value=\"G\"> G</label></div></li><li><div><strong>19</strong> Paragraph F</div><div class=\"choice-row\"><label><input name=\"q19\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q19\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q19\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q19\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q19\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q19\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q19\" type=\"radio\" value=\"G\"> G</label></div></li><li><div><strong>20</strong> Paragraph G</div><div class=\"choice-row\"><label><input name=\"q20\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q20\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q20\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q20\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q20\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q20\" type=\"radio\" value=\"F\"> F</label><label><input name=\"q20\" type=\"radio\" value=\"G\"> G</label></div></li></ol></section>",
+          "groupId": "group-1",
+          "kind": "heading_matching",
+          "leadHtml": "<p>Questions 14-20</p>",
+          "questionIds": [
+            "q14",
+            "q15",
+            "q16",
+            "q17",
+            "q18",
+            "q19",
+            "q20"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 21-23</p></div><ol><li><div><strong>21</strong> A wide variety of people achieve a brief period of fame.</div><div class=\"choice-row\"><label><input name=\"q21\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q21\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q21\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q21\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>22</strong> Stories are invented about celebrities’ lives.</div><div class=\"choice-row\"><label><input name=\"q22\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q22\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q22\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q22\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>23</strong> The fame of rulers is starting to diminish.</div><div class=\"choice-row\"><label><input name=\"q23\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q23\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q23\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q23\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "groupId": "group-2",
+          "kind": "matching",
+          "leadHtml": "<p>Questions 21-23</p>",
+          "questionIds": [
+            "q21",
+            "q22",
+            "q23"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 24-26</p></div><div class=\"notes-completion\">Questions 24–26 Complete the summary below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 24–26 on your answer sheet. Celebrities achieve a global status The development of the publishing industry in the 1700s signalled the beginning of international fame. A growing number of people could read, which meant they had the chance to become informed about their favourite figures by reading <span class=\"inline-completion\" data-question-id=\"q24\"><strong>24</strong> <input type=\"text\" id=\"q24_input\" name=\"q24\" placeholder=\"answer\"></span> . This exposure to celebrities expanded further when radio and television became popular, and it was mass media attention that resulted in higher status and fame for some celebrities. The recent rise of reality television has also meant that a person’s <span class=\"inline-completion\" data-question-id=\"q25\"><strong>25</strong> <input type=\"text\" id=\"q25_input\" name=\"q25\" placeholder=\"answer\"></span> rather than their talent can bring fame. With this type of television programme, fame may be entirely dependent on the response of the <span class=\"inline-completion\" data-question-id=\"q26\"><strong>26</strong> <input type=\"text\" id=\"q26_input\" name=\"q26\" placeholder=\"answer\"></span> . List of historical periods in Europe A Ancient times B Dark Ages C Renaissance D Modern era</div></section>",
+          "groupId": "group-3",
+          "kind": "summary_completion",
+          "leadHtml": "<p>Questions 24-26</p>",
+          "questionIds": [
+            "q24",
+            "q25",
+            "q26"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260810092238-42e47441/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/western-celebrity.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/private-real/western-celebrity.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045"
+          ],
+          "title": "RE ADI NG P AS S AGE 2"
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009",
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023"
+          ],
+          "classification": {
+            "confidence": 0.68,
+            "evidence": [
+              "b003",
+              "b004",
+              "b005",
+              "b006",
+              "b007",
+              "b008",
+              "b009",
+              "b010",
+              "b011",
+              "b012",
+              "b013",
+              "b014",
+              "b015",
+              "b016",
+              "b017",
+              "b018",
+              "b019",
+              "b020",
+              "b021",
+              "b022",
+              "b023"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D",
+                "E",
+                "F",
+                "G"
+              ],
+              "type": "matching"
+            },
+            "kind": "heading_matching",
+            "warnings": [
+              "Option reuse was inferred from question type; source wording did not state it explicitly."
+            ]
+          },
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b003",
+              "reason": "same-section-continuation",
+              "toBlockId": "b004"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b004",
+              "reason": "same-section-continuation",
+              "toBlockId": "b005"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b005",
+              "reason": "same-section-continuation",
+              "toBlockId": "b006"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b006",
+              "reason": "same-section-continuation",
+              "toBlockId": "b007"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b007",
+              "reason": "same-section-continuation",
+              "toBlockId": "b008"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b008",
+              "reason": "same-section-continuation",
+              "toBlockId": "b009"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b009",
+              "reason": "same-section-continuation",
+              "toBlockId": "b010"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b010",
+              "reason": "same-section-continuation",
+              "toBlockId": "b011"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            }
+          ],
+          "groupId": "group-1",
+          "heading": "Questions 14-20",
+          "instructionText": "Questions 14–20",
+          "kindHint": "heading_matching",
+          "layoutHint": "list",
+          "questionRange": [
+            14,
+            20
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 14–20"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Reading Passage 2 has seven paragraphs, A–G."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Choose the correct heading for each paragraph from the list of headings below."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct number, i–x, in boxes 14–20 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b007",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "14 Paragraph A"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b008",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "15 Paragraph B"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b009",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "16 Paragraph C"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b010",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "17 Paragraph D"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "18 Paragraph E"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "19 Paragraph F"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "20 Paragraph G List of Headings"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "i Why it is necessary to explain the meaning of the word celebrity"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "ii The influence of non-human celebrities on societies"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "iii The impact of broadcasting on concepts of celebrity"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "iv Creativity having greater value"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "v Admiration for physical achievement"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "vi The advantages of celebrity status in the ancient world"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "vii A result of hardship"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "viii Literacy and widespread celebrity"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "ix Attitudes of celebrities towards the media"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "x The original definition of celebrity"
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b046",
+            "b047",
+            "b048",
+            "b049",
+            "b050",
+            "b051",
+            "b052"
+          ],
+          "classification": {
+            "confidence": 0.68,
+            "evidence": [
+              "b046",
+              "b047",
+              "b048",
+              "b049",
+              "b050",
+              "b051",
+              "b052"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D"
+              ],
+              "type": "matching"
+            },
+            "kind": "matching",
+            "warnings": [
+              "Option reuse was inferred from question type; source wording did not state it explicitly."
+            ]
+          },
+          "confidence": 0.68,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b047",
+              "reason": "same-section-continuation",
+              "toBlockId": "b048"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b048",
+              "reason": "same-section-continuation",
+              "toBlockId": "b049"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b049",
+              "reason": "same-section-continuation",
+              "toBlockId": "b050"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b050",
+              "reason": "same-section-continuation",
+              "toBlockId": "b051"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b051",
+              "reason": "same-section-continuation",
+              "toBlockId": "b052"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 21-23",
+          "instructionText": "Questions 21–23",
+          "kindHint": "matching",
+          "layoutHint": "list",
+          "questionRange": [
+            21,
+            23
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 21–23"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Look at the following statements (Questions 21–23) and the list of historical periods in Europe below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b048",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Match each statement with the correct historical period, A, B, C, or D."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b049",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A, B, C, or D, in boxes 21–23 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b050",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "21 A wide variety of people achieve a brief period of fame."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b051",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "22 Stories are invented about celebrities’ lives."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b052",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "23 The fame of rulers is starting to diminish."
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b053",
+            "b054",
+            "b055",
+            "b056",
+            "b057",
+            "b058",
+            "b059",
+            "b060",
+            "b061",
+            "b062",
+            "b063"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b053",
+              "b054",
+              "b055",
+              "b056",
+              "b057",
+              "b058",
+              "b059",
+              "b060",
+              "b061",
+              "b062",
+              "b063"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "summary_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b053",
+              "reason": "same-section-continuation",
+              "toBlockId": "b054"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b054",
+              "reason": "same-section-continuation",
+              "toBlockId": "b055"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b055",
+              "reason": "same-section-continuation",
+              "toBlockId": "b056"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b056",
+              "reason": "same-section-continuation",
+              "toBlockId": "b057"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b057",
+              "reason": "same-section-continuation",
+              "toBlockId": "b058"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b058",
+              "reason": "same-section-continuation",
+              "toBlockId": "b059"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b059",
+              "reason": "same-section-continuation",
+              "toBlockId": "b060"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b060",
+              "reason": "same-section-continuation",
+              "toBlockId": "b061"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b061",
+              "reason": "same-section-continuation",
+              "toBlockId": "b062"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b062",
+              "reason": "same-section-continuation",
+              "toBlockId": "b063"
+            }
+          ],
+          "groupId": "group-3",
+          "heading": "Questions 24-26",
+          "instructionText": "Questions 24–26",
+          "kindHint": "summary_completion",
+          "layoutHint": "inline_completion",
+          "questionRange": [
+            24,
+            26
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b053",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 24–26"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b054",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary below."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b055",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b056",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 24–26 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b057",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Celebrities achieve a global status"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b058",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "The development of the publishing industry in the 1700s signalled the beginning of international fame. A growing number "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b059",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "List of historical periods in Europe"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b060",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Ancient times"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b061",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "B Dark Ages"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b062",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "C Renaissance"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b063",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "D Modern era"
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": [
+        {
+          "blockId": "b002",
+          "heading": "Questions 14-26",
+          "questionRange": [
+            14,
+            26
+          ],
+          "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading Passage 2 below."
+        }
+      ]
+    }
+  }
+}

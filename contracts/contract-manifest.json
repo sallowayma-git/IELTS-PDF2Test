@@ -4,11 +4,11 @@
   "schemas": {
     "CommonV2": {
       "path": "common-v2.schema.json",
-      "sha256": "806dc7d942c9faa38cd64d503c05b9a0d9018dea980b13e5236f70b3efeb887c"
+      "sha256": "678a0164a40d092742c6177f91635c087f377f14dbb55c255d2c71367b57ddda"
     },
     "DocumentIRV2": {
       "path": "document-ir-v2.schema.json",
-      "sha256": "87854a93b5b57630a89edc0b54e80d72d8ee5aaf690376d50327ceba0f71aa89"
+      "sha256": "e57fc39856754f692e18ee38ca07aab6a051470afe0f4ba3cbc9d3f0af108240"
     },
     "ContentDocV2": {
       "path": "content-doc-v2.schema.json",
@@ -16,11 +16,11 @@
     },
     "IeltsAuthoringIRV2": {
       "path": "ielts-authoring-ir-v2.schema.json",
-      "sha256": "c249bb2b633f86aa67ee240044d4a1e6cd37adbae4ff8f0a8d9decfaf949e291"
+      "sha256": "270a0bf75c4a12cec3c372c78a9a900038bcc1607e2f25ad135d4163d955b14d"
     },
     "QualityReportV2": {
       "path": "quality-report-v2.schema.json",
-      "sha256": "5e4a3effaa0246df4cc04c8ad3a7cc261bc19ce06367b9feebaf8b8c4ee1d059"
+      "sha256": "9578abd47920fc491166b16b3ca25cf52f80245ca02db0ebc92ea7dd27e88fe7"
     }
   },
   "compatibility": {
@@ -37,7 +37,7 @@
   "peerRepositories": {
     "nasForWendao": {
       "expectedRelativeContractRoot": "developer/contracts/authoring",
-      "hashCheck": "opt_in_until_peer_mirror_lands"
+      "hashCheck": "required"
     }
   }
 }

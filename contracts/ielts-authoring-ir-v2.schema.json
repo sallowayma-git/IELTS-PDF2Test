@@ -110,6 +110,8 @@
       }
     },
     "assignment": { "type": "string", "enum": ["per_slot", "unordered_set", "ordered_slots"] },
+    "responseScoringPolicy": { "type": "string", "enum": ["per_slot_binary", "per_slot_ielts_normalized", "exact_set", "all_or_nothing"] },
+    "duplicateSelectionPolicy": { "type": "string", "enum": ["reject_submission", "ignore_duplicates"] },
     "wordLimit": {
       "type": "object",
       "additionalProperties": false,
@@ -145,15 +147,17 @@
         "optionId": { "type": "string", "minLength": 1 },
         "label": { "type": "string", "minLength": 1 },
         "content": { "type": "array", "items": { "$ref": "./content-doc-v2.schema.json#/$defs/contentNode" } },
-        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
+        "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } },
+        "provenanceStatus": { "$ref": "./content-doc-v2.schema.json#/$defs/provenanceStatus" }
       }
     },
     "optionBank": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["optionBankId", "options", "allowReuse", "sourceAnchors"],
+      "required": ["optionBankId", "scope", "options", "allowReuse", "sourceAnchors"],
       "properties": {
         "optionBankId": { "type": "string", "minLength": 1 },
+        "scope": { "type": "string", "enum": ["task_group", "document"] },
         "title": { "type": "array", "items": { "$ref": "./content-doc-v2.schema.json#/$defs/contentNode" } },
         "options": { "type": "array", "items": { "$ref": "#/$defs/option" } },
         "allowReuse": { "type": "boolean" },
@@ -163,7 +167,7 @@
     "responseGroup": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["responseGroupId", "kind", "slotIds", "cardinality", "assignment", "allowOptionReuse", "sourceAnchors"],
+      "required": ["responseGroupId", "kind", "slotIds", "cardinality", "assignment", "scoringPolicy", "duplicatePolicy", "allowOptionReuse", "sourceAnchors"],
       "properties": {
         "responseGroupId": { "type": "string", "minLength": 1 },
         "kind": { "type": "string", "enum": ["choice", "text_entry", "matching", "diagram_hotspot", "composite"] },
@@ -173,6 +177,8 @@
         "optionBankRef": { "type": "string", "minLength": 1 },
         "cardinality": { "$ref": "#/$defs/cardinality" },
         "assignment": { "$ref": "#/$defs/assignment" },
+        "scoringPolicy": { "$ref": "#/$defs/responseScoringPolicy" },
+        "duplicatePolicy": { "$ref": "#/$defs/duplicateSelectionPolicy" },
         "allowOptionReuse": { "type": "boolean" },
         "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
       }
@@ -208,7 +214,7 @@
     "answerSlot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["slotId", "questionNumber", "displayLabel", "hostType", "interaction", "sourceAnchors", "confidence"],
+      "required": ["slotId", "questionNumber", "displayLabel", "hostType", "interaction", "participation", "sourceAnchors", "confidence"],
       "properties": {
         "slotId": { "type": "string", "minLength": 1 },
         "questionNumber": { "type": "integer", "minimum": 1 },
@@ -216,16 +222,19 @@
         "hostNodeId": { "type": "string", "minLength": 1 },
         "hostType": { "type": "string", "enum": ["prompt", "paragraph", "table_cell", "figure_hotspot", "flow_step"] },
         "interaction": { "type": "string", "enum": ["radio", "checkbox", "text", "select", "dragdrop", "hotspot"] },
+        "participation": { "type": "string", "enum": ["scoring", "example", "non_scoring"] },
         "constraints": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "maxWords": { "type": "integer", "minimum": 0 },
+            "maxNumbers": { "type": "integer", "minimum": 0 },
             "maxCharacters": { "type": "integer", "minimum": 0 },
             "acceptedOptionLabels": { "type": "array", "items": { "type": "string" } }
           }
         },
         "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } },
+        "provenanceStatus": { "$ref": "./content-doc-v2.schema.json#/$defs/provenanceStatus" },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     },

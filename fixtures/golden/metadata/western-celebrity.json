@@ -1,0 +1,392 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "western-celebrity",
+  "source": {
+    "path": "fixtures/golden/private-real/western-celebrity.pdf",
+    "originalName": "107. P2 - A study of western celebrity 西方名人.pdf",
+    "sha256": "07b0906358c30c05f6c5efff955a120f8d57e679a5529bbec5a9d25f12435f74",
+    "sizeBytes": 546921,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "answer"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          14,
+          20
+        ],
+        "kind": "matching_headings",
+        "slotIds": [
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19",
+          "q20"
+        ],
+        "responseGroupIds": [
+          "group-1-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          21,
+          23
+        ],
+        "kind": "matching_features",
+        "slotIds": [
+          "q21",
+          "q22",
+          "q23"
+        ],
+        "responseGroupIds": [
+          "group-2-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          24,
+          26
+        ],
+        "kind": "summary_completion",
+        "slotIds": [
+          "q24",
+          "q25",
+          "q26"
+        ],
+        "responseGroupIds": [
+          "group-3-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q14",
+        "displayNumber": "14",
+        "responseType": "select"
+      },
+      {
+        "id": "q15",
+        "displayNumber": "15",
+        "responseType": "select"
+      },
+      {
+        "id": "q16",
+        "displayNumber": "16",
+        "responseType": "select"
+      },
+      {
+        "id": "q17",
+        "displayNumber": "17",
+        "responseType": "select"
+      },
+      {
+        "id": "q18",
+        "displayNumber": "18",
+        "responseType": "select"
+      },
+      {
+        "id": "q19",
+        "displayNumber": "19",
+        "responseType": "select"
+      },
+      {
+        "id": "q20",
+        "displayNumber": "20",
+        "responseType": "select"
+      },
+      {
+        "id": "q21",
+        "displayNumber": "21",
+        "responseType": "select"
+      },
+      {
+        "id": "q22",
+        "displayNumber": "22",
+        "responseType": "select"
+      },
+      {
+        "id": "q23",
+        "displayNumber": "23",
+        "responseType": "select"
+      },
+      {
+        "id": "q24",
+        "displayNumber": "24",
+        "responseType": "text"
+      },
+      {
+        "id": "q25",
+        "displayNumber": "25",
+        "responseType": "text"
+      },
+      {
+        "id": "q26",
+        "displayNumber": "26",
+        "responseType": "text"
+      }
+    ],
+    "assets": [],
+    "optionBanks": [
+      {
+        "id": "group-1-option-bank",
+        "taskGroupId": "group-1",
+        "scope": "task_group",
+        "labels": [
+          "i",
+          "ii",
+          "iii",
+          "iv",
+          "v",
+          "vi",
+          "vii",
+          "viii",
+          "ix",
+          "x"
+        ],
+        "allowReuse": false,
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-option-bank",
+        "taskGroupId": "group-2",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "allowReuse": false,
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      }
+    ],
+    "responseGroups": [
+      {
+        "id": "group-1-responses",
+        "taskGroupId": "group-1",
+        "slotIds": [
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19",
+          "q20"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-1-option-bank"
+        },
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-responses",
+        "taskGroupId": "group-2",
+        "slotIds": [
+          "q21",
+          "q22",
+          "q23"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-2-option-bank"
+        },
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3-responses",
+        "taskGroupId": "group-3",
+        "slotIds": [
+          "q24",
+          "q25",
+          "q26"
+        ],
+        "promptMode": "embedded",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "none"
+        },
+        "reusePolicy": "not_applicable",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      }
+    ],
+    "sourceEvidence": [
+      {
+        "id": "group-1-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          1
+        ],
+        "references": [
+          "fixtures/golden/private-real/western-celebrity.pdf#page=1"
+        ]
+      },
+      {
+        "id": "group-2-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          4
+        ],
+        "references": [
+          "fixtures/golden/private-real/western-celebrity.pdf#page=4"
+        ]
+      },
+      {
+        "id": "group-3-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          4
+        ],
+        "references": [
+          "fixtures/golden/private-real/western-celebrity.pdf#page=4"
+        ]
+      }
+    ],
+    "runtimeExpectations": {
+      "authoritativeVersion": "v1",
+      "artifactMode": "shadow_only",
+      "compileExpectation": "structure_must_compile",
+      "loaderExpectation": "test_only",
+      "rendererExpectation": "test_only",
+      "scoringExpectation": "per_slot",
+      "productionExposure": "disabled",
+      "requiredFeatureFlags": {
+        "documentIrV2Shadow": false,
+        "authoringV2Shadow": false,
+        "qualityGateV2": false,
+        "runtimeSourceV2": false,
+        "nasPackageV2": false
+      }
+    }
+  },
+  "knownIssues": [
+    "Questions 14-20 precede the passage; physical page order must not pollute passage assembly."
+  ],
+  "review": {
+    "status": "approved",
+    "reviewedBy": "phase0-source-audit",
+    "reviewedAt": "2026-08-10",
+    "method": "source-text-and-overhaul-plan-evidence",
+    "evidence": [
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#2.1",
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#23.2",
+      "fixtures/golden/private/legacy-reference.json"
+    ]
+  },
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/western-celebrity.json",
+    "observed": {
+      "pageCount": 5,
+      "blockCount": 64,
+      "groupCount": 3,
+      "slotCount": 13,
+      "assetCount": 0,
+      "answerCount": 13,
+      "warningCount": 1,
+      "groupKinds": [
+        "heading_matching",
+        "matching",
+        "summary_completion"
+      ],
+      "questionIds": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

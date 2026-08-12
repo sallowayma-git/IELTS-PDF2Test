@@ -170,9 +170,13 @@ fn control_question_id(attrs: &HashMap<String, String>) -> Option<String> {
 }
 
 fn has_collectible_control(html: &str, qid: &str) -> bool {
-    html_control_tags(html)
-        .iter()
-        .any(|tag| control_question_id(&html_attr_map(tag)).as_deref() == Some(qid))
+    html_control_tags(html).iter().any(|tag| {
+        let attrs = html_attr_map(tag);
+        control_question_id(&attrs).as_deref() == Some(qid)
+            || attrs
+                .get("data-question-ids")
+                .is_some_and(|ids| ids.split(',').any(|candidate| candidate.trim() == qid))
+    })
 }
 
 fn dropzone_tags(html: &str) -> Vec<String> {

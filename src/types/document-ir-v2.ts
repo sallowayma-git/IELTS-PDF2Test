@@ -28,7 +28,10 @@ export interface GlyphNodeV2 {
   angleRad?: number;
   style: TextStyleV2;
   unicodeMapError: boolean;
-  hidden: boolean;
+  hidden?: boolean;
+  visibilityObserved: boolean;
+  unicodeMapErrorObserved: boolean;
+  geometryBasis: "pdfium_char_box" | "text_matrix_derived" | "ocr_observed" | "ooxml_layout_derived";
   confidence: number;
   source: "native" | "ocr";
   sourceAnchor: SourceAnchorV2;
@@ -56,7 +59,9 @@ export interface LineNodeV2 {
   indentationPt: number;
   hangingIndentPt?: number;
   lineHeightPt?: number;
-  hardBreakAfter: boolean;
+  hardBreakAfter?: boolean;
+  breakBasis?: string;
+  inlineGapsPt?: number[];
   sourceOrder: number;
   confidence: number;
   sourceAnchors: SourceAnchorV2[];
@@ -116,6 +121,16 @@ export interface TableCellV2 {
   colSpan: number;
   bbox: RectV2;
   contentRegionIds: string[];
+  widthPt?: number;
+  rowHeightPt?: number;
+  rowHeightRule?: string;
+  verticalAlignment?: string;
+  paddingPt?: {
+    top?: number;
+    right?: number;
+    bottom?: number;
+    left?: number;
+  };
   headerScope?: "row" | "column" | "both" | "none";
   borderEvidence: string[];
   confidence: number;
@@ -155,6 +170,7 @@ export interface PageNodeV2 {
   rotation: 0 | 90 | 180 | 270;
   mediaBox?: RectV2;
   cropBox?: RectV2;
+  pageTransform?: PageTransformV2;
   glyphs: GlyphNodeV2[];
   spans: SpanNodeV2[];
   lines: LineNodeV2[];
@@ -162,8 +178,70 @@ export interface PageNodeV2 {
   vectorPaths: VectorPathV2[];
   tables: TableNodeV2[];
   assetIds: string[];
+  imagePlacements?: PdfImagePlacementV2[];
+  markedContent?: PdfMarkedContentV2[];
+  annotations?: PdfAnnotationV2[];
   readingOrder: string[];
+  readingOrderGraph?: ReadingOrderGraphV2;
   quality: PageQualityV2;
+}
+
+export interface ReadingOrderEdgeV2 {
+  from: string;
+  to: string;
+  relation: string;
+  confidence: number;
+}
+
+export interface ReadingOrderGraphV2 {
+  primary: string[];
+  alternatives?: string[][];
+  edges: ReadingOrderEdgeV2[];
+  cycleEdgesRemoved?: ReadingOrderEdgeV2[];
+  confidence: number;
+}
+
+export interface PageTransformV2 {
+  userUnit: number;
+  pdfToDisplay: [number, number, number, number, number, number];
+  displayToNormalized: [number, number, number, number, number, number];
+  displayWidthPt: number;
+  displayHeightPt: number;
+}
+
+export interface PdfImagePlacementV2 {
+  id: string;
+  assetId: string;
+  bbox?: RectV2;
+  nativeBBox?: RectV2;
+  objectTransform: [number, number, number, number, number, number];
+  clipBBox?: RectV2;
+  confidence: number;
+  sourceAnchor: SourceAnchorV2;
+}
+
+export interface PdfMarkedContentV2 {
+  id: string;
+  mcid?: number;
+  tag?: string;
+  actualText?: string;
+  altText?: string;
+  structurePath?: string[];
+  sourceAnchor: SourceAnchorV2;
+}
+
+export interface PdfAnnotationV2 {
+  id: string;
+  subtype: string;
+  bbox: RectV2;
+  confidence: number;
+  fieldName?: string;
+  fieldType?: string;
+  value?: unknown;
+  defaultValue?: unknown;
+  flags?: string[];
+  appearanceAssetId?: string;
+  sourceAnchor: SourceAnchorV2;
 }
 
 export interface CoverageEntryV2 {

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "ContentDocV2",
+  "documentId": "phase1-content-contract",
+  "sourceDocumentId": "phase1-contract-document",
+  "root": [
+    {
+      "type": "paragraph",
+      "id": "paragraph-1",
+      "sourceAnchors": [
+        {
+          "sourceFileId": "source-1",
+          "pageIndex": 0,
+          "nodeIds": ["line-image-derived"],
+          "extractionMode": "pdf_ocr",
+          "sourceHash": "1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ],
+      "provenanceStatus": "source",
+      "children": [
+        {
+          "type": "text",
+          "id": "text-1",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "source-1",
+              "pageIndex": 0,
+              "nodeIds": ["line-image-derived"],
+              "extractionMode": "pdf_ocr",
+              "sourceHash": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ],
+          "provenanceStatus": "source",
+          "text": "Image-derived OCR line"
+        }
+      ]
+    }
+  ]
+}

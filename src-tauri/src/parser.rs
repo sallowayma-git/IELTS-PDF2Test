@@ -1,4 +1,5 @@
 use crate::authoring_pipeline::collapse_whitespace;
+use crate::docx_ingest::{is_rejected_package_error, open_docx, DocxPackageLimits};
 use crate::environment::{
     cloud_pdf_vision_enabled, command_failure, find_sidecar, local_ocr_enabled,
     pdf_renderer_setting, resolve_python_command,
@@ -8,8 +9,7 @@ use crate::{hash_bytes, html_escape, main_source_file, CommandResult, ImportJob,
 use chrono::Utc;
 use quick_xml::{events::Event, Reader};
 use serde_json::{json, Value};
-use std::{collections::HashMap, fs, io::Read, path::Path, process::Command};
-use zip::ZipArchive;
+use std::{collections::HashMap, fs, path::Path, process::Command};
 
 #[derive(Debug, Clone)]
 struct TableCellIr {
@@ -1138,34 +1138,21 @@ fn parse_docx_with_rust_ooxml(
     output_path: &Path,
     mode: &str,
 ) -> CommandResult<Value> {
-    let file = fs::File::open(upload_path)
-        .map_err(|error| format!("rust_docx_open_failed:{}:{}", upload_path.display(), error))?;
-    let mut archive =
-        ZipArchive::new(file).map_err(|error| format!("rust_docx_zip_open_failed:{}", error))?;
-    let mut document = archive
-        .by_name("word/document.xml")
-        .map_err(|error| format!("rust_docx_missing_document_xml:{}", error))?;
-    let mut document_xml = Vec::new();
-    document
-        .read_to_end(&mut document_xml)
-        .map_err(|error| format!("rust_docx_read_document_xml_failed:{}", error))?;
-    drop(document);
+    let package = open_docx(upload_path, DocxPackageLimits::default())
+        .map_err(|error| format!("rust_docx_package_open_failed:{}", error))?;
+    let document_part = package.main_document_part().unwrap_or("word/document.xml");
+    let document_xml = package
+        .part_bytes(document_part)
+        .ok_or_else(|| format!("rust_docx_missing_document_part:{document_part}"))?
+        .to_vec();
 
     let mut styles = HashMap::<String, DocxStyleDef>::new();
-    if let Ok(mut styles_file) = archive.by_name("word/styles.xml") {
-        let mut styles_xml = Vec::new();
-        styles_file
-            .read_to_end(&mut styles_xml)
-            .map_err(|error| format!("rust_docx_read_styles_xml_failed:{}", error))?;
-        styles = parse_docx_styles_xml(&styles_xml)?;
+    if let Some(styles_xml) = package.part_bytes("word/styles.xml") {
+        styles = parse_docx_styles_xml(styles_xml)?;
     }
     let mut numbering_defs = DocxNumberingDefs::default();
-    if let Ok(mut numbering_file) = archive.by_name("word/numbering.xml") {
-        let mut numbering_xml = Vec::new();
-        numbering_file
-            .read_to_end(&mut numbering_xml)
-            .map_err(|error| format!("rust_docx_read_numbering_xml_failed:{}", error))?;
-        numbering_defs = parse_docx_numbering_xml(&numbering_xml)?;
+    if let Some(numbering_xml) = package.part_bytes("word/numbering.xml") {
+        numbering_defs = parse_docx_numbering_xml(numbering_xml)?;
     }
 
     let mut warnings = Vec::<String>::new();
@@ -1550,7 +1537,7 @@ pub(crate) fn render_pdf_pages_with_adapter(
     job_id: &str,
     input_path: &Path,
     output_path: &Path,
-    asset_dir: &Path,
+    _asset_dir: &Path,
     prior_warnings: Vec<String>,
 ) -> CommandResult<Value> {
     match pdf_renderer_setting().as_str() {
@@ -1569,7 +1556,7 @@ pub(crate) fn render_pdf_pages_with_adapter(
                     job_id,
                     input_path,
                     output_path,
-                    asset_dir,
+                    _asset_dir,
                     prior_warnings,
                 )
             }
@@ -1929,6 +1916,9 @@ pub(crate) fn parse_source_document(
         match parse_docx_with_rust_ooxml(job, source, upload_path, output_path, mode) {
             Ok(ir) => return Ok(ir),
             Err(error) => {
+                if is_rejected_package_error(&error) {
+                    return Ok(parser_failure_document_ir(job, source, mode, &error));
+                }
                 let fallback =
                     parse_with_python_sidecar(&job.job_id, upload_path, output_path, mode);
                 return match fallback {

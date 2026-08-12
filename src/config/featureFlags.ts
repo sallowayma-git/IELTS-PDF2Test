@@ -31,11 +31,15 @@ export function resolvePhase0FeatureFlags(
 
 export interface Phase1FeatureFlags extends Phase0FeatureFlags {
   documentIrV2Shadow: boolean;
+  authoringV2Shadow: boolean;
+  qualityGateV2: boolean;
 }
 
 export const DEFAULT_PHASE1_FEATURE_FLAGS: Readonly<Phase1FeatureFlags> = Object.freeze({
   ...DEFAULT_PHASE0_FEATURE_FLAGS,
-  documentIrV2Shadow: false
+  documentIrV2Shadow: false,
+  authoringV2Shadow: false,
+  qualityGateV2: false
 });
 
 export type Phase1FeatureFlagName = keyof Phase1FeatureFlags;

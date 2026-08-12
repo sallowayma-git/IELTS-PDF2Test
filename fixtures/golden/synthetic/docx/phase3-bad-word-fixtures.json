@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "Phase3DocxFixtureMatrixV1",
+  "purpose": "Bounded adversarial and degraded OOXML cases used by C-001 through C-009 shadow tests.",
+  "fixtures": [
+    {
+      "id": "bad-01-zip-slip-entry",
+      "kind": "package-security",
+      "source": "bad-01-zip-slip-entry.docx",
+      "expected": "reject DOCX_PACKAGE_PATH_UNSAFE"
+    },
+    {
+      "id": "bad-02-duplicate-casefolded-entry",
+      "kind": "package-security",
+      "source": "bad-02-duplicate-casefolded-entry.docx",
+      "expected": "reject DOCX_PACKAGE_DUPLICATE_ENTRY"
+    },
+    {
+      "id": "bad-03-encrypted-entry",
+      "kind": "package-security",
+      "source": "bad-03-encrypted-entry.docx",
+      "expected": "reject DOCX_PACKAGE_ENCRYPTED_ENTRY"
+    },
+    {
+      "id": "bad-04-missing-content-types",
+      "kind": "package-structure",
+      "source": "bad-04-missing-content-types.docx",
+      "expected": "reject DOCX_PACKAGE_CONTENT_TYPES_MISSING"
+    },
+    {
+      "id": "bad-05-broken-internal-relationship",
+      "kind": "package-structure",
+      "source": "bad-05-broken-internal-relationship.docx",
+      "expected": "reject DOCX_PACKAGE_RELATIONSHIP_TARGET_MISSING"
+    },
+    {
+      "id": "bad-06-external-image",
+      "kind": "asset-boundary",
+      "source": "bad-06-external-image.docx",
+      "expected": "DOCX_EXTERNAL_ASSET_MISSING and publishBlocked=true"
+    },
+    {
+      "id": "bad-07-empty-table-cell",
+      "kind": "table-topology",
+      "source": "bad-07-empty-table-cell.docx",
+      "expected": "retain empty cell and OOXML cell anchor"
+    },
+    {
+      "id": "bad-08-vmerge-without-restart",
+      "kind": "table-topology",
+      "source": "bad-08-vmerge-without-restart.docx",
+      "expected": "TABLE_TOPOLOGY_AMBIGUOUS warning"
+    },
+    {
+      "id": "bad-09-floating-textbox-without-offset",
+      "kind": "floating-layout",
+      "source": "bad-09-floating-textbox-without-offset.docx",
+      "expected": "DOCX_FLOATING_ORDER_AMBIGUOUS warning"
+    },
+    {
+      "id": "bad-10-vml-textbox",
+      "kind": "floating-layout",
+      "source": "bad-10-vml-textbox.docx",
+      "expected": "retain VML text and source order"
+    },
+    {
+      "id": "bad-11-smartart-without-preview",
+      "kind": "composite-drawing",
+      "source": "bad-11-smartart-without-preview.docx",
+      "expected": "UNSUPPORTED_DOCX_COMPOSITE_DRAWING blocking error with publishBlocked=true; retain Figure contract, SmartArt XML asset, and source anchor"
+    },
+    {
+      "id": "bad-12-chart-without-preview",
+      "kind": "composite-drawing",
+      "source": "bad-12-chart-without-preview.docx",
+      "expected": "UNSUPPORTED_DOCX_COMPOSITE_DRAWING blocking error with publishBlocked=true; retain Figure contract, chart XML asset, and source anchor; no fake geometry"
+    },
+    {
+      "id": "bad-13-two-column-section",
+      "kind": "section-layout",
+      "source": "bad-13-two-column-section.docx",
+      "expected": "retain section columns and semantic-only render metadata"
+    },
+    {
+      "id": "bad-14-raw-whitespace-and-breaks",
+      "kind": "paragraph-boundary",
+      "source": "bad-14-raw-whitespace-and-breaks.docx",
+      "expected": "retain spaces tab page-break and field boundaries"
+    }
+  ]
+}

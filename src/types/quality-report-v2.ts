@@ -29,11 +29,42 @@ export interface ReviewIssueV2 {
   details?: Record<string, unknown>;
 }
 
+export interface QualityCoverageEntryV2 {
+  sourceNodeId: string;
+  significant: boolean;
+  disposition: "assigned" | "ignored_with_reason" | "unassigned";
+  targetIds: string[];
+  reason?: string;
+}
+
+export interface CoverageStatusV2 {
+  physicalShadow: "available" | "missing";
+  complete: boolean;
+  significantSourceNodeCount: number;
+  explainedSourceNodeCount: number;
+  unassignedSourceNodeIds: string[];
+}
+
+export interface CompilerProbeV2 {
+  status: "passed" | "failed";
+  schemaVersion: string;
+  issueCodes: string[];
+  details: string[];
+}
+
+export interface CompilerProbesV2 {
+  v2Runtime: CompilerProbeV2;
+  v1Compatibility: CompilerProbeV2;
+}
+
 export interface QualityReportV2 {
   schemaVersion: "QualityReportV2";
   state: ReadinessState;
   documentScore: number;
   sourceCoverage: number;
+  coverageLedger: QualityCoverageEntryV2[];
+  coverageStatus: CoverageStatusV2;
+  compilerProbes: CompilerProbesV2;
   taskScores: Record<string, number>;
   hardFailures: string[];
   issues: ReviewIssueV2[];
@@ -43,4 +74,3 @@ export interface QualityReportV2 {
 }
 
 export const QUALITY_REPORT_V2_SCHEMA_VERSION = "QualityReportV2" as const;
-

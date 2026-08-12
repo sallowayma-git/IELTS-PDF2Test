@@ -68,6 +68,14 @@
           "items": { "type": "string", "minLength": 1 }
         },
         "bbox": { "$ref": "#/$defs/rect" },
+        "nativeBBox": { "$ref": "#/$defs/rect" },
+        "displayBBox": { "$ref": "#/$defs/rect" },
+        "pdfToDisplay": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 6,
+          "maxItems": 6
+        },
         "charRange": {
           "type": "object",
           "additionalProperties": false,
@@ -84,6 +92,25 @@
           "enum": ["pdf_native", "pdf_ocr", "pdf_rendered_crop", "docx_ooxml", "docx_rendered_fallback", "manual"]
         },
         "sourceHash": { "type": "string", "minLength": 1 }
+        ,"variants": { "type": "array", "items": { "$ref": "#/$defs/sourceVariant" } }
+      }
+    },
+    "sourceVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["extractionMode"],
+      "properties": {
+        "text": { "type": "string" },
+        "extractionMode": {
+          "type": "string",
+          "enum": ["pdf_native", "pdf_ocr", "pdf_rendered_crop", "docx_ooxml", "docx_rendered_fallback", "manual"]
+        },
+        "bbox": { "$ref": "#/$defs/rect" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "provider": { "type": "string" },
+        "providerVersion": { "type": "string" },
+        "language": { "type": "string" },
+        "nodeIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }
     },
     "sourceFileRecord": {

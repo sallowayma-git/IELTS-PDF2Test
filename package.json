@@ -12,15 +12,26 @@
     "check": "tsc --noEmit",
     "verify:phase0": "node scripts/phase0-golden.mjs verify",
     "verify:phase0:strict": "node scripts/phase0-golden.mjs verify --strict",
+    "verify:phase0:ci": "node scripts/phase0-golden.mjs verify --ci-contract",
+    "test:phase0:cli-freshness": "node scripts/phase0-golden.mjs self-test-cli-freshness",
+    "test:phase0:feature-flags": "node scripts/phase0-golden.mjs self-test-feature-flags",
     "verify:phase1:schema": "node scripts/verify-schema-contract.mjs",
+    "verify:phase1:schema:local": "node scripts/verify-schema-contract.mjs --local-only",
+    "sync:phase1:peer": "node scripts/sync-phase1-peer-contract.mjs",
+    "verify:phase2:shadow": "node scripts/verify-phase2-shadow.mjs",
+    "verify:phase3:docx-package": "node scripts/verify-phase3-docx-package.mjs",
+    "verify:phase3:docx": "node scripts/verify-phase3-docx.mjs",
+    "verify:phase4:grammar": "node scripts/verify-phase4-grammar.mjs",
     "capture:phase0-baseline": "node scripts/phase0-golden.mjs capture",
     "register:phase0:private": "node scripts/register-phase0-private-sample.mjs",
+    "register:phase0:plan-corpus": "node scripts/register-phase0-plan-corpus.mjs",
     "annotate:phase0:private": "node scripts/annotate-phase0-private-sample.mjs",
     "generate:phase0-synthetic": "python scripts/generate-phase0-synthetic-fixtures.py",
     "register:phase0-synthetic": "python scripts/register-phase0-synthetic-fixtures.py",
     "index:phase0-legacy": "node scripts/index-legacy-corpus.mjs",
     "e2e:ui-flow": "node sidecars/ui-flow-e2e/ui-flow-e2e.mjs",
     "test:pdf-regression": "node scripts/pdf-regression-sample.mjs",
+    "test:pdf-regression:smoke": "node scripts/pdf-regression-sample.mjs --smoke",
     "test:pdf-regression:sample30": "node scripts/pdf-regression-sample.mjs --sample 30",
     "test:live-pdf-regression": "node scripts/live-pdf-pipeline-regression.mjs",
     "audit:package": "node scripts/package-audit.mjs --platform macos",
@@ -45,6 +56,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.5.0",
     "@types/react": "^19.0.7",
-    "@types/react-dom": "^19.0.3"
+    "@types/react-dom": "^19.0.3",
+    "ajv": "^8.20.0"
   }
 }

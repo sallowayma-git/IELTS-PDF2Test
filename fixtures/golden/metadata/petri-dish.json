@@ -1,0 +1,424 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "petri-dish",
+  "source": {
+    "path": "fixtures/golden/private-real/petri-dish.pdf",
+    "originalName": "105. P2 - How the Petri dish supports scientific advances 培养皿.pdf",
+    "sha256": "64a62faa5f462549a580bd02535021569d1c5fcabbdd59fb31fa2d4bdc70fa21",
+    "sizeBytes": 723984,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 6,
+        "roles": [
+          "answer"
+        ]
+      },
+      {
+        "pageIndex": 7,
+        "roles": [
+          "explanation"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          14,
+          19
+        ],
+        "kind": "matching_information",
+        "slotIds": [
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19"
+        ],
+        "responseGroupIds": [
+          "group-1-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          20,
+          25
+        ],
+        "kind": "matching_features",
+        "slotIds": [
+          "q20",
+          "q21",
+          "q22",
+          "q23",
+          "q24",
+          "q25"
+        ],
+        "responseGroupIds": [
+          "group-2-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          26,
+          29
+        ],
+        "kind": "summary_completion",
+        "slotIds": [
+          "q26",
+          "q27",
+          "q28",
+          "q29"
+        ],
+        "responseGroupIds": [
+          "group-3-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q14",
+        "displayNumber": "14",
+        "responseType": "select"
+      },
+      {
+        "id": "q15",
+        "displayNumber": "15",
+        "responseType": "select"
+      },
+      {
+        "id": "q16",
+        "displayNumber": "16",
+        "responseType": "select"
+      },
+      {
+        "id": "q17",
+        "displayNumber": "17",
+        "responseType": "select"
+      },
+      {
+        "id": "q18",
+        "displayNumber": "18",
+        "responseType": "select"
+      },
+      {
+        "id": "q19",
+        "displayNumber": "19",
+        "responseType": "select"
+      },
+      {
+        "id": "q20",
+        "displayNumber": "20",
+        "responseType": "select"
+      },
+      {
+        "id": "q21",
+        "displayNumber": "21",
+        "responseType": "select"
+      },
+      {
+        "id": "q22",
+        "displayNumber": "22",
+        "responseType": "select"
+      },
+      {
+        "id": "q23",
+        "displayNumber": "23",
+        "responseType": "select"
+      },
+      {
+        "id": "q24",
+        "displayNumber": "24",
+        "responseType": "select"
+      },
+      {
+        "id": "q25",
+        "displayNumber": "25",
+        "responseType": "select"
+      },
+      {
+        "id": "q26",
+        "displayNumber": "26",
+        "responseType": "text"
+      },
+      {
+        "id": "q27",
+        "displayNumber": "27",
+        "responseType": "text"
+      },
+      {
+        "id": "q28",
+        "displayNumber": "28",
+        "responseType": "text"
+      },
+      {
+        "id": "q29",
+        "displayNumber": "29",
+        "responseType": "text"
+      }
+    ],
+    "assets": [],
+    "optionBanks": [
+      {
+        "id": "group-1-option-bank",
+        "taskGroupId": "group-1",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F"
+        ],
+        "allowReuse": true,
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-option-bank",
+        "taskGroupId": "group-2",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "allowReuse": true,
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      }
+    ],
+    "responseGroups": [
+      {
+        "id": "group-1-responses",
+        "taskGroupId": "group-1",
+        "slotIds": [
+          "q14",
+          "q15",
+          "q16",
+          "q17",
+          "q18",
+          "q19"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-1-option-bank"
+        },
+        "reusePolicy": "allowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-responses",
+        "taskGroupId": "group-2",
+        "slotIds": [
+          "q20",
+          "q21",
+          "q22",
+          "q23",
+          "q24",
+          "q25"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-2-option-bank"
+        },
+        "reusePolicy": "allowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3-responses",
+        "taskGroupId": "group-3",
+        "slotIds": [
+          "q26",
+          "q27",
+          "q28",
+          "q29"
+        ],
+        "promptMode": "embedded",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "none"
+        },
+        "reusePolicy": "not_applicable",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      }
+    ],
+    "sourceEvidence": [
+      {
+        "id": "group-1-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          3
+        ],
+        "references": [
+          "fixtures/golden/private-real/petri-dish.pdf#page=3"
+        ]
+      },
+      {
+        "id": "group-2-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          4
+        ],
+        "references": [
+          "fixtures/golden/private-real/petri-dish.pdf#page=4"
+        ]
+      },
+      {
+        "id": "group-3-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          5
+        ],
+        "references": [
+          "fixtures/golden/private-real/petri-dish.pdf#page=5"
+        ]
+      }
+    ],
+    "runtimeExpectations": {
+      "authoritativeVersion": "v1",
+      "artifactMode": "shadow_only",
+      "compileExpectation": "structure_must_compile",
+      "loaderExpectation": "test_only",
+      "rendererExpectation": "test_only",
+      "scoringExpectation": "per_slot",
+      "productionExposure": "disabled",
+      "requiredFeatureFlags": {
+        "documentIrV2Shadow": false,
+        "authoringV2Shadow": false,
+        "qualityGateV2": false,
+        "runtimeSourceV2": false,
+        "nasPackageV2": false
+      }
+    }
+  },
+  "knownIssues": [
+    "Questions 20-25 use one shared List of People option bank; per-question option copies are incorrect."
+  ],
+  "review": {
+    "status": "approved",
+    "reviewedBy": "phase0-source-audit",
+    "reviewedAt": "2026-08-10",
+    "method": "source-text-and-overhaul-plan-evidence",
+    "evidence": [
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#2.1",
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#23.2",
+      "fixtures/golden/private/legacy-reference.json"
+    ]
+  },
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/petri-dish.json",
+    "observed": {
+      "pageCount": 7,
+      "blockCount": 51,
+      "groupCount": 3,
+      "slotCount": 16,
+      "assetCount": 0,
+      "answerCount": 16,
+      "warningCount": 2,
+      "groupKinds": [
+        "matching_information",
+        "matching",
+        "summary_completion"
+      ],
+      "questionIds": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26",
+        "q27",
+        "q28",
+        "q29"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

@@ -1,5 +1,5 @@
 use super::common::{AssetDescriptorV2, SourceAnchorV2};
-use super::content_doc_v2::ContentNodeV2;
+use super::content_doc_v2::{ContentNodeV2, ProvenanceStatusV2};
 use super::quality_report_v2::QualityReportV2;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -192,6 +192,8 @@ pub struct OptionV2 {
     pub label: String,
     pub content: Vec<ContentNodeV2>,
     pub source_anchors: Vec<SourceAnchorV2>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance_status: Option<ProvenanceStatusV2>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -199,11 +201,19 @@ pub struct OptionV2 {
 #[serde(deny_unknown_fields)]
 pub struct OptionBankV2 {
     pub option_bank_id: String,
+    pub scope: OptionBankScopeV2,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<Vec<ContentNodeV2>>,
     pub options: Vec<OptionV2>,
     pub allow_reuse: bool,
     pub source_anchors: Vec<SourceAnchorV2>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OptionBankScopeV2 {
+    TaskGroup,
+    Document,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -221,8 +231,26 @@ pub struct ResponseGroupV2 {
     pub option_bank_ref: Option<String>,
     pub cardinality: CardinalityV2,
     pub assignment: AssignmentV2,
+    pub scoring_policy: ResponseScoringPolicyV2,
+    pub duplicate_policy: DuplicateSelectionPolicyV2,
     pub allow_option_reuse: bool,
     pub source_anchors: Vec<SourceAnchorV2>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseScoringPolicyV2 {
+    PerSlotBinary,
+    PerSlotIeltsNormalized,
+    ExactSet,
+    AllOrNothing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DuplicateSelectionPolicyV2 {
+    RejectSubmission,
+    IgnoreDuplicates,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -264,10 +292,21 @@ pub struct AnswerSlotV2 {
     pub host_node_id: Option<String>,
     pub host_type: AnswerSlotHostTypeV2,
     pub interaction: InteractionV2,
+    pub participation: AnswerSlotParticipationV2,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub constraints: Option<AnswerConstraintsV2>,
     pub source_anchors: Vec<SourceAnchorV2>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance_status: Option<ProvenanceStatusV2>,
     pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerSlotParticipationV2 {
+    Scoring,
+    Example,
+    NonScoring,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -297,6 +336,8 @@ pub enum InteractionV2 {
 pub struct AnswerConstraintsV2 {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_words: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_numbers: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_characters: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]

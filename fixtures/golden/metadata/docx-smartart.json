@@ -3,8 +3,8 @@
   "fixtureId": "docx-smartart",
   "source": {
     "path": "fixtures/golden/synthetic/docx/docx-smartart.docx",
-    "sha256": "2273d3551b17db9840f3df675f8aadc13d54bfb33d8ed54a32281b49c92af632",
-    "sizeBytes": 2677,
+    "sha256": "1567151651ae0e4e65aaa322ae2d967d6a704a708156cf81a4a715629dbb9fcd",
+    "sizeBytes": 2807,
     "format": "docx"
   },
   "expected": {
@@ -64,23 +64,21 @@
     "v1Path": "fixtures/golden/baseline/v1/docx-smartart.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 2,
-      "groupCount": 1,
-      "slotCount": 3,
+      "blockCount": 1,
+      "groupCount": 0,
+      "slotCount": 0,
       "assetCount": 0,
-      "answerCount": 3,
+      "answerCount": 0,
       "warningCount": 0,
-      "groupKinds": [
-        "short_answer"
-      ],
-      "questionIds": [
-        "q1",
-        "q2",
-        "q3"
-      ],
-      "roles": [
-        "question"
-      ]
+      "groupKinds": [],
+      "questionIds": [],
+      "roles": []
     }
+  },
+  "sourceRevision": {
+    "updatedAt": "2026-08-10",
+    "reason": "Phase 3 OOXML adversarial fixtures intentionally regenerated with deterministic package parts",
+    "generator": "scripts/generate-phase3-docx-fixtures.py",
+    "supersedesSha256": "2273d3551b17db9840f3df675f8aadc13d54bfb33d8ed54a32281b49c92af632"
   }
 }

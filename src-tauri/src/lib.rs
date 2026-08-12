@@ -35,10 +35,13 @@ mod authoring_validation;
 mod auto_pipeline;
 mod cleanup;
 mod diagnostics;
+mod docx_facts_shadow;
+mod docx_ingest;
 mod environment;
 mod export_artifacts;
 mod export_nas_library;
 mod export_pack;
+mod ielts_grammar;
 mod job_commands;
 mod job_store;
 mod llm_commands;
@@ -47,8 +50,11 @@ mod llm_profiles;
 mod llm_suggestions;
 mod parser;
 mod pdf_facts_shadow;
+mod pdf_ingest;
 mod preview_commands;
 mod reading_source;
+mod reading_source_v2;
+mod runtime_compiler;
 mod runtime_validation;
 pub mod schema;
 mod source_review;
@@ -717,7 +723,9 @@ async fn choose_export_dir(app: AppHandle) -> CommandResult<Option<String>> {
 }
 
 #[tauri::command]
-async fn pick_pdf_folder_sources(app: AppHandle) -> CommandResult<Vec<job_commands::PickedSourcePath>> {
+async fn pick_pdf_folder_sources(
+    app: AppHandle,
+) -> CommandResult<Vec<job_commands::PickedSourcePath>> {
     job_commands::pick_pdf_folder_sources_core(app).await
 }
 
@@ -732,10 +740,7 @@ async fn parse_document(
 }
 
 #[tauri::command]
-async fn debug_document_ir_v2_overlay(
-    job_id: String,
-    app: AppHandle,
-) -> CommandResult<Value> {
+async fn debug_document_ir_v2_overlay(job_id: String, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     debug_document_ir_v2_overlay_core(&root, &job_id)
 }
@@ -1161,6 +1166,124 @@ mod tests {
             .join("fixtures")
             .join("parser")
             .join(name)
+    }
+
+    fn phase4_pdf_fixtures() -> Vec<(String, PathBuf, Value)> {
+        let repository_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+        let acceptance: Value =
+            read_json(&repository_root.join("fixtures/golden/phase4-eight-pdf-acceptance.json"))
+                .expect("Phase 4 acceptance manifest must be readable");
+        let fixture_ids = acceptance
+            .get("fixtureIds")
+            .and_then(Value::as_array)
+            .expect("Phase 4 acceptance manifest must declare fixtureIds");
+        assert_eq!(
+            fixture_ids.len(),
+            8,
+            "Phase 4 acceptance must remain pinned to exactly eight named fixtures"
+        );
+        let unique_ids = fixture_ids
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            unique_ids.len(),
+            fixture_ids.len(),
+            "Phase 4 acceptance fixtureIds must be unique strings"
+        );
+
+        let golden_manifest: Value =
+            read_json(&repository_root.join("fixtures/golden/manifest.json"))
+                .expect("golden manifest must be readable");
+        let manifest_fixtures = golden_manifest
+            .get("fixtures")
+            .and_then(Value::as_array)
+            .expect("golden manifest must declare fixtures");
+
+        fixture_ids
+            .iter()
+            .map(|fixture_id| {
+                let fixture_id = fixture_id
+                    .as_str()
+                    .expect("Phase 4 fixtureId must be a string");
+                let entry = manifest_fixtures
+                    .iter()
+                    .find(|entry| {
+                        entry.get("fixtureId").and_then(Value::as_str) == Some(fixture_id)
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("Phase 4 fixture {fixture_id} is missing from golden manifest")
+                    });
+                assert_eq!(
+                    entry.get("status").and_then(Value::as_str),
+                    Some("available"),
+                    "Phase 4 fixture {fixture_id} must be available"
+                );
+                let source_relative = entry
+                    .get("sourcePath")
+                    .and_then(Value::as_str)
+                    .expect("available fixture must declare sourcePath");
+                let metadata_relative = entry
+                    .get("metadataPath")
+                    .and_then(Value::as_str)
+                    .expect("available fixture must declare metadataPath");
+                let source_path = repository_root.join(source_relative);
+                let metadata: Value = read_json(&repository_root.join(metadata_relative))
+                    .unwrap_or_else(|error| {
+                        panic!("Phase 4 fixture {fixture_id} metadata failed: {error}")
+                    });
+                assert_eq!(
+                    metadata.get("fixtureId").and_then(Value::as_str),
+                    Some(fixture_id),
+                    "Phase 4 fixture metadata identity must match the acceptance manifest"
+                );
+                assert_eq!(
+                    metadata.pointer("/source/path").and_then(Value::as_str),
+                    Some(source_relative),
+                    "Phase 4 fixture metadata source path must match the golden manifest"
+                );
+                let (actual_hash, actual_size, _) = hash_file_or_path(&source_path)
+                    .unwrap_or_else(|error| panic!("Phase 4 fixture {fixture_id} failed: {error}"));
+                assert_eq!(
+                    entry.get("sha256").and_then(Value::as_str),
+                    Some(actual_hash.as_str()),
+                    "Phase 4 fixture {fixture_id} source hash drifted"
+                );
+                assert_eq!(
+                    entry.get("sizeBytes").and_then(Value::as_u64),
+                    Some(actual_size),
+                    "Phase 4 fixture {fixture_id} source size drifted"
+                );
+                (fixture_id.to_string(), source_path, metadata)
+            })
+            .collect()
+    }
+
+    fn assert_pdf_parser_provenance(document: &Value, fixture: &Path) {
+        let provider = document
+            .pointer("/parser/provider")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let warnings = parser_warnings(Some(document));
+        let fallback_warning = warnings.iter().find(|warning| {
+            warning.contains("rust pdf-extract failed; used Python parser fallback:")
+        });
+        match provider {
+            "rust-parser:pdf:pdf-extract" => assert!(
+                fallback_warning.is_none(),
+                "{} reports native Rust parsing and must not claim sidecar fallback",
+                fixture.display()
+            ),
+            "python-parser-sidecar:pdf:pypdf" => assert!(
+                fallback_warning.is_some_and(|warning| warning.contains("rust_pdf_extract_failed:")),
+                "{} may use the Python sidecar only with the original Rust parser failure preserved",
+                fixture.display()
+            ),
+            other => panic!(
+                "{} used unsupported PDF parser provider {other:?}",
+                fixture.display()
+            ),
+        }
     }
 
     fn write_minimal_docx(path: &Path, document_xml: &str) {
@@ -3512,12 +3635,9 @@ Answers
         ));
 
         let ir = parse_source_document(&job, &source, &fixture, &output, "auto")
-            .expect("no-text PDF fixture should parse through Rust PDF extractor");
+            .expect("no-text PDF fixture should parse through the supported parser chain");
 
-        assert_eq!(
-            ir.pointer("/parser/provider").and_then(Value::as_str),
-            Some("rust-parser:pdf:pdf-extract")
-        );
+        assert_pdf_parser_provenance(&ir, &fixture);
         assert!(parser_warnings(Some(&ir))
             .iter()
             .any(|warning| warning.contains("no extractable text")));
@@ -3694,11 +3814,37 @@ Answers
     fn auto_pipeline_persists_llm_review_in_authoring_ir_after_minimization() {
         let root = temp_test_root();
         ensure_app_dirs(&root).unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-group-review",
+                "name": "Group Review Test",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 60000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
         let mut job = test_job();
         attach_fixture_source(&root, &mut job, "complex-reading.txt", "MainQuestion");
         save_job(&root, &job).unwrap();
 
-        let report = run_auto_pipeline_core(&root, &job.job_id, None).unwrap();
+        let report = run_auto_pipeline_core_with_gateway(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                profile_id: Some("profile-group-review".to_string()),
+                ..AutoPipelineInput::default()
+            }),
+            |_root, _job_id, command_name, _input, _api_key| {
+                Err(format!("intentional_group_review_failure:{command_name}"))
+            },
+        )
+        .unwrap();
         assert_eq!(
             report.get("currentStep").and_then(Value::as_str),
             Some("Authoring")
@@ -3735,6 +3881,18 @@ Answers
         let mut job = test_job();
         attach_fixture_source(&root, &mut job, "complex-reading.txt", "MainQuestion");
         save_job(&root, &job).unwrap();
+        let job_path = job_dir(&root, &job.job_id);
+        fs::create_dir_all(job_path.join("cache").join("fixture-stage")).unwrap();
+        fs::create_dir_all(job_path.join("preview")).unwrap();
+        fs::write(
+            job_path
+                .join("cache")
+                .join("fixture-stage")
+                .join("facts.json"),
+            b"{}",
+        )
+        .unwrap();
+        fs::write(job_path.join("preview").join("index.html"), b"diagnostic").unwrap();
 
         let report = run_auto_pipeline_core(&root, &job.job_id, None).unwrap();
 
@@ -3742,11 +3900,15 @@ Answers
             report.get("status").and_then(Value::as_str),
             Some("NeedsReview")
         );
-        let job_path = job_dir(&root, &job.job_id);
         assert!(job_path.join("document-ir.json").exists());
         assert!(job_path.join("split-candidates.json").exists());
         assert!(job_path.join("pipeline-report.json").exists());
-        assert!(job_path.join("cache").exists());
+        assert!(job_path
+            .join("cache")
+            .join("fixture-stage")
+            .join("facts.json")
+            .exists());
+        assert!(job_path.join("preview").join("index.html").exists());
         let parser_cache = root.join("cache").join("parser");
         assert!(parser_cache.exists());
         let retained_parser_outputs = fs::read_dir(&parser_cache)
@@ -3769,6 +3931,21 @@ Answers
     fn auto_pipeline_high_confidence_llm_auto_applies_without_human_verification() {
         let root = temp_test_root();
         ensure_app_dirs(&root).unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-high-confidence",
+                "name": "High Confidence Group Test",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 60000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
         let mut job = test_job();
         attach_fixture_source(&root, &mut job, "complex-reading.txt", "MainQuestion");
         save_job(&root, &job).unwrap();
@@ -3780,7 +3957,7 @@ Answers
             Some(AutoPipelineInput {
                 parse_mode: None,
                 confidence_threshold: Some(0.85),
-                profile_id: None,
+                profile_id: Some("profile-high-confidence".to_string()),
                 execution_mode: None,
                 target: None,
                 allow_overwrite: None,
@@ -3951,17 +4128,13 @@ Answers
             report
                 .pointer("/parser/visionTranscription/attempted")
                 .and_then(Value::as_bool),
-            Some(true)
+            Some(false)
         );
-        assert!(
+        assert_eq!(
             report
-                .pointer("/parser/visionTranscription/applied")
-                .and_then(Value::as_bool)
-                == Some(true)
-                || report
-                    .pointer("/parser/visionTranscription/failure")
-                    .and_then(Value::as_str)
-                    .is_some()
+                .pointer("/parser/visionTranscription/failure")
+                .and_then(Value::as_str),
+            Some("no_enabled_llm_profile_available_for_pdf_vision_transcription")
         );
         assert_eq!(
             report.get("status").and_then(Value::as_str),
@@ -4227,17 +4400,23 @@ Answers
             .and_then(Value::as_array)
             .map(|groups| !groups.is_empty())
             .unwrap_or(false));
-        assert!(ir
+        let questions = ir
             .get("groups")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .any(|group| group
-                .get("llmReview")
-                .and_then(Value::as_object)
-                .and_then(|review| review.get("required"))
-                .and_then(Value::as_bool)
-                == Some(true)));
+            .flat_map(|group| {
+                group
+                    .get("questions")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        assert!(!questions.is_empty());
+        assert!(questions
+            .iter()
+            .all(|question| question.get("verified").and_then(Value::as_bool) == Some(false)));
         verify_all_authoring_items(&mut ir);
         assert_eq!(
             ir.pointer("/audit/humanVerified").and_then(Value::as_bool),
@@ -6701,7 +6880,9 @@ Answers
         );
         assert_eq!(result.get("assetCount").and_then(Value::as_u64), Some(1));
         let reading_exams_dir = library_root.clone();
-        assert!(library_root.join(format!("{}.js", expected_exam_id)).exists());
+        assert!(library_root
+            .join(format!("{}.js", expected_exam_id))
+            .exists());
         assert!(reading_exams_dir.join("manifest.js").exists());
         assert!(!library_root.join("publish").join("library.db").exists());
         assert!(!library_root.join("source").exists());
@@ -7161,20 +7342,25 @@ Answers
             file_type,
             Uuid::new_v4().simple()
         ));
+        let fixture = parser_fixture(file_name);
         let doc = parse_source_document(
             &job,
             job.source_files.first().unwrap(),
-            &parser_fixture(file_name),
+            &fixture,
             &output,
             "auto",
         )
         .unwrap();
 
-        assert_eq!(
-            doc.pointer("/parser/provider").and_then(Value::as_str),
-            Some(provider)
-        );
-        assert!(parser_warnings(Some(&doc)).is_empty());
+        if file_type == "pdf" {
+            assert_pdf_parser_provenance(&doc, &fixture);
+        } else {
+            assert_eq!(
+                doc.pointer("/parser/provider").and_then(Value::as_str),
+                Some(provider)
+            );
+            assert!(parser_warnings(Some(&doc)).is_empty());
+        }
         assert!(low_confidence_block_ids(Some(&doc), 0.5).is_empty());
         let blocks = dynamic_document_blocks(Some(&doc));
         assert!(blocks
@@ -7699,6 +7885,102 @@ Answers
     }
 
     #[test]
+    fn registered_phase4_pdf_corpus_reaches_frozen_v1_parse_split_and_authoring() {
+        for (fixture_id, sample, metadata) in phase4_pdf_fixtures() {
+            let mut job = make_job(CreateJobInput {
+                title: Some(fixture_id.clone()),
+                category: None,
+                frequency: None,
+                tags: Some(vec!["phase4-eight-pdf-corpus".to_string()]),
+                llm_profile_id: None,
+            });
+            let source = SourceFile {
+                file_id: format!("file-{fixture_id}"),
+                original_name: metadata
+                    .pointer("/source/originalName")
+                    .and_then(Value::as_str)
+                    .expect("Phase 4 metadata must declare source.originalName")
+                    .to_string(),
+                stored_name: sample
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("Phase 4 source filename must be UTF-8")
+                    .to_string(),
+                file_type: "pdf".to_string(),
+                sha256: metadata
+                    .pointer("/source/sha256")
+                    .and_then(Value::as_str)
+                    .expect("Phase 4 metadata must declare source.sha256")
+                    .to_string(),
+                size_bytes: metadata
+                    .pointer("/source/sizeBytes")
+                    .and_then(Value::as_u64)
+                    .expect("Phase 4 metadata must declare source.sizeBytes"),
+                role: "MainQuestion".to_string(),
+                imported_at: Utc::now(),
+            };
+            job.source_files = vec![source.clone()];
+            let output = env::temp_dir().join(format!(
+                "phase4-v1-{fixture_id}-{}-document-ir.json",
+                Uuid::new_v4().simple()
+            ));
+            let document = parse_source_document(&job, &source, &sample, &output, "auto")
+                .unwrap_or_else(|error| panic!("{fixture_id} V1 parse failed: {error}"));
+            assert_pdf_parser_provenance(&document, &sample);
+
+            let baseline = metadata
+                .pointer("/baseline/observed")
+                .expect("Phase 4 metadata must declare frozen V1 observations");
+            assert_eq!(
+                document
+                    .get("pages")
+                    .and_then(Value::as_array)
+                    .map(Vec::len),
+                baseline
+                    .get("pageCount")
+                    .and_then(Value::as_u64)
+                    .map(|count| count as usize),
+                "{fixture_id} V1 page count drifted"
+            );
+            assert_eq!(
+                parser_warnings(Some(&document)).len(),
+                baseline
+                    .get("warningCount")
+                    .and_then(Value::as_u64)
+                    .expect("frozen V1 warning count must be numeric") as usize,
+                "{fixture_id} V1 parser warning count drifted"
+            );
+
+            let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&document));
+            assert_eq!(
+                split
+                    .get("questionGroupCandidates")
+                    .and_then(Value::as_array)
+                    .map(Vec::len),
+                baseline
+                    .get("groupCount")
+                    .and_then(Value::as_u64)
+                    .map(|count| count as usize),
+                "{fixture_id} V1 split group count drifted"
+            );
+            let authoring = make_dynamic_authoring_ir(&job, &split, Some(&document));
+            assert_eq!(
+                authoring
+                    .get("questionOrder")
+                    .and_then(Value::as_array)
+                    .map(Vec::len),
+                baseline
+                    .get("slotCount")
+                    .and_then(Value::as_u64)
+                    .map(|count| count as usize),
+                "{fixture_id} V1 authoring slot count drifted"
+            );
+            let _ = fs::remove_file(output);
+        }
+    }
+
+    #[test]
+    #[ignore = "superseded by the registered Phase 4 eight-PDF corpus; requires removed legacy Files/*.pdf inputs"]
     fn files_pdf_samples_reach_expected_review_paths() {
         let sample_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -8196,7 +8478,19 @@ Answers
             .pointer("/parser/visionTranscription/failure")
             .and_then(Value::as_str)
             .unwrap_or_default()
-            .contains("kept original text-layer parse"));
+            .contains("authoritative local parse was unchanged"));
+        assert_eq!(
+            report
+                .pointer("/parser/visionTranscription/diagnosticOnly")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            report
+                .pointer("/parser/visionTranscription/wouldPassQualityGate")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
         let saved_doc: Value =
             read_json(&job_dir(&root, &job.job_id).join("document-ir.json")).unwrap();
         let saved_text = dynamic_document_blocks(Some(&saved_doc))
@@ -8206,9 +8500,7 @@ Answers
             .join("\n");
         assert!(saved_text.contains("The Origin of Paper"));
         assert!(!saved_text.contains("题号 答案"));
-        assert!(parser_warnings(Some(&saved_doc))
-            .iter()
-            .any(|warning| warning.contains("kept original text-layer parse")));
+        assert!(parser_warnings(Some(&saved_doc)).is_empty());
         let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
         let ir_text = serde_json::to_string(&ir).unwrap();
         assert!(ir_text.contains("The Origin of Paper"));
@@ -8305,7 +8597,7 @@ Answers
     }
 
     #[test]
-    fn auto_pipeline_local_only_still_runs_pdf_vision_rescue_and_skips_cloud_review() {
+    fn auto_pipeline_local_only_skips_all_pdf_cloud_calls() {
         let root = temp_test_root();
         ensure_app_dirs(&root).unwrap();
         write_diagnostics_settings(
@@ -8367,7 +8659,7 @@ Answers
         });
         write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), &doc).unwrap();
         write_source_review_status(&root, &job.job_id, Some(&doc), false, None).unwrap();
-        let vision_text = fs::read_to_string(parser_fixture("complex-reading.txt")).unwrap();
+        let mut gateway_calls = 0_usize;
 
         let report = run_auto_pipeline_core_with_gateway(
             &root,
@@ -8380,58 +8672,43 @@ Answers
                 target: Some("editableDraft".to_string()),
                 allow_overwrite: None,
             }),
-            move |_root, _job_id, command_name, _input, _api_key| match command_name {
-                "transcribe_pdf_images" => Ok(json!({
-                    "text": vision_text.clone(),
-                    "confidence": 0.94,
-                    "warnings": []
-                })),
-                "extract_pdf_image_answers" => Ok(json!({
-                    "answers": {
-                        "1": "TRUE",
-                        "2": "FALSE",
-                        "3": "TRUE",
-                        "4": "diaries",
-                        "5": "diaries"
-                    },
-                    "confidence": 0.99,
-                    "warnings": [],
-                    "evidence": [{"questionNumber": "1", "pageIndex": 1, "quote": "1 TRUE"}]
-                })),
-                other => Err(format!("unexpected_command:{}", other)),
+            |_root, _job_id, command_name, _input, _api_key| {
+                gateway_calls += 1;
+                Err(format!("local_only_must_not_call:{command_name}"))
             },
         )
         .unwrap();
 
+        assert_eq!(gateway_calls, 0);
         assert_eq!(
             report
                 .pointer("/parser/visionTranscription/attempted")
                 .and_then(Value::as_bool),
-            Some(true)
+            Some(false)
         );
         assert_eq!(
             report
                 .pointer("/parser/visionTranscription/applied")
                 .and_then(Value::as_bool),
-            Some(true)
+            Some(false)
         );
         assert_eq!(
             report
                 .pointer("/parser/visionAnswerExtraction/attempted")
                 .and_then(Value::as_bool),
-            Some(true)
+            Some(false)
         );
         assert_eq!(
             report
                 .pointer("/parser/visionAnswerExtraction/applied")
                 .and_then(Value::as_bool),
-            Some(true)
+            Some(false)
         );
         assert_eq!(
             report
                 .pointer("/parser/visionAnswerExtraction/answerCount")
                 .and_then(Value::as_u64),
-            Some(5)
+            Some(0)
         );
         assert_eq!(
             report
@@ -8446,37 +8723,27 @@ Answers
             saved_doc
                 .pointer("/parser/provider")
                 .and_then(Value::as_str),
-            Some("vision-llm-transcription")
+            Some("rust-parser:pdf:pdf-extract")
         );
         let ir: Value = read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
         assert_eq!(
             ir.get("questionOrder")
                 .and_then(Value::as_array)
                 .map(Vec::len),
-            Some(5)
+            Some(0)
         );
         assert!(!ir
             .get("groups")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
-            .flat_map(|group| group
-                .get("questions")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten())
-            .any(|question| {
-                question
-                    .get("prompt")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .starts_with("Manual import required for question")
-            }));
+            .any(|group| group.get("autoApplied").and_then(Value::as_bool) == Some(true)));
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
+    #[ignore = "superseded by the registered Phase 4 eight-PDF corpus; requires removed legacy Files/*.pdf inputs"]
     fn files_pdf_samples_auto_pipeline_minimizes_artifacts_and_preserves_review_gate() {
         let sample_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")

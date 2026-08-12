@@ -7,6 +7,8 @@ on:
       - ".github/workflows/windows-smoke.yml"
       - "package.json"
       - "package-lock.json"
+      - "contracts/**"
+      - "fixtures/**"
       - "scripts/**"
       - "sidecars/**"
       - "src/**"
@@ -33,6 +35,12 @@ jobs:
 
       - name: TypeScript check
         run: npm run check
+
+      - name: Phase 0 tracked corpus contract
+        run: npm run verify:phase0:ci
+
+      - name: Phase 1 local schema contract
+        run: npm run verify:phase1:schema:local
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml

@@ -70,6 +70,12 @@ pub struct SourceAnchorV2 {
     pub node_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bbox: Option<RectV2>,
+    #[serde(rename = "nativeBBox", skip_serializing_if = "Option::is_none")]
+    pub native_bbox: Option<RectV2>,
+    #[serde(rename = "displayBBox", skip_serializing_if = "Option::is_none")]
+    pub display_bbox: Option<RectV2>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdf_to_display: Option<[f64; 6]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub char_range: Option<SourceCharRangeV2>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,6 +84,29 @@ pub struct SourceAnchorV2 {
     pub relationship_id: Option<String>,
     pub extraction_mode: ExtractionModeV2,
     pub source_hash: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<SourceVariantV2>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct SourceVariantV2 {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    pub extraction_mode: ExtractionModeV2,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<RectV2>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub node_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

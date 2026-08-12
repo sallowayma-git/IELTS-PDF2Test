@@ -15,6 +15,11 @@ const pdfDirArg = args.pdfDir ?? args["pdf-dir"];
 const legacyDirArg = args.legacyDir ?? args["legacy-dir"];
 const outDirArg = args.outDir ?? args["out-dir"];
 const skipBuildArg = args.skipBuild ?? args["skip-build"];
+const smoke = args.smoke === "true" || args.smoke === true;
+
+if (smoke) {
+  runSmokeRegression();
+}
 
 if (!pdfDirArg || !legacyDirArg) {
   console.error("[pdf-regression] --pdf-dir and --legacy-dir are required for real corpus data.");
@@ -167,10 +172,76 @@ function printUsageAndExit(code) {
     "  --seed <value>       Deterministic sample seed. Default: current timestamp.",
     "  --cli <path>         Existing ielts-author-studio CLI binary to run.",
     "  --skip-build         Skip cargo build when --cli/default binary already exists.",
-    "  --strict             Exit non-zero when any sampled comparison fails."
+    "  --strict             Exit non-zero when any sampled comparison fails.",
+    "  --smoke              Run bundled V1 PDF fixtures and compare baseline facts."
   ].join("\n");
   (code === 0 ? console.log : console.error)(usage);
   process.exit(code);
+}
+
+function runSmokeRegression() {
+  const outputDir = path.resolve(outDirArg ?? path.join(defaultOutDir, "smoke"));
+  const cli = path.resolve(args.cli ?? path.join(repoRoot, "src-tauri", "target", "debug", cliBinaryName()));
+  if (!fs.existsSync(cli)) {
+    const build = spawnSync("cargo", ["build", "--manifest-path", path.join(repoRoot, "src-tauri", "Cargo.toml")], {
+      cwd: repoRoot,
+      stdio: "inherit"
+    });
+    if (build.status !== 0 || !fs.existsSync(cli)) process.exit(build.status ?? 2);
+  }
+  fs.mkdirSync(outputDir, { recursive: true });
+  const fixtures = ["parser-complex-reading", "parser-image-only-reading", "parser-no-text"];
+  const results = fixtures.map((fixtureId, index) => {
+    const baselinePath = path.join(repoRoot, "fixtures", "golden", "baseline", "v1", `${fixtureId}.json`);
+    const baseline = JSON.parse(fs.readFileSync(baselinePath, "utf8"));
+    const sourcePath = path.resolve(repoRoot, baseline.source.path);
+    const outputPath = path.join(outputDir, `${String(index + 1).padStart(2, "0")}-${fixtureId}.json`);
+    const generated = spawnSync(cli, ["--generate-reading-source", sourcePath, "--out", outputPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024 * 20
+    });
+    if (generated.status !== 0 || generated.error) {
+      return { fixtureId, ok: false, error: generated.error?.message ?? generated.stderr?.trim() ?? `exit_${generated.status}` };
+    }
+    const observed = summarizeSmokePayload(JSON.parse(fs.readFileSync(outputPath, "utf8")));
+    const expected = baseline.observed;
+    return {
+      fixtureId,
+      ok: JSON.stringify(observed) === JSON.stringify(expected),
+      expected,
+      observed,
+      outputPath: path.relative(repoRoot, outputPath).replaceAll("\\", "/")
+    };
+  });
+  const failures = results.filter((result) => !result.ok);
+  console.log(JSON.stringify({
+    schemaVersion: "PdfRegressionSmokeReportV1",
+    fixtureCount: results.length,
+    passCount: results.length - failures.length,
+    failCount: failures.length,
+    results
+  }, null, 2));
+  process.exit(failures.length > 0 ? 1 : 0);
+}
+
+function summarizeSmokePayload(payload) {
+  const pages = payload.documentIr?.pages ?? [];
+  const blocks = pages.flatMap((page) => page.blocks ?? []);
+  const groups = payload.authoringIr?.groups ?? [];
+  const questions = groups.flatMap((group) => group.questions ?? []);
+  return {
+    pageCount: pages.length,
+    blockCount: blocks.length,
+    groupCount: groups.length,
+    slotCount: questions.length,
+    assetCount: (payload.documentIr?.assets ?? []).length,
+    answerCount: Object.keys(payload.authoringIr?.answerKey ?? {}).length,
+    warningCount: (payload.documentIr?.parser?.warnings ?? []).length,
+    groupKinds: groups.map((group) => group.kind),
+    questionIds: questions.map((question) => question.id),
+    roles: [...new Set(blocks.map((block) => block.roleHint).filter(Boolean))].sort()
+  };
 }
 
 function assertReadableDirectory(dir, label) {

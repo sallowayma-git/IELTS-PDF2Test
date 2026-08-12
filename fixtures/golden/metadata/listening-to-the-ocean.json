@@ -1,0 +1,432 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "listening-to-the-ocean",
+  "source": {
+    "path": "fixtures/golden/private-real/listening-to-the-ocean.pdf",
+    "originalName": "9. P1 - Listening to the Ocean 海洋探测.pdf",
+    "sha256": "10078322c4da3a45edcfecbfe1b4096463d12c5e18affc6cf5dc5c57cc5f5fbd",
+    "sizeBytes": 481039,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "answer"
+        ]
+      },
+      {
+        "pageIndex": 6,
+        "roles": [
+          "explanation"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          1,
+          4
+        ],
+        "kind": "true_false_not_given",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ],
+        "responseGroupIds": [
+          "group-1-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          5,
+          8
+        ],
+        "kind": "matching_information",
+        "slotIds": [
+          "q5",
+          "q6",
+          "q7",
+          "q8"
+        ],
+        "responseGroupIds": [
+          "group-2-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          9,
+          13
+        ],
+        "kind": "single_choice",
+        "slotIds": [
+          "q9",
+          "q10",
+          "q11",
+          "q12",
+          "q13"
+        ],
+      "responseGroupIds": [
+          "group-3-response-9",
+          "group-3-response-10",
+          "group-3-response-11",
+          "group-3-response-12",
+          "group-3-response-13"
+      ],
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q1",
+        "displayNumber": "1",
+        "responseType": "radio"
+      },
+      {
+        "id": "q2",
+        "displayNumber": "2",
+        "responseType": "radio"
+      },
+      {
+        "id": "q3",
+        "displayNumber": "3",
+        "responseType": "radio"
+      },
+      {
+        "id": "q4",
+        "displayNumber": "4",
+        "responseType": "radio"
+      },
+      {
+        "id": "q5",
+        "displayNumber": "5",
+        "responseType": "select"
+      },
+      {
+        "id": "q6",
+        "displayNumber": "6",
+        "responseType": "select"
+      },
+      {
+        "id": "q7",
+        "displayNumber": "7",
+        "responseType": "select"
+      },
+      {
+        "id": "q8",
+        "displayNumber": "8",
+        "responseType": "select"
+      },
+      {
+        "id": "q9",
+        "displayNumber": "9",
+        "responseType": "radio"
+      },
+      {
+        "id": "q10",
+        "displayNumber": "10",
+        "responseType": "radio"
+      },
+      {
+        "id": "q11",
+        "displayNumber": "11",
+        "responseType": "radio"
+      },
+      {
+        "id": "q12",
+        "displayNumber": "12",
+        "responseType": "radio"
+      },
+      {
+        "id": "q13",
+        "displayNumber": "13",
+        "responseType": "radio"
+      }
+    ],
+    "assets": [],
+    "optionBanks": [
+      {
+        "id": "group-1-option-bank",
+        "taskGroupId": "group-1",
+        "scope": "task_group",
+        "labels": [
+          "TRUE",
+          "FALSE",
+          "NOT GIVEN"
+        ],
+        "allowReuse": true,
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-option-bank",
+        "taskGroupId": "group-2",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "G"
+        ],
+        "allowReuse": true,
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      }
+    ],
+    "responseGroups": [
+      {
+        "id": "group-1-responses",
+        "taskGroupId": "group-1",
+        "slotIds": [
+          "q1",
+          "q2",
+          "q3",
+          "q4"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-1-option-bank"
+        },
+        "reusePolicy": "allowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-responses",
+        "taskGroupId": "group-2",
+        "slotIds": [
+          "q5",
+          "q6",
+          "q7",
+          "q8"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-2-option-bank"
+        },
+        "reusePolicy": "allowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3-response-9",
+        "taskGroupId": "group-3",
+        "slotIds": ["q9"],
+        "promptMode": "per_slot",
+        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "assignment": "per_slot",
+        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": ["group-3-source"]
+      },
+      {
+        "id": "group-3-response-10",
+        "taskGroupId": "group-3",
+        "slotIds": ["q10"],
+        "promptMode": "per_slot",
+        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "assignment": "per_slot",
+        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": ["group-3-source"]
+      },
+      {
+        "id": "group-3-response-11",
+        "taskGroupId": "group-3",
+        "slotIds": ["q11"],
+        "promptMode": "per_slot",
+        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "assignment": "per_slot",
+        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": ["group-3-source"]
+      },
+      {
+        "id": "group-3-response-12",
+        "taskGroupId": "group-3",
+        "slotIds": ["q12"],
+        "promptMode": "per_slot",
+        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "assignment": "per_slot",
+        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": ["group-3-source"]
+      },
+      {
+        "id": "group-3-response-13",
+        "taskGroupId": "group-3",
+        "slotIds": ["q13"],
+        "promptMode": "per_slot",
+        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "assignment": "per_slot",
+        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": ["group-3-source"]
+      }
+    ],
+    "sourceEvidence": [
+      {
+        "id": "group-1-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          3
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-to-the-ocean.pdf#page=3"
+        ]
+      },
+      {
+        "id": "group-2-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          3
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-to-the-ocean.pdf#page=3"
+        ]
+      },
+      {
+        "id": "group-3-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          4
+        ],
+        "references": [
+          "fixtures/golden/private-real/listening-to-the-ocean.pdf#page=4"
+        ]
+      }
+    ],
+    "runtimeExpectations": {
+      "authoritativeVersion": "v1",
+      "artifactMode": "shadow_only",
+      "compileExpectation": "structure_must_compile",
+      "loaderExpectation": "test_only",
+      "rendererExpectation": "test_only",
+      "scoringExpectation": "per_slot",
+      "productionExposure": "disabled",
+      "requiredFeatureFlags": {
+        "documentIrV2Shadow": false,
+        "authoringV2Shadow": false,
+        "qualityGateV2": false,
+        "runtimeSourceV2": false,
+        "nasPackageV2": false
+      }
+    }
+  },
+  "knownIssues": [
+    "V1 emits parser warnings for non-extractable answer or explanation pages; those pages must not enter passage text."
+  ],
+  "review": {
+    "status": "approved",
+    "reviewedBy": "phase0-source-audit",
+    "reviewedAt": "2026-08-10",
+    "method": "source-text-and-overhaul-plan-evidence",
+    "evidence": [
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#2.1",
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#23.2",
+      "fixtures/golden/private/legacy-reference.json"
+    ]
+  },
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/listening-to-the-ocean.json",
+    "observed": {
+      "pageCount": 6,
+      "blockCount": 42,
+      "groupCount": 3,
+      "slotCount": 13,
+      "assetCount": 0,
+      "answerCount": 13,
+      "warningCount": 2,
+      "groupKinds": [
+        "true_false_not_given",
+        "matching_information",
+        "single_choice"
+      ],
+      "questionIds": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5",
+        "q6",
+        "q7",
+        "q8",
+        "q9",
+        "q10",
+        "q11",
+        "q12",
+        "q13"
+      ],
+      "roles": [
+        "passage",
+        "question"
+      ]
+    }
+  }
+}

@@ -1,0 +1,3705 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "conformity",
+  "source": {
+    "path": "fixtures/golden/private-real/conformity.pdf",
+    "sha256": "60dbf15365da522b15ba35729af145bc5b99ea9c598e615691ee5fc405e3d3fd",
+    "sizeBytes": 670950
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 5,
+    "blockCount": 48,
+    "groupCount": 3,
+    "slotCount": 14,
+    "assetCount": 0,
+    "answerCount": 14,
+    "warningCount": 1,
+    "groupKinds": [
+      "yes_no_not_given",
+      "summary_completion",
+      "sentence_completion"
+    ],
+    "questionIds": [
+      "q27",
+      "q28",
+      "q29",
+      "q30",
+      "q31",
+      "q32",
+      "q33",
+      "q34",
+      "q35",
+      "q36",
+      "q37",
+      "q38",
+      "q39",
+      "q40"
+    ],
+    "roles": [
+      "passage",
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q27": "",
+        "q28": "",
+        "q29": "",
+        "q30": "",
+        "q31": "",
+        "q32": "",
+        "q33": "",
+        "q34": "",
+        "q35": "",
+        "q36": "",
+        "q37": "",
+        "q38": "",
+        "q39": "",
+        "q40": ""
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "conformity.pdf",
+            "role": "MainQuestion",
+            "sha256": "60dbf15365da522b15ba35729af145bc5b99ea9c598e615691ee5fc405e3d3fd",
+            "sizeBytes": 670950,
+            "storedName": "conformity.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "conformity"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            }
+          ],
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 27-30"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "yes_no_not_given",
+          "layout": {
+            "layoutHint": "list",
+            "template": "ynng_list"
+          },
+          "questionRange": [
+            27,
+            30
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "27",
+              "id": "q27",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "YES",
+                  "NO",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Childhood crazes can centre on items of any value.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "28",
+              "id": "q28",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "YES",
+                  "NO",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Children are more vulnerable to crazes now than they used to be.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "29",
+              "id": "q29",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "YES",
+                  "NO",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Consumers make too many quick decisions in shops.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "30",
+              "id": "q30",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "YES",
+                  "NO",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Crutchfield’s definition of conformity is the most reliable.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b011",
+                "b012",
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 27-30"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Do the following statements agree with the claims of the writer in Reading Passage 3?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In boxes 27–30 on your answer sheet, write"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "YES if the statement agrees with the claims of the writer NO if the statement contradicts the claims of the writer NOT G"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "27 Childhood crazes can centre on items of any value."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "28 Children are more vulnerable to crazes now than they used to be."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "29 Consumers make too many quick decisions in shops."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "30 Crutchfield’s definition of conformity is the most reliable."
+            }
+          ],
+          "sourceBlockIds": [
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 31-35"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "summary_completion",
+          "layout": {
+            "layoutHint": "inline_completion",
+            "notes": "Questions 31–35 Complete the summary below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 31–35 on your answer sheet. Studies on conformity In the Jenness study, people had to guess how many 31 ______ were in a container. Jenness found that, in most cases, people opted for an estimate given by a 32 ______. Asch asked his subjects to 33 ______ line lengths. To test the extent to which people would conform, he placed his subjects with colleagues who gave 34 ______ responses. He found that his subjects agreed with his colleagues 32% of the time, although they admitted to feeling 35 ______ about giving their answer.",
+            "template": "summary_text_completion"
+          },
+          "questionRange": [
+            31,
+            35
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "31",
+              "id": "q31",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "were in a container. Jenness found that, in most cases, people opted for an estimate given by a",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "32",
+              "id": "q32",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "Asch asked his subjects to",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "33",
+              "id": "q33",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "line lengths. To test the extent to which people would conform, he placed his subjects with colleagues who gave",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "34",
+              "id": "q34",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "responses. He found that his subjects agreed with his colleagues 32% of the time, although they admitted to feeling",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "35",
+              "id": "q35",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "about giving their answer.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 31–35"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary below."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 31–35 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Studies on conformity"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In the Jenness study, people had to guess how many 31 ______ were in a container."
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Jenness found that, in most cases, people opted for an estimate given by a 32 ______."
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Asch asked his subjects to 33 ______ line lengths. To test the extent to which people would"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "conform, he placed his subjects with colleagues who gave 34 ______ responses. He found"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "that his subjects agreed with his colleagues 32% of the time, although they admitted to"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "feeling 35 ______ about giving their answer."
+            }
+          ],
+          "sourceBlockIds": [
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045",
+            "b046",
+            "b047"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
+              "toBlockId": "b045"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
+            }
+          ],
+          "groupId": "group-3",
+          "instruction": [
+            "Questions 36-40"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "sentence_completion",
+          "layout": {
+            "layoutHint": "inline_completion",
+            "notes": "Questions 36–40 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 36–40 on your answer sheet. Kelman’s processes of social conformity • Compliance – people support the majority view despite their own ideas – social harmony is maintained – illustrated by the results of the research conducted by 36 ______ • 37 ______ – majority view is considered most 38 ______ view – people persuade themselves despite their own ideas • 39 ______ – people change their ideas to those of the majority – typical of 40 ______ Disclaimer Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.",
+            "template": "inline_text_completion"
+          },
+          "questionRange": [
+            36,
+            40
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "36",
+              "id": "q36",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "•",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "37",
+              "id": "q37",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "– majority view is considered most",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "38",
+              "id": "q38",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "view – people persuade themselves despite their own ideas •",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "39",
+              "id": "q39",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "– people change their ideas to those of the majority – typical of",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "40",
+              "id": "q40",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "Disclaimer Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 36–40"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the notes below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 36–40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Kelman’s processes of social conformity"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Compliance"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– people support the majority view despite their own ideas"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– social harmony is maintained"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– illustrated by the results of the research conducted by 36 ______"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• 37 ______"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– majority view is considered most 38 ______ view"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– people persuade themselves despite their own ideas"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• 39 ______"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– people change their ideas to those of the majority"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– typical of 40 ______"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b045",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Disclaimer"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited."
+            }
+          ],
+          "sourceBlockIds": [
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045",
+            "b046",
+            "b047"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   3</p>\n<p>A review of conformity and some of the studies that have been done on it</p>\n<p>During your childhood, there will have been some kind of craze which affected all the \npeople in your school. It may have been to do with a particular toy or possibly a must-have \nitem of clothing. It may have been something as simple as a type of pen or as expensive as \nan electronic games console. Fashion designers, toy manufacturers and anyone else \ninvolved in the retail trade love conformity. Set up a craze, especially in the young, and \neveryone will go for it. In fact, it’s an ideal way to sell huge quantities of merchandise. The \nlevels of conformity in consumerism are phenomenal. When you actually stand back and \nconsider how easily we are persuaded that having certain items is the only way we can \nensure peace of mind, you see what an important concept conformity is.</p>\n<p>Conformity has been described as “yielding to group pressure” (Crutchfield, 1962). \nHowever, this implies that other people put pressure on us to make us conform and this is \nnot always the case. A better definition is given by Aronson (1976) who said it was a \n“change in a person’s behaviour or opinions as a result of real or imagined pressure from a \nperson or group of people”. This would make more sense, as often the pressure we feel is \nimagined. The person or group he refers to would have to be important to us at the time, \nregardless of their status.</p>\n<p>There has been considerable research on conformity. One of the first studies looked at the \nanswers people gave when asked to estimate the number of beans in a bottle (Jenness, \n1932). If you have ever entered a “guess the number” competition, you probably looked at \nthe previous estimates made and based your judgment on what other people had guessed. \nThis is more or less what happened in the Jenness study. First of all, he asked the \nrespondents to give their own estimates, and then he asked them to decide a group \nestimate. Finally, he asked them alone again and discovered that they had stayed with the \ngroup answer.</p>\n<p>Probably the most famous study on conformity was undertaken by Asch (1951) when he \ncreated a situation where many of his subjects gave answers which were blatantly untrue, \nrather than contradict the people they were with. He did this by getting his subject to sit \nround a table with six stooges (colleagues of the experimenter) so that the subject was \nsecond to last. He showed them all a large card which had three lines of different lengths \ndrawn on it, labelled A, B and C. He then gave them a card with a single line and asked \nthem to match this in terms of length to one of the lines A, B or C.</p>\n<p>The stooges gave untrue responses in a number of the trials and the subjects were left in \nthe situation where they either reported what they saw with their own eyes or conformed to \nthe norm of the group. When the results were assessed, Asch found that in one out of every \nthree trials where the wrong answer was given, the subject gave the same wrong answer \nas the stooges. This led to an average level of conformity of 32 per cent. Asch interviewed \nhis subjects after the trials to try to find out why they conformed to an answer which was so \nobviously wrong. Most of them said that they did not want to cause problems within the \ngroup, although they also stated that when they did give wrong answers it made them \nanxious. (Asch found that when there was just one other person present who did not go \nalong with the majority, no matter how many others there were, it was sufficient to make the \nsubject give the right answer.)</p>\n<p>Kelman (1953) outlined three processes which can explain social conformity. The first is \ncompliance, where subjects go along with the crowd to prevent any in-group hostility or bad \nfeeling and to maintain group harmony. However, they do not change their own private \nbelief. If we look back to the Asch study, we can see that the subjects were simply \ncomplying with the demands of the experimental situation but hadn’t actually internalized \nthe group’s norms. They agreed in public, but dissented in private. In a process known as \ninternalization, however, subjects do actually see the view of the group as the more valid \none. They may be able to do this, for example, by convincing themselves that their eyesight \nis poor. Sometimes, however, subjects actually seem to change their beliefs because they \nwant to become more like their heroes. If they really want to become part of an in-group, \nthey will start to identify with that group and take on the group’s values and beliefs, even if \nthey are different to their own. Kelman calls this identification. It frequently happens with \nteenagers who want to become more like a peer group in order to be accepted, and \nsuddenly seem to go against all the values and beliefs of their parents.</p>\n<p>So why is it that we have to conform? Some people feel confident most of the time, have \nhigh self-esteem and do not have to go along with the majority. For most of us, though, how \nconfident we feel varies from day to day, depending on the situation we are in, and this can \ninfluence behaviour.</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 27-40",
+            "questionRange": [
+              27,
+              40
+            ],
+            "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Conformity"
+          }
+        ],
+        "sourceBlockIds": [
+          "b001",
+          "b003",
+          "b004",
+          "b005",
+          "b006",
+          "b007",
+          "b008",
+          "b009",
+          "b010"
+        ],
+        "title": "RE ADI NG P AS S AGE 3"
+      },
+      "questionDisplayMap": {
+        "q27": "27",
+        "q28": "28",
+        "q29": "29",
+        "q30": "30",
+        "q31": "31",
+        "q32": "32",
+        "q33": "33",
+        "q34": "34",
+        "q35": "35",
+        "q36": "36",
+        "q37": "37",
+        "q38": "38",
+        "q39": "39",
+        "q40": "40"
+      },
+      "questionOrder": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>RE ADI NG  P AS S AGE   3</p>",
+              "pageIndex": 1,
+              "text": "RE ADI NG  P AS S AGE   3  "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>You should spend about 20 minutes on Questions 27-40, which are based on Reading \nPassage 3 below. \n Conformity</p>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading \nPassage 3 below. \n Conformity "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A review of conformity and some of the studies that have been done on it</p>",
+              "pageIndex": 1,
+              "text": "A review of conformity and some of the studies that have been done on it "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>During your childhood, there will have been some kind of craze which affected all the \npeople in your school. It may have been to do with a particular toy or possibly a must-have \nitem of clothing. It may have been something as simple as a type of pen or as expensive as \nan electronic games console. Fashion designers, toy manufacturers and anyone else \ninvolved in the retail trade love conformity. Set up a craze, especially in the young, and \neveryone will go for it. In fact, it’s an ideal way to sell huge quantities of merchandise. The \nlevels of conformity in consumerism are phenomenal. When you actually stand back and \nconsider how easily we are persuaded that having certain items is the only way we can \nensure peace of mind, you see what an important concept conformity is.</p>",
+              "pageIndex": 1,
+              "text": "During your childhood, there will have been some kind of craze which affected all the \npeople in your school. It may have been to do with a particular toy or possibly a must-have \nitem of clothing. It may have been something as simple as a type of pen or as expensive as \nan electronic games console. Fashion designers, toy manufacturers and anyone else \ninvolved in the retail trade love conformity. Set up a craze, especially in the young, and \neveryone will go for it. In fact, it’s an ideal way to sell huge quantities of merchandise. The \nlevels of conformity in consumerism are phenomenal. When you actually stand back and \nconsider how easily we are persuaded that having certain items is the only way we can \nensure peace of mind, you see what an important concept conformity is. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Conformity has been described as “yielding to group pressure” (Crutchfield, 1962). \nHowever, this implies that other people put pressure on us to make us conform and this is \nnot always the case. A better definition is given by Aronson (1976) who said it was a \n“change in a person’s behaviour or opinions as a result of real or imagined pressure from a \nperson or group of people”. This would make more sense, as often the pressure we feel is \nimagined. The person or group he refers to would have to be important to us at the time, \nregardless of their status.</p>",
+              "pageIndex": 1,
+              "text": "Conformity has been described as “yielding to group pressure” (Crutchfield, 1962). \nHowever, this implies that other people put pressure on us to make us conform and this is \nnot always the case. A better definition is given by Aronson (1976) who said it was a \n“change in a person’s behaviour or opinions as a result of real or imagined pressure from a \nperson or group of people”. This would make more sense, as often the pressure we feel is \nimagined. The person or group he refers to would have to be important to us at the time, \nregardless of their status. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>There has been considerable research on conformity. One of the first studies looked at the \nanswers people gave when asked to estimate the number of beans in a bottle (Jenness, \n1932). If you have ever entered a “guess the number” competition, you probably looked at \nthe previous estimates made and based your judgment on what other people had guessed. \nThis is more or less what happened in the Jenness study. First of all, he asked the \nrespondents to give their own estimates, and then he asked them to decide a group \nestimate. Finally, he asked them alone again and discovered that they had stayed with the \ngroup answer.</p>",
+              "pageIndex": 1,
+              "text": "There has been considerable research on conformity. One of the first studies looked at the \nanswers people gave when asked to estimate the number of beans in a bottle (Jenness, \n1932). If you have ever entered a “guess the number” competition, you probably looked at \nthe previous estimates made and based your judgment on what other people had guessed. \nThis is more or less what happened in the Jenness study. First of all, he asked the \nrespondents to give their own estimates, and then he asked them to decide a group \nestimate. Finally, he asked them alone again and discovered that they had stayed with the \ngroup answer. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Probably the most famous study on conformity was undertaken by Asch (1951) when he \ncreated a situation where many of his subjects gave answers which were blatantly untrue, \nrather than contradict the people they were with. He did this by getting his subject to sit \nround a table with six stooges (colleagues of the experimenter) so that the subject was \nsecond to last. He showed them all a large card which had three lines of different lengths \ndrawn on it, labelled A, B and C. He then gave them a card with a single line and asked \nthem to match this in terms of length to one of the lines A, B or C.</p>",
+              "pageIndex": 1,
+              "text": "Probably the most famous study on conformity was undertaken by Asch (1951) when he \ncreated a situation where many of his subjects gave answers which were blatantly untrue, \nrather than contradict the people they were with. He did this by getting his subject to sit \nround a table with six stooges (colleagues of the experimenter) so that the subject was \nsecond to last. He showed them all a large card which had three lines of different lengths \ndrawn on it, labelled A, B and C. He then gave them a card with a single line and asked \nthem to match this in terms of length to one of the lines A, B or C. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The stooges gave untrue responses in a number of the trials and the subjects were left in \nthe situation where they either reported what they saw with their own eyes or conformed to \nthe norm of the group. When the results were assessed, Asch found that in one out of every \nthree trials where the wrong answer was given, the subject gave the same wrong answer \nas the stooges. This led to an average level of conformity of 32 per cent. Asch interviewed \nhis subjects after the trials to try to find out why they conformed to an answer which was so \nobviously wrong. Most of them said that they did not want to cause problems within the \ngroup, although they also stated that when they did give wrong answers it made them \nanxious. (Asch found that when there was just one other person present who did not go \nalong with the majority, no matter how many others there were, it was sufficient to make the \nsubject give the right answer.)</p>",
+              "pageIndex": 2,
+              "text": "The stooges gave untrue responses in a number of the trials and the subjects were left in \nthe situation where they either reported what they saw with their own eyes or conformed to \nthe norm of the group. When the results were assessed, Asch found that in one out of every \nthree trials where the wrong answer was given, the subject gave the same wrong answer \nas the stooges. This led to an average level of conformity of 32 per cent. Asch interviewed \nhis subjects after the trials to try to find out why they conformed to an answer which was so \nobviously wrong. Most of them said that they did not want to cause problems within the \ngroup, although they also stated that when they did give wrong answers it made them \nanxious. (Asch found that when there was just one other person present who did not go \nalong with the majority, no matter how many others there were, it was sufficient to make the \nsubject give the right answer.) "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b009",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Kelman (1953) outlined three processes which can explain social conformity. The first is \ncompliance, where subjects go along with the crowd to prevent any in-group hostility or bad \nfeeling and to maintain group harmony. However, they do not change their own private \nbelief. If we look back to the Asch study, we can see that the subjects were simply \ncomplying with the demands of the experimental situation but hadn’t actually internalized \nthe group’s norms. They agreed in public, but dissented in private. In a process known as \ninternalization, however, subjects do actually see the view of the group as the more valid \none. They may be able to do this, for example, by convincing themselves that their eyesight \nis poor. Sometimes, however, subjects actually seem to change their beliefs because they \nwant to become more like their heroes. If they really want to become part of an in-group, \nthey will start to identify with that group and take on the group’s values and beliefs, even if \nthey are different to their own. Kelman calls this identification. It frequently happens with \nteenagers who want to become more like a peer group in order to be accepted, and \nsuddenly seem to go against all the values and beliefs of their parents.</p>",
+              "pageIndex": 2,
+              "text": "Kelman (1953) outlined three processes which can explain social conformity. The first is \ncompliance, where subjects go along with the crowd to prevent any in-group hostility or bad \nfeeling and to maintain group harmony. However, they do not change their own private \nbelief. If we look back to the Asch study, we can see that the subjects were simply \ncomplying with the demands of the experimental situation but hadn’t actually internalized \nthe group’s norms. They agreed in public, but dissented in private. In a process known as \ninternalization, however, subjects do actually see the view of the group as the more valid \none. They may be able to do this, for example, by convincing themselves that their eyesight \nis poor. Sometimes, however, subjects actually seem to change their beliefs because they \nwant to become more like their heroes. If they really want to become part of an in-group, \nthey will start to identify with that group and take on the group’s values and beliefs, even if \nthey are different to their own. Kelman calls this identification. It frequently happens with \nteenagers who want to become more like a peer group in order to be accepted, and \nsuddenly seem to go against all the values and beliefs of their parents. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b010",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>So why is it that we have to conform? Some people feel confident most of the time, have \nhigh self-esteem and do not have to go along with the majority. For most of us, though, how \nconfident we feel varies from day to day, depending on the situation we are in, and this can \ninfluence behaviour.</p>",
+              "pageIndex": 2,
+              "text": "So why is it that we have to conform? Some people feel confident most of the time, have \nhigh self-esteem and do not have to go along with the majority. For most of us, though, how \nconfident we feel varies from day to day, depending on the situation we are in, and this can \ninfluence behaviour. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 2,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b011",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 27-30</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 27-30 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Do the following statements agree with the claims of the writer in Reading Passage 3?</p>",
+              "pageIndex": 3,
+              "roleHint": "passage",
+              "text": "Do the following statements agree with the claims of the writer in Reading Passage 3? "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b013",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>In boxes 27–30 on your answer sheet, write</p>",
+              "pageIndex": 3,
+              "text": "In boxes 27–30 on your answer sheet, write "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b014",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>YES        if the statement agrees with the claims of the writer \nNO         if the statement contradicts the claims of the writer \nNOT GIVEN    if it is impossible to say what the writer thinks about this</p>",
+              "pageIndex": 3,
+              "text": "YES        if the statement agrees with the claims of the writer \nNO         if the statement contradicts the claims of the writer \nNOT GIVEN    if it is impossible to say what the writer thinks about this "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b015",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>27   Childhood crazes can centre on items of any value.</p>",
+              "pageIndex": 3,
+              "text": "27   Childhood crazes can centre on items of any value. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b016",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>28   Children are more vulnerable to crazes now than they used to be.</p>",
+              "pageIndex": 3,
+              "text": "28   Children are more vulnerable to crazes now than they used to be. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b017",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>29   Consumers make too many quick decisions in shops.</p>",
+              "pageIndex": 3,
+              "text": "29   Consumers make too many quick decisions in shops. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b018",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>30   Crutchfield’s definition of conformity is the most reliable.</p>",
+              "pageIndex": 3,
+              "text": "30   Crutchfield’s definition of conformity is the most reliable. "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b019",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 31–35</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 31–35 "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b020",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Complete the summary below.</p>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Complete the summary below. "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b021",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose ONE WORD ONLY from the passage for each answer.</p>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Choose ONE WORD ONLY from the passage for each answer. "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write your answers in boxes 31–35 on your answer sheet.</p>",
+              "pageIndex": 3,
+              "text": "Write your answers in boxes 31–35 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Studies on conformity</p>",
+              "pageIndex": 3,
+              "text": "Studies on conformity "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b024",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>In the Jenness study, people had to guess how many 31 ______ were in a container.</p>",
+              "pageIndex": 3,
+              "text": "In the Jenness study, people had to guess how many 31 ______ were in a container. "
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b025",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Jenness found that, in most cases, people opted for an estimate given by a 32 ______.</p>",
+              "pageIndex": 3,
+              "text": "Jenness found that, in most cases, people opted for an estimate given by a 32 ______. "
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Asch asked his subjects to 33 ______ line lengths. To test the extent to which people would</p>",
+              "pageIndex": 3,
+              "text": "Asch asked his subjects to 33 ______ line lengths. To test the extent to which people would "
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b027",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>conform, he placed his subjects with colleagues who gave 34 ______ responses. He found</p>",
+              "pageIndex": 3,
+              "text": "conform, he placed his subjects with colleagues who gave 34 ______ responses. He found "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>that his subjects agreed with his colleagues 32% of the time, although they admitted to</p>",
+              "pageIndex": 3,
+              "text": "that his subjects agreed with his colleagues 32% of the time, although they admitted to "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b029",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>feeling 35 ______ about giving their answer.</p>",
+              "pageIndex": 3,
+              "text": "feeling 35 ______ about giving their answer. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 3,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b030",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 36–40</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 36–40 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Complete the notes below.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Complete the notes below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose ONE WORD ONLY from the passage for each answer.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Choose ONE WORD ONLY from the passage for each answer. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write your answers in boxes 36–40 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write your answers in boxes 36–40 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b034",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Kelman’s processes of social conformity</p>",
+              "pageIndex": 4,
+              "text": " Kelman’s processes of social conformity "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  Compliance</p>",
+              "pageIndex": 4,
+              "text": "•  Compliance "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>–  people support the majority view despite their own ideas</p>",
+              "pageIndex": 4,
+              "text": "–  people support the majority view despite their own ideas "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>–  social harmony is maintained</p>",
+              "pageIndex": 4,
+              "text": "–  social harmony is maintained "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b038",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>–  illustrated by the results of the research conducted by 36 ______</p>",
+              "pageIndex": 4,
+              "text": "–  illustrated by the results of the research conducted by 36 ______ "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b039",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  37 ______</p>",
+              "pageIndex": 4,
+              "text": "•  37 ______ "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b040",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>–  majority view is considered most 38 ______ view</p>",
+              "pageIndex": 4,
+              "text": "–  majority view is considered most 38 ______ view "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b041",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>–  people persuade themselves despite their own ideas</p>",
+              "pageIndex": 4,
+              "text": "–  people persuade themselves despite their own ideas "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b042",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  39 ______</p>",
+              "pageIndex": 4,
+              "text": "•  39 ______ "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b043",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>–  people change their ideas to those of the majority</p>",
+              "pageIndex": 4,
+              "text": "–  people change their ideas to those of the majority "
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b044",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>–  typical of 40 ______</p>",
+              "pageIndex": 4,
+              "text": "–  typical of 40 ______ "
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b045",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Disclaimer</p>",
+              "pageIndex": 4,
+              "text": "Disclaimer "
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b046",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks. \nAll copyright in the underlying works remains with the original authors and publishers. \nNo affiliation with or endorsement by any rights holder (including IELTS® owners). \nFor non-commercial educational use only. This notice must remain intact in all copies.</p>",
+              "pageIndex": 4,
+              "text": "Compiled, formatted, and lightly proofread by ZYZ Reading Walks. \nAll copyright in the underlying works remains with the original authors and publishers. \nNo affiliation with or endorsement by any rights holder (including IELTS® owners). \nFor non-commercial educational use only. This notice must remain intact in all copies. "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b047",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
+              "pageIndex": 4,
+              "text": "Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 4,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b048",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 5]</p>",
+              "pageIndex": 5,
+              "text": "[No extractable text on page 5]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 5,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "conformity.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 5 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q27": "",
+        "q28": "",
+        "q29": "",
+        "q30": "",
+        "q31": "",
+        "q32": "",
+        "q33": "",
+        "q34": "",
+        "q35": "",
+        "q36": "",
+        "q37": "",
+        "q38": "",
+        "q39": "",
+        "q40": ""
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:60dbf15365da522b15ba35729af145bc5b99ea9c598e615691ee5fc405e3d3fd;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "conformity.pdf",
+        "questionIntroHtml": "<h3>Questions</h3><ul class=\"question-umbrella-ranges\"><li><strong>Questions 27-40</strong><span>Q27-40</span></li></ul>",
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 27-40",
+            "questionRange": [
+              27,
+              40
+            ],
+            "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Conformity"
+          }
+        ],
+        "title": "conformity"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   3</p>\n<p>A review of conformity and some of the studies that have been done on it</p>\n<p>During your childhood, there will have been some kind of craze which affected all the \npeople in your school. It may have been to do with a particular toy or possibly a must-have \nitem of clothing. It may have been something as simple as a type of pen or as expensive as \nan electronic games console. Fashion designers, toy manufacturers and anyone else \ninvolved in the retail trade love conformity. Set up a craze, especially in the young, and \neveryone will go for it. In fact, it’s an ideal way to sell huge quantities of merchandise. The \nlevels of conformity in consumerism are phenomenal. When you actually stand back and \nconsider how easily we are persuaded that having certain items is the only way we can \nensure peace of mind, you see what an important concept conformity is.</p>\n<p>Conformity has been described as “yielding to group pressure” (Crutchfield, 1962). \nHowever, this implies that other people put pressure on us to make us conform and this is \nnot always the case. A better definition is given by Aronson (1976) who said it was a \n“change in a person’s behaviour or opinions as a result of real or imagined pressure from a \nperson or group of people”. This would make more sense, as often the pressure we feel is \nimagined. The person or group he refers to would have to be important to us at the time, \nregardless of their status.</p>\n<p>There has been considerable research on conformity. One of the first studies looked at the \nanswers people gave when asked to estimate the number of beans in a bottle (Jenness, \n1932). If you have ever entered a “guess the number” competition, you probably looked at \nthe previous estimates made and based your judgment on what other people had guessed. \nThis is more or less what happened in the Jenness study. First of all, he asked the \nrespondents to give their own estimates, and then he asked them to decide a group \nestimate. Finally, he asked them alone again and discovered that they had stayed with the \ngroup answer.</p>\n<p>Probably the most famous study on conformity was undertaken by Asch (1951) when he \ncreated a situation where many of his subjects gave answers which were blatantly untrue, \nrather than contradict the people they were with. He did this by getting his subject to sit \nround a table with six stooges (colleagues of the experimenter) so that the subject was \nsecond to last. He showed them all a large card which had three lines of different lengths \ndrawn on it, labelled A, B and C. He then gave them a card with a single line and asked \nthem to match this in terms of length to one of the lines A, B or C.</p>\n<p>The stooges gave untrue responses in a number of the trials and the subjects were left in \nthe situation where they either reported what they saw with their own eyes or conformed to \nthe norm of the group. When the results were assessed, Asch found that in one out of every \nthree trials where the wrong answer was given, the subject gave the same wrong answer \nas the stooges. This led to an average level of conformity of 32 per cent. Asch interviewed \nhis subjects after the trials to try to find out why they conformed to an answer which was so \nobviously wrong. Most of them said that they did not want to cause problems within the \ngroup, although they also stated that when they did give wrong answers it made them \nanxious. (Asch found that when there was just one other person present who did not go \nalong with the majority, no matter how many others there were, it was sufficient to make the \nsubject give the right answer.)</p>\n<p>Kelman (1953) outlined three processes which can explain social conformity. The first is \ncompliance, where subjects go along with the crowd to prevent any in-group hostility or bad \nfeeling and to maintain group harmony. However, they do not change their own private \nbelief. If we look back to the Asch study, we can see that the subjects were simply \ncomplying with the demands of the experimental situation but hadn’t actually internalized \nthe group’s norms. They agreed in public, but dissented in private. In a process known as \ninternalization, however, subjects do actually see the view of the group as the more valid \none. They may be able to do this, for example, by convincing themselves that their eyesight \nis poor. Sometimes, however, subjects actually seem to change their beliefs because they \nwant to become more like their heroes. If they really want to become part of an in-group, \nthey will start to identify with that group and take on the group’s values and beliefs, even if \nthey are different to their own. Kelman calls this identification. It frequently happens with \nteenagers who want to become more like a peer group in order to be accepted, and \nsuddenly seem to go against all the values and beliefs of their parents.</p>\n<p>So why is it that we have to conform? Some people feel confident most of the time, have \nhigh self-esteem and do not have to go along with the majority. For most of us, though, how \nconfident we feel varies from day to day, depending on the situation we are in, and this can \ninfluence behaviour.</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q27": "27",
+        "q28": "28",
+        "q29": "29",
+        "q30": "30",
+        "q31": "31",
+        "q32": "32",
+        "q33": "33",
+        "q34": "34",
+        "q35": "35",
+        "q36": "36",
+        "q37": "37",
+        "q38": "38",
+        "q39": "39",
+        "q40": "40"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 27-30</p></div><ol><li><div><strong>27</strong> Childhood crazes can centre on items of any value.</div><div class=\"choice-row\"><label><input name=\"q27\" type=\"radio\" value=\"YES\"> YES</label><label><input name=\"q27\" type=\"radio\" value=\"NO\"> NO</label><label><input name=\"q27\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>28</strong> Children are more vulnerable to crazes now than they used to be.</div><div class=\"choice-row\"><label><input name=\"q28\" type=\"radio\" value=\"YES\"> YES</label><label><input name=\"q28\" type=\"radio\" value=\"NO\"> NO</label><label><input name=\"q28\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>29</strong> Consumers make too many quick decisions in shops.</div><div class=\"choice-row\"><label><input name=\"q29\" type=\"radio\" value=\"YES\"> YES</label><label><input name=\"q29\" type=\"radio\" value=\"NO\"> NO</label><label><input name=\"q29\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>30</strong> Crutchfield’s definition of conformity is the most reliable.</div><div class=\"choice-row\"><label><input name=\"q30\" type=\"radio\" value=\"YES\"> YES</label><label><input name=\"q30\" type=\"radio\" value=\"NO\"> NO</label><label><input name=\"q30\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "groupId": "group-1",
+          "kind": "yes_no_not_given",
+          "leadHtml": "<p>Questions 27-30</p>",
+          "questionIds": [
+            "q27",
+            "q28",
+            "q29",
+            "q30"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 31-35</p></div><div class=\"notes-completion\">Questions 31–35 Complete the summary below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 31–35 on your answer sheet. Studies on conformity In the Jenness study, people had to guess how many <span class=\"inline-completion\" data-question-id=\"q31\"><strong>31</strong> <input type=\"text\" id=\"q31_input\" name=\"q31\" placeholder=\"answer\"></span> were in a container. Jenness found that, in most cases, people opted for an estimate given by a <span class=\"inline-completion\" data-question-id=\"q32\"><strong>32</strong> <input type=\"text\" id=\"q32_input\" name=\"q32\" placeholder=\"answer\"></span> Asch asked his subjects to <span class=\"inline-completion\" data-question-id=\"q33\"><strong>33</strong> <input type=\"text\" id=\"q33_input\" name=\"q33\" placeholder=\"answer\"></span> line lengths. To test the extent to which people would conform, he placed his subjects with colleagues who gave <span class=\"inline-completion\" data-question-id=\"q34\"><strong>34</strong> <input type=\"text\" id=\"q34_input\" name=\"q34\" placeholder=\"answer\"></span> responses. He found that his subjects agreed with his colleagues 32% of the time, although they admitted to feeling <span class=\"inline-completion\" data-question-id=\"q35\"><strong>35</strong> <input type=\"text\" id=\"q35_input\" name=\"q35\" placeholder=\"answer\"></span> about giving their answer.</div></section>",
+          "groupId": "group-2",
+          "kind": "summary_completion",
+          "leadHtml": "<p>Questions 31-35</p>",
+          "questionIds": [
+            "q31",
+            "q32",
+            "q33",
+            "q34",
+            "q35"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 36-40</p></div><div class=\"notes-completion\">Questions 36–40 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 36–40 on your answer sheet. Kelman’s processes of social conformity • Compliance – people support the majority view despite their own ideas – social harmony is maintained – illustrated by the results of the research conducted by <span class=\"inline-completion\" data-question-id=\"q36\"><strong>36</strong> <input type=\"text\" id=\"q36_input\" name=\"q36\" placeholder=\"answer\"></span> • <span class=\"inline-completion\" data-question-id=\"q37\"><strong>37</strong> <input type=\"text\" id=\"q37_input\" name=\"q37\" placeholder=\"answer\"></span> – majority view is considered most <span class=\"inline-completion\" data-question-id=\"q38\"><strong>38</strong> <input type=\"text\" id=\"q38_input\" name=\"q38\" placeholder=\"answer\"></span> view – people persuade themselves despite their own ideas • <span class=\"inline-completion\" data-question-id=\"q39\"><strong>39</strong> <input type=\"text\" id=\"q39_input\" name=\"q39\" placeholder=\"answer\"></span> – people change their ideas to those of the majority – typical of <span class=\"inline-completion\" data-question-id=\"q40\"><strong>40</strong> <input type=\"text\" id=\"q40_input\" name=\"q40\" placeholder=\"answer\"></span> Disclaimer Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</div></section>",
+          "groupId": "group-3",
+          "kind": "sentence_completion",
+          "leadHtml": "<p>Questions 36-40</p>",
+          "questionIds": [
+            "q36",
+            "q37",
+            "q38",
+            "q39",
+            "q40"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q27",
+        "q28",
+        "q29",
+        "q30",
+        "q31",
+        "q32",
+        "q33",
+        "q34",
+        "q35",
+        "q36",
+        "q37",
+        "q38",
+        "q39",
+        "q40"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260810092234-e5c9f917/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/conformity.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/private-real/conformity.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001",
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009",
+            "b010"
+          ],
+          "title": "RE ADI NG P AS S AGE 3"
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b011",
+              "b012",
+              "b013",
+              "b014",
+              "b015",
+              "b016",
+              "b017",
+              "b018"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "YES",
+                "NO",
+                "NOT GIVEN"
+              ],
+              "type": "radio"
+            },
+            "kind": "yes_no_not_given",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            }
+          ],
+          "groupId": "group-1",
+          "heading": "Questions 27-30",
+          "instructionText": "Questions 27-30",
+          "kindHint": "yes_no_not_given",
+          "layoutHint": "list",
+          "questionRange": [
+            27,
+            30
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 27-30"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Do the following statements agree with the claims of the writer in Reading Passage 3?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In boxes 27–30 on your answer sheet, write"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "YES if the statement agrees with the claims of the writer NO if the statement contradicts the claims of the writer NOT G"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "27 Childhood crazes can centre on items of any value."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "28 Children are more vulnerable to crazes now than they used to be."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "29 Consumers make too many quick decisions in shops."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "30 Crutchfield’s definition of conformity is the most reliable."
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b019",
+              "b020",
+              "b021",
+              "b022",
+              "b023",
+              "b024",
+              "b025",
+              "b026",
+              "b027",
+              "b028",
+              "b029"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "summary_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 31-35",
+          "instructionText": "Questions 31–35",
+          "kindHint": "summary_completion",
+          "layoutHint": "inline_completion",
+          "questionRange": [
+            31,
+            35
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 31–35"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary below."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 31–35 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Studies on conformity"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In the Jenness study, people had to guess how many 31 ______ were in a container."
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Jenness found that, in most cases, people opted for an estimate given by a 32 ______."
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Asch asked his subjects to 33 ______ line lengths. To test the extent to which people would"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "conform, he placed his subjects with colleagues who gave 34 ______ responses. He found"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "that his subjects agreed with his colleagues 32% of the time, although they admitted to"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "feeling 35 ______ about giving their answer."
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045",
+            "b046",
+            "b047"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b030",
+              "b031",
+              "b032",
+              "b033",
+              "b034",
+              "b035",
+              "b036",
+              "b037",
+              "b038",
+              "b039",
+              "b040",
+              "b041",
+              "b042",
+              "b043",
+              "b044",
+              "b045",
+              "b046",
+              "b047"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "sentence_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
+              "toBlockId": "b045"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
+            }
+          ],
+          "groupId": "group-3",
+          "heading": "Questions 36-40",
+          "instructionText": "Questions 36–40",
+          "kindHint": "sentence_completion",
+          "layoutHint": "inline_completion",
+          "questionRange": [
+            36,
+            40
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 36–40"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the notes below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 36–40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Kelman’s processes of social conformity"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• Compliance"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– people support the majority view despite their own ideas"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– social harmony is maintained"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– illustrated by the results of the research conducted by 36 ______"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• 37 ______"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– majority view is considered most 38 ______ view"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– people persuade themselves despite their own ideas"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• 39 ______"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– people change their ideas to those of the majority"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "– typical of 40 ______"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b045",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Disclaimer"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited."
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": [
+        {
+          "blockId": "b002",
+          "heading": "Questions 27-40",
+          "questionRange": [
+            27,
+            40
+          ],
+          "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3 below. Conformity"
+        }
+      ]
+    }
+  }
+}

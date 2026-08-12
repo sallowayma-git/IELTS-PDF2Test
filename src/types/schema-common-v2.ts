@@ -39,11 +39,26 @@ export interface SourceAnchorV2 {
   pageIndex: number;
   nodeIds: string[];
   bbox?: RectV2;
+  nativeBBox?: RectV2;
+  displayBBox?: RectV2;
+  pdfToDisplay?: [number, number, number, number, number, number];
   charRange?: SourceCharRangeV2;
   ooxmlPath?: string;
   relationshipId?: string;
   extractionMode: ExtractionMode;
   sourceHash: string;
+  variants?: SourceVariantV2[];
+}
+
+export interface SourceVariantV2 {
+  text?: string;
+  extractionMode: ExtractionMode;
+  bbox?: RectV2;
+  confidence?: number;
+  provider?: string;
+  providerVersion?: string;
+  language?: string;
+  nodeIds?: string[];
 }
 
 export interface SourceFileRecordV2 {

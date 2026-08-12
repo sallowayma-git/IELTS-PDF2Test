@@ -5,6 +5,8 @@ use crate::{
     },
     authoring_review::refresh_authoring_review_state,
     cleanup::minimize_process_artifacts_after_authoring,
+    environment::quality_gate_v2_enabled,
+    ielts_grammar::build_authoring_v2_shadow,
     job_store::{load_job, update_job},
     llm_gateway::run_llm_gateway,
     llm_profiles::{find_profile, load_llm_api_key, load_profiles},
@@ -18,6 +20,7 @@ use crate::{
         extract_pdf_images_for_vision, image_count_from_extraction, missing_source_document_ir,
         parse_source_document, vision_transcription_document_ir,
     },
+    pdf_facts_shadow::SHADOW_ARTIFACT_FILE as DOCUMENT_V2_SHADOW_ARTIFACT_FILE,
     reading_source::{
         answer_key_from_authoring, display_map_from_authoring, question_order_from_authoring,
     },
@@ -169,7 +172,8 @@ pub(crate) fn main_pdf_needs_vision_transcription(job: &ImportJob, doc: &Value) 
         .pointer("/parser/provider")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let lacks_reliable_groups = !has_reliable_question_groups(&job.job_id, job, doc);
+    let split = make_dynamic_split_candidates(&job.job_id, job, Some(doc));
+    let lacks_reliable_groups = !legacy_has_reliable_question_groups(&split);
     provider != "vision-llm-transcription"
         && (warnings.contains("no extractable text")
             || warnings.contains("ocr/manual review required")
@@ -177,8 +181,87 @@ pub(crate) fn main_pdf_needs_vision_transcription(job: &ImportJob, doc: &Value) 
             || lacks_reliable_groups)
 }
 
-fn has_reliable_question_groups(job_id: &str, job: &ImportJob, doc: &Value) -> bool {
+fn has_reliable_question_groups(
+    job_id: &str,
+    job: &ImportJob,
+    doc: &Value,
+    physical_shadow: Option<&Value>,
+) -> bool {
     let split = make_dynamic_split_candidates(job_id, job, Some(doc));
+    if !quality_gate_v2_enabled() {
+        return legacy_has_reliable_question_groups(&split);
+    }
+    let v1_authoring = make_dynamic_authoring_ir(job, &split, Some(doc));
+    let v2_authoring =
+        build_authoring_v2_shadow(job, &v1_authoring, &split, Some(doc), physical_shadow).ok();
+    question_groups_are_reliable(true, &split, v2_authoring.as_ref())
+}
+
+fn question_groups_are_reliable(
+    quality_gate_enabled: bool,
+    split: &Value,
+    v2_authoring: Option<&Value>,
+) -> bool {
+    if !quality_gate_enabled {
+        return legacy_has_reliable_question_groups(split);
+    }
+    v2_authoring.is_some_and(|authoring| {
+        authoring.pointer("/quality/state").and_then(Value::as_str) == Some("ready")
+            && authoring
+                .get("answerSlots")
+                .and_then(Value::as_object)
+                .is_some_and(|slots| !slots.is_empty())
+    })
+}
+
+fn quality_gate_requires_review(quality_gate_enabled: bool, quality: &Value) -> bool {
+    quality_gate_enabled && quality.get("state").and_then(Value::as_str) != Some("ready")
+}
+
+fn quality_gate_review_count(quality_gate_enabled: bool, quality: &Value) -> u32 {
+    if !quality_gate_requires_review(quality_gate_enabled, quality) {
+        return 0;
+    }
+    let issue_count = quality
+        .get("issues")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let hard_failure_count = quality
+        .get("hardFailures")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    issue_count.max(hard_failure_count).max(1) as u32
+}
+
+fn physical_shadow_matches_source(shadow: &Value, job: &ImportJob) -> bool {
+    let Some(source) = main_source_file(job) else {
+        return false;
+    };
+    shadow.get("schemaVersion").and_then(Value::as_str) == Some("DocumentIRV2")
+        && shadow.get("jobId").and_then(Value::as_str) == Some(job.job_id.as_str())
+        && shadow
+            .get("sourceFiles")
+            .and_then(Value::as_array)
+            .is_some_and(|sources| {
+                sources.iter().any(|candidate| {
+                    candidate.get("sourceFileId").and_then(Value::as_str)
+                        == Some(source.file_id.as_str())
+                        && candidate.get("sha256").and_then(Value::as_str)
+                            == Some(source.sha256.as_str())
+                })
+            })
+}
+
+fn current_physical_shadow(dir: &Path, job: &ImportJob) -> Option<Value> {
+    read_json_opt(&dir.join(DOCUMENT_V2_SHADOW_ARTIFACT_FILE))
+        .ok()
+        .flatten()
+        .filter(|shadow| physical_shadow_matches_source(shadow, job))
+}
+
+fn legacy_has_reliable_question_groups(split: &Value) -> bool {
     split
         .get("questionGroupCandidates")
         .and_then(Value::as_array)
@@ -196,26 +279,6 @@ fn has_reliable_question_groups(job_id: &str, job: &ImportJob, doc: &Value) -> b
             })
         })
         .unwrap_or(false)
-}
-
-fn append_document_parser_warning(doc: &mut Value, warning: &str) {
-    if warning.trim().is_empty() {
-        return;
-    }
-    let Some(parser) = doc.get_mut("parser").and_then(Value::as_object_mut) else {
-        return;
-    };
-    let warnings = parser
-        .entry("warnings".to_string())
-        .or_insert_with(|| json!([]));
-    if !warnings.is_array() {
-        *warnings = json!([]);
-    }
-    if let Some(items) = warnings.as_array_mut() {
-        if !items.iter().any(|item| item.as_str() == Some(warning)) {
-            items.push(json!(warning));
-        }
-    }
 }
 
 fn main_source_is_pdf(job: &ImportJob) -> bool {
@@ -1062,6 +1125,7 @@ where
     let parse_mode = options.parse_mode.as_deref().unwrap_or("auto");
     let confidence_threshold = options.confidence_threshold.unwrap_or(0.85).clamp(0.0, 1.0);
     let local_only = matches!(options.execution_mode.as_deref(), Some("localOnly"));
+    let cloud_diagnostics_opted_in = !local_only && options.profile_id.is_some();
     let target = options.target.as_deref().unwrap_or("editableDraft");
     let allow_overwrite = options.allow_overwrite.unwrap_or(false);
 
@@ -1119,7 +1183,9 @@ where
         })?;
     }
 
-    let profile_id = select_llm_profile(root, &job, options.profile_id.clone());
+    let profile_id = cloud_diagnostics_opted_in
+        .then(|| select_llm_profile(root, &job, options.profile_id.clone()))
+        .flatten();
     let selected_profile_id = profile_id.clone();
     let mut vision_transcription = json!({
         "attempted": false,
@@ -1137,9 +1203,9 @@ where
         "failure": null
     });
     let mut pdf_vision_extraction: Option<Value> = None;
-    let mut vision_answer_candidates = Vec::<Value>::new();
 
-    let mut doc = read_json_opt(&dir.join("document-ir.json"))?;
+    let doc = read_json_opt(&dir.join("document-ir.json"))?;
+    let physical_shadow = current_physical_shadow(&dir, &job);
     let needs_pdf_vision_transcription = doc
         .as_ref()
         .map(|current_doc| main_pdf_needs_vision_transcription(&job, current_doc))
@@ -1154,8 +1220,8 @@ where
     }
     if let (Some(profile_id_for_vision), Some(_current_doc)) = (profile_id.as_deref(), doc.as_ref())
     {
-        // `localOnly` only defers whole-paper cloud review; PDF vision rescue still runs here
-        // so passage-only text layers do not fall through into bogus umbrella-only drafts.
+        // Cloud vision is an explicitly opted-in diagnostic. It may produce independent
+        // artifacts, but it never replaces the authoritative local DocumentIRV1.
         if needs_pdf_vision_transcription {
             if let Some(obj) = vision_transcription.as_object_mut() {
                 obj.insert("attempted".to_string(), json!(true));
@@ -1179,10 +1245,19 @@ where
                         &dir.join("vision-transcription-output.json"),
                         &vision_output,
                     )?;
-                    let vision_has_reliable_groups =
-                        has_reliable_question_groups(&job_id, &job, &vision_ir);
+                    let vision_has_reliable_groups = has_reliable_question_groups(
+                        &job_id,
+                        &job,
+                        &vision_ir,
+                        physical_shadow.as_ref(),
+                    );
                     if let Some(obj) = vision_transcription.as_object_mut() {
-                        obj.insert("applied".to_string(), json!(vision_has_reliable_groups));
+                        obj.insert("applied".to_string(), json!(false));
+                        obj.insert("diagnosticOnly".to_string(), json!(true));
+                        obj.insert(
+                            "wouldPassQualityGate".to_string(),
+                            json!(vision_has_reliable_groups),
+                        );
                         obj.insert(
                             "confidence".to_string(),
                             vision_output
@@ -1198,31 +1273,8 @@ where
                                 .unwrap_or_else(|| json!([])),
                         );
                     }
-                    if vision_has_reliable_groups {
-                        write_json(&dir.join("document-ir.json"), &vision_ir)?;
-                        let _ = write_source_review_status(
-                            root,
-                            &job_id,
-                            Some(&vision_ir),
-                            false,
-                            None,
-                        )?;
-                        doc = Some(vision_ir);
-                        job = update_job(root, &job_id, |item| {
-                            item.status = JobStatus::NeedsReview;
-                            item.current_step = WorkflowStep::DocumentReview;
-                        })?;
-                    } else if let Some(current_doc) = doc.as_mut() {
-                        let warning = "vision transcription did not produce reliable question groups; kept original text-layer parse";
-                        append_document_parser_warning(current_doc, warning);
-                        write_json(&dir.join("document-ir.json"), current_doc)?;
-                        let _ = write_source_review_status(
-                            root,
-                            &job_id,
-                            Some(current_doc),
-                            false,
-                            None,
-                        )?;
+                    if !vision_has_reliable_groups {
+                        let warning = "vision transcription diagnostic did not produce reliable question groups; authoritative local parse was unchanged";
                         if let Some(obj) = vision_transcription.as_object_mut() {
                             obj.insert("failure".to_string(), json!(warning));
                         }
@@ -1259,9 +1311,9 @@ where
                                 .map(|answers| answers.len())
                                 .unwrap_or(0);
                             write_json(&dir.join("vision-answer-output.json"), &output)?;
-                            vision_answer_candidates.push(candidate);
                             if let Some(obj) = vision_answer_extraction.as_object_mut() {
-                                obj.insert("applied".to_string(), json!(answer_count > 0));
+                                obj.insert("applied".to_string(), json!(false));
+                                obj.insert("diagnosticOnly".to_string(), json!(true));
                                 obj.insert("answerCount".to_string(), json!(answer_count));
                                 obj.insert(
                                     "confidence".to_string(),
@@ -1309,7 +1361,6 @@ where
     let mut split = make_dynamic_split_candidates(&job_id, &job, doc.as_ref());
     let answer_candidates = parse_answer_source_candidates(root, &job, parse_mode)?;
     merge_answer_source_candidates(&mut split, answer_candidates);
-    merge_answer_source_candidates(&mut split, vision_answer_candidates);
     write_json(&dir.join("split-candidates.json"), &split)?;
     job = update_job(root, &job_id, |item| {
         item.status = JobStatus::Working;
@@ -1635,6 +1686,26 @@ where
         .to_string();
     let static_runtime_passed = report_passed && runtime_mode == "static-rust";
 
+    let v2_quality_gate = if quality_gate_v2_enabled() {
+        match build_authoring_v2_shadow(&job, &ir, &split, doc.as_ref(), physical_shadow.as_ref()) {
+            Ok(authoring_v2) => authoring_v2.get("quality").cloned().unwrap_or_else(
+                || json!({"state":"blocked","issues":[],"hardFailures":["QUALITY_REPORT_MISSING"]}),
+            ),
+            Err(error) => json!({
+                "state": "blocked",
+                "issues": [],
+                "hardFailures": ["QUALITY_GATE_EVALUATION_FAILED"],
+                "error": error
+            }),
+        }
+    } else {
+        json!({"state":"disabled","issues":[],"hardFailures":[]})
+    };
+    let v2_quality_requires_review =
+        quality_gate_requires_review(quality_gate_v2_enabled(), &v2_quality_gate);
+    let v2_quality_issue_count =
+        quality_gate_review_count(quality_gate_v2_enabled(), &v2_quality_gate);
+
     let requires_parser_review = !source_review_issues(&source_review).is_empty();
     let requires_authoring_review = remaining_authoring_review > 0;
 
@@ -1642,7 +1713,8 @@ where
         || !blocked_auto_apply_groups.is_empty()
         || requires_parser_review
         || cloud_needs_confirmation
-        || requires_authoring_review;
+        || requires_authoring_review
+        || v2_quality_requires_review;
     let next_status = if has_review_blocks {
         JobStatus::NeedsReview
     } else if target == "editableDraft" {
@@ -1682,6 +1754,8 @@ where
         "题稿已生成，请在题稿编辑页确认部分识别结果。"
     } else if requires_authoring_review {
         "题稿已生成，还有题干、答案或题型需要你确认。"
+    } else if v2_quality_requires_review {
+        "题稿已生成，但 V2 质量门发现结构或来源证据问题，需要审核。"
     } else {
         "题稿已生成，可以开始检查和编辑。"
     };
@@ -1693,7 +1767,8 @@ where
             + blocked_auto_apply_groups.len() as u32
             + source_review_issues(&source_review).len() as u32
             + cloud_warning_count
-            + remaining_authoring_review;
+            + remaining_authoring_review
+            + v2_quality_issue_count;
         let issues = report
             .get("issues")
             .and_then(Value::as_array)
@@ -1732,7 +1807,9 @@ where
             "visionAnswerExtraction": vision_answer_extraction
         },
         "quality": {
-            "cloudComparison": cloud_comparison
+            "cloudComparison": cloud_comparison,
+            "v2GateEnabled": quality_gate_v2_enabled(),
+            "v2Gate": v2_quality_gate
         },
         "authoring": {
             "remainingReviewItems": remaining_authoring_review
@@ -1859,6 +1936,33 @@ pub(crate) fn run_cloud_review_core(
     }
 
     let source_doc = read_json_opt(&dir.join("document-ir.json"))?;
+    let physical_shadow = current_physical_shadow(&dir, &job);
+    let split = make_dynamic_split_candidates(job_id, &job, source_doc.as_ref());
+    let v2_quality_gate = if quality_gate_v2_enabled() {
+        match build_authoring_v2_shadow(
+            &job,
+            &ir,
+            &split,
+            source_doc.as_ref(),
+            physical_shadow.as_ref(),
+        ) {
+            Ok(authoring_v2) => authoring_v2.get("quality").cloned().unwrap_or_else(
+                || json!({"state":"blocked","issues":[],"hardFailures":["QUALITY_REPORT_MISSING"]}),
+            ),
+            Err(error) => json!({
+                "state": "blocked",
+                "issues": [],
+                "hardFailures": ["QUALITY_GATE_EVALUATION_FAILED"],
+                "error": error
+            }),
+        }
+    } else {
+        json!({"state":"disabled","issues":[],"hardFailures":[]})
+    };
+    let v2_quality_requires_review =
+        quality_gate_requires_review(quality_gate_v2_enabled(), &v2_quality_gate);
+    let v2_quality_issue_count =
+        quality_gate_review_count(quality_gate_v2_enabled(), &v2_quality_gate);
     let source_review = source_review_status(root, job_id, source_doc.as_ref())?;
     let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     let parser_warnings = source_review
@@ -1955,7 +2059,8 @@ pub(crate) fn run_cloud_review_core(
         || blocked_auto_apply_count > 0
         || requires_parser_review
         || cloud_needs_confirmation
-        || remaining_authoring_review > 0;
+        || remaining_authoring_review > 0
+        || v2_quality_requires_review;
     let next_status = if has_review_blocks {
         JobStatus::NeedsReview
     } else {
@@ -1979,6 +2084,8 @@ pub(crate) fn run_cloud_review_core(
         "题稿已生成，请在题稿编辑页确认部分识别结果。"
     } else if remaining_authoring_review > 0 {
         "题稿已生成，还有题干、答案或题型需要你确认。"
+    } else if v2_quality_requires_review {
+        "题稿已生成，但 V2 质量门发现结构或来源证据问题，需要审核。"
     } else {
         "题稿已生成，云端复核已完成。"
     };
@@ -1990,7 +2097,8 @@ pub(crate) fn run_cloud_review_core(
             + blocked_auto_apply_count
             + source_review_issue_count
             + cloud_warning_count
-            + remaining_authoring_review;
+            + remaining_authoring_review
+            + v2_quality_issue_count;
         let issues = report
             .get("issues")
             .and_then(Value::as_array)
@@ -2038,8 +2146,17 @@ pub(crate) fn run_cloud_review_core(
         .and_then(Value::as_object_mut)
     {
         quality.insert("cloudComparison".to_string(), cloud_comparison.clone());
+        quality.insert(
+            "v2GateEnabled".to_string(),
+            json!(quality_gate_v2_enabled()),
+        );
+        quality.insert("v2Gate".to_string(), v2_quality_gate.clone());
     } else {
-        pipeline_report["quality"] = json!({ "cloudComparison": cloud_comparison });
+        pipeline_report["quality"] = json!({
+            "cloudComparison": cloud_comparison,
+            "v2GateEnabled": quality_gate_v2_enabled(),
+            "v2Gate": v2_quality_gate
+        });
     }
     pipeline_report["jobId"] = json!(job.job_id);
     pipeline_report["validationPassed"] = json!(report_passed);
@@ -2055,4 +2172,133 @@ pub(crate) fn run_cloud_review_core(
     pipeline_report["validationReport"] = report.clone();
     write_json(&dir.join("pipeline-report.json"), &pipeline_report)?;
     Ok(pipeline_report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::IssueCounts;
+
+    fn sample_job() -> ImportJob {
+        let now = Utc::now();
+        ImportJob {
+            job_id: "job-1".to_string(),
+            title: "Fixture".to_string(),
+            status: JobStatus::Working,
+            category: None,
+            frequency: None,
+            tags: Vec::new(),
+            source_files: vec![SourceFile {
+                file_id: "source-1".to_string(),
+                original_name: "fixture.pdf".to_string(),
+                stored_name: "fixture.pdf".to_string(),
+                file_type: "pdf".to_string(),
+                sha256: "a".repeat(64),
+                size_bytes: 123,
+                role: "MainQuestion".to_string(),
+                imported_at: now,
+            }],
+            active_llm_profile_id: None,
+            created_at: now,
+            updated_at: now,
+            current_step: WorkflowStep::DocumentReview,
+            issue_counts: IssueCounts::default(),
+        }
+    }
+
+    #[test]
+    fn v2_quality_gate_off_preserves_legacy_reliability() {
+        let reliable = json!({
+            "questionGroupCandidates": [{
+                "questionRange": [1, 2],
+                "requiresManualQuestionImport": false
+            }]
+        });
+        let blocked_v2 = json!({
+            "answerSlots": {"q1": {"questionNumber": 1}},
+            "quality": {"state": "blocked"}
+        });
+        assert!(question_groups_are_reliable(
+            false,
+            &reliable,
+            Some(&blocked_v2)
+        ));
+    }
+
+    #[test]
+    fn v2_quality_gate_on_requires_ready_report_and_slots() {
+        let unreliable_legacy = json!({"questionGroupCandidates": []});
+        let ready = json!({
+            "answerSlots": {"q1": {"questionNumber": 1}},
+            "quality": {"state": "ready"}
+        });
+        let blocked = json!({
+            "answerSlots": {"q1": {"questionNumber": 1}},
+            "quality": {"state": "blocked"}
+        });
+        let empty = json!({"answerSlots": {}, "quality": {"state": "ready"}});
+        assert!(question_groups_are_reliable(
+            true,
+            &unreliable_legacy,
+            Some(&ready)
+        ));
+        assert!(!question_groups_are_reliable(
+            true,
+            &unreliable_legacy,
+            Some(&blocked)
+        ));
+        assert!(!question_groups_are_reliable(
+            true,
+            &unreliable_legacy,
+            Some(&empty)
+        ));
+        assert!(!question_groups_are_reliable(
+            true,
+            &unreliable_legacy,
+            None
+        ));
+    }
+
+    #[test]
+    fn v2_quality_review_count_never_hides_a_non_ready_state() {
+        let blocked_without_details = json!({"state": "blocked"});
+        assert_eq!(
+            quality_gate_review_count(false, &blocked_without_details),
+            0
+        );
+        assert_eq!(quality_gate_review_count(true, &blocked_without_details), 1);
+        assert!(quality_gate_requires_review(true, &blocked_without_details));
+        assert!(!quality_gate_requires_review(
+            true,
+            &json!({"state": "ready"})
+        ));
+    }
+
+    #[test]
+    fn physical_shadow_freshness_requires_schema_job_source_and_hash() {
+        let job = sample_job();
+        let valid = json!({
+            "schemaVersion": "DocumentIRV2",
+            "jobId": "job-1",
+            "sourceFiles": [{
+                "sourceFileId": "source-1",
+                "sha256": "a".repeat(64)
+            }]
+        });
+        assert!(physical_shadow_matches_source(&valid, &job));
+        for pointer in [
+            "/schemaVersion",
+            "/jobId",
+            "/sourceFiles/0/sourceFileId",
+            "/sourceFiles/0/sha256",
+        ] {
+            let mut stale = valid.clone();
+            *stale.pointer_mut(pointer).expect("fixture pointer") = json!("stale");
+            assert!(!physical_shadow_matches_source(&stale, &job), "{pointer}");
+        }
+        assert!(!physical_shadow_matches_source(
+            &json!({"schemaVersion": "DocumentIRV2", "jobId": "job-1", "sourceFiles": []}),
+            &job
+        ));
+    }
 }

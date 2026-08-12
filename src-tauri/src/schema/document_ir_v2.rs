@@ -32,10 +32,23 @@ pub struct GlyphNodeV2 {
     pub angle_rad: Option<f64>,
     pub style: TextStyleV2,
     pub unicode_map_error: bool,
-    pub hidden: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    pub visibility_observed: bool,
+    pub unicode_map_error_observed: bool,
+    pub geometry_basis: GlyphGeometryBasisV2,
     pub confidence: f64,
     pub source: GlyphSourceV2,
     pub source_anchor: SourceAnchorV2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum GlyphGeometryBasisV2 {
+    PdfiumCharBox,
+    TextMatrixDerived,
+    OcrObserved,
+    OoxmlLayoutDerived,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -84,7 +97,12 @@ pub struct LineNodeV2 {
     pub hanging_indent_pt: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_height_pt: Option<f64>,
-    pub hard_break_after: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hard_break_after: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub break_basis: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inline_gaps_pt: Vec<f64>,
     pub source_order: u32,
     pub confidence: f64,
     pub source_anchors: Vec<SourceAnchorV2>,
@@ -178,10 +196,34 @@ pub struct TableCellV2 {
     pub bbox: RectV2,
     pub content_region_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_pt: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row_height_pt: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row_height_rule: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_alignment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub padding_pt: Option<TableCellPaddingV2>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub header_scope: Option<HeaderScopeV2>,
     pub border_evidence: Vec<String>,
     pub confidence: f64,
     pub source_anchors: Vec<SourceAnchorV2>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct TableCellPaddingV2 {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -259,6 +301,8 @@ pub struct PageNodeV2 {
     pub media_box: Option<RectV2>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crop_box: Option<RectV2>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_transform: Option<PageTransformV2>,
     pub glyphs: Vec<GlyphNodeV2>,
     pub spans: Vec<SpanNodeV2>,
     pub lines: Vec<LineNodeV2>,
@@ -266,8 +310,108 @@ pub struct PageNodeV2 {
     pub vector_paths: Vec<VectorPathV2>,
     pub tables: Vec<TableNodeV2>,
     pub asset_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_placements: Vec<PdfImagePlacementV2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marked_content: Vec<PdfMarkedContentV2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<PdfAnnotationV2>,
     pub reading_order: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reading_order_graph: Option<ReadingOrderGraphV2>,
     pub quality: PageQualityV2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ReadingOrderGraphV2 {
+    pub primary: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternatives: Vec<Vec<String>>,
+    pub edges: Vec<ReadingOrderEdgeV2>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cycle_edges_removed: Vec<ReadingOrderEdgeV2>,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ReadingOrderEdgeV2 {
+    pub from: String,
+    pub to: String,
+    pub relation: String,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PageTransformV2 {
+    pub user_unit: f64,
+    pub pdf_to_display: [f64; 6],
+    pub display_to_normalized: [f64; 6],
+    pub display_width_pt: f64,
+    pub display_height_pt: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PdfImagePlacementV2 {
+    pub id: String,
+    pub asset_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<RectV2>,
+    #[serde(rename = "nativeBBox", skip_serializing_if = "Option::is_none")]
+    pub native_bbox: Option<RectV2>,
+    pub object_transform: [f64; 6],
+    #[serde(rename = "clipBBox", skip_serializing_if = "Option::is_none")]
+    pub clip_bbox: Option<RectV2>,
+    pub confidence: f64,
+    pub source_anchor: SourceAnchorV2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PdfMarkedContentV2 {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcid: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alt_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub structure_path: Vec<String>,
+    pub source_anchor: SourceAnchorV2,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct PdfAnnotationV2 {
+    pub id: String,
+    pub subtype: String,
+    pub bbox: RectV2,
+    pub confidence: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub appearance_asset_id: Option<String>,
+    pub source_anchor: SourceAnchorV2,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

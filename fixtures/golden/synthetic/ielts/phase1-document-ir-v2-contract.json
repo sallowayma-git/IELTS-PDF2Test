@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "DocumentIRV2",
+  "documentId": "phase1-contract-document",
+  "jobId": "phase1-contract-job",
+  "sourceFiles": [
+    {
+      "sourceFileId": "source-1",
+      "originalName": "phase1-contract.pdf",
+      "mediaType": "application/pdf",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "byteLength": 128,
+      "role": "question_paper"
+    }
+  ],
+  "pages": [
+    {
+      "pageIndex": 0,
+      "widthPt": 595,
+      "heightPt": 842,
+      "rotation": 0,
+      "mediaBox": {
+        "x": 0,
+        "y": 0,
+        "width": 595,
+        "height": 842,
+        "unit": "pt",
+        "origin": "bottom-left",
+        "pageRotation": 0
+      },
+      "cropBox": {
+        "x": 0,
+        "y": 0,
+        "width": 595,
+        "height": 842,
+        "unit": "pt",
+        "origin": "bottom-left",
+        "pageRotation": 0
+      },
+      "pageTransform": {
+        "userUnit": 1,
+        "pdfToDisplay": [1, 0, 0, -1, 0, 842],
+        "displayToNormalized": [0.0016806723, 0, 0, 0.0011876485, 0, 0],
+        "displayWidthPt": 595,
+        "displayHeightPt": 842
+      },
+      "glyphs": [],
+      "spans": [],
+      "lines": [
+        {
+          "id": "line-image-derived",
+          "spanIds": [],
+          "text": "Image-derived OCR line",
+          "bbox": {
+            "x": 72,
+            "y": 72,
+            "width": 180,
+            "height": 12,
+            "unit": "pt",
+            "origin": "top-left",
+            "pageRotation": 0
+          },
+          "writingMode": "horizontal-tb",
+          "indentationPt": 72,
+          "breakBasis": "ocr_observed_line",
+          "inlineGapsPt": [4.5, 8],
+          "sourceOrder": 0,
+          "confidence": 0.95,
+          "sourceAnchors": [
+            {
+              "sourceFileId": "source-1",
+              "pageIndex": 0,
+              "nodeIds": ["line-image-derived"],
+              "extractionMode": "pdf_ocr",
+              "sourceHash": "1111111111111111111111111111111111111111111111111111111111111111"
+            }
+          ]
+        }
+      ],
+      "regions": [],
+      "vectorPaths": [],
+      "tables": [],
+      "assetIds": [],
+      "readingOrder": ["line-image-derived"],
+      "quality": {
+        "classification": "scanned",
+        "nativeCharacterCount": 0,
+        "unicodeErrorRatio": 0,
+        "duplicateTextRatio": 0,
+        "imageCoverageRatio": 1,
+        "textCoverageRatio": 0.02,
+        "rotationConfidence": 1,
+        "requiresOcrRegions": [],
+        "warnings": []
+      }
+    }
+  ],
+  "assets": [],
+  "coverageLedger": [
+    {
+      "sourceNodeId": "line-image-derived",
+      "disposition": "question",
+      "targetIds": ["line-image-derived"]
+    }
+  ],
+  "parser": {
+    "provider": "phase1-contract-fixture",
+    "providerVersion": "1",
+    "extractionStartedAt": "2026-08-11T00:00:00Z",
+    "extractionCompletedAt": "2026-08-11T00:00:01Z",
+    "options": {
+      "fixture": true
+    },
+    "warnings": []
+  }
+}

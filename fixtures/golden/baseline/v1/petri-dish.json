@@ -1,0 +1,3722 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "petri-dish",
+  "source": {
+    "path": "fixtures/golden/private-real/petri-dish.pdf",
+    "sha256": "64a62faa5f462549a580bd02535021569d1c5fcabbdd59fb31fa2d4bdc70fa21",
+    "sizeBytes": 723984
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 7,
+    "blockCount": 51,
+    "groupCount": 3,
+    "slotCount": 16,
+    "assetCount": 0,
+    "answerCount": 16,
+    "warningCount": 2,
+    "groupKinds": [
+      "matching_information",
+      "matching",
+      "summary_completion"
+    ],
+    "questionIds": [
+      "q14",
+      "q15",
+      "q16",
+      "q17",
+      "q18",
+      "q19",
+      "q20",
+      "q21",
+      "q22",
+      "q23",
+      "q24",
+      "q25",
+      "q26",
+      "q27",
+      "q28",
+      "q29"
+    ],
+    "roles": [
+      "passage",
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q14": "",
+        "q15": "",
+        "q16": "",
+        "q17": "",
+        "q18": "",
+        "q19": "",
+        "q20": "",
+        "q21": "",
+        "q22": "",
+        "q23": "",
+        "q24": "",
+        "q25": "",
+        "q26": "",
+        "q27": "",
+        "q28": "",
+        "q29": ""
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "petri-dish.pdf",
+            "role": "MainQuestion",
+            "sha256": "64a62faa5f462549a580bd02535021569d1c5fcabbdd59fb31fa2d4bdc70fa21",
+            "sizeBytes": 723984,
+            "storedName": "petri-dish.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "petri dish"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": true,
+          "classificationEvidence": [
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            }
+          ],
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 14-19"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "matching_information",
+          "layout": {
+            "layoutHint": "list",
+            "template": "matching_information"
+          },
+          "questionRange": [
+            14,
+            19
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "14",
+              "id": "q14",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a description of an experiment involving both human and non-human cells of a specific type",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "15",
+              "id": "q15",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F"
+                ],
+                "type": "matching"
+              },
+              "prompt": "possibilities for improved research into various medical conditions",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "16",
+              "id": "q16",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F"
+                ],
+                "type": "matching"
+              },
+              "prompt": "contrasting views of the importance of the Petri dish",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "17",
+              "id": "q17",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a change remarked on by one scientist in the material used for the Petri dish",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "18",
+              "id": "q18",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a claim that the Petri dish enables a scientist to monitor the progress of an experiment on a regular basis",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "19",
+              "id": "q19",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "E",
+                  "F"
+                ],
+                "type": "matching"
+              },
+              "prompt": "a reference to the importance of a material for different types of laboratory equipment",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020",
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 14-19"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Reading Passage 2 has six sections, A–F."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Which section contains the following information?"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A–F, in boxes 14-19 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "NB You may use any letter more than once."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "14 a description of an experiment involving both human and non-human cells of a specific type"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "15 possibilities for improved research into various medical conditions"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "16 contrasting views of the importance of the Petri dish"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "17 a change remarked on by one scientist in the material used for the Petri dish"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "18 a claim that the Petri dish enables a scientist to monitor the progress of an experiment on a regular basis"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "19 a reference to the importance of a material for different types of laboratory equipment"
+            }
+          ],
+          "sourceBlockIds": [
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": true,
+          "classificationEvidence": [
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 20-25"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "matching",
+          "layout": {
+            "layoutHint": "list",
+            "template": "matching_list"
+          },
+          "questionRange": [
+            20,
+            25
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "20",
+              "id": "q20",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "To deal with the injury, cells must go through a series of activities in a particular order.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "21",
+              "id": "q21",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "One technological development formed the basis of all modern scientific research.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "22",
+              "id": "q22",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "A modification to the Petri dish allows experiments to provide more accurate information.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "23",
+              "id": "q23",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Petri dishes allow observation of medical conditions that are normally impossible to observe.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "24",
+              "id": "q24",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Visual evidence is a very important requirement for the provision of reliable information.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "25",
+              "id": "q25",
+              "interaction": {
+                "allowOptionReuse": true,
+                "options": [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+                ],
+                "type": "matching"
+              },
+              "prompt": "Petri dishes can be used to help produce a range of new cells of many different kinds.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 20-25"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Look at the following statements (Questions 20-25) and the list of people below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Match each statement with the correct person, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A, B, C or D, in boxes 20-25 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "NB You may use any letter more than once."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "20 To deal with the injury, cells must go through a series of activities in a particular order."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "21 One technological development formed the basis of all modern scientific research."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "22 A modification to the Petri dish allows experiments to provide more accurate information."
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "23 Petri dishes allow observation of medical conditions that are normally impossible to observe."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "24 Visual evidence is a very important requirement for the provision of reliable information."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "25 Petri dishes can be used to help produce a range of new cells of many different kinds."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "List of People"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Alan Macfarlane B Professor Ludovic Vallier C Dr Meritxell Huch D Dr Madeline Lancaster"
+            }
+          ],
+          "sourceBlockIds": [
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045",
+            "b046",
+            "b047",
+            "b048",
+            "b049"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
+              "toBlockId": "b045"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b047",
+              "reason": "same-section-continuation",
+              "toBlockId": "b048"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b048",
+              "reason": "same-section-continuation",
+              "toBlockId": "b049"
+            }
+          ],
+          "groupId": "group-3",
+          "instruction": [
+            "Questions 26-29"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "summary_completion",
+          "layout": {
+            "layoutHint": "inline_completion",
+            "notes": "Questions 26-29 Complete the summary below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 29-32 on your answer sheet. Research in the MRC Lab of Molecular Biology A team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells from 26 _______ to them. The aim is to allow the neurons to grow in three 27 _______. This results in a 28 _______ that resembles a developing brain. The technology could help scientists study how neuron production varies in different 29 _______, leading to possibilities for increased medical knowledge.",
+            "template": "summary_text_completion"
+          },
+          "questionRange": [
+            26,
+            29
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "26",
+              "id": "q26",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "to them. The aim is to allow the neurons to grow in three",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047",
+                "b048",
+                "b049"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "27",
+              "id": "q27",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "This results in a",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047",
+                "b048",
+                "b049"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "28",
+              "id": "q28",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "that resembles a developing brain. The technology could help scientists study how neuron production varies in different",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047",
+                "b048",
+                "b049"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "29",
+              "id": "q29",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": ", leading to possibilities for increased medical knowledge.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b040",
+                "b041",
+                "b042",
+                "b043",
+                "b044",
+                "b045",
+                "b046",
+                "b047",
+                "b048",
+                "b049"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 26-29"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 29-32 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Research in the MRC Lab of Molecular Biology"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b045",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "from 26 _______ to them. The aim is to allow the neurons to grow in three 27 _______. This"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "results in a 28 _______ that resembles a developing brain. The technology could help scientists"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b048",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "study how neuron production varies in different 29 _______, leading to possibilities for"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b049",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "increased medical knowledge."
+            }
+          ],
+          "sourceBlockIds": [
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045",
+            "b046",
+            "b047",
+            "b048",
+            "b049"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>How the Petri dish supports scientific advances</p>\n<p>A simple piece of scientific equipment is helping research in three institutions in Cambridge, UK</p>\n<p>A  Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive \nthe appreciation or attention that their more complex lab companions like the microscope \nenjoy. They are simple, utilitarian little things, and it’s understandable that some people see \nthem as just shallow dishes with lids. But Petri dishes deserve celebrating; they are still at the \nforefront of scientific discovery.</p>\n<p>B  The invention of the Petri dish, and the advances it has helped to create, are part of a bigger \nwhole, of course – the development of glass scientific instruments, from microscope lenses to \nlaboratory beakers. In The Glass Bathyscaphe: How Glass Changed the World, Alan \nMacfarlane argues that without glass, the Renaissance and the scientific revolution would \nnever have happened.</p>\n<p>Around 70 per cent of what we know about the world comes in through our eyes, Macfarlane \npoints out, and glass instruments enabled us to see better. Until about 1400, knowledge was \nbased on what people had been told in the past. ‘Glass allowed the growth of the experimental \nmethod. Don’t trust what you are being told: see it for yourself. It was transformational,’ he \nsays.</p>\n<p>C  At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his \nfirst encounter with a Petri dish was a classic example of understanding the world in this way: \nstudents used the dishes to see which bacteria could grow in the presence of antibiotics. ‘It’s \ngood to see things grow,’ he says. ‘It is a fascinating experience. Now, we grow cells in the \nPetri dish, and we don’t use glass any more, but plastic.’</p>\n<p>Today, his team focuses on stem cells, which have the capacity to become any cell type in the \nhuman body: neurons, skin cells, liver cells, and so on. Vallier and his colleagues study them \nin order to understand how they do this, and how they can produce more cells. And to study \nthem, they need to grow them. ‘We put the stem cells on the dish and then we feed them and \nthey grow,’ he says. ‘And then… we divide them and distribute them in new Petri dishes, and \nwe grow them again. We feed them on a liquid medium that is basically food for cells: it tells \nthem to grow and also what to do, as we want to produce new cells. So by feeding them this \nmedium we can allow the cells to become neurons, cardiac cells, liver cells, and so on. We \ncan then model disease in a dish, or produce cells for regenerative-medicine applications.’ \nThis means that the Petri dish becomes a place where Vallier and his team can study what \nhappens to those cells when disease strikes. ‘We work a lot on fatty-liver diseases, and in this \ncase the liver cell in the dish becomes full of fat, which we can see … We can’t look inside a \npatient’s liver to see what’s happening. So we are reproducing those diseases in our dishes.’</p>\n<p>D  ‘Disease in a dish’ is also the focus of Dr Meritxell Huch’s team at the Gurdon Institute. They \nuse between 50 and 150 Petri dishes every day to grow mouse liver and human liver cells, in \norder to study how the liver can regenerate itself.</p>\n<p>Huch’s team is examining the molecular mechanisms by which these cells decide to multiply. \nShe says: ‘You can divide regeneration into different phases. The cells first have to realise that \nthere is damage and activate the response. Once they activate the response, the cells will \nproliferate to compensate for the loss of cells owing to the damage. And once they have \nproliferated, they then become functional cells.’</p>\n<p>E  In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini-\nbrains’ in hundreds of Petri dishes. Here, the dish has been specially treated to stop cells \nsticking to it and to encourage them to float freely.</p>\n<p>Dr Lancaster explains that they want the cells to develop in three, rather than two, dimensions \nas that’s the way our brains are. ‘If you can grow neurons in a dish in two dimensions, you can \nsee individual neurons and see what they do, but you won’t be able to understand the \narchitecture of those cells – their positioning relative to one another.’ She says that this new \nmethod gives you a structure that looks a lot more like that of an actual developing brain.</p>\n<p>F  The aim of this research is to look at exactly how neurons are made and how that differs in \nhumans compared with other species. One day, says Lancaster, this work could translate into \nunderstanding far more about Alzheimer’s disease, Parkinson’s and schizophrenia. So in a \nworld of cutting-edge and highly complex technology, Petri dishes, in their relative simplicity, \nremain a vital weapon in the fight against the world’s most serious diseases. And they also \nenable a hands-on approach that she finds satisfying.</p>\n<p>‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and \nyou check it every day. You change the media this day or that day to help it grow better. It’s \nrewarding to see something grow before your eyes. There’s something about the interplay \nbetween new, next-generation and classic technologies. They give you capabilities that were \nnot possible before.’</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 14-29",
+            "questionRange": [
+              14,
+              29
+            ],
+            "text": "You should spend about 20 minutes on Questions 14–29, which are based on Reading Passage 2 below."
+          }
+        ],
+        "sourceBlockIds": [
+          "b001",
+          "b003",
+          "b004",
+          "b005",
+          "b006",
+          "b007",
+          "b008",
+          "b009",
+          "b010",
+          "b011",
+          "b012",
+          "b013",
+          "b014",
+          "b015"
+        ],
+        "title": "How the Petri dish supports scientific advances"
+      },
+      "questionDisplayMap": {
+        "q14": "14",
+        "q15": "15",
+        "q16": "16",
+        "q17": "17",
+        "q18": "18",
+        "q19": "19",
+        "q20": "20",
+        "q21": "21",
+        "q22": "22",
+        "q23": "23",
+        "q24": "24",
+        "q25": "25",
+        "q26": "26",
+        "q27": "27",
+        "q28": "28",
+        "q29": "29"
+      },
+      "questionOrder": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26",
+        "q27",
+        "q28",
+        "q29"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>READING PASSAGE 2</h3>",
+              "pageIndex": 1,
+              "roleHint": "passage",
+              "text": "READING PASSAGE 2 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>You should spend about 20 minutes on Questions 14–29, which are based on Reading \nPassage 2 below.</p>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "You should spend about 20 minutes on Questions 14–29, which are based on Reading \nPassage 2 below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>How the Petri dish supports scientific advances</p>",
+              "pageIndex": 1,
+              "text": "How the Petri dish supports scientific advances "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A simple piece of scientific equipment is helping research in three institutions in Cambridge, UK</p>",
+              "pageIndex": 1,
+              "text": "A simple piece of scientific equipment is helping research in three institutions in Cambridge, UK "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A  Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive \nthe appreciation or attention that their more complex lab companions like the microscope \nenjoy. They are simple, utilitarian little things, and it’s understandable that some people see \nthem as just shallow dishes with lids. But Petri dishes deserve celebrating; they are still at the \nforefront of scientific discovery.</p>",
+              "pageIndex": 1,
+              "text": "A  Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive \nthe appreciation or attention that their more complex lab companions like the microscope \nenjoy. They are simple, utilitarian little things, and it’s understandable that some people see \nthem as just shallow dishes with lids. But Petri dishes deserve celebrating; they are still at the \nforefront of scientific discovery. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>B  The invention of the Petri dish, and the advances it has helped to create, are part of a bigger \nwhole, of course – the development of glass scientific instruments, from microscope lenses to \nlaboratory beakers. In The Glass Bathyscaphe: How Glass Changed the World, Alan \nMacfarlane argues that without glass, the Renaissance and the scientific revolution would \nnever have happened.</p>",
+              "pageIndex": 1,
+              "text": "B  The invention of the Petri dish, and the advances it has helped to create, are part of a bigger \nwhole, of course – the development of glass scientific instruments, from microscope lenses to \nlaboratory beakers. In The Glass Bathyscaphe: How Glass Changed the World, Alan \nMacfarlane argues that without glass, the Renaissance and the scientific revolution would \nnever have happened. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Around 70 per cent of what we know about the world comes in through our eyes, Macfarlane \npoints out, and glass instruments enabled us to see better. Until about 1400, knowledge was \nbased on what people had been told in the past. ‘Glass allowed the growth of the experimental \nmethod. Don’t trust what you are being told: see it for yourself. It was transformational,’ he \nsays.</p>",
+              "pageIndex": 1,
+              "text": "Around 70 per cent of what we know about the world comes in through our eyes, Macfarlane \npoints out, and glass instruments enabled us to see better. Until about 1400, knowledge was \nbased on what people had been told in the past. ‘Glass allowed the growth of the experimental \nmethod. Don’t trust what you are being told: see it for yourself. It was transformational,’ he \nsays. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>C  At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his \nfirst encounter with a Petri dish was a classic example of understanding the world in this way: \nstudents used the dishes to see which bacteria could grow in the presence of antibiotics. ‘It’s \ngood to see things grow,’ he says. ‘It is a fascinating experience. Now, we grow cells in the \nPetri dish, and we don’t use glass any more, but plastic.’</p>",
+              "pageIndex": 1,
+              "text": "C  At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his \nfirst encounter with a Petri dish was a classic example of understanding the world in this way: \nstudents used the dishes to see which bacteria could grow in the presence of antibiotics. ‘It’s \ngood to see things grow,’ he says. ‘It is a fascinating experience. Now, we grow cells in the \nPetri dish, and we don’t use glass any more, but plastic.’ "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b009",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Today, his team focuses on stem cells, which have the capacity to become any cell type in the \nhuman body: neurons, skin cells, liver cells, and so on. Vallier and his colleagues study them \nin order to understand how they do this, and how they can produce more cells. And to study \nthem, they need to grow them. ‘We put the stem cells on the dish and then we feed them and \nthey grow,’ he says. ‘And then… we divide them and distribute them in new Petri dishes, and \nwe grow them again. We feed them on a liquid medium that is basically food for cells: it tells \nthem to grow and also what to do, as we want to produce new cells. So by feeding them this \nmedium we can allow the cells to become neurons, cardiac cells, liver cells, and so on. We \ncan then model disease in a dish, or produce cells for regenerative-medicine applications.’ \nThis means that the Petri dish becomes a place where Vallier and his team can study what \nhappens to those cells when disease strikes. ‘We work a lot on fatty-liver diseases, and in this \ncase the liver cell in the dish becomes full of fat, which we can see … We can’t look inside a \npatient’s liver to see what’s happening. So we are reproducing those diseases in our dishes.’</p>",
+              "pageIndex": 1,
+              "text": "Today, his team focuses on stem cells, which have the capacity to become any cell type in the \nhuman body: neurons, skin cells, liver cells, and so on. Vallier and his colleagues study them \nin order to understand how they do this, and how they can produce more cells. And to study \nthem, they need to grow them. ‘We put the stem cells on the dish and then we feed them and \nthey grow,’ he says. ‘And then… we divide them and distribute them in new Petri dishes, and \nwe grow them again. We feed them on a liquid medium that is basically food for cells: it tells \nthem to grow and also what to do, as we want to produce new cells. So by feeding them this \nmedium we can allow the cells to become neurons, cardiac cells, liver cells, and so on. We \ncan then model disease in a dish, or produce cells for regenerative-medicine applications.’ \nThis means that the Petri dish becomes a place where Vallier and his team can study what \nhappens to those cells when disease strikes. ‘We work a lot on fatty-liver diseases, and in this \ncase the liver cell in the dish becomes full of fat, which we can see … We can’t look inside a \npatient’s liver to see what’s happening. So we are reproducing those diseases in our dishes.’ "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b010",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>D  ‘Disease in a dish’ is also the focus of Dr Meritxell Huch’s team at the Gurdon Institute. They \nuse between 50 and 150 Petri dishes every day to grow mouse liver and human liver cells, in \norder to study how the liver can regenerate itself.</p>",
+              "pageIndex": 2,
+              "text": "D  ‘Disease in a dish’ is also the focus of Dr Meritxell Huch’s team at the Gurdon Institute. They \nuse between 50 and 150 Petri dishes every day to grow mouse liver and human liver cells, in \norder to study how the liver can regenerate itself. "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b011",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Huch’s team is examining the molecular mechanisms by which these cells decide to multiply. \nShe says: ‘You can divide regeneration into different phases. The cells first have to realise that \nthere is damage and activate the response. Once they activate the response, the cells will \nproliferate to compensate for the loss of cells owing to the damage. And once they have \nproliferated, they then become functional cells.’</p>",
+              "pageIndex": 2,
+              "text": "Huch’s team is examining the molecular mechanisms by which these cells decide to multiply. \nShe says: ‘You can divide regeneration into different phases. The cells first have to realise that \nthere is damage and activate the response. Once they activate the response, the cells will \nproliferate to compensate for the loss of cells owing to the damage. And once they have \nproliferated, they then become functional cells.’ "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>E  In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini-\nbrains’ in hundreds of Petri dishes. Here, the dish has been specially treated to stop cells \nsticking to it and to encourage them to float freely.</p>",
+              "pageIndex": 2,
+              "text": "E  In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini-\nbrains’ in hundreds of Petri dishes. Here, the dish has been specially treated to stop cells \nsticking to it and to encourage them to float freely. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b013",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Dr Lancaster explains that they want the cells to develop in three, rather than two, dimensions \nas that’s the way our brains are. ‘If you can grow neurons in a dish in two dimensions, you can \nsee individual neurons and see what they do, but you won’t be able to understand the \narchitecture of those cells – their positioning relative to one another.’ She says that this new \nmethod gives you a structure that looks a lot more like that of an actual developing brain.</p>",
+              "pageIndex": 2,
+              "text": "Dr Lancaster explains that they want the cells to develop in three, rather than two, dimensions \nas that’s the way our brains are. ‘If you can grow neurons in a dish in two dimensions, you can \nsee individual neurons and see what they do, but you won’t be able to understand the \narchitecture of those cells – their positioning relative to one another.’ She says that this new \nmethod gives you a structure that looks a lot more like that of an actual developing brain. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b014",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>F  The aim of this research is to look at exactly how neurons are made and how that differs in \nhumans compared with other species. One day, says Lancaster, this work could translate into \nunderstanding far more about Alzheimer’s disease, Parkinson’s and schizophrenia. So in a \nworld of cutting-edge and highly complex technology, Petri dishes, in their relative simplicity, \nremain a vital weapon in the fight against the world’s most serious diseases. And they also \nenable a hands-on approach that she finds satisfying.</p>",
+              "pageIndex": 2,
+              "text": "F  The aim of this research is to look at exactly how neurons are made and how that differs in \nhumans compared with other species. One day, says Lancaster, this work could translate into \nunderstanding far more about Alzheimer’s disease, Parkinson’s and schizophrenia. So in a \nworld of cutting-edge and highly complex technology, Petri dishes, in their relative simplicity, \nremain a vital weapon in the fight against the world’s most serious diseases. And they also \nenable a hands-on approach that she finds satisfying. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b015",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and \nyou check it every day. You change the media this day or that day to help it grow better. It’s \nrewarding to see something grow before your eyes. There’s something about the interplay \nbetween new, next-generation and classic technologies. They give you capabilities that were \nnot possible before.’</p>",
+              "pageIndex": 2,
+              "text": "‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and \nyou check it every day. You change the media this day or that day to help it grow better. It’s \nrewarding to see something grow before your eyes. There’s something about the interplay \nbetween new, next-generation and classic technologies. They give you capabilities that were \nnot possible before.’ "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 2,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b016",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 14-19</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 14-19 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b017",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Reading Passage 2 has six sections, A–F.</h3>",
+              "pageIndex": 3,
+              "roleHint": "passage",
+              "text": "Reading Passage 2 has six sections, A–F. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b018",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Which section contains the following information?</p>",
+              "pageIndex": 3,
+              "text": "Which section contains the following information? "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b019",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter, A–F, in boxes 14-19 on your answer sheet.</p>",
+              "pageIndex": 3,
+              "text": "Write the correct letter, A–F, in boxes 14-19 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b020",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>NB You may use any letter more than once.</p>",
+              "pageIndex": 3,
+              "text": "NB You may use any letter more than once. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b021",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>14  a description of an experiment involving both human and non-human cells of a specific type</p>",
+              "pageIndex": 3,
+              "text": "14  a description of an experiment involving both human and non-human cells of a specific type "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>15  possibilities for improved research into various medical conditions</p>",
+              "pageIndex": 3,
+              "text": "15  possibilities for improved research into various medical conditions "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>16  contrasting views of the importance of the Petri dish</p>",
+              "pageIndex": 3,
+              "text": "16  contrasting views of the importance of the Petri dish "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b024",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>17  a change remarked on by one scientist in the material used for the Petri dish</p>",
+              "pageIndex": 3,
+              "text": "17  a change remarked on by one scientist in the material used for the Petri dish "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b025",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>18  a claim that the Petri dish enables a scientist to monitor the progress of an experiment on a \nregular basis</p>",
+              "pageIndex": 3,
+              "text": "18  a claim that the Petri dish enables a scientist to monitor the progress of an experiment on a \nregular basis "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>19  a reference to the importance of a material for different types of laboratory equipment</p>",
+              "pageIndex": 3,
+              "text": "19  a reference to the importance of a material for different types of laboratory equipment "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 3,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b027",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 20-25</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 20-25 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Look at the following statements (Questions 20-25) and the list of people below.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Look at the following statements (Questions 20-25) and the list of people below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b029",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Match each statement with the correct person, A, B, C or D.</p>",
+              "pageIndex": 4,
+              "text": "Match each statement with the correct person, A, B, C or D. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b030",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write the correct letter, A, B, C or D, in boxes 20-25 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write the correct letter, A, B, C or D, in boxes 20-25 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>NB You may use any letter more than once.</p>",
+              "pageIndex": 4,
+              "text": "NB You may use any letter more than once. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>20  To deal with the injury, cells must go through a series of activities in a particular order.</p>",
+              "pageIndex": 4,
+              "text": "20  To deal with the injury, cells must go through a series of activities in a particular order. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>21  One technological development formed the basis of all modern scientific research.</p>",
+              "pageIndex": 4,
+              "text": "21  One technological development formed the basis of all modern scientific research. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b034",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>22  A modification to the Petri dish allows experiments to provide more accurate information.</p>",
+              "pageIndex": 4,
+              "text": "22  A modification to the Petri dish allows experiments to provide more accurate information. "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>23  Petri dishes allow observation of medical conditions that are normally impossible to observe.</p>",
+              "pageIndex": 4,
+              "text": "23  Petri dishes allow observation of medical conditions that are normally impossible to observe. "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>24  Visual evidence is a very important requirement for the provision of reliable information.</p>",
+              "pageIndex": 4,
+              "text": "24  Visual evidence is a very important requirement for the provision of reliable information. "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>25  Petri dishes can be used to help produce a range of new cells of many different kinds.</p>",
+              "pageIndex": 4,
+              "text": "25  Petri dishes can be used to help produce a range of new cells of many different kinds. "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b038",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>List of People</p>",
+              "pageIndex": 4,
+              "text": " List of People "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b039",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A    Alan Macfarlane \nB    Professor Ludovic Vallier \nC    Dr Meritxell Huch \nD    Dr Madeline Lancaster</p>",
+              "pageIndex": 4,
+              "text": "A    Alan Macfarlane \nB    Professor Ludovic Vallier \nC    Dr Meritxell Huch \nD    Dr Madeline Lancaster "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 4,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b040",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 26-29</h3>",
+              "pageIndex": 5,
+              "roleHint": "question",
+              "text": "Questions 26-29 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b041",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Complete the summary below.</p>",
+              "pageIndex": 5,
+              "roleHint": "question",
+              "text": "Complete the summary below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b042",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose ONE WORD ONLY from the passage for each answer.</p>",
+              "pageIndex": 5,
+              "roleHint": "question",
+              "text": "Choose ONE WORD ONLY from the passage for each answer. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b043",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write your answers in boxes 29-32 on your answer sheet.</p>",
+              "pageIndex": 5,
+              "text": "Write your answers in boxes 29-32 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b044",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Research in the MRC Lab of Molecular Biology</p>",
+              "pageIndex": 5,
+              "text": "Research in the MRC Lab of Molecular Biology "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b045",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells</p>",
+              "pageIndex": 5,
+              "text": "A team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b046",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>from 26 _______ to them. The aim is to allow the neurons to grow in three 27 _______. This</p>",
+              "pageIndex": 5,
+              "text": "from 26 _______ to them. The aim is to allow the neurons to grow in three 27 _______. This "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b047",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>results in a 28 _______ that resembles a developing brain. The technology could help scientists</p>",
+              "pageIndex": 5,
+              "text": "results in a 28 _______ that resembles a developing brain. The technology could help scientists "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b048",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>study how neuron production varies in different 29 _______, leading to possibilities for</p>",
+              "pageIndex": 5,
+              "text": "study how neuron production varies in different 29 _______, leading to possibilities for "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b049",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>increased medical knowledge.</p>",
+              "pageIndex": 5,
+              "text": "increased medical knowledge. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 5,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b050",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 6]</p>",
+              "pageIndex": 6,
+              "text": "[No extractable text on page 6]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 6,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b051",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 7]</p>",
+              "pageIndex": 7,
+              "text": "[No extractable text on page 7]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 7,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "petri-dish.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 6 has no extractable text; OCR/manual review required",
+          "page 7 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q14": "",
+        "q15": "",
+        "q16": "",
+        "q17": "",
+        "q18": "",
+        "q19": "",
+        "q20": "",
+        "q21": "",
+        "q22": "",
+        "q23": "",
+        "q24": "",
+        "q25": "",
+        "q26": "",
+        "q27": "",
+        "q28": "",
+        "q29": ""
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:64a62faa5f462549a580bd02535021569d1c5fcabbdd59fb31fa2d4bdc70fa21;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "petri-dish.pdf",
+        "questionIntroHtml": "<h3>Questions</h3><ul class=\"question-umbrella-ranges\"><li><strong>Questions 14-29</strong><span>Q14-29</span></li></ul>",
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 14-29",
+            "questionRange": [
+              14,
+              29
+            ],
+            "text": "You should spend about 20 minutes on Questions 14–29, which are based on Reading Passage 2 below."
+          }
+        ],
+        "title": "petri dish"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>How the Petri dish supports scientific advances</p>\n<p>A simple piece of scientific equipment is helping research in three institutions in Cambridge, UK</p>\n<p>A  Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive \nthe appreciation or attention that their more complex lab companions like the microscope \nenjoy. They are simple, utilitarian little things, and it’s understandable that some people see \nthem as just shallow dishes with lids. But Petri dishes deserve celebrating; they are still at the \nforefront of scientific discovery.</p>\n<p>B  The invention of the Petri dish, and the advances it has helped to create, are part of a bigger \nwhole, of course – the development of glass scientific instruments, from microscope lenses to \nlaboratory beakers. In The Glass Bathyscaphe: How Glass Changed the World, Alan \nMacfarlane argues that without glass, the Renaissance and the scientific revolution would \nnever have happened.</p>\n<p>Around 70 per cent of what we know about the world comes in through our eyes, Macfarlane \npoints out, and glass instruments enabled us to see better. Until about 1400, knowledge was \nbased on what people had been told in the past. ‘Glass allowed the growth of the experimental \nmethod. Don’t trust what you are being told: see it for yourself. It was transformational,’ he \nsays.</p>\n<p>C  At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his \nfirst encounter with a Petri dish was a classic example of understanding the world in this way: \nstudents used the dishes to see which bacteria could grow in the presence of antibiotics. ‘It’s \ngood to see things grow,’ he says. ‘It is a fascinating experience. Now, we grow cells in the \nPetri dish, and we don’t use glass any more, but plastic.’</p>\n<p>Today, his team focuses on stem cells, which have the capacity to become any cell type in the \nhuman body: neurons, skin cells, liver cells, and so on. Vallier and his colleagues study them \nin order to understand how they do this, and how they can produce more cells. And to study \nthem, they need to grow them. ‘We put the stem cells on the dish and then we feed them and \nthey grow,’ he says. ‘And then… we divide them and distribute them in new Petri dishes, and \nwe grow them again. We feed them on a liquid medium that is basically food for cells: it tells \nthem to grow and also what to do, as we want to produce new cells. So by feeding them this \nmedium we can allow the cells to become neurons, cardiac cells, liver cells, and so on. We \ncan then model disease in a dish, or produce cells for regenerative-medicine applications.’ \nThis means that the Petri dish becomes a place where Vallier and his team can study what \nhappens to those cells when disease strikes. ‘We work a lot on fatty-liver diseases, and in this \ncase the liver cell in the dish becomes full of fat, which we can see … We can’t look inside a \npatient’s liver to see what’s happening. So we are reproducing those diseases in our dishes.’</p>\n<p>D  ‘Disease in a dish’ is also the focus of Dr Meritxell Huch’s team at the Gurdon Institute. They \nuse between 50 and 150 Petri dishes every day to grow mouse liver and human liver cells, in \norder to study how the liver can regenerate itself.</p>\n<p>Huch’s team is examining the molecular mechanisms by which these cells decide to multiply. \nShe says: ‘You can divide regeneration into different phases. The cells first have to realise that \nthere is damage and activate the response. Once they activate the response, the cells will \nproliferate to compensate for the loss of cells owing to the damage. And once they have \nproliferated, they then become functional cells.’</p>\n<p>E  In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini-\nbrains’ in hundreds of Petri dishes. Here, the dish has been specially treated to stop cells \nsticking to it and to encourage them to float freely.</p>\n<p>Dr Lancaster explains that they want the cells to develop in three, rather than two, dimensions \nas that’s the way our brains are. ‘If you can grow neurons in a dish in two dimensions, you can \nsee individual neurons and see what they do, but you won’t be able to understand the \narchitecture of those cells – their positioning relative to one another.’ She says that this new \nmethod gives you a structure that looks a lot more like that of an actual developing brain.</p>\n<p>F  The aim of this research is to look at exactly how neurons are made and how that differs in \nhumans compared with other species. One day, says Lancaster, this work could translate into \nunderstanding far more about Alzheimer’s disease, Parkinson’s and schizophrenia. So in a \nworld of cutting-edge and highly complex technology, Petri dishes, in their relative simplicity, \nremain a vital weapon in the fight against the world’s most serious diseases. And they also \nenable a hands-on approach that she finds satisfying.</p>\n<p>‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and \nyou check it every day. You change the media this day or that day to help it grow better. It’s \nrewarding to see something grow before your eyes. There’s something about the interplay \nbetween new, next-generation and classic technologies. They give you capabilities that were \nnot possible before.’</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q14": "14",
+        "q15": "15",
+        "q16": "16",
+        "q17": "17",
+        "q18": "18",
+        "q19": "19",
+        "q20": "20",
+        "q21": "21",
+        "q22": "22",
+        "q23": "23",
+        "q24": "24",
+        "q25": "25",
+        "q26": "26",
+        "q27": "27",
+        "q28": "28",
+        "q29": "29"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": true,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 14-19</p></div><ol><li><div><strong>14</strong> a description of an experiment involving both human and non-human cells of a specific type</div><div class=\"choice-row\"><label><input name=\"q14\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q14\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q14\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q14\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q14\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q14\" type=\"radio\" value=\"F\"> F</label></div></li><li><div><strong>15</strong> possibilities for improved research into various medical conditions</div><div class=\"choice-row\"><label><input name=\"q15\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q15\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q15\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q15\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q15\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q15\" type=\"radio\" value=\"F\"> F</label></div></li><li><div><strong>16</strong> contrasting views of the importance of the Petri dish</div><div class=\"choice-row\"><label><input name=\"q16\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q16\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q16\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q16\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q16\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q16\" type=\"radio\" value=\"F\"> F</label></div></li><li><div><strong>17</strong> a change remarked on by one scientist in the material used for the Petri dish</div><div class=\"choice-row\"><label><input name=\"q17\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q17\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q17\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q17\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q17\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q17\" type=\"radio\" value=\"F\"> F</label></div></li><li><div><strong>18</strong> a claim that the Petri dish enables a scientist to monitor the progress of an experiment on a regular basis</div><div class=\"choice-row\"><label><input name=\"q18\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q18\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q18\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q18\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q18\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q18\" type=\"radio\" value=\"F\"> F</label></div></li><li><div><strong>19</strong> a reference to the importance of a material for different types of laboratory equipment</div><div class=\"choice-row\"><label><input name=\"q19\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q19\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q19\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q19\" type=\"radio\" value=\"D\"> D</label><label><input name=\"q19\" type=\"radio\" value=\"E\"> E</label><label><input name=\"q19\" type=\"radio\" value=\"F\"> F</label></div></li></ol></section>",
+          "groupId": "group-1",
+          "kind": "matching_information",
+          "leadHtml": "<p>Questions 14-19</p>",
+          "questionIds": [
+            "q14",
+            "q15",
+            "q16",
+            "q17",
+            "q18",
+            "q19"
+          ]
+        },
+        {
+          "allowOptionReuse": true,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 20-25</p></div><ol><li><div><strong>20</strong> To deal with the injury, cells must go through a series of activities in a particular order.</div><div class=\"choice-row\"><label><input name=\"q20\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q20\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q20\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q20\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>21</strong> One technological development formed the basis of all modern scientific research.</div><div class=\"choice-row\"><label><input name=\"q21\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q21\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q21\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q21\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>22</strong> A modification to the Petri dish allows experiments to provide more accurate information.</div><div class=\"choice-row\"><label><input name=\"q22\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q22\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q22\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q22\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>23</strong> Petri dishes allow observation of medical conditions that are normally impossible to observe.</div><div class=\"choice-row\"><label><input name=\"q23\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q23\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q23\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q23\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>24</strong> Visual evidence is a very important requirement for the provision of reliable information.</div><div class=\"choice-row\"><label><input name=\"q24\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q24\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q24\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q24\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>25</strong> Petri dishes can be used to help produce a range of new cells of many different kinds.</div><div class=\"choice-row\"><label><input name=\"q25\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q25\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q25\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q25\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "groupId": "group-2",
+          "kind": "matching",
+          "leadHtml": "<p>Questions 20-25</p>",
+          "questionIds": [
+            "q20",
+            "q21",
+            "q22",
+            "q23",
+            "q24",
+            "q25"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 26-29</p></div><div class=\"notes-completion\">Questions 26-29 Complete the summary below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 29-32 on your answer sheet. Research in the MRC Lab of Molecular Biology A team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells from <span class=\"inline-completion\" data-question-id=\"q26\"><strong>26</strong> <input type=\"text\" id=\"q26_input\" name=\"q26\" placeholder=\"answer\"></span> to them. The aim is to allow the neurons to grow in three <span class=\"inline-completion\" data-question-id=\"q27\"><strong>27</strong> <input type=\"text\" id=\"q27_input\" name=\"q27\" placeholder=\"answer\"></span> This results in a <span class=\"inline-completion\" data-question-id=\"q28\"><strong>28</strong> <input type=\"text\" id=\"q28_input\" name=\"q28\" placeholder=\"answer\"></span> that resembles a developing brain. The technology could help scientists study how neuron production varies in different <span class=\"inline-completion\" data-question-id=\"q29\"><strong>29</strong> <input type=\"text\" id=\"q29_input\" name=\"q29\" placeholder=\"answer\"></span>, leading to possibilities for increased medical knowledge.</div></section>",
+          "groupId": "group-3",
+          "kind": "summary_completion",
+          "leadHtml": "<p>Questions 26-29</p>",
+          "questionIds": [
+            "q26",
+            "q27",
+            "q28",
+            "q29"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26",
+        "q27",
+        "q28",
+        "q29"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260810092236-cc47d74c/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/petri-dish.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/private-real/petri-dish.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001",
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009",
+            "b010",
+            "b011",
+            "b012",
+            "b013",
+            "b014",
+            "b015"
+          ],
+          "title": "How the Petri dish supports scientific advances"
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020",
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b016",
+              "b017",
+              "b018",
+              "b019",
+              "b020",
+              "b021",
+              "b022",
+              "b023",
+              "b024",
+              "b025",
+              "b026"
+            ],
+            "interaction": {
+              "allowOptionReuse": true,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D",
+                "E",
+                "F"
+              ],
+              "type": "matching"
+            },
+            "kind": "matching_information",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b020",
+              "reason": "same-section-continuation",
+              "toBlockId": "b021"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            }
+          ],
+          "groupId": "group-1",
+          "heading": "Questions 14-19",
+          "instructionText": "Questions 14-19",
+          "kindHint": "matching_information",
+          "layoutHint": "list",
+          "questionRange": [
+            14,
+            19
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 14-19"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Reading Passage 2 has six sections, A–F."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Which section contains the following information?"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A–F, in boxes 14-19 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "NB You may use any letter more than once."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "14 a description of an experiment involving both human and non-human cells of a specific type"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "15 possibilities for improved research into various medical conditions"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "16 contrasting views of the importance of the Petri dish"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "17 a change remarked on by one scientist in the material used for the Petri dish"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "18 a claim that the Petri dish enables a scientist to monitor the progress of an experiment on a regular basis"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "19 a reference to the importance of a material for different types of laboratory equipment"
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b027",
+              "b028",
+              "b029",
+              "b030",
+              "b031",
+              "b032",
+              "b033",
+              "b034",
+              "b035",
+              "b036",
+              "b037",
+              "b038",
+              "b039"
+            ],
+            "interaction": {
+              "allowOptionReuse": true,
+              "options": [
+                "A",
+                "B",
+                "C",
+                "D"
+              ],
+              "type": "matching"
+            },
+            "kind": "matching",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 20-25",
+          "instructionText": "Questions 20-25",
+          "kindHint": "matching",
+          "layoutHint": "list",
+          "questionRange": [
+            20,
+            25
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 20-25"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Look at the following statements (Questions 20-25) and the list of people below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Match each statement with the correct person, A, B, C or D."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write the correct letter, A, B, C or D, in boxes 20-25 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "NB You may use any letter more than once."
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "20 To deal with the injury, cells must go through a series of activities in a particular order."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "21 One technological development formed the basis of all modern scientific research."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "22 A modification to the Petri dish allows experiments to provide more accurate information."
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "23 Petri dishes allow observation of medical conditions that are normally impossible to observe."
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "24 Visual evidence is a very important requirement for the provision of reliable information."
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "25 Petri dishes can be used to help produce a range of new cells of many different kinds."
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "List of People"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A Alan Macfarlane B Professor Ludovic Vallier C Dr Meritxell Huch D Dr Madeline Lancaster"
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045",
+            "b046",
+            "b047",
+            "b048",
+            "b049"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b040",
+              "b041",
+              "b042",
+              "b043",
+              "b044",
+              "b045",
+              "b046",
+              "b047",
+              "b048",
+              "b049"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "summary_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
+              "toBlockId": "b045"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b047",
+              "reason": "same-section-continuation",
+              "toBlockId": "b048"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b048",
+              "reason": "same-section-continuation",
+              "toBlockId": "b049"
+            }
+          ],
+          "groupId": "group-3",
+          "heading": "Questions 26-29",
+          "instructionText": "Questions 26-29",
+          "kindHint": "summary_completion",
+          "layoutHint": "inline_completion",
+          "questionRange": [
+            26,
+            29
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 26-29"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the summary below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 29-32 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Research in the MRC Lab of Molecular Biology"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b045",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "A team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "from 26 _______ to them. The aim is to allow the neurons to grow in three 27 _______. This"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "results in a 28 _______ that resembles a developing brain. The technology could help scientists"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b048",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "study how neuron production varies in different 29 _______, leading to possibilities for"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b049",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "increased medical knowledge."
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": [
+        {
+          "blockId": "b002",
+          "heading": "Questions 14-29",
+          "questionRange": [
+            14,
+            29
+          ],
+          "text": "You should spend about 20 minutes on Questions 14–29, which are based on Reading Passage 2 below."
+        }
+      ]
+    }
+  }
+}

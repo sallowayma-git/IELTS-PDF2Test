@@ -33,11 +33,31 @@
   },
   "fixtures": [
     {
+      "fixtureId": "chili-peppers",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/chili-peppers.pdf",
+      "originalName": "7. P1 - Chili peppers 辣椒的历史.pdf",
+      "sha256": "f4e70c39b51cff44115e93f0e4dcdaff6ab35b10478869720b7dc549d0b4f602",
+      "sizeBytes": 552135,
+      "metadataPath": "fixtures/golden/metadata/chili-peppers.json",
+      "baselinePath": "fixtures/golden/baseline/v1/chili-peppers.json"
+    },
+    {
+      "fixtureId": "conformity",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/conformity.pdf",
+      "originalName": "138. P3 - Conformity 从众心理.pdf",
+      "sha256": "60dbf15365da522b15ba35729af145bc5b99ea9c598e615691ee5fc405e3d3fd",
+      "sizeBytes": 670950,
+      "metadataPath": "fixtures/golden/metadata/conformity.json",
+      "baselinePath": "fixtures/golden/baseline/v1/conformity.json"
+    },
+    {
       "fixtureId": "docx-external-image",
       "status": "available",
       "sourcePath": "fixtures/golden/synthetic/docx/docx-external-image.docx",
-      "sha256": "c4df41c183508292ec6153181ecf3b9f4137cccdd6a8d18be5b2ec416057ddca",
-      "sizeBytes": 2293,
+      "sha256": "159086c86df69395b2920a809282a743717c8dbca7a18ac7816a6e2255343d93",
+      "sizeBytes": 2492,
       "metadataPath": "fixtures/golden/metadata/docx-external-image.json",
       "baselinePath": "fixtures/golden/baseline/v1/docx-external-image.json"
     },
@@ -45,8 +65,8 @@
       "fixtureId": "docx-floating-text-box",
       "status": "available",
       "sourcePath": "fixtures/golden/synthetic/docx/docx-floating-text-box.docx",
-      "sha256": "ae3251a6557b1aec86231af840de457041e1e32c0fb48eed58a60a20a74b2bd4",
-      "sizeBytes": 2202,
+      "sha256": "b994080e37d15cb253bdf9b81b29828c608748e18708a4f393fddef46dae8884",
+      "sizeBytes": 1894,
       "metadataPath": "fixtures/golden/metadata/docx-floating-text-box.json",
       "baselinePath": "fixtures/golden/baseline/v1/docx-floating-text-box.json"
     },
@@ -54,8 +74,8 @@
       "fixtureId": "docx-section-columns",
       "status": "available",
       "sourcePath": "fixtures/golden/synthetic/docx/docx-section-columns.docx",
-      "sha256": "32ec265d746f6d988c6060a3a261e1570f76dad322a2e7ed0b05a5a60ac152f5",
-      "sizeBytes": 2111,
+      "sha256": "8ea3a0c8c55da3dfb68726cc284cbe4a6e485fde8b14ad6ead99cff80ccfbaca",
+      "sizeBytes": 1842,
       "metadataPath": "fixtures/golden/metadata/docx-section-columns.json",
       "baselinePath": "fixtures/golden/baseline/v1/docx-section-columns.json"
     },
@@ -63,8 +83,8 @@
       "fixtureId": "docx-smartart",
       "status": "available",
       "sourcePath": "fixtures/golden/synthetic/docx/docx-smartart.docx",
-      "sha256": "2273d3551b17db9840f3df675f8aadc13d54bfb33d8ed54a32281b49c92af632",
-      "sizeBytes": 2677,
+      "sha256": "1567151651ae0e4e65aaa322ae2d967d6a704a708156cf81a4a715629dbb9fcd",
+      "sizeBytes": 2807,
       "metadataPath": "fixtures/golden/metadata/docx-smartart.json",
       "baselinePath": "fixtures/golden/baseline/v1/docx-smartart.json"
     },
@@ -72,10 +92,40 @@
       "fixtureId": "docx-table-merged-cells",
       "status": "available",
       "sourcePath": "fixtures/golden/synthetic/docx/docx-table-merged-cells.docx",
-      "sha256": "7c8c28e736464025ad036cc488d7155cedad9895dc5d22f7c5aab028928ab1aa",
-      "sizeBytes": 2147,
+      "sha256": "b16ac45a0d925fbbf01b24c386339346f70ada3adb100d722e5234b9df82f2f9",
+      "sizeBytes": 1977,
       "metadataPath": "fixtures/golden/metadata/docx-table-merged-cells.json",
       "baselinePath": "fixtures/golden/baseline/v1/docx-table-merged-cells.json"
+    },
+    {
+      "fixtureId": "fishbourne-roman-palace",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/fishbourne-roman-palace.pdf",
+      "originalName": "8. P1 - Fishbourne Roman Palace 罗马宫殿.pdf",
+      "sha256": "1c8897dd32e095c727d490d132a8d5a3024800f1ab480c71be88361a6b8eae02",
+      "sizeBytes": 309511,
+      "metadataPath": "fixtures/golden/metadata/fishbourne-roman-palace.json",
+      "baselinePath": "fixtures/golden/baseline/v1/fishbourne-roman-palace.json"
+    },
+    {
+      "fixtureId": "listening-to-the-ocean",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/listening-to-the-ocean.pdf",
+      "originalName": "9. P1 - Listening to the Ocean 海洋探测.pdf",
+      "sha256": "10078322c4da3a45edcfecbfe1b4096463d12c5e18affc6cf5dc5c57cc5f5fbd",
+      "sizeBytes": 481039,
+      "metadataPath": "fixtures/golden/metadata/listening-to-the-ocean.json",
+      "baselinePath": "fixtures/golden/baseline/v1/listening-to-the-ocean.json"
+    },
+    {
+      "fixtureId": "organisational-design",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/organisational-design.pdf",
+      "originalName": "106. P2 - Early Approaches to Organisational Design 组织设计.pdf",
+      "sha256": "62aa3d7720c3125130c09fc16e99c60d0a7533664ea499ae527c9910335be830",
+      "sizeBytes": 819356,
+      "metadataPath": "fixtures/golden/metadata/organisational-design.json",
+      "baselinePath": "fixtures/golden/baseline/v1/organisational-design.json"
     },
     {
       "fixtureId": "parser-complex-reading",
@@ -240,6 +290,16 @@
       "baselinePath": "fixtures/golden/baseline/v1/pdf-vector-diagram.json"
     },
     {
+      "fixtureId": "petri-dish",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/petri-dish.pdf",
+      "originalName": "105. P2 - How the Petri dish supports scientific advances 培养皿.pdf",
+      "sha256": "64a62faa5f462549a580bd02535021569d1c5fcabbdd59fb31fa2d4bdc70fa21",
+      "sizeBytes": 723984,
+      "metadataPath": "fixtures/golden/metadata/petri-dish.json",
+      "baselinePath": "fixtures/golden/baseline/v1/petri-dish.json"
+    },
+    {
       "fixtureId": "private-random-01",
       "status": "available",
       "sourcePath": "fixtures/golden/private-real/private-random-01.pdf",
@@ -334,72 +394,84 @@
       "sizeBytes": 373519,
       "metadataPath": "fixtures/golden/metadata/private-random-08.json",
       "baselinePath": "fixtures/golden/baseline/v1/private-random-08.json"
+    },
+    {
+      "fixtureId": "sleep-study",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/sleep-study.pdf",
+      "originalName": "139. P1 - Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions 部落睡眠研究.pdf",
+      "sha256": "1c7262c8726850398c20c84d63310143180877979cd8b3705e654c55a5e9b7b2",
+      "sizeBytes": 905744,
+      "metadataPath": "fixtures/golden/metadata/sleep-study.json",
+      "baselinePath": "fixtures/golden/baseline/v1/sleep-study.json"
+    },
+    {
+      "fixtureId": "western-celebrity",
+      "status": "available",
+      "sourcePath": "fixtures/golden/private-real/western-celebrity.pdf",
+      "originalName": "107. P2 - A study of western celebrity 西方名人.pdf",
+      "sha256": "07b0906358c30c05f6c5efff955a120f8d57e679a5529bbec5a9d25f12435f74",
+      "sizeBytes": 546921,
+      "metadataPath": "fixtures/golden/metadata/western-celebrity.json",
+      "baselinePath": "fixtures/golden/baseline/v1/western-celebrity.json"
     }
   ],
   "requiredPrivateCorpus": [
     {
-      "fixtureId": "private-random-01",
+      "fixtureId": "fishbourne-roman-palace",
       "status": "available",
-      "sourcePath": "fixtures/golden/private-real/private-random-01.pdf",
-      "originalName": "234. P2 - The Secret Language of Plants 植物交流.pdf",
-      "selectionSeed": 20260809,
-      "sampleRank": 1
+      "sourcePath": "fixtures/golden/private-real/fishbourne-roman-palace.pdf",
+      "originalName": "8. P1 - Fishbourne Roman Palace 罗马宫殿.pdf",
+      "reviewRequired": true
     },
     {
-      "fixtureId": "private-random-02",
+      "fixtureId": "listening-to-the-ocean",
       "status": "available",
-      "sourcePath": "fixtures/golden/private-real/private-random-02.pdf",
-      "originalName": "162. P3 - Sea Change for Salinity 土地盐碱化.pdf",
-      "selectionSeed": 20260809,
-      "sampleRank": 2
+      "sourcePath": "fixtures/golden/private-real/listening-to-the-ocean.pdf",
+      "originalName": "9. P1 - Listening to the Ocean 海洋探测.pdf",
+      "reviewRequired": true
     },
     {
-      "fixtureId": "private-random-03",
+      "fixtureId": "chili-peppers",
       "status": "available",
-      "sourcePath": "fixtures/golden/private-real/private-random-03.pdf",
-      "originalName": "74. P3 - Let’s teach them how to teach 教他们如何教学.pdf",
-      "selectionSeed": 20260809,
-      "sampleRank": 3
+      "sourcePath": "fixtures/golden/private-real/chili-peppers.pdf",
+      "originalName": "7. P1 - Chili peppers 辣椒的历史.pdf",
+      "reviewRequired": true
     },
     {
-      "fixtureId": "private-random-04",
+      "fixtureId": "petri-dish",
       "status": "available",
-      "sourcePath": "fixtures/golden/private-real/private-random-04.pdf",
-      "originalName": "65. P3 - Does class size matter 课堂规模.pdf",
-      "selectionSeed": 20260809,
-      "sampleRank": 4
+      "sourcePath": "fixtures/golden/private-real/petri-dish.pdf",
+      "originalName": "105. P2 - How the Petri dish supports scientific advances 培养皿.pdf",
+      "reviewRequired": true
     },
     {
-      "fixtureId": "private-random-05",
+      "fixtureId": "organisational-design",
       "status": "available",
-      "sourcePath": "fixtures/golden/private-real/private-random-05.pdf",
-      "originalName": "73. P3 - Language Strategy in Multinational Companies 跨国公司语言策略.pdf",
-      "selectionSeed": 20260809,
-      "sampleRank": 5
+      "sourcePath": "fixtures/golden/private-real/organisational-design.pdf",
+      "originalName": "106. P2 - Early Approaches to Organisational Design 组织设计.pdf",
+      "reviewRequired": true
     },
     {
-      "fixtureId": "private-random-06",
+      "fixtureId": "western-celebrity",
       "status": "available",
-      "sourcePath": "fixtures/golden/private-real/private-random-06.pdf",
-      "originalName": "81. P3 - Robert Louis Stevenson 苏格兰作家.pdf",
-      "selectionSeed": 20260809,
-      "sampleRank": 6
+      "sourcePath": "fixtures/golden/private-real/western-celebrity.pdf",
+      "originalName": "107. P2 - A study of western celebrity 西方名人.pdf",
+      "reviewRequired": true
     },
     {
-      "fixtureId": "private-random-07",
+      "fixtureId": "conformity",
       "status": "available",
-      "sourcePath": "fixtures/golden/private-real/private-random-07.pdf",
-      "originalName": "51. P2 - The dingo debate 澳洲野犬_澳洲野狗.pdf",
-      "selectionSeed": 20260809,
-      "sampleRank": 7
+      "sourcePath": "fixtures/golden/private-real/conformity.pdf",
+      "originalName": "138. P3 - Conformity 从众心理.pdf",
+      "reviewRequired": true
     },
     {
-      "fixtureId": "private-random-08",
+      "fixtureId": "sleep-study",
       "status": "available",
-      "sourcePath": "fixtures/golden/private-real/private-random-08.pdf",
-      "originalName": "2. P1 - Sunlight Soap 阳光牌肥皂.pdf",
-      "selectionSeed": 20260809,
-      "sampleRank": 8
+      "sourcePath": "fixtures/golden/private-real/sleep-study.pdf",
+      "originalName": "139. P1 - Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions 部落睡眠研究.pdf",
+      "reviewRequired": true
     }
   ],
   "plannedSyntheticFixtures": [],
@@ -429,5 +501,24 @@
       "51. P2 - The dingo debate 澳洲野犬_澳洲野狗.pdf",
       "2. P1 - Sunlight Soap 阳光牌肥皂.pdf"
     ]
+  },
+  "planCorpus": {
+    "sourcePlanSections": [
+      "2.1",
+      "16.1",
+      "23.2"
+    ],
+    "requiredFixtureIds": [
+      "fishbourne-roman-palace",
+      "listening-to-the-ocean",
+      "chili-peppers",
+      "petri-dish",
+      "organisational-design",
+      "western-celebrity",
+      "conformity",
+      "sleep-study"
+    ],
+    "registrationMethod": "exact-filename-authorized-local-source",
+    "registeredAt": "2026-08-10"
   }
 }

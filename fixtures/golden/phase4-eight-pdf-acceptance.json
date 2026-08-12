@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "Phase4EightPdfAcceptanceV1",
+  "fixtureIds": [
+    "chili-peppers",
+    "conformity",
+    "fishbourne-roman-palace",
+    "listening-to-the-ocean",
+    "organisational-design",
+    "petri-dish",
+    "sleep-study",
+    "western-celebrity"
+  ],
+  "requiredProofs": [
+    "manifest_metadata_pdf_identity",
+    "executable_v1_baseline_summary",
+    "real_pdf_physical_document_ir_v2",
+    "physical_to_authoring_v2_to_quality",
+    "metadata_task_group_slot_option_response_truth",
+    "organisational_shared_prompt_two_slots",
+    "petri_single_list_of_people_bank",
+    "western_questions_before_passage",
+    "ocean_q9_q13_inline_a_d",
+    "chili_passage_image",
+    "answer_raster_excluded_from_passage"
+  ],
+  "policy": {
+    "v1Authoritative": true,
+    "v2ShadowOnly": true,
+    "productionExposure": false,
+    "falseReadyForbidden": true
+  }
+}

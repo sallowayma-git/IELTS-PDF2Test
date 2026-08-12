@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "Phase1TrackedShadowPairRegistryV1",
+  "evidenceKind": "contract-slice",
+  "pairCount": 1,
+  "pairs": [
+    {
+      "pairId": "early-approaches-contract-slice",
+      "documentPath": "fixtures/golden/synthetic/ielts/phase1-document-ir-v2-contract.json",
+      "authoringPath": "fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json",
+      "documentId": "phase1-contract-document",
+      "authoringSourceDocumentId": "early-approaches-document",
+      "documentSourceFileIds": ["source-1"],
+      "authoringSourceFileIds": ["early-approaches-pdf"],
+      "sourceIdentity": {
+        "documentSourceHash": "1111111111111111111111111111111111111111111111111111111111111111",
+        "authoringSourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  ]
+}

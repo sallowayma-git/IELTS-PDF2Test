@@ -4,12 +4,15 @@
   "title": "QualityReportV2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "state", "documentScore", "sourceCoverage", "taskScores", "hardFailures", "issues", "metrics", "evaluatedAt", "evaluatorVersion"],
+  "required": ["schemaVersion", "state", "documentScore", "sourceCoverage", "coverageLedger", "coverageStatus", "compilerProbes", "taskScores", "hardFailures", "issues", "metrics", "evaluatedAt", "evaluatorVersion"],
   "properties": {
     "schemaVersion": { "const": "QualityReportV2" },
     "state": { "type": "string", "enum": ["ready", "review_required", "blocked"] },
     "documentScore": { "type": "number", "minimum": 0, "maximum": 1 },
     "sourceCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+    "coverageLedger": { "type": "array", "items": { "$ref": "#/$defs/coverageEntry" } },
+    "coverageStatus": { "$ref": "#/$defs/coverageStatus" },
+    "compilerProbes": { "$ref": "#/$defs/compilerProbes" },
     "taskScores": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 } },
     "hardFailures": { "type": "array", "items": { "type": "string", "minLength": 1 } },
     "issues": { "type": "array", "items": { "$ref": "#/$defs/reviewIssue" } },
@@ -18,6 +21,56 @@
     "evaluatorVersion": { "type": "string", "minLength": 1 }
   },
   "$defs": {
+    "coverageEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceNodeId", "significant", "disposition", "targetIds"],
+      "properties": {
+        "sourceNodeId": { "type": "string", "minLength": 1 },
+        "significant": { "const": true },
+        "disposition": { "type": "string", "enum": ["assigned", "ignored_with_reason", "unassigned"] },
+        "targetIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "disposition": { "const": "ignored_with_reason" } }, "required": ["disposition"] },
+          "then": { "required": ["reason"] }
+        }
+      ]
+    },
+    "coverageStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["physicalShadow", "complete", "significantSourceNodeCount", "explainedSourceNodeCount", "unassignedSourceNodeIds"],
+      "properties": {
+        "physicalShadow": { "type": "string", "enum": ["available", "missing"] },
+        "complete": { "type": "boolean" },
+        "significantSourceNodeCount": { "type": "integer", "minimum": 0 },
+        "explainedSourceNodeCount": { "type": "integer", "minimum": 0 },
+        "unassignedSourceNodeIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+      }
+    },
+    "compilerProbe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "schemaVersion", "issueCodes", "details"],
+      "properties": {
+        "status": { "type": "string", "enum": ["passed", "failed"] },
+        "schemaVersion": { "type": "string", "minLength": 1 },
+        "issueCodes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "details": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "compilerProbes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v2Runtime", "v1Compatibility"],
+      "properties": {
+        "v2Runtime": { "$ref": "#/$defs/compilerProbe" },
+        "v1Compatibility": { "$ref": "#/$defs/compilerProbe" }
+      }
+    },
     "reviewIssue": {
       "type": "object",
       "additionalProperties": false,

@@ -2,6 +2,7 @@ use crate::schema::common::canonical_json_bytes;
 use crate::util::{safe_job_dir, validate_path_segment};
 use crate::{hash_bytes, CommandResult};
 use chrono::Utc;
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -211,18 +212,22 @@ pub(crate) fn recover_current_revision(
     job_id: &str,
 ) -> CommandResult<CurrentRevisionV2> {
     let current = read_current_revision(root, job_id)?;
-    if current.revision > 0 {
+    let records = list_revision_records(root, job_id)?;
+    let latest_revision = records.last().map(|record| record.revision).unwrap_or(0);
+    if current.revision == latest_revision {
         return Ok(current);
     }
-    let records = list_revision_records(root, job_id)?;
-    let Some(record) = records.last() else {
-        return Ok(current);
-    };
+    if current.revision > latest_revision {
+        return Err(format!(
+            "current_revision_missing_record:current={}:latest={}",
+            current.revision, latest_revision
+        ));
+    }
     let recovered = CurrentRevisionV2 {
         schema_version: CURRENT_REVISION_SCHEMA_VERSION.to_string(),
         layout_version: JOB_ARTIFACT_LAYOUT_VERSION.to_string(),
         job_id: job_id.to_string(),
-        revision: record.revision,
+        revision: latest_revision,
         updated_at: Utc::now().to_rfc3339(),
     };
     write_canonical_json_atomic(
@@ -241,7 +246,18 @@ pub(crate) fn append_revision(
     patches: &[Value],
 ) -> CommandResult<RevisionWriteResultV2> {
     let paths = ensure_job_artifact_layout(root, job_id)?;
-    let current = read_current_revision(root, job_id)?;
+    let lock_path = paths.authoring_dir.join("revision.lock");
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| format!("open_revision_lock:{}:{}", lock_path.display(), error))?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|error| format!("lock_revision_store:{}:{}", lock_path.display(), error))?;
+
+    let current = recover_current_revision(root, job_id)?;
     if current.revision != base_revision {
         return Err(format!(
             "revision_conflict:current={}:base={}",
@@ -249,8 +265,11 @@ pub(crate) fn append_revision(
         ));
     }
 
-    let revision = current.revision.saturating_add(1);
-    let artifact_receipt = write_canonical_json_atomic(&paths.revision_path(revision), artifact)?;
+    let revision = max_revision_number(&paths.revisions_dir)?
+        .max(current.revision)
+        .saturating_add(1);
+    let artifact_receipt =
+        write_canonical_json_create_new(&paths.revision_path(revision), artifact)?;
     let patch_receipt = if patches.is_empty() {
         None
     } else {
@@ -259,7 +278,7 @@ pub(crate) fn append_revision(
             bytes.extend(canonical_json_bytes(patch).map_err(|error| error.to_string())?);
             bytes.push(b'\n');
         }
-        Some(write_bytes_atomic(
+        Some(write_bytes_create_new(
             &paths.patch_path(revision),
             &bytes,
             true,
@@ -284,7 +303,7 @@ pub(crate) fn append_revision(
         patch_path: patch_path.clone(),
         patch_sha256: patch_receipt.as_ref().map(|receipt| receipt.sha256.clone()),
     };
-    write_canonical_json_atomic(
+    write_canonical_json_create_new(
         &paths.revision_meta_path(revision),
         &serde_json::to_value(&record).map_err(|error| error.to_string())?,
     )?;
@@ -522,6 +541,60 @@ fn write_bytes_atomic(
     })
 }
 
+fn write_canonical_json_create_new(path: &Path, value: &Value) -> CommandResult<ArtifactReceiptV2> {
+    let bytes = canonical_json_bytes(value).map_err(|error| error.to_string())?;
+    write_bytes_create_new(path, &bytes, true)
+}
+
+fn write_bytes_create_new(
+    path: &Path,
+    bytes: &[u8],
+    canonical_json: bool,
+) -> CommandResult<ArtifactReceiptV2> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("artifact_parent_missing:{}", path.display()))?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("create_immutable_artifact:{}:{}", path.display(), error))?;
+    file.write_all(bytes)
+        .map_err(|error| format!("write_immutable_artifact:{}:{}", path.display(), error))?;
+    file.flush()
+        .map_err(|error| format!("flush_immutable_artifact:{}:{}", path.display(), error))?;
+    file.sync_all()
+        .map_err(|error| format!("sync_immutable_artifact:{}:{}", path.display(), error))?;
+    Ok(ArtifactReceiptV2 {
+        relative_path: path.to_string_lossy().replace('\\', "/"),
+        byte_length: bytes.len() as u64,
+        sha256: hash_bytes(bytes),
+        canonical_json,
+    })
+}
+
+fn max_revision_number(revisions_dir: &Path) -> CommandResult<u64> {
+    if !revisions_dir.exists() {
+        return Ok(0);
+    }
+    let mut maximum = 0;
+    for entry in fs::read_dir(revisions_dir).map_err(|error| error.to_string())? {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        let file_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let revision_text = file_name
+            .strip_suffix(".meta.json")
+            .or_else(|| file_name.strip_suffix(".json"));
+        if let Some(revision) = revision_text.and_then(|value| value.parse::<u64>().ok()) {
+            maximum = maximum.max(revision);
+        }
+    }
+    Ok(maximum)
+}
+
 fn replace_file(temporary: &Path, target: &Path) -> CommandResult<()> {
     if !target.exists() {
         return fs::rename(temporary, target).map_err(|error| {
@@ -571,7 +644,11 @@ fn replace_file(temporary: &Path, target: &Path) -> CommandResult<()> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::{env, fs};
+    use std::{
+        env, fs,
+        sync::{Arc, Barrier},
+        thread,
+    };
 
     fn temp_root() -> PathBuf {
         env::temp_dir().join(format!("phase1-artifact-{}", Uuid::new_v4().simple()))
@@ -672,6 +749,111 @@ mod tests {
                 .unwrap()
                 .revision,
             2
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn append_with_missing_pointer_never_overwrites_revision_one() {
+        let root = temp_root();
+        append_revision(
+            &root,
+            "job-missing-pointer",
+            0,
+            RevisionSourceV2::AutoExtract,
+            &json!({"value":"original"}),
+            &[],
+        )
+        .unwrap();
+        let paths = JobArtifactPaths::for_job(&root, "job-missing-pointer").unwrap();
+        fs::remove_file(paths.current_revision_path()).unwrap();
+
+        let error = append_revision(
+            &root,
+            "job-missing-pointer",
+            0,
+            RevisionSourceV2::User,
+            &json!({"value":"replacement"}),
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(error, "revision_conflict:current=1:base=0");
+        assert_eq!(
+            read_revision(&root, "job-missing-pointer", 1).unwrap()["value"],
+            "original"
+        );
+        assert_eq!(
+            read_current_revision(&root, "job-missing-pointer")
+                .unwrap()
+                .revision,
+            1
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn concurrent_base_zero_writers_cannot_replace_each_other() {
+        let root = Arc::new(temp_root());
+        let barrier = Arc::new(Barrier::new(2));
+        let handles = ["first", "second"].map(|value| {
+            let root = Arc::clone(&root);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                append_revision(
+                    root.as_ref(),
+                    "job-concurrent",
+                    0,
+                    RevisionSourceV2::User,
+                    &json!({"value":value}),
+                    &[],
+                )
+            })
+        });
+        let results = handles.map(|handle| handle.join().unwrap());
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
+        assert_eq!(
+            list_revision_records(root.as_ref(), "job-concurrent")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(matches!(
+            read_revision(root.as_ref(), "job-concurrent", 1).unwrap()["value"].as_str(),
+            Some("first" | "second")
+        ));
+        let _ = fs::remove_dir_all(root.as_ref());
+    }
+
+    #[test]
+    fn incomplete_revision_number_is_quarantined_by_monotonic_allocation() {
+        let root = temp_root();
+        let paths = ensure_job_artifact_layout(&root, "job-half-write").unwrap();
+        fs::write(paths.revision_path(1), br#"{"value":"partial"}"#).unwrap();
+        let result = append_revision(
+            &root,
+            "job-half-write",
+            0,
+            RevisionSourceV2::AutoExtract,
+            &json!({"value":"complete"}),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(result.current.revision, 2);
+        assert_eq!(
+            read_revision(&root, "job-half-write", 1).unwrap()["value"],
+            "partial"
+        );
+        assert_eq!(
+            read_revision(&root, "job-half-write", 2).unwrap()["value"],
+            "complete"
+        );
+        assert_eq!(
+            list_revision_records(&root, "job-half-write")
+                .unwrap()
+                .len(),
+            1
         );
         let _ = fs::remove_dir_all(root);
     }

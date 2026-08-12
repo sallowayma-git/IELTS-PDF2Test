@@ -7,11 +7,20 @@ use crate::{
         parse_answer_source_candidates, select_llm_profile, vision_transcription_for_job,
     },
     cleanup::minimize_process_artifacts_after_authoring,
-    environment::document_ir_v2_shadow_enabled,
+    docx_facts_shadow::write_docx_facts_shadow_with_v1,
+    environment::{authoring_v2_shadow_enabled, document_ir_v2_shadow_enabled},
+    ielts_grammar::{
+        write_authoring_v2_shadow, SHADOW_ARTIFACT_FILE as AUTHORING_V2_SHADOW_ARTIFACT_FILE,
+        SHADOW_COMPARE_FILE as AUTHORING_V2_SHADOW_COMPARE_FILE,
+        SHADOW_ERROR_FILE as AUTHORING_V2_SHADOW_ERROR_FILE,
+    },
     job_store::{load_job, update_job},
     main_source_file,
     parser::{manual_transcription_document_ir, missing_source_document_ir, parse_source_document},
-    pdf_facts_shadow::{write_pdf_facts_shadow, SHADOW_ARTIFACT_FILE, SHADOW_ERROR_FILE},
+    pdf_facts_shadow::{
+        write_pdf_facts_shadow_with_v1, SHADOW_ARTIFACT_FILE, SHADOW_COMPARE_FILE,
+        SHADOW_ERROR_FILE,
+    },
     reading_source::{
         answer_key_from_authoring, display_map_from_authoring, question_order_from_authoring,
         render_group_body_html,
@@ -27,6 +36,75 @@ use crate::{
 use chrono::Utc;
 use serde_json::{json, Value};
 use std::{fs, path::Path};
+
+fn remove_generated_file(path: &Path) -> CommandResult<()> {
+    if path.exists() {
+        fs::remove_file(path)
+            .map_err(|error| format!("remove_generated_file:{}:{error}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn remove_generated_dir(path: &Path) -> CommandResult<()> {
+    if path.exists() {
+        fs::remove_dir_all(path)
+            .map_err(|error| format!("remove_generated_dir:{}:{error}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn combine_cleanup_results(
+    context: &str,
+    results: impl IntoIterator<Item = CommandResult<()>>,
+) -> CommandResult<()> {
+    let errors = results
+        .into_iter()
+        .filter_map(Result::err)
+        .collect::<Vec<_>>();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{context}:{}", errors.join("|")))
+    }
+}
+
+fn clear_document_shadow_success(dir: &Path, clear_docx_assets: bool) -> CommandResult<()> {
+    let asset_result = if clear_docx_assets {
+        remove_generated_dir(&dir.join("assets").join("shadow").join("docx"))
+    } else {
+        Ok(())
+    };
+    combine_cleanup_results(
+        "clear_document_shadow_success",
+        [
+            remove_generated_file(&dir.join(SHADOW_ARTIFACT_FILE)),
+            remove_generated_file(&dir.join(SHADOW_COMPARE_FILE)),
+            asset_result,
+        ],
+    )
+}
+
+fn clear_authoring_shadow_success(dir: &Path) -> CommandResult<()> {
+    combine_cleanup_results(
+        "clear_authoring_shadow_success",
+        [
+            remove_generated_file(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE)),
+            remove_generated_file(&dir.join(AUTHORING_V2_SHADOW_COMPARE_FILE)),
+        ],
+    )
+}
+
+fn physical_shadow_matches_source(shadow: &Value, file_id: &str, sha256: &str) -> bool {
+    shadow
+        .get("sourceFiles")
+        .and_then(Value::as_array)
+        .is_some_and(|sources| {
+            sources.iter().any(|source| {
+                source.get("sourceFileId").and_then(Value::as_str) == Some(file_id)
+                    && source.get("sha256").and_then(Value::as_str) == Some(sha256)
+            })
+        })
+}
 
 fn archive_current_draft_for_source_replacement(dir: &Path, reason: &str) -> CommandResult<()> {
     if !dir.join("authoring-ir.json").exists() && !dir.join("split-candidates.json").exists() {
@@ -106,12 +184,31 @@ pub(crate) fn parse_document_core(
         missing_source_document_ir(&job, mode, "no MainQuestion source file")
     };
     if document_ir_v2_shadow_enabled() {
-        if let Some(source) = main_source_file(&job).filter(|source| source.file_type == "pdf") {
+        if let Some(source) = main_source_file(&job)
+            .filter(|source| matches!(source.file_type.as_str(), "pdf" | "docx"))
+        {
             let upload_path = dir.join("uploads").join(&source.stored_name);
             if upload_path.exists() {
                 let shadow_path = dir.join(SHADOW_ARTIFACT_FILE);
                 let error_path = dir.join(SHADOW_ERROR_FILE);
-                match write_pdf_facts_shadow(&job, source, &upload_path, &shadow_path) {
+                let shadow_result = if source.file_type == "pdf" {
+                    write_pdf_facts_shadow_with_v1(
+                        &job,
+                        source,
+                        &upload_path,
+                        &shadow_path,
+                        Some(&ir),
+                    )
+                } else {
+                    write_docx_facts_shadow_with_v1(
+                        &job,
+                        source,
+                        &upload_path,
+                        &shadow_path,
+                        Some(&ir),
+                    )
+                };
+                match shadow_result {
                     Ok(_) => {
                         let _ = fs::remove_file(error_path);
                     }
@@ -318,6 +415,46 @@ pub(crate) fn build_authoring_ir_core(
     let source_review = source_review_status(root, job_id, doc.as_ref())?;
     let source_review_issue_count = source_review_issues(&source_review).len() as u32;
     write_json(&job_dir(root, job_id).join("authoring-ir.json"), &ir)?;
+    if authoring_v2_shadow_enabled() {
+        let shadow_path = dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE);
+        let error_path = dir.join(AUTHORING_V2_SHADOW_ERROR_FILE);
+        let document = read_json_opt(&dir.join("document-ir.json"))?;
+        let physical_shadow = if dir.join(SHADOW_ERROR_FILE).exists() {
+            None
+        } else {
+            read_json_opt(&dir.join(SHADOW_ARTIFACT_FILE))?.filter(|shadow| {
+                main_source_file(&job).is_some_and(|source| {
+                    physical_shadow_matches_source(shadow, &source.file_id, &source.sha256)
+                })
+            })
+        };
+        match write_authoring_v2_shadow(
+            &dir,
+            &job,
+            &ir,
+            &split,
+            document.as_ref(),
+            physical_shadow.as_ref(),
+            &shadow_path,
+        ) {
+            Ok(_) => {
+                let _ = fs::remove_file(error_path);
+            }
+            Err(error) => {
+                let cleanup_error = clear_authoring_shadow_success(&dir).err();
+                let _ = write_json(
+                    &error_path,
+                    &json!({
+                        "schemaVersion": "IeltsAuthoringIRV2ShadowErrorV1",
+                        "jobId": job.job_id,
+                        "error": error,
+                        "cleanupError": cleanup_error,
+                        "recordedAt": Utc::now().to_rfc3339()
+                    }),
+                );
+            }
+        }
+    }
     let _ = minimize_process_artifacts_after_authoring(root, job_id, "build_authoring_ir")?;
     update_job(root, job_id, |job| {
         job.status = if needs_review > 0 || source_review_issue_count > 0 {
@@ -393,4 +530,100 @@ pub(crate) fn render_group_html_core(
         })
         .ok_or_else(|| "group_not_found".to_string())?;
     Ok(json!({"groupId": group_id, "bodyHtml": render_group_body_html(group)}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        clear_authoring_shadow_success, clear_document_shadow_success,
+        physical_shadow_matches_source, AUTHORING_V2_SHADOW_ARTIFACT_FILE,
+        AUTHORING_V2_SHADOW_COMPARE_FILE, SHADOW_ARTIFACT_FILE, SHADOW_COMPARE_FILE,
+    };
+    use serde_json::json;
+    use std::{fs, path::PathBuf};
+    use uuid::Uuid;
+
+    #[test]
+    fn physical_shadow_must_match_the_current_source_id_and_hash() {
+        let shadow = json!({
+            "sourceFiles": [{
+                "sourceFileId": "source-current",
+                "sha256": "sha-current"
+            }]
+        });
+        assert!(physical_shadow_matches_source(
+            &shadow,
+            "source-current",
+            "sha-current"
+        ));
+        assert!(!physical_shadow_matches_source(
+            &shadow,
+            "source-current",
+            "sha-stale"
+        ));
+        assert!(!physical_shadow_matches_source(
+            &shadow,
+            "source-stale",
+            "sha-current"
+        ));
+        assert!(!physical_shadow_matches_source(
+            &json!({"sourceFiles": []}),
+            "source-current",
+            "sha-current"
+        ));
+    }
+
+    #[test]
+    fn failed_shadow_cleanup_removes_all_prior_success_artifacts() {
+        let dir = make_temp_dir();
+        let docx_assets = dir.join("assets").join("shadow").join("docx");
+        fs::create_dir_all(&docx_assets).unwrap();
+        for path in [
+            dir.join(SHADOW_ARTIFACT_FILE),
+            dir.join(SHADOW_COMPARE_FILE),
+            dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE),
+            dir.join(AUTHORING_V2_SHADOW_COMPARE_FILE),
+            docx_assets.join("old-asset.png"),
+        ] {
+            fs::write(path, b"stale").unwrap();
+        }
+
+        clear_document_shadow_success(&dir, true).unwrap();
+        clear_authoring_shadow_success(&dir).unwrap();
+
+        assert!(!dir.join(SHADOW_ARTIFACT_FILE).exists());
+        assert!(!dir.join(SHADOW_COMPARE_FILE).exists());
+        assert!(!docx_assets.exists());
+        assert!(!dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE).exists());
+        assert!(!dir.join(AUTHORING_V2_SHADOW_COMPARE_FILE).exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn shadow_cleanup_continues_after_an_individual_delete_error() {
+        let dir = make_temp_dir();
+        let invalid_file = dir.join(SHADOW_ARTIFACT_FILE);
+        let compare = dir.join(SHADOW_COMPARE_FILE);
+        let docx_assets = dir.join("assets").join("shadow").join("docx");
+        fs::create_dir_all(&invalid_file).unwrap();
+        fs::create_dir_all(&docx_assets).unwrap();
+        fs::write(&compare, b"stale").unwrap();
+        fs::write(docx_assets.join("old-asset.png"), b"stale").unwrap();
+
+        let error = clear_document_shadow_success(&dir, true).unwrap_err();
+        assert!(error.contains("clear_document_shadow_success"));
+        assert!(invalid_file.is_dir());
+        assert!(!compare.exists());
+        assert!(!docx_assets.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn make_temp_dir() -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "phase3-shadow-cleanup-test-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
 }

@@ -21,6 +21,7 @@ serde_json = "1"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+fs2 = "0.4"
 thiserror = "2"
 pdf-extract = "0.10"
 quick-xml = "0.39"

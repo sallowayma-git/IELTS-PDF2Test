@@ -82,10 +82,7 @@ mod tests {
 
     #[test]
     fn legacy_job_load_does_not_require_phase1_directories() {
-        let root = env::temp_dir().join(format!(
-            "phase1-job-store-{}",
-            Uuid::new_v4().simple()
-        ));
+        let root = env::temp_dir().join(format!("phase1-job-store-{}", Uuid::new_v4().simple()));
         let job = make_job(CreateJobInput {
             title: Some("Legacy job".to_string()),
             ..Default::default()

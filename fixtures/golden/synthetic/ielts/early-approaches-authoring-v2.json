@@ -1,0 +1,277 @@
+{
+  "schemaVersion": "IeltsAuthoringIRV2",
+  "jobId": "early-approaches-architecture-proof",
+  "exam": {
+    "examId": "early-approaches",
+    "title": "Early Approaches to Organisational Design",
+    "category": "P3",
+    "frequency": "medium",
+    "language": "en",
+    "tags": ["phase4", "shared-slots", "architecture-proof"],
+    "sourceFiles": [
+      { "sourceFileId": "early-approaches-pdf", "role": "question_paper" }
+    ]
+  },
+  "modality": "reading",
+  "passage": {
+    "title": "Early Approaches to Organisational Design",
+    "content": [
+      {
+        "type": "paragraph",
+        "id": "passage-p1",
+        "sourceAnchors": [
+          {
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 0,
+            "nodeIds": ["line-p1"],
+            "extractionMode": "pdf_native",
+            "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "provenanceStatus": "source",
+        "children": [
+          {
+            "type": "text",
+            "id": "passage-p1-text",
+            "sourceAnchors": [
+              {
+                "sourceFileId": "early-approaches-pdf",
+                "pageIndex": 0,
+                "nodeIds": ["line-p1"],
+                "extractionMode": "pdf_native",
+                "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            ],
+            "provenanceStatus": "source",
+            "text": "Several factors shaped early organisational design."
+          }
+        ]
+      }
+    ],
+    "paragraphMap": { "A": "passage-p1" },
+    "sourceAnchors": [
+      {
+        "sourceFileId": "early-approaches-pdf",
+        "pageIndex": 0,
+        "nodeIds": ["line-p1"],
+        "extractionMode": "pdf_native",
+        "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "taskGroups": [
+    {
+      "taskId": "early-approaches-q14-15",
+      "displayRange": { "kind": "set", "values": [14, 15] },
+      "taskType": "multiple_choice",
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "early-approaches-instructions",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "early-approaches-pdf",
+              "pageIndex": 1,
+              "nodeIds": ["line-instruction"],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "early-approaches-instructions-text",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "early-approaches-pdf",
+                  "pageIndex": 1,
+                  "nodeIds": ["line-instruction"],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Choose TWO letters, A-E."
+            }
+          ]
+        }
+      ],
+      "instructionSignature": {
+        "normalizedText": "Choose TWO letters, A-E.",
+        "taskType": "multiple_choice",
+        "expectedQuestionNumbers": [14, 15],
+        "expectedSlotCount": 2,
+        "optionAlphabet": "A-E",
+        "selectionCardinality": { "min": 2, "max": 2, "exact": 2 },
+        "answerAssignment": "unordered_set",
+        "allowOptionReuse": false,
+        "evidenceAnchors": [
+          {
+            "sourceFileId": "early-approaches-pdf",
+            "pageIndex": 1,
+            "nodeIds": ["line-instruction"],
+            "extractionMode": "pdf_native",
+            "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "confidence": 1.0
+      },
+      "optionBank": {
+        "optionBankId": "early-approaches-options",
+        "scope": "task_group",
+        "options": [
+          {
+            "optionId": "option-a",
+            "label": "A",
+            "content": [{ "type": "text", "id": "option-a-text", "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-a"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }], "provenanceStatus": "source", "text": "factor A" }],
+            "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-a"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+          },
+          {
+            "optionId": "option-b",
+            "label": "B",
+            "content": [{ "type": "text", "id": "option-b-text", "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-b"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }], "provenanceStatus": "source", "text": "factor B" }],
+            "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-b"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+          },
+          {
+            "optionId": "option-c",
+            "label": "C",
+            "content": [{ "type": "text", "id": "option-c-text", "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-c"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }], "provenanceStatus": "source", "text": "factor C" }],
+            "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-c"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+          },
+          {
+            "optionId": "option-d",
+            "label": "D",
+            "content": [{ "type": "text", "id": "option-d-text", "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-d"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }], "provenanceStatus": "source", "text": "factor D" }],
+            "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-d"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+          },
+          {
+            "optionId": "option-e",
+            "label": "E",
+            "content": [{ "type": "text", "id": "option-e-text", "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-e"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }], "provenanceStatus": "source", "text": "factor E" }],
+            "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-e"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+          }
+        ],
+        "allowReuse": false,
+        "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-option-a", "line-option-b", "line-option-c", "line-option-d", "line-option-e"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+      },
+      "responseGroups": [
+        {
+          "responseGroupId": "early-approaches-shared-response",
+          "kind": "choice",
+          "prompt": [
+            {
+              "type": "paragraph",
+              "id": "early-approaches-shared-prompt",
+              "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-shared-prompt"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+              "provenanceStatus": "source",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "early-approaches-shared-prompt-text",
+                  "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-shared-prompt"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+                  "provenanceStatus": "source",
+                  "text": "Which TWO factors influenced early organisational design?"
+                }
+              ]
+            }
+          ],
+          "slotIds": ["q14", "q15"],
+          "optionBankRef": "early-approaches-options",
+          "cardinality": { "min": 2, "max": 2, "exact": 2 },
+          "assignment": "unordered_set",
+          "scoringPolicy": "per_slot_ielts_normalized",
+          "duplicatePolicy": "reject_submission",
+          "allowOptionReuse": false,
+          "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-shared-prompt", "slot-q14", "slot-q15"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+        }
+      ],
+      "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["line-instruction", "line-shared-prompt", "line-option-a", "line-option-b", "line-option-c", "line-option-d", "line-option-e", "slot-q14", "slot-q15"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+      "quality": { "score": 1.0, "sourceCoverage": 1.0, "hardFailures": [] },
+      "reviewState": "confirmed"
+    }
+  ],
+  "answerSlots": {
+    "q14": {
+      "slotId": "q14",
+      "questionNumber": 14,
+      "displayLabel": "14",
+      "hostNodeId": "early-approaches-shared-prompt",
+      "hostType": "prompt",
+      "interaction": "checkbox",
+      "participation": "scoring",
+      "constraints": { "acceptedOptionLabels": ["A", "B", "C", "D", "E"] },
+      "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["slot-q14", "line-shared-prompt"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+      "confidence": 1.0
+    },
+    "q15": {
+      "slotId": "q15",
+      "questionNumber": 15,
+      "displayLabel": "15",
+      "hostNodeId": "early-approaches-shared-prompt",
+      "hostType": "prompt",
+      "interaction": "checkbox",
+      "participation": "scoring",
+      "constraints": { "acceptedOptionLabels": ["A", "B", "C", "D", "E"] },
+      "sourceAnchors": [{ "sourceFileId": "early-approaches-pdf", "pageIndex": 1, "nodeIds": ["slot-q15", "line-shared-prompt"], "extractionMode": "pdf_native", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+      "confidence": 1.0
+    }
+  },
+  "answerKey": {
+    "q14": { "kind": "option", "labels": ["B"], "assignment": "unordered_set" },
+    "q15": { "kind": "option", "labels": ["D"], "assignment": "unordered_set" }
+  },
+  "assets": [],
+  "sourceDocumentId": "early-approaches-document",
+  "quality": {
+    "schemaVersion": "QualityReportV2",
+    "state": "review_required",
+    "documentScore": 1.0,
+    "sourceCoverage": 0.0,
+    "coverageLedger": [],
+    "coverageStatus": {
+      "physicalShadow": "missing",
+      "complete": false,
+      "significantSourceNodeCount": 0,
+      "explainedSourceNodeCount": 0,
+      "unassignedSourceNodeIds": []
+    },
+    "compilerProbes": {
+      "v2Runtime": {
+        "status": "passed",
+        "schemaVersion": "ReadingExamSourceV2",
+        "issueCodes": [],
+        "details": ["PR-06 fixture compiled by the Rust V2 runtime probe"]
+      },
+      "v1Compatibility": {
+        "status": "passed",
+        "schemaVersion": "ReadingExamSourceV1",
+        "issueCodes": [],
+        "details": ["PR-06 fixture retains an explicit V1 compatibility probe result"]
+      }
+    },
+    "taskScores": { "early-approaches-q14-15": 1.0 },
+    "hardFailures": [],
+    "issues": [{
+      "issueId": "phase4-PHYSICAL_SHADOW_MISSING-document",
+      "code": "PHYSICAL_SHADOW_MISSING",
+      "severity": "warning",
+      "message": "The standalone PR-06 fixture has no paired DocumentIRV2 artifact; Ready must be recomputed by the PR-07 test with a fresh physical shadow.",
+      "targetType": "document",
+      "targetId": "document",
+      "sourceAnchors": [],
+      "suggestedActions": ["assign_role"]
+    }],
+    "metrics": { "taskCount": 1.0, "slotCount": 2.0 },
+    "evaluatedAt": "2026-08-10T00:00:00Z",
+    "evaluatorVersion": "phase4-pr06-fixture"
+  },
+  "audit": {
+    "revision": 1,
+    "source": "auto_extract",
+    "humanVerified": true,
+    "llmUsed": false,
+    "updatedAt": "2026-08-10T00:00:00Z",
+    "notes": ["PR-06 Early Approaches shared-slot architecture proof"]
+  }
+}

@@ -1,0 +1,3237 @@
+{
+  "schemaVersion": "V1BaselineSnapshotV1",
+  "fixtureId": "sleep-study",
+  "source": {
+    "path": "fixtures/golden/private-real/sleep-study.pdf",
+    "sha256": "1c7262c8726850398c20c84d63310143180877979cd8b3705e654c55a5e9b7b2",
+    "sizeBytes": 905744
+  },
+  "capturedAt": "2026-08-09",
+  "observed": {
+    "pageCount": 6,
+    "blockCount": 44,
+    "groupCount": 2,
+    "slotCount": 13,
+    "assetCount": 0,
+    "answerCount": 13,
+    "warningCount": 1,
+    "groupKinds": [
+      "true_false_not_given",
+      "sentence_completion"
+    ],
+    "questionIds": [
+      "q1",
+      "q2",
+      "q3",
+      "q4",
+      "q5",
+      "q6",
+      "q7",
+      "q8",
+      "q9",
+      "q10",
+      "q11",
+      "q12",
+      "q13"
+    ],
+    "roles": [
+      "answer",
+      "passage",
+      "question"
+    ]
+  },
+  "payload": {
+    "authoringIr": {
+      "answerKey": {
+        "q1": "",
+        "q10": "",
+        "q11": "",
+        "q12": "",
+        "q13": "",
+        "q2": "",
+        "q3": "",
+        "q4": "",
+        "q5": "",
+        "q6": "",
+        "q7": "",
+        "q8": "",
+        "q9": ""
+      },
+      "audit": {
+        "humanVerified": false,
+        "issues": [
+          "No answer key detected; answers must be entered manually."
+        ],
+        "llmUsed": false,
+        "revision": 1
+      },
+      "exam": {
+        "category": "P1",
+        "frequency": "medium",
+        "sourceFiles": [
+          {
+            "fileId": "file-cli-main",
+            "fileType": "pdf",
+            "originalName": "sleep-study.pdf",
+            "role": "MainQuestion",
+            "sha256": "1c7262c8726850398c20c84d63310143180877979cd8b3705e654c55a5e9b7b2",
+            "sizeBytes": 905744,
+            "storedName": "sleep-study.pdf"
+          }
+        ],
+        "tags": [
+          "regression-cli"
+        ],
+        "title": "sleep study"
+      },
+      "groups": [
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            }
+          ],
+          "groupId": "group-1",
+          "instruction": [
+            "Questions 1-4"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "true_false_not_given",
+          "layout": {
+            "layoutHint": "list",
+            "template": "tfng_list"
+          },
+          "questionRange": [
+            1,
+            4
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "1",
+              "id": "q1",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Scientists studied hunter-gatherer societies because their sleep patterns are assumed to be similar to those of humans more than 10,000 years ago.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "2",
+              "id": "q2",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "The medical devices used in the research were specially designed for humid conditions.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "3",
+              "id": "q3",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Researchers found that tribespeople stayed longer in bed than inhabitants of industrialised regions.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "4",
+              "id": "q4",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [
+                  "TRUE",
+                  "FALSE",
+                  "NOT GIVEN"
+                ],
+                "type": "radio"
+              },
+              "prompt": "Jerome Siegel believes that environment and culture have little effect on sleep patterns.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b013",
+                "b014",
+                "b015",
+                "b016",
+                "b017",
+                "b018",
+                "b019",
+                "b020"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 1–4"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In boxes 1–4 on your answer sheet, write"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "1 Scientists studied hunter-gatherer societies because their sleep patterns are assumed to be similar to those of humans"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "2 The medical devices used in the research were specially designed for humid conditions."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "3 Researchers found that tribespeople stayed longer in bed than inhabitants of industrialised regions."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "4 Jerome Siegel believes that environment and culture have little effect on sleep patterns."
+            }
+          ],
+          "sourceBlockIds": [
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020"
+          ],
+          "verified": false
+        },
+        {
+          "allowOptionReuse": false,
+          "classificationEvidence": [
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042"
+          ],
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            }
+          ],
+          "groupId": "group-2",
+          "instruction": [
+            "Questions 5-13"
+          ],
+          "isUmbrellaRange": false,
+          "kind": "sentence_completion",
+          "layout": {
+            "layoutHint": "inline_completion",
+            "notes": "Questions 5–13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 5–13 on your answer sheet. New Evidence on Sleep Patterns New ideas about napping • scientists have recorded an afternoon drop in 5 __________ • studies of hunter-gatherer societies show that napping was rare and occurred more often during the 6 __________ • the devices may not have detected 7 __________ naps Daily activity cycles • the tribespeople went to sleep several hours after sunset • even with 8 __________ there was little light • tribespeople usually woke up around 9 __________ • scientists found that 10 __________ had almost as much influence on sleep patterns as light Differences between tribespeople and people in industrialised regions • 11 __________ is something that very few of the tribespeople suffered from • the environment of tribespeople may have been more suitable for sleep • tribespeople had better fitness than industrialised populations and were not 12 __________ • tribespeople also had stronger 13 __________ Disclaimer Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.",
+            "template": "inline_text_completion"
+          },
+          "questionRange": [
+            5,
+            13
+          ],
+          "questions": [
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "5",
+              "id": "q5",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "• studies of hunter-gatherer societies show that napping was rare and occurred more often during the",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "6",
+              "id": "q6",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "• the devices may not have detected",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "7",
+              "id": "q7",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "naps Daily activity cycles • the tribespeople went to sleep several hours after sunset • even with",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "8",
+              "id": "q8",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "there was little light • tribespeople usually woke up around",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "9",
+              "id": "q9",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "• scientists found that",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "10",
+              "id": "q10",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "had almost as much influence on sleep patterns as light Differences between tribespeople and people in industrialised regions •",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "11",
+              "id": "q11",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "is something that very few of the tribespeople suffered from • the environment of tribespeople may have been more suitable for sleep • tribespeople had better fitness than industrialised populations and were not",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "12",
+              "id": "q12",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "• tribespeople also had stronger",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            },
+            {
+              "answer": "",
+              "confidence": 0.82,
+              "displayNumber": "13",
+              "id": "q13",
+              "interaction": {
+                "allowOptionReuse": false,
+                "options": [],
+                "type": "text"
+              },
+              "prompt": "Disclaimer Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.",
+              "requiresManualQuestionImport": false,
+              "sourceBlockIds": [
+                "b021",
+                "b022",
+                "b023",
+                "b024",
+                "b025",
+                "b026",
+                "b027",
+                "b028",
+                "b029",
+                "b030",
+                "b031",
+                "b032",
+                "b033",
+                "b034",
+                "b035",
+                "b036",
+                "b037",
+                "b038",
+                "b039",
+                "b040",
+                "b041",
+                "b042"
+              ],
+              "verified": false
+            }
+          ],
+          "requiresManualQuestionImport": false,
+          "reviewWarnings": [],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 5–13"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the notes below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 5–13 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "New Evidence on Sleep Patterns"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "New ideas about napping"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• scientists have recorded an afternoon drop in 5 __________"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• studies of hunter-gatherer societies show that napping was rare and occurred more often during the 6 __________"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• the devices may not have detected 7 __________ naps"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Daily activity cycles"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• the tribespeople went to sleep several hours after sunset"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• even with 8 __________ there was little light"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• tribespeople usually woke up around 9 __________"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• scientists found that 10 __________ had almost as much influence on sleep patterns as light"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Differences between tribespeople and people in industrialised regions"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• 11 __________ is something that very few of the tribespeople suffered from"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• the environment of tribespeople may have been more suitable for sleep"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• tribespeople had better fitness than industrialised populations and were not 12 __________"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• tribespeople also had stronger 13 __________"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Disclaimer"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited."
+            }
+          ],
+          "sourceBlockIds": [
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042"
+          ],
+          "verified": false
+        }
+      ],
+      "passage": {
+        "htmlBlocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   1</p>\n<p>Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions</p>\n<p>The sleep troubles common in modern life have long been blamed on our industrial society, \nfrom the city lights, long work hours and commutes, to caffeine and the Internet. Sleep \nresearchers often look back on a time when humans were able to get more rest by sleeping \nand waking to the rhythms of the sun. It turns out that this may not be quite right. In fact, our \nancestors may not have been getting the recommended eight hours of sleep, either.</p>\n<p>In a recent study, researchers traveled all over the world to examine sleep in some of the \nworld’s last remaining hunter-gatherer societies – the Hadza of Tanzania, the San of \nNamibia, and the Tsimane of Bolivia. Cut off from media, electricity and other distractions, \nthese pre-industrial societies are thought to sleep the way humans did more than 10,000 \nyears ago. Traveling to where they lived, often in humid, remote locations, researchers \nused medical devices to record the sleeping habits of 94 of these tribespeople and ended \nup collecting data representing 1,165 days.</p>\n<p>They found very similar sleep patterns despite their geographic isolation. On average, all \nthree groups sleep a little less than 6.5 hours a night, do not take naps, and don’t go to \nsleep when it gets dark. Like many of us, the Hadza, San, and Tsimane spend more time in \nbed – from 6.9 to 8.5 hours – than they do actually sleeping. This adds up to a sleep \nefficiency that is very similar to today’s industrial populations.</p>\n<p>According to Jerome Siegel, director of the University of California’s Center for Sleep \nResearch, evidence suggests sleep habits may not be environmental or cultural, but central \nto the physical makeup of humans. These findings question the millions of dollars that have \nbeen spent on research that tries to explain why some sleepers get only about six hours of \nsleep a night. Also, such findings question whether lack of sleep is a cause of obesity, \nmood disorders, and other physical and mental illnesses which have become so common in \nrecent decades. Scientists have documented that people’s energy often falls in the mid-\nafternoon. Some have suggested that it’s because we’ve managed to suppress a natural \ndesire for a nap.</p>\n<p>However, the new study provides evidence that this is unlikely, and that napping was \nactually rare in hunter-gatherer societies. The researchers estimated that naps may have \noccurred on up to 7 percent of winter days and 22 percent of summer days. They noted that \ntheir devices were only good at detecting longer naps, so it is possible that some of the \nstudy subjects took naps that were short, perhaps 15 minutes or less.</p>\n<p>Another fascinating finding from the study had to do with the circadian rhythms, our daily \nactivity cycles related to sunlight. Instead of going to sleep right at dusk, tribespeople were \nstaying awake an average of between 2.5 and 4.4 hours after sunset. All three tribes had \nfires going, but the light itself was much lower than you might get from a light bulb. They \ndid, however, have a tendency to wake up anywhere between an hour before and an hour \nafter sunrise.</p>\n<p>Siegel and his co-authors investigated this further by looking into the significance of \ntemperature. They found that it also played a big role, though it was somewhat less \nimportant than light in influencing sleep patterns. They wrote that “sleep in both the winter \nand summer usually occurred during the period of cooling and that waking times usually \noccurred near the height of the daily warming trend.”</p>\n<p>The tribespeople that were studied are different from people living in modern conditions in a \nnumber of respects. Importantly, almost none of them were troubled by sleeplessness. In \ninterviews with the researchers conducted through interpreters, only 1.5 to 2.5 percent of \nthe study subjects said they had severe difficulties sleeping more than once a year. This \nfigure is far lower than the 10 to 30 percent recorded in many industrialized countries today. \nSiegel suggested that “mimicking aspects of the natural environment” may therefore help \ntreat some sleep disorders.</p>\n<p>The tribespeople are also much healthier. Not a single one is overweight, indicating their \noverall higher levels of physical fitness. They also tended to have healthier hearts. Thus \ncomes a critical question. If we can’t blame our health problems on our lack of sleep, could \nit be that the reason we feel so unrested is because of poor health?</p>"
+          }
+        ],
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 1-13",
+            "questionRange": [
+              1,
+              13
+            ],
+            "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below."
+          }
+        ],
+        "sourceBlockIds": [
+          "b001",
+          "b003",
+          "b004",
+          "b005",
+          "b006",
+          "b007",
+          "b008",
+          "b009",
+          "b010",
+          "b011",
+          "b012"
+        ],
+        "title": "RE ADI NG P AS S AGE 1"
+      },
+      "questionDisplayMap": {
+        "q1": "1",
+        "q10": "10",
+        "q11": "11",
+        "q12": "12",
+        "q13": "13",
+        "q2": "2",
+        "q3": "3",
+        "q4": "4",
+        "q5": "5",
+        "q6": "6",
+        "q7": "7",
+        "q8": "8",
+        "q9": "9"
+      },
+      "questionOrder": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5",
+        "q6",
+        "q7",
+        "q8",
+        "q9",
+        "q10",
+        "q11",
+        "q12",
+        "q13"
+      ],
+      "schemaVersion": "ReadingAuthoringIRV1"
+    },
+    "documentIr": {
+      "assets": [],
+      "pages": [
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b001",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>RE ADI NG  P AS S AGE   1</p>",
+              "pageIndex": 1,
+              "text": "RE ADI NG  P AS S AGE   1  "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b002",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>You should spend about 20 minutes on Questions 1–13, which are based on Reading \nPassage 1 below.</p>",
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading \nPassage 1 below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions</p>",
+              "pageIndex": 1,
+              "text": "Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The sleep troubles common in modern life have long been blamed on our industrial society, \nfrom the city lights, long work hours and commutes, to caffeine and the Internet. Sleep \nresearchers often look back on a time when humans were able to get more rest by sleeping \nand waking to the rhythms of the sun. It turns out that this may not be quite right. In fact, our \nancestors may not have been getting the recommended eight hours of sleep, either.</p>",
+              "pageIndex": 1,
+              "text": "The sleep troubles common in modern life have long been blamed on our industrial society, \nfrom the city lights, long work hours and commutes, to caffeine and the Internet. Sleep \nresearchers often look back on a time when humans were able to get more rest by sleeping \nand waking to the rhythms of the sun. It turns out that this may not be quite right. In fact, our \nancestors may not have been getting the recommended eight hours of sleep, either. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b005",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>In a recent study, researchers traveled all over the world to examine sleep in some of the \nworld’s last remaining hunter-gatherer societies – the Hadza of Tanzania, the San of \nNamibia, and the Tsimane of Bolivia. Cut off from media, electricity and other distractions, \nthese pre-industrial societies are thought to sleep the way humans did more than 10,000 \nyears ago. Traveling to where they lived, often in humid, remote locations, researchers \nused medical devices to record the sleeping habits of 94 of these tribespeople and ended \nup collecting data representing 1,165 days.</p>",
+              "pageIndex": 1,
+              "text": "In a recent study, researchers traveled all over the world to examine sleep in some of the \nworld’s last remaining hunter-gatherer societies – the Hadza of Tanzania, the San of \nNamibia, and the Tsimane of Bolivia. Cut off from media, electricity and other distractions, \nthese pre-industrial societies are thought to sleep the way humans did more than 10,000 \nyears ago. Traveling to where they lived, often in humid, remote locations, researchers \nused medical devices to record the sleeping habits of 94 of these tribespeople and ended \nup collecting data representing 1,165 days. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>They found very similar sleep patterns despite their geographic isolation. On average, all \nthree groups sleep a little less than 6.5 hours a night, do not take naps, and don’t go to \nsleep when it gets dark. Like many of us, the Hadza, San, and Tsimane spend more time in \nbed – from 6.9 to 8.5 hours – than they do actually sleeping. This adds up to a sleep \nefficiency that is very similar to today’s industrial populations.</p>",
+              "pageIndex": 1,
+              "text": "They found very similar sleep patterns despite their geographic isolation. On average, all \nthree groups sleep a little less than 6.5 hours a night, do not take naps, and don’t go to \nsleep when it gets dark. Like many of us, the Hadza, San, and Tsimane spend more time in \nbed – from 6.9 to 8.5 hours – than they do actually sleeping. This adds up to a sleep \nefficiency that is very similar to today’s industrial populations. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>According to Jerome Siegel, director of the University of California’s Center for Sleep \nResearch, evidence suggests sleep habits may not be environmental or cultural, but central \nto the physical makeup of humans. These findings question the millions of dollars that have \nbeen spent on research that tries to explain why some sleepers get only about six hours of \nsleep a night. Also, such findings question whether lack of sleep is a cause of obesity, \nmood disorders, and other physical and mental illnesses which have become so common in \nrecent decades. Scientists have documented that people’s energy often falls in the mid-\nafternoon. Some have suggested that it’s because we’ve managed to suppress a natural \ndesire for a nap.</p>",
+              "pageIndex": 1,
+              "text": "According to Jerome Siegel, director of the University of California’s Center for Sleep \nResearch, evidence suggests sleep habits may not be environmental or cultural, but central \nto the physical makeup of humans. These findings question the millions of dollars that have \nbeen spent on research that tries to explain why some sleepers get only about six hours of \nsleep a night. Also, such findings question whether lack of sleep is a cause of obesity, \nmood disorders, and other physical and mental illnesses which have become so common in \nrecent decades. Scientists have documented that people’s energy often falls in the mid-\nafternoon. Some have suggested that it’s because we’ve managed to suppress a natural \ndesire for a nap. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>However, the new study provides evidence that this is unlikely, and that napping was \nactually rare in hunter-gatherer societies. The researchers estimated that naps may have \noccurred on up to 7 percent of winter days and 22 percent of summer days. They noted that \ntheir devices were only good at detecting longer naps, so it is possible that some of the \nstudy subjects took naps that were short, perhaps 15 minutes or less.</p>",
+              "pageIndex": 1,
+              "text": "However, the new study provides evidence that this is unlikely, and that napping was \nactually rare in hunter-gatherer societies. The researchers estimated that naps may have \noccurred on up to 7 percent of winter days and 22 percent of summer days. They noted that \ntheir devices were only good at detecting longer naps, so it is possible that some of the \nstudy subjects took naps that were short, perhaps 15 minutes or less. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 1,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b009",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Another fascinating finding from the study had to do with the circadian rhythms, our daily \nactivity cycles related to sunlight. Instead of going to sleep right at dusk, tribespeople were \nstaying awake an average of between 2.5 and 4.4 hours after sunset. All three tribes had \nfires going, but the light itself was much lower than you might get from a light bulb. They \ndid, however, have a tendency to wake up anywhere between an hour before and an hour \nafter sunrise.</p>",
+              "pageIndex": 2,
+              "text": "Another fascinating finding from the study had to do with the circadian rhythms, our daily \nactivity cycles related to sunlight. Instead of going to sleep right at dusk, tribespeople were \nstaying awake an average of between 2.5 and 4.4 hours after sunset. All three tribes had \nfires going, but the light itself was much lower than you might get from a light bulb. They \ndid, however, have a tendency to wake up anywhere between an hour before and an hour \nafter sunrise. "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b010",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Siegel and his co-authors investigated this further by looking into the significance of \ntemperature. They found that it also played a big role, though it was somewhat less \nimportant than light in influencing sleep patterns. They wrote that “sleep in both the winter \nand summer usually occurred during the period of cooling and that waking times usually \noccurred near the height of the daily warming trend.”</p>",
+              "pageIndex": 2,
+              "text": "Siegel and his co-authors investigated this further by looking into the significance of \ntemperature. They found that it also played a big role, though it was somewhat less \nimportant than light in influencing sleep patterns. They wrote that “sleep in both the winter \nand summer usually occurred during the period of cooling and that waking times usually \noccurred near the height of the daily warming trend.” "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b011",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The tribespeople that were studied are different from people living in modern conditions in a \nnumber of respects. Importantly, almost none of them were troubled by sleeplessness. In \ninterviews with the researchers conducted through interpreters, only 1.5 to 2.5 percent of \nthe study subjects said they had severe difficulties sleeping more than once a year. This \nfigure is far lower than the 10 to 30 percent recorded in many industrialized countries today. \nSiegel suggested that “mimicking aspects of the natural environment” may therefore help \ntreat some sleep disorders.</p>",
+              "pageIndex": 2,
+              "text": "The tribespeople that were studied are different from people living in modern conditions in a \nnumber of respects. Importantly, almost none of them were troubled by sleeplessness. In \ninterviews with the researchers conducted through interpreters, only 1.5 to 2.5 percent of \nthe study subjects said they had severe difficulties sleeping more than once a year. This \nfigure is far lower than the 10 to 30 percent recorded in many industrialized countries today. \nSiegel suggested that “mimicking aspects of the natural environment” may therefore help \ntreat some sleep disorders. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The tribespeople are also much healthier. Not a single one is overweight, indicating their \noverall higher levels of physical fitness. They also tended to have healthier hearts. Thus \ncomes a critical question. If we can’t blame our health problems on our lack of sleep, could \nit be that the reason we feel so unrested is because of poor health?</p>",
+              "pageIndex": 2,
+              "text": "The tribespeople are also much healthier. Not a single one is overweight, indicating their \noverall higher levels of physical fitness. They also tended to have healthier hearts. Thus \ncomes a critical question. If we can’t blame our health problems on our lack of sleep, could \nit be that the reason we feel so unrested is because of poor health? "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 2,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b013",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 1–4</h3>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "Questions 1–4 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b014",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Do the following statements agree with the information given in Reading Passage 1?</p>",
+              "pageIndex": 3,
+              "roleHint": "passage",
+              "text": "Do the following statements agree with the information given in Reading Passage 1? "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b015",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>In boxes 1–4 on your answer sheet, write</p>",
+              "pageIndex": 3,
+              "text": "In boxes 1–4 on your answer sheet, write "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b016",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>TRUE       if the statement agrees with the information \nFALSE      if the statement contradicts the information \nNOT GIVEN    if there is no information on this</p>",
+              "pageIndex": 3,
+              "roleHint": "question",
+              "text": "TRUE       if the statement agrees with the information \nFALSE      if the statement contradicts the information \nNOT GIVEN    if there is no information on this "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b017",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>1  Scientists studied hunter-gatherer societies because their sleep patterns are assumed \nto be similar to those of humans more than 10,000 years ago.</p>",
+              "pageIndex": 3,
+              "text": "1  Scientists studied hunter-gatherer societies because their sleep patterns are assumed \nto be similar to those of humans more than 10,000 years ago. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b018",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>2  The medical devices used in the research were specially designed for humid conditions.</p>",
+              "pageIndex": 3,
+              "text": "2  The medical devices used in the research were specially designed for humid conditions. "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b019",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>3  Researchers found that tribespeople stayed longer in bed than inhabitants of \nindustrialised regions.</p>",
+              "pageIndex": 3,
+              "text": "3  Researchers found that tribespeople stayed longer in bed than inhabitants of \nindustrialised regions. "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b020",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>4  Jerome Siegel believes that environment and culture have little effect on sleep patterns.</p>",
+              "pageIndex": 3,
+              "text": "4  Jerome Siegel believes that environment and culture have little effect on sleep patterns. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 3,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b021",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 5–13</h3>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Questions 5–13 "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Complete the notes below.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Complete the notes below. "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Choose ONE WORD ONLY from the passage for each answer.</p>",
+              "pageIndex": 4,
+              "roleHint": "question",
+              "text": "Choose ONE WORD ONLY from the passage for each answer. "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b024",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Write your answers in boxes 5–13 on your answer sheet.</p>",
+              "pageIndex": 4,
+              "text": "Write your answers in boxes 5–13 on your answer sheet. "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b025",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>New Evidence on Sleep Patterns</p>",
+              "pageIndex": 4,
+              "text": " New Evidence on Sleep Patterns "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>New ideas about napping</p>",
+              "pageIndex": 4,
+              "text": "New ideas about napping "
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b027",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  scientists have recorded an afternoon drop in 5 __________</p>",
+              "pageIndex": 4,
+              "text": "•  scientists have recorded an afternoon drop in 5 __________ "
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  studies of hunter-gatherer societies show that napping was rare and occurred \nmore often during the 6 __________</p>",
+              "pageIndex": 4,
+              "text": "•  studies of hunter-gatherer societies show that napping was rare and occurred \nmore often during the 6 __________ "
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b029",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  the devices may not have detected 7 __________ naps</p>",
+              "pageIndex": 4,
+              "text": "•  the devices may not have detected 7 __________ naps "
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b030",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Daily activity cycles</p>",
+              "pageIndex": 4,
+              "text": "Daily activity cycles "
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  the tribespeople went to sleep several hours after sunset</p>",
+              "pageIndex": 4,
+              "text": "•  the tribespeople went to sleep several hours after sunset "
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  even with 8 __________ there was little light</p>",
+              "pageIndex": 4,
+              "text": "•  even with 8 __________ there was little light "
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  tribespeople usually woke up around 9 __________</p>",
+              "pageIndex": 4,
+              "text": "•  tribespeople usually woke up around 9 __________ "
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b034",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  scientists found that 10 __________ had almost as much influence on sleep \npatterns as light</p>",
+              "pageIndex": 4,
+              "text": "•  scientists found that 10 __________ had almost as much influence on sleep \npatterns as light "
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Differences between tribespeople and people in industrialised regions</p>",
+              "pageIndex": 4,
+              "text": "Differences between tribespeople and people in industrialised regions "
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  11 __________ is something that very few of the tribespeople suffered from</p>",
+              "pageIndex": 4,
+              "text": "•  11 __________ is something that very few of the tribespeople suffered from "
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  the environment of tribespeople may have been more suitable for sleep</p>",
+              "pageIndex": 4,
+              "text": "•  the environment of tribespeople may have been more suitable for sleep "
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b038",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  tribespeople had better fitness than industrialised populations and were not      \n12 __________</p>",
+              "pageIndex": 4,
+              "text": "•  tribespeople had better fitness than industrialised populations and were not      \n12 __________ "
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b039",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>•  tribespeople also had stronger 13 __________</p>",
+              "pageIndex": 4,
+              "text": "•  tribespeople also had stronger 13 __________ "
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b040",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Disclaimer</p>",
+              "pageIndex": 4,
+              "text": "Disclaimer "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b041",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks. \nAll copyright in the underlying works remains with the original authors and publishers. \nNo affiliation with or endorsement by any rights holder (including IELTS® owners). \nFor non-commercial educational use only. This notice must remain intact in all copies.</p>",
+              "pageIndex": 4,
+              "text": "Compiled, formatted, and lightly proofread by ZYZ Reading Walks. \nAll copyright in the underlying works remains with the original authors and publishers. \nNo affiliation with or endorsement by any rights holder (including IELTS® owners). \nFor non-commercial educational use only. This notice must remain intact in all copies. "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b042",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
+              "pageIndex": 4,
+              "text": "Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited. "
+            }
+          ],
+          "height": 842,
+          "pageIndex": 4,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b043",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Q3 答案可能有争议，争议分析⻅下⻚</p>",
+              "pageIndex": 5,
+              "roleHint": "answer",
+              "text": "Q3 答案可能有争议，争议分析⻅下⻚"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 5,
+          "width": 595
+        },
+        {
+          "blocks": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b044",
+              "blockType": "paragraph",
+              "confidence": 0.2,
+              "html": "<p>[No extractable text on page 6]</p>",
+              "pageIndex": 6,
+              "text": "[No extractable text on page 6]"
+            }
+          ],
+          "height": 842,
+          "pageIndex": 6,
+          "width": 595
+        }
+      ],
+      "parser": {
+        "mode": "auto",
+        "provider": "rust-parser:pdf:pdf-extract",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "sleep-study.pdf",
+        "version": "0.1.0",
+        "warnings": [
+          "page 6 has no extractable text; OCR/manual review required"
+        ]
+      },
+      "schemaVersion": "DocumentIRV1"
+    },
+    "readingSource": {
+      "answerKey": {
+        "q1": "",
+        "q10": "",
+        "q11": "",
+        "q12": "",
+        "q13": "",
+        "q2": "",
+        "q3": "",
+        "q4": "",
+        "q5": "",
+        "q6": "",
+        "q7": "",
+        "q8": "",
+        "q9": ""
+      },
+      "audit": {
+        "matchConfidence": 0,
+        "matchStatus": "needs_review",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:1c7262c8726850398c20c84d63310143180877979cd8b3705e654c55a5e9b7b2;signature:radio,text,table",
+        "verifiedAt": null
+      },
+      "meta": {
+        "category": "P1",
+        "frequency": "medium",
+        "legacyFilename": "",
+        "legacyPath": "",
+        "pdfFilename": "sleep-study.pdf",
+        "questionIntroHtml": "<h3>Questions</h3><ul class=\"question-umbrella-ranges\"><li><strong>Questions 1-13</strong><span>Q1-13</span></li></ul>",
+        "questionUmbrellaRanges": [
+          {
+            "blockId": "b002",
+            "heading": "Questions 1-13",
+            "questionRange": [
+              1,
+              13
+            ],
+            "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below."
+          }
+        ],
+        "title": "sleep study"
+      },
+      "passage": {
+        "blocks": [
+          {
+            "blockId": "passage-main",
+            "html": "<p>RE ADI NG  P AS S AGE   1</p>\n<p>Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions</p>\n<p>The sleep troubles common in modern life have long been blamed on our industrial society, \nfrom the city lights, long work hours and commutes, to caffeine and the Internet. Sleep \nresearchers often look back on a time when humans were able to get more rest by sleeping \nand waking to the rhythms of the sun. It turns out that this may not be quite right. In fact, our \nancestors may not have been getting the recommended eight hours of sleep, either.</p>\n<p>In a recent study, researchers traveled all over the world to examine sleep in some of the \nworld’s last remaining hunter-gatherer societies – the Hadza of Tanzania, the San of \nNamibia, and the Tsimane of Bolivia. Cut off from media, electricity and other distractions, \nthese pre-industrial societies are thought to sleep the way humans did more than 10,000 \nyears ago. Traveling to where they lived, often in humid, remote locations, researchers \nused medical devices to record the sleeping habits of 94 of these tribespeople and ended \nup collecting data representing 1,165 days.</p>\n<p>They found very similar sleep patterns despite their geographic isolation. On average, all \nthree groups sleep a little less than 6.5 hours a night, do not take naps, and don’t go to \nsleep when it gets dark. Like many of us, the Hadza, San, and Tsimane spend more time in \nbed – from 6.9 to 8.5 hours – than they do actually sleeping. This adds up to a sleep \nefficiency that is very similar to today’s industrial populations.</p>\n<p>According to Jerome Siegel, director of the University of California’s Center for Sleep \nResearch, evidence suggests sleep habits may not be environmental or cultural, but central \nto the physical makeup of humans. These findings question the millions of dollars that have \nbeen spent on research that tries to explain why some sleepers get only about six hours of \nsleep a night. Also, such findings question whether lack of sleep is a cause of obesity, \nmood disorders, and other physical and mental illnesses which have become so common in \nrecent decades. Scientists have documented that people’s energy often falls in the mid-\nafternoon. Some have suggested that it’s because we’ve managed to suppress a natural \ndesire for a nap.</p>\n<p>However, the new study provides evidence that this is unlikely, and that napping was \nactually rare in hunter-gatherer societies. The researchers estimated that naps may have \noccurred on up to 7 percent of winter days and 22 percent of summer days. They noted that \ntheir devices were only good at detecting longer naps, so it is possible that some of the \nstudy subjects took naps that were short, perhaps 15 minutes or less.</p>\n<p>Another fascinating finding from the study had to do with the circadian rhythms, our daily \nactivity cycles related to sunlight. Instead of going to sleep right at dusk, tribespeople were \nstaying awake an average of between 2.5 and 4.4 hours after sunset. All three tribes had \nfires going, but the light itself was much lower than you might get from a light bulb. They \ndid, however, have a tendency to wake up anywhere between an hour before and an hour \nafter sunrise.</p>\n<p>Siegel and his co-authors investigated this further by looking into the significance of \ntemperature. They found that it also played a big role, though it was somewhat less \nimportant than light in influencing sleep patterns. They wrote that “sleep in both the winter \nand summer usually occurred during the period of cooling and that waking times usually \noccurred near the height of the daily warming trend.”</p>\n<p>The tribespeople that were studied are different from people living in modern conditions in a \nnumber of respects. Importantly, almost none of them were troubled by sleeplessness. In \ninterviews with the researchers conducted through interpreters, only 1.5 to 2.5 percent of \nthe study subjects said they had severe difficulties sleeping more than once a year. This \nfigure is far lower than the 10 to 30 percent recorded in many industrialized countries today. \nSiegel suggested that “mimicking aspects of the natural environment” may therefore help \ntreat some sleep disorders.</p>\n<p>The tribespeople are also much healthier. Not a single one is overweight, indicating their \noverall higher levels of physical fitness. They also tended to have healthier hearts. Thus \ncomes a critical question. If we can’t blame our health problems on our lack of sleep, could \nit be that the reason we feel so unrested is because of poor health?</p>",
+            "kind": "html"
+          }
+        ]
+      },
+      "questionDisplayMap": {
+        "q1": "1",
+        "q10": "10",
+        "q11": "11",
+        "q12": "12",
+        "q13": "13",
+        "q2": "2",
+        "q3": "3",
+        "q4": "4",
+        "q5": "5",
+        "q6": "6",
+        "q7": "7",
+        "q8": "8",
+        "q9": "9"
+      },
+      "questionGroups": [
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-4</p></div><ol><li><div><strong>1</strong> Scientists studied hunter-gatherer societies because their sleep patterns are assumed to be similar to those of humans more than 10,000 years ago.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> The medical devices used in the research were specially designed for humid conditions.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> Researchers found that tribespeople stayed longer in bed than inhabitants of industrialised regions.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>4</strong> Jerome Siegel believes that environment and culture have little effect on sleep patterns.</div><div class=\"choice-row\"><label><input name=\"q4\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q4\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q4\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "groupId": "group-1",
+          "kind": "true_false_not_given",
+          "leadHtml": "<p>Questions 1-4</p>",
+          "questionIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4"
+          ]
+        },
+        {
+          "allowOptionReuse": false,
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 5-13</p></div><div class=\"notes-completion\">Questions 5–13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 5–13 on your answer sheet. New Evidence on Sleep Patterns New ideas about napping • scientists have recorded an afternoon drop in <span class=\"inline-completion\" data-question-id=\"q5\"><strong>5</strong> <input type=\"text\" id=\"q5_input\" name=\"q5\" placeholder=\"answer\"></span> • studies of hunter-gatherer societies show that napping was rare and occurred more often during the <span class=\"inline-completion\" data-question-id=\"q6\"><strong>6</strong> <input type=\"text\" id=\"q6_input\" name=\"q6\" placeholder=\"answer\"></span> • the devices may not have detected <span class=\"inline-completion\" data-question-id=\"q7\"><strong>7</strong> <input type=\"text\" id=\"q7_input\" name=\"q7\" placeholder=\"answer\"></span> naps Daily activity cycles • the tribespeople went to sleep several hours after sunset • even with <span class=\"inline-completion\" data-question-id=\"q8\"><strong>8</strong> <input type=\"text\" id=\"q8_input\" name=\"q8\" placeholder=\"answer\"></span> there was little light • tribespeople usually woke up around <span class=\"inline-completion\" data-question-id=\"q9\"><strong>9</strong> <input type=\"text\" id=\"q9_input\" name=\"q9\" placeholder=\"answer\"></span> • scientists found that <span class=\"inline-completion\" data-question-id=\"q10\"><strong>10</strong> <input type=\"text\" id=\"q10_input\" name=\"q10\" placeholder=\"answer\"></span> had almost as much influence on sleep patterns as light Differences between tribespeople and people in industrialised regions • <span class=\"inline-completion\" data-question-id=\"q11\"><strong>11</strong> <input type=\"text\" id=\"q11_input\" name=\"q11\" placeholder=\"answer\"></span> is something that very few of the tribespeople suffered from • the environment of tribespeople may have been more suitable for sleep • tribespeople had better fitness than industrialised populations and were not <span class=\"inline-completion\" data-question-id=\"q12\"><strong>12</strong> <input type=\"text\" id=\"q12_input\" name=\"q12\" placeholder=\"answer\"></span> • tribespeople also had stronger <span class=\"inline-completion\" data-question-id=\"q13\"><strong>13</strong> <input type=\"text\" id=\"q13_input\" name=\"q13\" placeholder=\"answer\"></span> Disclaimer Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</div></section>",
+          "groupId": "group-2",
+          "kind": "sentence_completion",
+          "leadHtml": "<p>Questions 5-13</p>",
+          "questionIds": [
+            "q5",
+            "q6",
+            "q7",
+            "q8",
+            "q9",
+            "q10",
+            "q11",
+            "q12",
+            "q13"
+          ]
+        }
+      ],
+      "questionOrder": [
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "q5",
+        "q6",
+        "q7",
+        "q8",
+        "q9",
+        "q10",
+        "q11",
+        "q12",
+        "q13"
+      ],
+      "schemaVersion": "ReadingExamSourceV1",
+      "sourceRefs": {
+        "ieltsHtml": null,
+        "primaryHtml": "author-imports/import-20260810092237-34ea6f80/intermediate.html",
+        "primaryProvider": "author_web",
+        "shuiHtml": null,
+        "shuiPdf": "uploads/sleep-study.pdf"
+      }
+    },
+    "schemaVersion": "ReadingSourceGenerationFixtureV1",
+    "sourcePath": "fixtures/golden/private-real/sleep-study.pdf",
+    "splitCandidates": {
+      "answerKeyCandidates": [],
+      "issues": [
+        "No answer key detected; answers must be entered manually."
+      ],
+      "passageCandidates": [
+        {
+          "categoryHint": "P1",
+          "range": [
+            "b001",
+            "b003",
+            "b004",
+            "b005",
+            "b006",
+            "b007",
+            "b008",
+            "b009",
+            "b010",
+            "b011",
+            "b012"
+          ],
+          "title": "RE ADI NG P AS S AGE 1"
+        }
+      ],
+      "questionGroupCandidates": [
+        {
+          "blockIds": [
+            "b013",
+            "b014",
+            "b015",
+            "b016",
+            "b017",
+            "b018",
+            "b019",
+            "b020"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b013",
+              "b014",
+              "b015",
+              "b016",
+              "b017",
+              "b018",
+              "b019",
+              "b020"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [
+                "TRUE",
+                "FALSE",
+                "NOT GIVEN"
+              ],
+              "type": "radio"
+            },
+            "kind": "true_false_not_given",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b014",
+              "reason": "same-section-continuation",
+              "toBlockId": "b015"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b015",
+              "reason": "same-section-continuation",
+              "toBlockId": "b016"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b016",
+              "reason": "same-section-continuation",
+              "toBlockId": "b017"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b017",
+              "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "same-section-continuation",
+              "toBlockId": "b019"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b019",
+              "reason": "same-section-continuation",
+              "toBlockId": "b020"
+            }
+          ],
+          "groupId": "group-1",
+          "heading": "Questions 1-4",
+          "instructionText": "Questions 1–4",
+          "kindHint": "true_false_not_given",
+          "layoutHint": "list",
+          "questionRange": [
+            1,
+            4
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 1–4"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "passage",
+              "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b015",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "In boxes 1–4 on your answer sheet, write"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b016",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there "
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b017",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "1 Scientists studied hunter-gatherer societies because their sleep patterns are assumed to be similar to those of humans"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "2 The medical devices used in the research were specially designed for humid conditions."
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b019",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "3 Researchers found that tribespeople stayed longer in bed than inhabitants of industrialised regions."
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b020",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "4 Jerome Siegel believes that environment and culture have little effect on sleep patterns."
+            }
+          ]
+        },
+        {
+          "blockIds": [
+            "b021",
+            "b022",
+            "b023",
+            "b024",
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042"
+          ],
+          "classification": {
+            "confidence": 0.82,
+            "evidence": [
+              "b021",
+              "b022",
+              "b023",
+              "b024",
+              "b025",
+              "b026",
+              "b027",
+              "b028",
+              "b029",
+              "b030",
+              "b031",
+              "b032",
+              "b033",
+              "b034",
+              "b035",
+              "b036",
+              "b037",
+              "b038",
+              "b039",
+              "b040",
+              "b041",
+              "b042"
+            ],
+            "interaction": {
+              "allowOptionReuse": false,
+              "options": [],
+              "type": "text"
+            },
+            "kind": "sentence_completion",
+            "warnings": []
+          },
+          "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b022",
+              "reason": "same-section-continuation",
+              "toBlockId": "b023"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b023",
+              "reason": "same-section-continuation",
+              "toBlockId": "b024"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b024",
+              "reason": "same-section-continuation",
+              "toBlockId": "b025"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b025",
+              "reason": "same-section-continuation",
+              "toBlockId": "b026"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b026",
+              "reason": "same-section-continuation",
+              "toBlockId": "b027"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b027",
+              "reason": "same-section-continuation",
+              "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b031",
+              "reason": "same-section-continuation",
+              "toBlockId": "b032"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b032",
+              "reason": "same-section-continuation",
+              "toBlockId": "b033"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b034",
+              "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            }
+          ],
+          "groupId": "group-2",
+          "heading": "Questions 5-13",
+          "instructionText": "Questions 5–13",
+          "kindHint": "sentence_completion",
+          "layoutHint": "inline_completion",
+          "questionRange": [
+            5,
+            13
+          ],
+          "sectionEvidence": [
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Questions 5–13"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b022",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Complete the notes below."
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "question",
+              "textPreview": "Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b024",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Write your answers in boxes 5–13 on your answer sheet."
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b025",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "New Evidence on Sleep Patterns"
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b026",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "New ideas about napping"
+            },
+            {
+              "bbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "blockId": "b027",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                324,
+                520,
+                360
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• scientists have recorded an afternoon drop in 5 __________"
+            },
+            {
+              "bbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "blockId": "b028",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                366,
+                520,
+                402
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• studies of hunter-gatherer societies show that napping was rare and occurred more often during the 6 __________"
+            },
+            {
+              "bbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "blockId": "b029",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                408,
+                520,
+                444
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• the devices may not have detected 7 __________ naps"
+            },
+            {
+              "bbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "blockId": "b030",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                450,
+                520,
+                486
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Daily activity cycles"
+            },
+            {
+              "bbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "blockId": "b031",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                492,
+                520,
+                528
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• the tribespeople went to sleep several hours after sunset"
+            },
+            {
+              "bbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "blockId": "b032",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                534,
+                520,
+                570
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• even with 8 __________ there was little light"
+            },
+            {
+              "bbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "blockId": "b033",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                576,
+                520,
+                612
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• tribespeople usually woke up around 9 __________"
+            },
+            {
+              "bbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "blockId": "b034",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                618,
+                520,
+                654
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• scientists found that 10 __________ had almost as much influence on sleep patterns as light"
+            },
+            {
+              "bbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                660,
+                520,
+                696
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Differences between tribespeople and people in industrialised regions"
+            },
+            {
+              "bbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                702,
+                520,
+                738
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• 11 __________ is something that very few of the tribespeople suffered from"
+            },
+            {
+              "bbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "blockId": "b037",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                72,
+                520,
+                108
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• the environment of tribespeople may have been more suitable for sleep"
+            },
+            {
+              "bbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "blockId": "b038",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                114,
+                520,
+                150
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• tribespeople had better fitness than industrialised populations and were not 12 __________"
+            },
+            {
+              "bbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "blockId": "b039",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                156,
+                520,
+                192
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "• tribespeople also had stronger 13 __________"
+            },
+            {
+              "bbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                198,
+                520,
+                234
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Disclaimer"
+            },
+            {
+              "bbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                240,
+                520,
+                276
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Compiled, formatted, and lightly proofread by ZYZ Reading Walks. All copyright in the underlying works remains with the "
+            },
+            {
+              "bbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                282,
+                520,
+                318
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "textPreview": "Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited."
+            }
+          ]
+        }
+      ],
+      "umbrellaQuestionRanges": [
+        {
+          "blockId": "b002",
+          "heading": "Questions 1-13",
+          "questionRange": [
+            1,
+            13
+          ],
+          "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below."
+        }
+      ]
+    }
+  }
+}

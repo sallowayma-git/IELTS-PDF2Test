@@ -106,10 +106,12 @@ export interface OptionV2 {
   label: string;
   content: ContentNodeV2[];
   sourceAnchors: SourceAnchorV2[];
+  provenanceStatus?: "source" | "derived" | "user_edited" | "manual";
 }
 
 export interface OptionBankV2 {
   optionBankId: string;
+  scope: "task_group" | "document";
   title?: ContentNodeV2[];
   options: OptionV2[];
   allowReuse: boolean;
@@ -125,6 +127,8 @@ export interface ResponseGroupV2 {
   optionBankRef?: string;
   cardinality: { min: number; max: number; exact?: number };
   assignment: "per_slot" | "unordered_set" | "ordered_slots";
+  scoringPolicy: "per_slot_binary" | "per_slot_ielts_normalized" | "exact_set" | "all_or_nothing";
+  duplicatePolicy: "reject_submission" | "ignore_duplicates";
   allowOptionReuse: boolean;
   sourceAnchors: SourceAnchorV2[];
 }
@@ -136,8 +140,15 @@ export interface AnswerSlotV2 {
   hostNodeId?: string;
   hostType: "prompt" | "paragraph" | "table_cell" | "figure_hotspot" | "flow_step";
   interaction: "radio" | "checkbox" | "text" | "select" | "dragdrop" | "hotspot";
-  constraints?: { maxWords?: number; maxCharacters?: number; acceptedOptionLabels?: string[] };
+  participation: "scoring" | "example" | "non_scoring";
+  constraints?: {
+    maxWords?: number;
+    maxNumbers?: number;
+    maxCharacters?: number;
+    acceptedOptionLabels?: string[];
+  };
   sourceAnchors: SourceAnchorV2[];
+  provenanceStatus?: "source" | "derived" | "user_edited" | "manual";
   confidence: number;
 }
 
@@ -162,4 +173,3 @@ export interface AuthoringAuditV2 {
 }
 
 export const IELTS_AUTHORING_IR_V2_SCHEMA_VERSION = "IeltsAuthoringIRV2" as const;
-

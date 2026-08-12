@@ -3,42 +3,29 @@
   "fixtureId": "docx-section-columns",
   "source": {
     "path": "fixtures/golden/synthetic/docx/docx-section-columns.docx",
-    "sha256": "32ec265d746f6d988c6060a3a261e1570f76dad322a2e7ed0b05a5a60ac152f5",
-    "sizeBytes": 2111
+    "sha256": "8ea3a0c8c55da3dfb68726cc284cbe4a6e485fde8b14ad6ead99cff80ccfbaca",
+    "sizeBytes": 1842
   },
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 1,
-    "blockCount": 3,
-    "groupCount": 1,
-    "slotCount": 4,
+    "blockCount": 1,
+    "groupCount": 0,
+    "slotCount": 0,
     "assetCount": 0,
-    "answerCount": 4,
+    "answerCount": 0,
     "warningCount": 0,
-    "groupKinds": [
-      "matching"
-    ],
-    "questionIds": [
-      "q1",
-      "q2",
-      "q3",
-      "q4"
-    ],
-    "roles": [
-      "question"
-    ]
+    "groupKinds": [],
+    "questionIds": [],
+    "roles": []
   },
   "payload": {
     "authoringIr": {
-      "answerKey": {
-        "q1": "",
-        "q2": "",
-        "q3": "",
-        "q4": ""
-      },
+      "answerKey": {},
       "audit": {
         "humanVerified": false,
         "issues": [
+          "No question range heading detected; manual split required.",
           "No answer key detected; answers must be entered manually."
         ],
         "llmUsed": false,
@@ -53,8 +40,8 @@
             "fileType": "docx",
             "originalName": "docx-section-columns.docx",
             "role": "MainQuestion",
-            "sha256": "32ec265d746f6d988c6060a3a261e1570f76dad322a2e7ed0b05a5a60ac152f5",
-            "sizeBytes": 2111,
+            "sha256": "8ea3a0c8c55da3dfb68726cc284cbe4a6e485fde8b14ad6ead99cff80ccfbaca",
+            "sizeBytes": 1842,
             "storedName": "docx-section-columns.docx"
           }
         ],
@@ -63,175 +50,22 @@
         ],
         "title": "docx section columns"
       },
-      "groups": [
-        {
-          "allowOptionReuse": false,
-          "classificationEvidence": [
-            "b003"
-          ],
-          "confidence": 0.68,
-          "groupId": "group-1",
-          "instruction": [
-            "Questions 1-4"
-          ],
-          "isUmbrellaRange": false,
-          "kind": "matching",
-          "layout": {
-            "layoutHint": "list",
-            "template": "matching_list"
-          },
-          "questionRange": [
-            1,
-            4
-          ],
-          "questions": [
-            {
-              "answer": "",
-              "confidence": 0.68,
-              "displayNumber": "1",
-              "id": "q1",
-              "interaction": {
-                "allowOptionReuse": false,
-                "options": [
-                  "A",
-                  "B",
-                  "C",
-                  "D"
-                ],
-                "type": "matching"
-              },
-              "prompt": "",
-              "requiresManualQuestionImport": false,
-              "sourceBlockIds": [
-                "b003"
-              ],
-              "verified": false
-            },
-            {
-              "answer": "",
-              "confidence": 0.68,
-              "displayNumber": "2",
-              "id": "q2",
-              "interaction": {
-                "allowOptionReuse": false,
-                "options": [
-                  "A",
-                  "B",
-                  "C",
-                  "D"
-                ],
-                "type": "matching"
-              },
-              "prompt": "",
-              "requiresManualQuestionImport": false,
-              "sourceBlockIds": [
-                "b003"
-              ],
-              "verified": false
-            },
-            {
-              "answer": "",
-              "confidence": 0.68,
-              "displayNumber": "3",
-              "id": "q3",
-              "interaction": {
-                "allowOptionReuse": false,
-                "options": [
-                  "A",
-                  "B",
-                  "C",
-                  "D"
-                ],
-                "type": "matching"
-              },
-              "prompt": "",
-              "requiresManualQuestionImport": false,
-              "sourceBlockIds": [
-                "b003"
-              ],
-              "verified": false
-            },
-            {
-              "answer": "",
-              "confidence": 0.68,
-              "displayNumber": "4",
-              "id": "q4",
-              "interaction": {
-                "allowOptionReuse": false,
-                "options": [
-                  "A",
-                  "B",
-                  "C",
-                  "D"
-                ],
-                "type": "matching"
-              },
-              "prompt": "",
-              "requiresManualQuestionImport": false,
-              "sourceBlockIds": [
-                "b003"
-              ],
-              "verified": false
-            }
-          ],
-          "requiresManualQuestionImport": false,
-          "reviewWarnings": [
-            "Option reuse was inferred from question type; source wording did not state it explicitly."
-          ],
-          "sectionEvidence": [
-            {
-              "bbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "blockId": "b003",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "question",
-              "textPreview": "Questions 1-4: Match each statement to a column."
-            }
-          ],
-          "sourceBlockIds": [
-            "b003"
-          ],
-          "verified": false
-        }
-      ],
+      "groups": [],
       "passage": {
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic section-columns DOCX fixture.</p>\n<p>Column one contains the passage. Column two contains the question instruction.</p>"
+            "html": "<p>two column section</p>"
           }
         ],
         "questionUmbrellaRanges": [],
         "sourceBlockIds": [
-          "b001",
-          "b002"
+          "b001"
         ],
-        "title": "Synthetic section-columns DOCX fixture."
+        "title": "two column section"
       },
-      "questionDisplayMap": {
-        "q1": "1",
-        "q2": "2",
-        "q3": "3",
-        "q4": "4"
-      },
-      "questionOrder": [
-        "q1",
-        "q2",
-        "q3",
-        "q4"
-      ],
+      "questionDisplayMap": {},
+      "questionOrder": [],
       "schemaVersion": "ReadingAuthoringIRV1"
     },
     "documentIr": {
@@ -249,68 +83,9 @@
               "blockId": "b001",
               "blockType": "paragraph",
               "confidence": 0.99,
-              "html": "<p>Synthetic section-columns DOCX fixture.</p>",
-              "layoutHints": {
-                "basedOnStyleId": null,
-                "headingLevel": null,
-                "numbering": null,
-                "resolvedStyleId": "Normal",
-                "section": null,
-                "source": "docx-ooxml-paragraph",
-                "styleId": "Normal",
-                "styleName": "Normal"
-              },
+              "html": "<p>two column section</p>",
               "pageIndex": 1,
-              "text": "Synthetic section-columns DOCX fixture."
-            },
-            {
-              "bbox": [
-                72,
-                114,
-                520,
-                150
-              ],
-              "blockId": "b002",
-              "blockType": "paragraph",
-              "confidence": 0.99,
-              "html": "<p>Column one contains the passage. Column two contains the question instruction.</p>",
-              "layoutHints": {
-                "basedOnStyleId": null,
-                "headingLevel": null,
-                "numbering": null,
-                "resolvedStyleId": "Normal",
-                "section": null,
-                "source": "docx-ooxml-paragraph",
-                "styleId": "Normal",
-                "styleName": "Normal"
-              },
-              "pageIndex": 1,
-              "text": "Column one contains the passage. Column two contains the question instruction."
-            },
-            {
-              "bbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "blockId": "b003",
-              "blockType": "header",
-              "confidence": 0.99,
-              "html": "<h3>Questions 1-4: Match each statement to a column.</h3>",
-              "layoutHints": {
-                "basedOnStyleId": null,
-                "headingLevel": null,
-                "numbering": null,
-                "resolvedStyleId": "Normal",
-                "section": null,
-                "source": "docx-ooxml-paragraph",
-                "styleId": "Normal",
-                "styleName": "Normal"
-              },
-              "pageIndex": 1,
-              "roleHint": "question",
-              "text": "Questions 1-4: Match each statement to a column."
+              "text": "two column section"
             }
           ],
           "height": 842,
@@ -329,16 +104,11 @@
       "schemaVersion": "DocumentIRV1"
     },
     "readingSource": {
-      "answerKey": {
-        "q1": "",
-        "q2": "",
-        "q3": "",
-        "q4": ""
-      },
+      "answerKey": {},
       "audit": {
         "matchConfidence": 0,
         "matchStatus": "needs_review",
-        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:32ec265d746f6d988c6060a3a261e1570f76dad322a2e7ed0b05a5a60ac152f5;signature:radio,text,table",
+        "notes": "provider:author_tauri;sourceFileId:file-cli-main;sourceSha256:8ea3a0c8c55da3dfb68726cc284cbe4a6e485fde8b14ad6ead99cff80ccfbaca;signature:radio,text,table",
         "verifiedAt": null
       },
       "meta": {
@@ -355,42 +125,18 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic section-columns DOCX fixture.</p>\n<p>Column one contains the passage. Column two contains the question instruction.</p>",
+            "html": "<p>two column section</p>",
             "kind": "html"
           }
         ]
       },
-      "questionDisplayMap": {
-        "q1": "1",
-        "q2": "2",
-        "q3": "3",
-        "q4": "4"
-      },
-      "questionGroups": [
-        {
-          "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-4</p></div><ol><li><div><strong>1</strong> </div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q1\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q1\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q1\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>2</strong> </div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q2\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q2\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q2\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>3</strong> </div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q3\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q3\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q3\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>4</strong> </div><div class=\"choice-row\"><label><input name=\"q4\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q4\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q4\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q4\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
-          "groupId": "group-1",
-          "kind": "matching",
-          "leadHtml": "<p>Questions 1-4</p>",
-          "questionIds": [
-            "q1",
-            "q2",
-            "q3",
-            "q4"
-          ]
-        }
-      ],
-      "questionOrder": [
-        "q1",
-        "q2",
-        "q3",
-        "q4"
-      ],
+      "questionDisplayMap": {},
+      "questionGroups": [],
+      "questionOrder": [],
       "schemaVersion": "ReadingExamSourceV1",
       "sourceRefs": {
         "ieltsHtml": null,
-        "primaryHtml": "author-imports/import-20260809143539-287ee02f/intermediate.html",
+        "primaryHtml": "author-imports/<import>/intermediate.html",
         "primaryProvider": "author_web",
         "shuiHtml": null,
         "shuiPdf": "uploads/docx-section-columns.docx"
@@ -401,77 +147,19 @@
     "splitCandidates": {
       "answerKeyCandidates": [],
       "issues": [
+        "No question range heading detected; manual split required.",
         "No answer key detected; answers must be entered manually."
       ],
       "passageCandidates": [
         {
           "categoryHint": "P1",
           "range": [
-            "b001",
-            "b002"
+            "b001"
           ],
-          "title": "Synthetic section-columns DOCX fixture."
+          "title": "two column section"
         }
       ],
-      "questionGroupCandidates": [
-        {
-          "blockIds": [
-            "b003"
-          ],
-          "classification": {
-            "confidence": 0.68,
-            "evidence": [
-              "b003"
-            ],
-            "interaction": {
-              "allowOptionReuse": false,
-              "options": [
-                "A",
-                "B",
-                "C",
-                "D"
-              ],
-              "type": "matching"
-            },
-            "kind": "matching",
-            "warnings": [
-              "Option reuse was inferred from question type; source wording did not state it explicitly."
-            ]
-          },
-          "confidence": 0.68,
-          "groupId": "group-1",
-          "heading": "Questions 1-4",
-          "instructionText": "Questions 1-4: Match each statement to a column.",
-          "kindHint": "matching",
-          "layoutHint": "list",
-          "questionRange": [
-            1,
-            4
-          ],
-          "sectionEvidence": [
-            {
-              "bbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "blockId": "b003",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "question",
-              "textPreview": "Questions 1-4: Match each statement to a column."
-            }
-          ]
-        }
-      ],
+      "questionGroupCandidates": [],
       "umbrellaQuestionRanges": []
     }
   }

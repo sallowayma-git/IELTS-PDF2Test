@@ -40,7 +40,7 @@
     "glyph": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "text", "bbox", "origin", "style", "unicodeMapError", "hidden", "confidence", "source", "sourceAnchor"],
+      "required": ["id", "text", "bbox", "origin", "style", "unicodeMapError", "visibilityObserved", "unicodeMapErrorObserved", "geometryBasis", "confidence", "source", "sourceAnchor"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "text": { "type": "string", "minLength": 1 },
@@ -52,6 +52,9 @@
         "style": { "$ref": "./common-v2.schema.json#/$defs/textStyle" },
         "unicodeMapError": { "type": "boolean" },
         "hidden": { "type": "boolean" },
+        "visibilityObserved": { "type": "boolean" },
+        "unicodeMapErrorObserved": { "type": "boolean" },
+        "geometryBasis": { "type": "string", "enum": ["pdfium_char_box", "text_matrix_derived", "ocr_observed", "ooxml_layout_derived"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "source": { "type": "string", "enum": ["native", "ocr"] },
         "sourceAnchor": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
@@ -76,7 +79,7 @@
     "line": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "spanIds", "text", "bbox", "writingMode", "indentationPt", "hardBreakAfter", "sourceOrder", "confidence", "sourceAnchors"],
+      "required": ["id", "spanIds", "text", "bbox", "writingMode", "indentationPt", "sourceOrder", "confidence", "sourceAnchors"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "spanIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
@@ -88,6 +91,8 @@
         "hangingIndentPt": { "type": "number", "minimum": 0 },
         "lineHeightPt": { "type": "number", "minimum": 0 },
         "hardBreakAfter": { "type": "boolean" },
+        "breakBasis": { "type": "string", "minLength": 1 },
+        "inlineGapsPt": { "type": "array", "items": { "type": "number", "minimum": 0 } },
         "sourceOrder": { "type": "integer", "minimum": 0 },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "sourceAnchors": { "type": "array", "items": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" } }
@@ -147,6 +152,20 @@
         "colSpan": { "type": "integer", "minimum": 1 },
         "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
         "contentRegionIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "widthPt": { "type": "number", "minimum": 0 },
+        "rowHeightPt": { "type": "number", "minimum": 0 },
+        "rowHeightRule": { "type": "string", "minLength": 1 },
+        "verticalAlignment": { "type": "string", "minLength": 1 },
+        "paddingPt": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "top": { "type": "number", "minimum": 0 },
+            "right": { "type": "number", "minimum": 0 },
+            "bottom": { "type": "number", "minimum": 0 },
+            "left": { "type": "number", "minimum": 0 }
+          }
+        },
         "headerScope": { "type": "string", "enum": ["row", "column", "both", "none"] },
         "borderEvidence": { "type": "array", "items": { "type": "string" } },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -198,6 +217,7 @@
         "rotation": { "$ref": "./common-v2.schema.json#/$defs/pageRotation" },
         "mediaBox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
         "cropBox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "pageTransform": { "$ref": "#/$defs/pageTransform" },
         "glyphs": { "type": "array", "items": { "$ref": "#/$defs/glyph" } },
         "spans": { "type": "array", "items": { "$ref": "#/$defs/span" } },
         "lines": { "type": "array", "items": { "$ref": "#/$defs/line" } },
@@ -205,8 +225,94 @@
         "vectorPaths": { "type": "array", "items": { "$ref": "#/$defs/vectorPath" } },
         "tables": { "type": "array", "items": { "$ref": "#/$defs/table" } },
         "assetIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "imagePlacements": { "type": "array", "items": { "$ref": "#/$defs/imagePlacement" } },
+        "markedContent": { "type": "array", "items": { "$ref": "#/$defs/markedContent" } },
+        "annotations": { "type": "array", "items": { "$ref": "#/$defs/annotation" } },
         "readingOrder": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "readingOrderGraph": { "$ref": "#/$defs/readingOrderGraph" },
         "quality": { "$ref": "#/$defs/quality" }
+      }
+    },
+    "pageTransform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["userUnit", "pdfToDisplay", "displayToNormalized", "displayWidthPt", "displayHeightPt"],
+      "properties": {
+        "userUnit": { "type": "number", "exclusiveMinimum": 0 },
+        "pdfToDisplay": { "type": "array", "items": { "type": "number" }, "minItems": 6, "maxItems": 6 },
+        "displayToNormalized": { "type": "array", "items": { "type": "number" }, "minItems": 6, "maxItems": 6 },
+        "displayWidthPt": { "type": "number", "exclusiveMinimum": 0 },
+        "displayHeightPt": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "readingOrderGraph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "edges", "confidence"],
+      "properties": {
+        "primary": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "alternatives": { "type": "array", "items": { "type": "array", "items": { "type": "string", "minLength": 1 } } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/readingOrderEdge" } },
+        "cycleEdgesRemoved": { "type": "array", "items": { "$ref": "#/$defs/readingOrderEdge" } },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "readingOrderEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "relation", "confidence"],
+      "properties": {
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "relation": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "imagePlacement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "assetId", "objectTransform", "confidence", "sourceAnchor"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "assetId": { "type": "string", "minLength": 1 },
+        "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "nativeBBox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "objectTransform": { "type": "array", "items": { "type": "number" }, "minItems": 6, "maxItems": 6 },
+        "clipBBox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceAnchor": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
+      }
+    },
+    "markedContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sourceAnchor"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "mcid": { "type": "integer" },
+        "tag": { "type": "string" },
+        "actualText": { "type": "string" },
+        "altText": { "type": "string" },
+        "structurePath": { "type": "array", "items": { "type": "string" } },
+        "sourceAnchor": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "subtype", "bbox", "confidence", "sourceAnchor"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "subtype": { "type": "string", "minLength": 1 },
+        "bbox": { "$ref": "./common-v2.schema.json#/$defs/rect" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "fieldName": { "type": "string" },
+        "fieldType": { "type": "string" },
+        "value": {},
+        "defaultValue": {},
+        "flags": { "type": "array", "items": { "type": "string" } },
+        "appearanceAssetId": { "type": "string", "minLength": 1 },
+        "sourceAnchor": { "$ref": "./common-v2.schema.json#/$defs/sourceAnchor" }
       }
     },
     "coverageEntry": {

@@ -1,0 +1,552 @@
+{
+  "schemaVersion": "GoldenFixtureMetadataV1",
+  "fixtureId": "organisational-design",
+  "source": {
+    "path": "fixtures/golden/private-real/organisational-design.pdf",
+    "originalName": "106. P2 - Early Approaches to Organisational Design 组织设计.pdf",
+    "sha256": "62aa3d7720c3125130c09fc16e99c60d0a7533664ea499ae527c9910335be830",
+    "sizeBytes": 819356,
+    "format": "pdf"
+  },
+  "expected": {
+    "pageRoles": [
+      {
+        "pageIndex": 1,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 2,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 3,
+        "roles": [
+          "passage"
+        ]
+      },
+      {
+        "pageIndex": 4,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 5,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 6,
+        "roles": [
+          "question"
+        ]
+      },
+      {
+        "pageIndex": 7,
+        "roles": [
+          "answer"
+        ]
+      },
+      {
+        "pageIndex": 8,
+        "roles": [
+          "explanation"
+        ]
+      }
+    ],
+    "taskGroups": [
+      {
+        "id": "group-1",
+        "displayRange": [
+          14,
+          15
+        ],
+        "kind": "multiple_choice",
+        "slotIds": [
+          "q14",
+          "q15"
+        ],
+        "responseGroupIds": [
+          "group-1-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2",
+        "displayRange": [
+          16,
+          17
+        ],
+        "kind": "multiple_choice",
+        "slotIds": [
+          "q16",
+          "q17"
+        ],
+        "responseGroupIds": [
+          "group-2-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3",
+        "displayRange": [
+          18,
+          19
+        ],
+        "kind": "multiple_choice",
+        "slotIds": [
+          "q18",
+          "q19"
+        ],
+        "responseGroupIds": [
+          "group-3-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      },
+      {
+        "id": "group-4",
+        "displayRange": [
+          20,
+          21
+        ],
+        "kind": "multiple_choice",
+        "slotIds": [
+          "q20",
+          "q21"
+        ],
+        "responseGroupIds": [
+          "group-4-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-4-source"
+        ]
+      },
+      {
+        "id": "group-5",
+        "displayRange": [
+          22,
+          26
+        ],
+        "kind": "matching_features",
+        "slotIds": [
+          "q22",
+          "q23",
+          "q24",
+          "q25",
+          "q26"
+        ],
+        "responseGroupIds": [
+          "group-5-responses"
+        ],
+        "sourceEvidenceIds": [
+          "group-5-source"
+        ]
+      }
+    ],
+    "slots": [
+      {
+        "id": "q14",
+        "displayNumber": "14",
+        "responseType": "checkbox"
+      },
+      {
+        "id": "q15",
+        "displayNumber": "15",
+        "responseType": "checkbox"
+      },
+      {
+        "id": "q16",
+        "displayNumber": "16",
+        "responseType": "checkbox"
+      },
+      {
+        "id": "q17",
+        "displayNumber": "17",
+        "responseType": "checkbox"
+      },
+      {
+        "id": "q18",
+        "displayNumber": "18",
+        "responseType": "checkbox"
+      },
+      {
+        "id": "q19",
+        "displayNumber": "19",
+        "responseType": "checkbox"
+      },
+      {
+        "id": "q20",
+        "displayNumber": "20",
+        "responseType": "checkbox"
+      },
+      {
+        "id": "q21",
+        "displayNumber": "21",
+        "responseType": "checkbox"
+      },
+      {
+        "id": "q22",
+        "displayNumber": "22",
+        "responseType": "select"
+      },
+      {
+        "id": "q23",
+        "displayNumber": "23",
+        "responseType": "select"
+      },
+      {
+        "id": "q24",
+        "displayNumber": "24",
+        "responseType": "select"
+      },
+      {
+        "id": "q25",
+        "displayNumber": "25",
+        "responseType": "select"
+      },
+      {
+        "id": "q26",
+        "displayNumber": "26",
+        "responseType": "select"
+      }
+    ],
+    "assets": [],
+    "optionBanks": [
+      {
+        "id": "group-1-option-bank",
+        "taskGroupId": "group-1",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E"
+        ],
+        "allowReuse": false,
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-option-bank",
+        "taskGroupId": "group-2",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E"
+        ],
+        "allowReuse": false,
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3-option-bank",
+        "taskGroupId": "group-3",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E"
+        ],
+        "allowReuse": false,
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      },
+      {
+        "id": "group-4-option-bank",
+        "taskGroupId": "group-4",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E"
+        ],
+        "allowReuse": false,
+        "sourceEvidenceIds": [
+          "group-4-source"
+        ]
+      },
+      {
+        "id": "group-5-option-bank",
+        "taskGroupId": "group-5",
+        "scope": "task_group",
+        "labels": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "allowReuse": true,
+        "sourceEvidenceIds": [
+          "group-5-source"
+        ]
+      }
+    ],
+    "responseGroups": [
+      {
+        "id": "group-1-responses",
+        "taskGroupId": "group-1",
+        "slotIds": [
+          "q14",
+          "q15"
+        ],
+        "promptMode": "shared",
+        "cardinality": {
+          "min": 2,
+          "max": 2,
+          "exact": 2
+        },
+        "assignment": "unordered_set",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-1-option-bank"
+        },
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-1-source"
+        ]
+      },
+      {
+        "id": "group-2-responses",
+        "taskGroupId": "group-2",
+        "slotIds": [
+          "q16",
+          "q17"
+        ],
+        "promptMode": "shared",
+        "cardinality": {
+          "min": 2,
+          "max": 2,
+          "exact": 2
+        },
+        "assignment": "unordered_set",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-2-option-bank"
+        },
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-2-source"
+        ]
+      },
+      {
+        "id": "group-3-responses",
+        "taskGroupId": "group-3",
+        "slotIds": [
+          "q18",
+          "q19"
+        ],
+        "promptMode": "shared",
+        "cardinality": {
+          "min": 2,
+          "max": 2,
+          "exact": 2
+        },
+        "assignment": "unordered_set",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-3-option-bank"
+        },
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
+      },
+      {
+        "id": "group-4-responses",
+        "taskGroupId": "group-4",
+        "slotIds": [
+          "q20",
+          "q21"
+        ],
+        "promptMode": "shared",
+        "cardinality": {
+          "min": 2,
+          "max": 2,
+          "exact": 2
+        },
+        "assignment": "unordered_set",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-4-option-bank"
+        },
+        "reusePolicy": "disallowed",
+        "scoringPolicy": "per_slot_ielts_normalized",
+        "sourceEvidenceIds": [
+          "group-4-source"
+        ]
+      },
+      {
+        "id": "group-5-responses",
+        "taskGroupId": "group-5",
+        "slotIds": [
+          "q22",
+          "q23",
+          "q24",
+          "q25",
+          "q26"
+        ],
+        "promptMode": "per_slot",
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "assignment": "per_slot",
+        "optionBinding": {
+          "mode": "option_bank",
+          "optionBankId": "group-5-option-bank"
+        },
+        "reusePolicy": "allowed",
+        "scoringPolicy": "per_slot_binary",
+        "sourceEvidenceIds": [
+          "group-5-source"
+        ]
+      }
+    ],
+    "sourceEvidence": [
+      {
+        "id": "group-1-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          4
+        ],
+        "references": [
+          "fixtures/golden/private-real/organisational-design.pdf#page=4"
+        ]
+      },
+      {
+        "id": "group-2-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          4
+        ],
+        "references": [
+          "fixtures/golden/private-real/organisational-design.pdf#page=4"
+        ]
+      },
+      {
+        "id": "group-3-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          5
+        ],
+        "references": [
+          "fixtures/golden/private-real/organisational-design.pdf#page=5"
+        ]
+      },
+      {
+        "id": "group-4-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          5
+        ],
+        "references": [
+          "fixtures/golden/private-real/organisational-design.pdf#page=5"
+        ]
+      },
+      {
+        "id": "group-5-source",
+        "evidenceType": "source_text",
+        "pageIndexes": [
+          6
+        ],
+        "references": [
+          "fixtures/golden/private-real/organisational-design.pdf#page=6"
+        ]
+      }
+    ],
+    "runtimeExpectations": {
+      "authoritativeVersion": "v1",
+      "artifactMode": "shadow_only",
+      "compileExpectation": "structure_must_compile",
+      "loaderExpectation": "test_only",
+      "rendererExpectation": "test_only",
+      "scoringExpectation": "per_slot",
+      "productionExposure": "disabled",
+      "requiredFeatureFlags": {
+        "documentIrV2Shadow": false,
+        "authoringV2Shadow": false,
+        "qualityGateV2": false,
+        "runtimeSourceV2": false,
+        "nasPackageV2": false
+      }
+    }
+  },
+  "knownIssues": [
+    "Each Choose TWO group has one shared prompt and option set with two unordered scored slots.",
+    "Answer and explanation pages 7-8 are image-only in the current local parser output; without an OCR/vision result the answer key must remain unresolved and QualityReportV2 must not report Ready."
+  ],
+  "review": {
+    "status": "approved",
+    "reviewedBy": "phase0-source-audit",
+    "reviewedAt": "2026-08-10",
+    "method": "source-text-and-overhaul-plan-evidence",
+    "evidence": [
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#2.1",
+      "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#23.2",
+      "fixtures/golden/private/legacy-reference.json"
+    ]
+  },
+  "baseline": {
+    "v1Path": "fixtures/golden/baseline/v1/organisational-design.json",
+    "observed": {
+      "pageCount": 8,
+      "blockCount": 55,
+      "groupCount": 5,
+      "slotCount": 13,
+      "assetCount": 0,
+      "answerCount": 13,
+      "warningCount": 2,
+      "groupKinds": [
+        "multi_choice",
+        "multi_choice",
+        "multi_choice",
+        "multi_choice",
+        "matching"
+      ],
+      "questionIds": [
+        "q14",
+        "q15",
+        "q16",
+        "q17",
+        "q18",
+        "q19",
+        "q20",
+        "q21",
+        "q22",
+        "q23",
+        "q24",
+        "q25",
+        "q26"
+      ],
+      "roles": [
+        "question"
+      ]
+    }
+  }
+}

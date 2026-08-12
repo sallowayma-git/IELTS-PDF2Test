@@ -3,8 +3,8 @@
   "fixtureId": "docx-section-columns",
   "source": {
     "path": "fixtures/golden/synthetic/docx/docx-section-columns.docx",
-    "sha256": "32ec265d746f6d988c6060a3a261e1570f76dad322a2e7ed0b05a5a60ac152f5",
-    "sizeBytes": 2111,
+    "sha256": "8ea3a0c8c55da3dfb68726cc284cbe4a6e485fde8b14ad6ead99cff80ccfbaca",
+    "sizeBytes": 1842,
     "format": "docx"
   },
   "expected": {
@@ -64,24 +64,21 @@
     "v1Path": "fixtures/golden/baseline/v1/docx-section-columns.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 3,
-      "groupCount": 1,
-      "slotCount": 4,
+      "blockCount": 1,
+      "groupCount": 0,
+      "slotCount": 0,
       "assetCount": 0,
-      "answerCount": 4,
+      "answerCount": 0,
       "warningCount": 0,
-      "groupKinds": [
-        "matching"
-      ],
-      "questionIds": [
-        "q1",
-        "q2",
-        "q3",
-        "q4"
-      ],
-      "roles": [
-        "question"
-      ]
+      "groupKinds": [],
+      "questionIds": [],
+      "roles": []
     }
+  },
+  "sourceRevision": {
+    "updatedAt": "2026-08-10",
+    "reason": "Phase 3 OOXML adversarial fixtures intentionally regenerated with deterministic package parts",
+    "generator": "scripts/generate-phase3-docx-fixtures.py",
+    "supersedesSha256": "32ec265d746f6d988c6060a3a261e1570f76dad322a2e7ed0b05a5a60ac152f5"
   }
 }

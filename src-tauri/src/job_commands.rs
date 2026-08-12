@@ -31,7 +31,10 @@ pub(crate) struct PickedSourcePath {
 }
 
 fn clean_file_stem(name: &str) -> String {
-    let stem = name.rsplit_once('.').map(|(value, _)| value).unwrap_or(name);
+    let stem = name
+        .rsplit_once('.')
+        .map(|(value, _)| value)
+        .unwrap_or(name);
     stem.replace(['_', '-'], " ")
         .split_whitespace()
         .collect::<Vec<_>>()

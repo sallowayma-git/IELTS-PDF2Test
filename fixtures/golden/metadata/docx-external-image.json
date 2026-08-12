@@ -3,8 +3,8 @@
   "fixtureId": "docx-external-image",
   "source": {
     "path": "fixtures/golden/synthetic/docx/docx-external-image.docx",
-    "sha256": "c4df41c183508292ec6153181ecf3b9f4137cccdd6a8d18be5b2ec416057ddca",
-    "sizeBytes": 2293,
+    "sha256": "159086c86df69395b2920a809282a743717c8dbca7a18ac7816a6e2255343d93",
+    "sizeBytes": 2492,
     "format": "docx"
   },
   "expected": {
@@ -33,7 +33,7 @@
     "v1Path": "fixtures/golden/baseline/v1/docx-external-image.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 2,
+      "blockCount": 1,
       "groupCount": 0,
       "slotCount": 0,
       "assetCount": 0,
@@ -43,5 +43,11 @@
       "questionIds": [],
       "roles": []
     }
+  },
+  "sourceRevision": {
+    "updatedAt": "2026-08-10",
+    "reason": "Phase 3 OOXML adversarial fixtures intentionally regenerated with deterministic package parts",
+    "generator": "scripts/generate-phase3-docx-fixtures.py",
+    "supersedesSha256": "c4df41c183508292ec6153181ecf3b9f4137cccdd6a8d18be5b2ec416057ddca"
   }
 }

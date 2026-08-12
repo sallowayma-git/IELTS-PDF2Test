@@ -39,6 +39,28 @@ mod tests {
             "state": "ready",
             "documentScore": 1.0,
             "sourceCoverage": 1.0,
+            "coverageLedger": [],
+            "coverageStatus": {
+                "physicalShadow": "available",
+                "complete": true,
+                "significantSourceNodeCount": 0,
+                "explainedSourceNodeCount": 0,
+                "unassignedSourceNodeIds": []
+            },
+            "compilerProbes": {
+                "v2Runtime": {
+                    "status": "passed",
+                    "schemaVersion": "ReadingExamSourceV2",
+                    "issueCodes": [],
+                    "details": []
+                },
+                "v1Compatibility": {
+                    "status": "passed",
+                    "schemaVersion": "ReadingExamSourceV1",
+                    "issueCodes": [],
+                    "details": []
+                }
+            },
             "taskScores": {},
             "hardFailures": [],
             "issues": [],

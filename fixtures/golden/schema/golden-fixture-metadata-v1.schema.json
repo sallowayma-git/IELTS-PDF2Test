@@ -47,7 +47,9 @@
               "id": { "type": "string", "minLength": 1 },
               "displayRange": { "type": "array", "prefixItems": [{ "type": "integer", "minimum": 1 }, { "type": "integer", "minimum": 1 }], "items": false, "minItems": 2, "maxItems": 2 },
               "kind": { "type": "string", "minLength": 1 },
-              "slotIds": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+              "slotIds": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+              "responseGroupIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+              "sourceEvidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
             }
           }
         },
@@ -76,10 +78,52 @@
               "required": { "type": "boolean" }
             }
           }
+        },
+        "optionBanks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/optionBank" }
+        },
+        "responseGroups": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/responseGroup" }
+        },
+        "sourceEvidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sourceEvidence" }
+        },
+        "runtimeExpectations": {
+          "$ref": "#/$defs/runtimeExpectations"
         }
       }
     },
     "knownIssues": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "sourceRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["updatedAt", "reason", "generator", "supersedesSha256"],
+      "properties": {
+        "updatedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "reason": { "type": "string", "minLength": 1 },
+        "generator": { "type": "string", "minLength": 1 },
+        "supersedesSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reviewedBy", "reviewedAt", "method", "evidence"],
+      "properties": {
+        "status": { "enum": ["needs_review", "approved", "rejected"] },
+        "reviewedBy": { "type": "string", "minLength": 1 },
+        "reviewedAt": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "method": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "baseline": {
       "type": "object",
       "additionalProperties": false,
@@ -87,6 +131,88 @@
       "properties": {
         "v1Path": { "type": "string", "minLength": 1 },
         "observed": { "type": "object" }
+      }
+    }
+  },
+  "$defs": {
+    "cardinality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "type": "integer", "minimum": 0 },
+        "max": { "type": "integer", "minimum": 0 },
+        "exact": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "optionBank": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "taskGroupId", "scope", "labels", "allowReuse", "sourceEvidenceIds"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "taskGroupId": { "type": "string", "minLength": 1 },
+        "scope": { "enum": ["task_group", "document"] },
+        "labels": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true },
+        "allowReuse": { "type": "boolean" },
+        "sourceEvidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+      }
+    },
+    "optionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["option_bank", "inline", "none"] },
+        "optionBankId": { "type": "string", "minLength": 1 },
+        "inlineLabels": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true }
+      }
+    },
+    "responseGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "taskGroupId", "slotIds", "promptMode", "cardinality", "assignment", "optionBinding", "reusePolicy", "scoringPolicy", "sourceEvidenceIds"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "taskGroupId": { "type": "string", "minLength": 1 },
+        "slotIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true },
+        "promptMode": { "enum": ["shared", "per_slot", "embedded"] },
+        "cardinality": { "$ref": "#/$defs/cardinality" },
+        "assignment": { "enum": ["per_slot", "unordered_set", "ordered_slots"] },
+        "optionBinding": { "$ref": "#/$defs/optionBinding" },
+        "reusePolicy": { "enum": ["allowed", "disallowed", "not_applicable"] },
+        "scoringPolicy": { "enum": ["per_slot_binary", "per_slot_ielts_normalized", "exact_set", "all_or_nothing"] },
+        "sourceEvidenceIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+      }
+    },
+    "sourceEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "evidenceType", "pageIndexes", "references"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "evidenceType": { "enum": ["source_text", "source_layout", "source_asset", "plan_document"] },
+        "pageIndexes": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1, "uniqueItems": true },
+        "references": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+      }
+    },
+    "runtimeExpectations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authoritativeVersion", "artifactMode", "compileExpectation", "loaderExpectation", "rendererExpectation", "scoringExpectation", "productionExposure", "requiredFeatureFlags"],
+      "properties": {
+        "authoritativeVersion": { "const": "v1" },
+        "artifactMode": { "const": "shadow_only" },
+        "compileExpectation": { "const": "structure_must_compile" },
+        "loaderExpectation": { "const": "test_only" },
+        "rendererExpectation": { "const": "test_only" },
+        "scoringExpectation": { "enum": ["per_slot", "not_applicable"] },
+        "productionExposure": { "const": "disabled" },
+        "requiredFeatureFlags": {
+          "type": "object",
+          "additionalProperties": { "const": false },
+          "minProperties": 3
+        }
       }
     }
   }
