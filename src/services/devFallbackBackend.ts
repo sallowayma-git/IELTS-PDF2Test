@@ -42,7 +42,7 @@ import type {
   LibraryStats,
   LibraryStatus
 } from "../types";
-import type { AuthoringEditorSessionV2, IeltsAuthoringIRV2, ApplyAuthoringV2PatchesInput } from "../types";
+import type { AuthoringEditorSessionV2, IeltsAuthoringIRV2, ApplyAuthoringV2PatchesInput, AuthoringV2ExportResultV2 } from "../types";
 import type { DiagnosticsSettings } from "../types/settings";
 import { buildManifest, buildWrapper, escapeHtml, renderGroupBodyHtml, toReadingExamSource } from "./templateRenderer";
 import { applyAuthoringV2Patches } from "./authoringV2Patches";
@@ -2567,6 +2567,36 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         ...phase5Session(store, input.jobId),
         savedPatchCount: input.patches.length
       } as T;
+    }
+    case "export_authoring_v2": {
+      const input = args.input as { jobId: string; exportDir: string; revision?: number };
+      const session = phase5Session(store, input.jobId);
+      if (input.revision !== undefined && input.revision !== session.revision) throw new Error(`revision_conflict:current=${session.revision}:requested=${input.revision}`);
+      const staleDerivedQualityCodes = new Set(["ANSWER_KEY_MISSING_SLOT", "RUNTIME_COMPILER_FAILED"]);
+      const hardFailures = session.authoring.quality.hardFailures.filter((code) => !staleDerivedQualityCodes.has(code));
+      if (hardFailures.length) throw new Error(`authoring_v2_export_blocked:hard_failures=${hardFailures.join(",")}`);
+      const unresolvedSlots = Object.entries(session.authoring.answerKey).filter(([, value]) => value.kind === "unresolved").map(([slotId]) => slotId);
+      if (unresolvedSlots.length) throw new Error(`authoring_v2_export_blocked:unresolved_answers=${unresolvedSlots.join(",")}`);
+      const blockingIssues = session.authoring.quality.issues.filter((issue) => issue.severity === "blocking" && !staleDerivedQualityCodes.has(issue.code) && issue.details?.resolution !== "resolved" && issue.details?.resolution !== "ignored").map((issue) => issue.issueId);
+      if (blockingIssues.length) throw new Error(`authoring_v2_export_blocked:blocking_issues=${blockingIssues.join(",")}`);
+      const outputDir = `${input.exportDir || "local://exports"}/${session.authoring.exam.examId}-r${session.revision}`;
+      return {
+        receipt: {
+          schemaVersion: "AuthoringV2ExportReceiptV1",
+          jobId: input.jobId,
+          examId: session.authoring.exam.examId,
+          revision: session.revision,
+          outputDir,
+          authoringPath: `${outputDir}/authoring-ir-v2.json`,
+          runtimePath: `${outputDir}/reading-source-v2.json`,
+          manifestPath: `${outputDir}/manifest-v2.json`,
+          v1FilesRemainReadable: true,
+          pdfPerQuestionLlmRepair: false
+        },
+        outputDir,
+        revision: session.revision,
+        examId: session.authoring.exam.examId
+      } as AuthoringV2ExportResultV2 as T;
     }
 
     case "update_job_meta": {

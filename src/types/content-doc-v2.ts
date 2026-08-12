@@ -112,6 +112,8 @@ export interface FigureNodeV2 extends BaseContentNodeV2 {
   assetId: string;
   caption?: ContentNodeV2[];
   hotspots?: DiagramHotspotV2[];
+  /** Normalized [x, y, width, height] crop in asset coordinates. */
+  crop?: [number, number, number, number];
   display: ContentDisplayV2;
 }
 
@@ -119,6 +121,8 @@ export interface ImageNodeV2 extends BaseContentNodeV2 {
   type: "image";
   assetId: string;
   altText?: string;
+  /** Normalized [x, y, width, height] crop in asset coordinates. */
+  crop?: [number, number, number, number];
   display: ContentDisplayV2;
 }
 
@@ -144,6 +148,8 @@ export interface DiagramNodeV2 extends BaseContentNodeV2 {
   type: "diagram";
   assetId: string;
   hotspots?: DiagramHotspotV2[];
+  /** Normalized [x, y, width, height] crop in asset coordinates. */
+  crop?: [number, number, number, number];
   display: ContentDisplayV2;
 }
 

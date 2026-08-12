@@ -77,7 +77,8 @@ export function resolvePhase5FeatureFlags(
 }
 
 export function isPhase5EditorEnabled(): boolean {
-  if (import.meta.env.DEV) return true;
-  return typeof window !== "undefined"
+  const explicitBuildOptIn = import.meta.env.VITE_IELTS_AUTHORING_EDITOR_V2 === "1";
+  const explicitLocalOptIn = typeof window !== "undefined"
     && window.localStorage.getItem("ielts-author-studio.feature.authoringEditorV2") === "1";
+  return explicitBuildOptIn || explicitLocalOptIn;
 }

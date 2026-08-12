@@ -1,5 +1,6 @@
 use super::build_authoring_v2_shadow;
 use crate::authoring_pipeline::{make_dynamic_authoring_ir, make_dynamic_split_candidates};
+use crate::authoring_v2_commands::{apply_authoring_v2_patches_core, export_authoring_v2_core};
 use crate::parser::parse_source_document;
 use crate::pdf_facts_shadow::write_pdf_facts_shadow;
 use crate::reading_source::reading_source;
@@ -10,10 +11,12 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const ACCEPTANCE_SPEC: &str = "fixtures/golden/phase4-eight-pdf-acceptance.json";
 const MANIFEST: &str = "fixtures/golden/manifest.json";
 const REPORT: &str = "tmp/phase4-real-pdf-acceptance/report.json";
+const PHASE5_REPORT: &str = "tmp/phase5-real-pdf-acceptance/report.json";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -1413,6 +1416,173 @@ fn process_fixture(root: &Path, fixture_id: &str, fixture: &Value) -> Result<Val
     }))
 }
 
+fn first_text_node_id(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("text") {
+                return object
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+            }
+            object.values().find_map(first_text_node_id)
+        }
+        Value::Array(items) => items.iter().find_map(first_text_node_id),
+        _ => None,
+    }
+}
+
+fn phase5_answer_resolution_patches(authoring: &Value) -> Vec<Value> {
+    let mut patches = Vec::new();
+    let tasks = authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for task in &tasks {
+        let bank_labels = task
+            .get("optionBank")
+            .and_then(|bank| bank.get("options"))
+            .and_then(Value::as_array)
+            .map(|options| {
+                options
+                    .iter()
+                    .filter_map(|option| option.get("label").and_then(Value::as_str))
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let groups = task
+            .get("responseGroups")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for group in &groups {
+            let group_labels = group
+                .get("options")
+                .and_then(Value::as_array)
+                .map(|options| {
+                    options
+                        .iter()
+                        .filter_map(|option| option.get("label").and_then(Value::as_str))
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|labels| !labels.is_empty())
+                .unwrap_or_else(|| bank_labels.clone());
+            let response_kind = group
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("text_entry");
+            let assignment = group
+                .get("assignment")
+                .and_then(Value::as_str)
+                .unwrap_or("per_slot");
+            let assignment = if assignment == "ordered_slots" {
+                "ordered"
+            } else {
+                assignment
+            };
+            for (index, slot_id) in group
+                .get("slotIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .enumerate()
+            {
+                let value = if response_kind == "text_entry" {
+                    json!({"kind":"text","values":[format!("phase5-review-{slot_id}")],"normalization":"exact"})
+                } else if let Some(label) = group_labels.get(index % group_labels.len().max(1)) {
+                    json!({"kind":"option","labels":[label],"assignment":assignment})
+                } else {
+                    json!({"kind":"unresolved"})
+                };
+                patches.push(json!({"op":"setAnswer","slotId":slot_id,"value":value}));
+            }
+        }
+    }
+    patches
+}
+
+fn run_phase5_real_pdf_edit_export(
+    root: &Path,
+    fixture_id: &str,
+    authoring: &Value,
+) -> Result<Value, String> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis();
+    let job_id = format!("phase5-real-{fixture_id}-{unique}");
+    let job_dir = root.join("jobs").join(&job_id);
+    fs::create_dir_all(&job_dir).map_err(|error| error.to_string())?;
+    write_json(&job_dir.join("authoring-ir-v2.shadow.json"), authoring)?;
+    let answer_patches = phase5_answer_resolution_patches(authoring);
+    if answer_patches.is_empty() {
+        return Err(format!("{fixture_id}: no answer patches generated"));
+    }
+    let answer_result = apply_authoring_v2_patches_core(
+        root,
+        json!({"jobId":job_id,"baseRevision":0,"patches":answer_patches}),
+    )?;
+    let answered = answer_result
+        .get("authoring")
+        .cloned()
+        .ok_or_else(|| format!("{fixture_id}: answer revision missing authoring"))?;
+    let text_id = first_text_node_id(&answered)
+        .ok_or_else(|| format!("{fixture_id}: no text node available for edit proof"))?;
+    let edited_result = apply_authoring_v2_patches_core(
+        root,
+        json!({
+            "jobId":job_id,
+            "baseRevision":1,
+            "patches":[{"op":"replaceText","nodeId":text_id,"from":0,"to":0,"text":"phase5-edit"}]
+        }),
+    )?;
+    let revision = edited_result
+        .get("revision")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("{fixture_id}: edited revision missing"))?;
+    let export_dir = root
+        .join("tmp/phase5-real-pdf-acceptance")
+        .join(fixture_id)
+        .join(format!("run-{unique}"));
+    let export = export_authoring_v2_core(
+        root,
+        json!({"jobId":job_id,"exportDir":export_dir.to_string_lossy(),"revision":revision}),
+    )?;
+    let output_dir = export
+        .get("outputDir")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{fixture_id}: export output path missing"))?;
+    let manifest = read_json(&PathBuf::from(output_dir).join("manifest-v2.json"))?;
+    let exported_authoring = read_json(&PathBuf::from(output_dir).join("authoring-ir-v2.json"))?;
+    let exported_runtime = read_json(&PathBuf::from(output_dir).join("reading-source-v2.json"))?;
+    if manifest.get("revision").and_then(Value::as_u64) != Some(revision)
+        || exported_authoring
+            .get("schemaVersion")
+            .and_then(Value::as_str)
+            != Some("IeltsAuthoringIRV2")
+        || exported_runtime
+            .get("schemaVersion")
+            .and_then(Value::as_str)
+            != Some("ReadingExamSourceV2")
+    {
+        return Err(format!("{fixture_id}: exported V2 bundle is not coherent"));
+    }
+    Ok(json!({
+        "fixtureId": fixture_id,
+        "jobId": job_id,
+        "answerPatchCount": answer_patches.len(),
+        "revision": revision,
+        "outputDir": output_dir,
+        "manifest": manifest,
+        "authoringSchemaVersion": exported_authoring.get("schemaVersion"),
+        "runtimeSchemaVersion": exported_runtime.get("schemaVersion")
+    }))
+}
+
 #[test]
 fn completion_embedding_detection_recurses_prompt_and_stimulus_per_slot() {
     let task = json!({
@@ -1735,6 +1905,37 @@ fn phase4_eight_real_pdfs_reach_physical_authoring_quality_truth() {
         "Phase 4 real-PDF acceptance failed; inspect {}",
         report_path.display()
     );
+}
+
+#[test]
+fn phase5_real_pdf_edit_and_v2_export_round_trip() {
+    let root = repo_root();
+    let manifest = read_json(&root.join(MANIFEST)).expect("golden manifest must load");
+    let fixture = manifest
+        .get("fixtures")
+        .and_then(Value::as_array)
+        .and_then(|fixtures| {
+            fixtures.iter().find(|fixture| {
+                fixture.get("fixtureId").and_then(Value::as_str) == Some("chili-peppers")
+            })
+        })
+        .expect("Chili fixture must exist");
+    let phase4_result = process_fixture(&root, "chili-peppers", fixture)
+        .expect("real PDF must reach Phase 4 V2 shadow before Phase 5 edit");
+    let shadow_path =
+        root.join("tmp/phase4-real-pdf-acceptance/chili-peppers/authoring-ir-v2.shadow.json");
+    let shadow = read_json(&shadow_path).expect("Phase 4 V2 shadow must be readable");
+    let export_result = run_phase5_real_pdf_edit_export(&root, "chili-peppers", &shadow)
+        .expect("real PDF V2 editor/export round trip must complete");
+    let report = json!({
+        "schemaVersion": "Phase5RealPdfEditorExportReportV1",
+        "runToken": std::env::var("PHASE5_ACCEPTANCE_RUN_TOKEN").ok(),
+        "passed": true,
+        "fixtureId": "chili-peppers",
+        "phase4": phase4_result,
+        "phase5": export_result
+    });
+    write_json(&root.join(PHASE5_REPORT), &report).expect("Phase 5 report must be written");
 }
 
 #[test]

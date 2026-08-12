@@ -221,7 +221,9 @@ pub(crate) fn document_ir_v2_shadow_enabled() -> bool {
 }
 
 pub(crate) fn authoring_v2_shadow_enabled() -> bool {
-    cfg!(debug_assertions) && env_flag_enabled("EPIC8_AUTHORING_V2_SHADOW", false)
+    // Production packages may opt into the append-only V2 shadow during the
+    // controlled rollout; the default remains off and V1 is untouched.
+    env_flag_enabled("EPIC8_AUTHORING_V2_SHADOW", false)
 }
 
 pub(crate) fn quality_gate_v2_enabled() -> bool {

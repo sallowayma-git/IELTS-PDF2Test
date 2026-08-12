@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { applyAuthoringV2Patches, getAuthoringV2 } from "../api/tauriCommands";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { applyAuthoringV2Patches, exportAuthoringV2, getAuthoringV2 } from "../api/tauriCommands";
 import { go } from "../app/router";
-import { answerValueForSelection, applyAuthoringV2Patches as applyLocalPatches, taskTypeLabel } from "../services/authoringV2Patches";
+import { chooseExportDirectory } from "../api/desktopDialogs";
+import { answerValueForSelection, applyAuthoringV2Patches as applyLocalPatches, inverseAuthoringPatch, locateContentNode, taskTypeLabel } from "../services/authoringV2Patches";
+import { AuthoringTiptapEditor } from "../editor/authoringTiptap";
+import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
 import type {
   AnswerSlotV2,
   AnswerValueV2,
+  AuthoringContentTargetV2,
   AuthoringEditorRecoveryV2,
   AuthoringEditorSessionV2,
   AuthoringPatchV2,
@@ -75,6 +79,26 @@ function sourceSummary(anchors: SourceAnchorV2[]): string {
   return "源文件页码：" + pages.join("、") + " · " + anchors.reduce((count, anchor) => count + anchor.nodeIds.length, 0) + " 个源节点";
 }
 
+function sourceAnchorStyle(anchor: SourceAnchorV2): CSSProperties | undefined {
+  const rect = anchor.displayBBox ?? anchor.bbox ?? anchor.nativeBBox;
+  if (!rect?.normalized) return undefined;
+  const [x, y, width, height] = rect.normalized;
+  return {
+    left: `${x * 100}%`,
+    top: `${y * 100}%`,
+    width: `${width * 100}%`,
+    height: `${height * 100}%`
+  };
+}
+
+function sourceAnchorGeometry(anchor: SourceAnchorV2): string {
+  const rect = anchor.displayBBox ?? anchor.bbox ?? anchor.nativeBBox;
+  if (!rect) return "坐标未提供";
+  const values = [rect.x, rect.y, rect.width, rect.height].map((value) => Number(value.toFixed(2))).join(", ");
+  const normalized = rect.normalized ? ` · normalized ${rect.normalized.map((value) => Number(value.toFixed(3))).join(", ")}` : "";
+  return `${rect.unit}/${rect.origin} [${values}]${normalized}`;
+}
+
 function readRecovery(jobId: string): AuthoringEditorRecoveryV2 | undefined {
   try {
     const raw = window.localStorage.getItem(recoveryKey(jobId));
@@ -123,7 +147,7 @@ function contentNodeEditor(
       case "ordered_list":
         return <ul key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)}>{node.items.map((item) => <li key={item.id}>{contentNodeEditor(item.children, selectedId, onSelect, onTextChange, readOnly)}</li>)}</ul>;
       case "table":
-        return <table key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)}><tbody>{node.rows.map((row) => <tr key={row.id}>{row.cells.map((cell) => <td key={cell.id} colSpan={cell.colSpan} rowSpan={cell.rowSpan}>{contentNodeEditor(cell.children, selectedId, onSelect, onTextChange, readOnly)}</td>)}</tr>)}</tbody></table>;
+        return <table key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)}><tbody>{node.rows.map((row) => <tr key={row.id}>{row.cells.map((cell) => { const Cell = cell.headerScope && cell.headerScope !== "none" ? "th" : "td"; return <Cell key={cell.id} scope={Cell === "th" ? cell.headerScope : undefined} colSpan={cell.colSpan} rowSpan={cell.rowSpan}>{contentNodeEditor(cell.children, selectedId, onSelect, onTextChange, readOnly)}</Cell>; })}</tr>)}</tbody></table>;
       case "figure":
       case "image":
       case "diagram":
@@ -146,20 +170,28 @@ function optionText(option: OptionV2): string {
   return nodeText(option.content);
 }
 
+function RuntimeAnswerControl({ interaction, name, options }: { interaction: AnswerSlotV2["interaction"]; name: string; options: string[] }) {
+  if (interaction === "text" || interaction === "select") return <input className="student-control" type="text" name={name} placeholder="填写答案" />;
+  const inputType = interaction === "checkbox" || interaction === "dragdrop" ? "checkbox" : "radio";
+  return <span className="student-control-group">{options.map((option) => <label key={option}><input type={inputType} name={name} value={option} />{option}</label>)}</span>;
+}
+
 function StudentPreview({ authoring }: { authoring: IeltsAuthoringIRV2 }) {
+  const runtime = buildRuntimeViewModelV2(authoring);
+  const interactionModel = buildReadingInteractionModelV2(runtime);
   return <div className="student-parity-grid">
-    <article className="student-sheet"><p className="student-sheet-label">Passage</p><h3>{authoring.passage?.title}</h3>{contentNodeEditor(authoring.passage?.content, undefined, () => undefined, () => undefined, true)}</article>
-    <article className="student-sheet"><p className="student-sheet-label">Questions</p>{authoring.taskGroups.map((task) => <section key={task.taskId} className="student-task">{contentNodeEditor(task.instructions, undefined, () => undefined, () => undefined, true)}{task.responseGroups.map((group) => <div key={group.responseGroupId} className="student-response">{contentNodeEditor(group.prompt, undefined, () => undefined, () => undefined, true)}{task.optionBank?.options.map((option) => <div key={option.optionId} className="student-option"><span>{option.label}</span>{optionText(option)}</div>)}{group.slotIds.map((slotId) => <div key={slotId} className="student-answer-row"><strong>{authoring.answerSlots[slotId]?.displayLabel}</strong><span className="student-control">选择答案</span></div>)}</div>)}</section>)}</article>
+    <article className="student-sheet"><p className="student-sheet-label">Passage · RuntimeViewModelV2</p><h3>{runtime.title}</h3>{contentNodeEditor(runtime.passage, undefined, () => undefined, () => undefined, true)}</article>
+    <article className="student-sheet"><p className="student-sheet-label">Questions · ReadingInteractionModelV2</p>{runtime.taskGroups.map((task) => <section key={task.taskId} className="student-task">{contentNodeEditor(task.instructions, undefined, () => undefined, () => undefined, true)}{task.stimulus?.length ? <div className="student-stimulus">{contentNodeEditor(task.stimulus, undefined, () => undefined, () => undefined, true)}</div> : null}{task.responseGroups.map((group) => { const interaction = interactionModel.responseGroups[group.responseGroupId]; if (!interaction) return null; const options = interaction.options.map((option) => option.label); return <div key={group.responseGroupId} className="student-response">{contentNodeEditor(group.prompt, undefined, () => undefined, () => undefined, true)}{group.slotIds.map((slotId) => { const slot = interactionModel.slots[slotId]; if (!slot) return null; return <div key={slotId} className="student-answer-row"><strong>{runtime.questionDisplayMap[slotId]}</strong><RuntimeAnswerControl interaction={slot.slot.interaction} name={slotId} options={options.length ? options : slot.slot.constraints?.acceptedOptionLabels ?? []} /></div>; })}</div>; })}</section>)}</article>
   </div>;
 }
 
-function SourceOverlay({ authoring, selectedId }: { authoring: IeltsAuthoringIRV2; selectedId?: string }) {
-  const anchors = selectedId ? sourceAnchorsFor(authoring, selectedId) : [];
+function SourceOverlay({ authoring, selectedId, anchorsOverride }: { authoring: IeltsAuthoringIRV2; selectedId?: string; anchorsOverride?: SourceAnchorV2[] }) {
+  const anchors = anchorsOverride ?? (selectedId ? sourceAnchorsFor(authoring, selectedId) : []);
   const pages = Array.from(new Set(anchors.map((anchor) => anchor.pageIndex))).sort((a, b) => a - b);
   return <section className="source-overlay-panel">
     <div className="inspector-section-heading"><span>源定位</span><small>{selectedId ?? "未选择节点"}</small></div>
     <p className="source-summary">{sourceSummary(anchors)}</p>
-    {pages.length ? pages.map((page) => <div className="source-page-mini" key={page}><span>源页面 {page + 1}</span><div className="source-page-grid">{anchors.filter((anchor) => anchor.pageIndex === page).flatMap((anchor) => anchor.nodeIds).map((nodeId) => <i key={nodeId} title={nodeId}>{nodeId}</i>)}</div></div>) : <div className="source-page-mini source-page-empty">点击题干、选项或问题即可查看源锚点</div>}
+    {pages.length ? pages.map((page) => <div className="source-page-mini" key={page}><span>源页面 {page + 1}</span><div className="source-page-grid source-coordinate-overlay">{anchors.filter((anchor) => anchor.pageIndex === page).map((anchor, index) => { const style = sourceAnchorStyle(anchor); return <div className={"source-anchor-card" + (style ? " has-geometry" : "")} key={`${anchor.sourceFileId}-${index}`} style={style} title={anchor.nodeIds.join("、")}><span>{anchor.nodeIds.join("、")}</span><small>{sourceAnchorGeometry(anchor)}</small></div>; })}</div></div>) : <div className="source-page-mini source-page-empty">点击题干、选项或问题即可查看源锚点</div>}
   </section>;
 }
 
@@ -175,6 +207,12 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
   const [error, setError] = useState<string>();
   const [recoveryCandidate, setRecoveryCandidate] = useState<AuthoringEditorRecoveryV2>();
   const [saving, setSaving] = useState(false);
+  const [undoDepth, setUndoDepth] = useState(0);
+  const [redoDepth, setRedoDepth] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<{ outputDir: string; revision: number }>();
+  const undoRef = useRef<Array<{ patch: AuthoringPatchV2; inverse: AuthoringPatchV2 }>>([]);
+  const redoRef = useRef<Array<{ patch: AuthoringPatchV2; inverse: AuthoringPatchV2 }>>([]);
 
   const load = useCallback(async () => {
     setStatus("loading");
@@ -186,9 +224,12 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
       setDraft(next.authoring);
       setPendingPatches([]);
       pendingRef.current = [];
+      undoRef.current = [];
+      redoRef.current = [];
+      setUndoDepth(0);
+      setRedoDepth(0);
       const recovery = readRecovery(jobId);
-      if (recovery && recovery.baseRevision === next.revision && recovery.patches.length) setRecoveryCandidate(recovery);
-      else if (recovery) window.localStorage.removeItem(recoveryKey(jobId));
+      if (recovery?.patches.length) setRecoveryCandidate(recovery);
       setStatus("clean");
     } catch (caught) {
       setStatus("error");
@@ -198,14 +239,67 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
 
   useEffect(() => { void load(); }, [load]);
 
-  const queuePatch = useCallback((patch: AuthoringPatchV2) => {
-    const nextDraft = draftRef.current ? applyLocalPatches(draftRef.current, [patch]) : undefined;
+  const queuePatch = useCallback((patch: AuthoringPatchV2, recordHistory = true) => {
+    const currentDraft = draftRef.current;
+    const inverse = currentDraft ? inverseAuthoringPatch(currentDraft, patch) : undefined;
+    let nextDraft: IeltsAuthoringIRV2 | undefined;
+    try {
+      nextDraft = currentDraft ? applyLocalPatches(currentDraft, [patch]) : undefined;
+    } catch (caught) {
+      setStatus("error");
+      setError(caught instanceof Error ? caught.message : String(caught));
+      return;
+    }
     draftRef.current = nextDraft;
     setDraft(nextDraft);
     pendingRef.current = pendingRef.current.concat(patch);
     setPendingPatches(pendingRef.current);
+    if (recordHistory && inverse) {
+      undoRef.current = undoRef.current.concat({ patch, inverse });
+      redoRef.current = [];
+      setUndoDepth(undoRef.current.length);
+      setRedoDepth(0);
+    }
     setStatus("dirty");
   }, []);
+
+  const undo = useCallback(() => {
+    const entry = undoRef.current.pop();
+    if (!entry) return;
+    queuePatch(entry.inverse, false);
+    redoRef.current = redoRef.current.concat(entry);
+    setUndoDepth(undoRef.current.length);
+    setRedoDepth(redoRef.current.length);
+  }, [queuePatch]);
+
+  const redo = useCallback(() => {
+    const entry = redoRef.current.pop();
+    if (!entry) return;
+    queuePatch(entry.patch, false);
+    undoRef.current = undoRef.current.concat(entry);
+    setUndoDepth(undoRef.current.length);
+    setRedoDepth(redoRef.current.length);
+  }, [queuePatch]);
+
+  const exportV2 = useCallback(async () => {
+    if (!session || pendingRef.current.length) {
+      setError("请等待自动保存完成后再导出。");
+      return;
+    }
+    setExporting(true);
+    setError(undefined);
+    try {
+      const exportDir = await chooseExportDirectory();
+      if (!exportDir) return;
+      const result = await exportAuthoringV2({ jobId, exportDir, revision: session.revision });
+      setExportResult({ outputDir: result.outputDir, revision: result.revision });
+    } catch (caught) {
+      setStatus("error");
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setExporting(false);
+    }
+  }, [jobId, session]);
 
   const flush = useCallback(async (patches: AuthoringPatchV2[]) => {
     if (!session || !patches.length || saving) return;
@@ -233,6 +327,21 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
   }, [jobId, refresh, saving, session]);
 
   useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key.toLowerCase() === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undo();
+      } else if (event.key.toLowerCase() === "y" || (event.key.toLowerCase() === "z" && event.shiftKey)) {
+        event.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [redo, undo]);
+
+  useEffect(() => {
     if (!session || !pendingPatches.length) return;
     const recovery: AuthoringEditorRecoveryV2 = { schemaVersion: "AuthoringEditorRecoveryV1", jobId, baseRevision: session.revision, updatedAt: new Date().toISOString(), patches: pendingPatches };
     window.localStorage.setItem(recoveryKey(jobId), JSON.stringify(recovery));
@@ -248,14 +357,105 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
     return () => window.clearTimeout(timer);
   }, [selectedId]);
 
+  const selectIssue = useCallback((issue: IeltsAuthoringIRV2["quality"]["issues"][number]) => {
+    const targetId = issue.targetId || issue.issueId;
+    setSelectedId(targetId);
+    window.setTimeout(() => {
+      const target = Array.from(document.querySelectorAll<HTMLElement>("[data-editor-id]"))
+        .find((element) => element.dataset.editorId === targetId);
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+  }, []);
+
   const activeTask = useMemo(() => draft?.taskGroups[0], [draft]);
   const issues = draft?.quality.issues ?? [];
-  const selectedAnchors = draft && selectedId ? sourceAnchorsFor(draft, selectedId) : [];
+  const selectedIssue = selectedId ? issues.find((issue) => issue.targetId === selectedId || issue.issueId === selectedId) : undefined;
+  const selectedAnchors = selectedIssue?.sourceAnchors?.length ? selectedIssue.sourceAnchors : draft && selectedId ? sourceAnchorsFor(draft, selectedId) : [];
+  const staleDerivedQualityCodes = new Set(["ANSWER_KEY_MISSING_SLOT", "RUNTIME_COMPILER_FAILED"]);
+  const unresolvedAnswerIds = draft ? Object.entries(draft.answerKey).filter(([, value]) => value.kind === "unresolved").map(([slotId]) => slotId) : [];
+  const hardFailureCodes = draft?.quality.hardFailures.filter((code) => !staleDerivedQualityCodes.has(code)) ?? [];
+  const blockingIssueIds = issues.filter((issue) => issue.severity === "blocking" && !staleDerivedQualityCodes.has(issue.code) && issue.details?.resolution !== "resolved" && issue.details?.resolution !== "ignored").map((issue) => issue.issueId);
+  const exportBlockers = [
+    ...unresolvedAnswerIds.map((slotId) => "答案位 " + slotId + " 仍未解析"),
+    ...hardFailureCodes.map((code) => "质量硬失败：" + code),
+    ...blockingIssueIds.map((issueId) => "未处理阻断 issue：" + issueId)
+  ];
+  const exportBlocked = exportBlockers.length > 0;
+  const selectedContent = draft && selectedId ? locateContentNode(draft, selectedId)?.node : undefined;
+
+  const runExport = useCallback(() => {
+    if (exportBlocked) {
+      setError("导出已阻断：请先处理下方列出的答案位、质量硬失败或阻断 issue。");
+      return;
+    }
+    void exportV2();
+  }, [exportBlocked, exportV2]);
 
   function editText(node: Extract<ContentNodeV2, { type: "text" }>) {
     const currentText = findEntity(draftRef.current, node.id)?.text;
     const fromLength = typeof currentText === "string" ? Array.from(currentText).length : 0;
     queuePatch({ op: "replaceText", nodeId: node.id, from: 0, to: fromLength, text: node.text });
+  }
+
+  function replaceContent(target: AuthoringContentTargetV2, content: ContentNodeV2[]) {
+    queuePatch({ op: "replaceContent", target, content });
+  }
+
+  function newParagraph(): ContentNodeV2 {
+    const stamp = Date.now().toString(36);
+    return {
+      type: "paragraph",
+      id: `manual-paragraph-${stamp}`,
+      sourceAnchors: [],
+      provenanceStatus: "manual",
+      children: [{
+        type: "text",
+        id: `manual-text-${stamp}`,
+        sourceAnchors: [],
+        provenanceStatus: "manual",
+        text: "新段落"
+      }]
+    };
+  }
+
+  function insertAfterSelected() {
+    if (!draft || !selectedId) return;
+    const location = locateContentNode(draft, selectedId);
+    if (!location) return;
+    queuePatch({ op: "insertNode", target: location.target, parentId: location.parentId, index: location.index + 1, node: newParagraph() });
+  }
+
+  function deleteSelectedNode() {
+    if (!selectedId || !draft || !locateContentNode(draft, selectedId)) return;
+    queuePatch({ op: "deleteNode", nodeId: selectedId });
+    setSelectedId(undefined);
+  }
+
+  function moveSelected(delta: number) {
+    if (!selectedId || !draft) return;
+    const location = locateContentNode(draft, selectedId);
+    if (!location) return;
+    const nextIndex = Math.max(0, location.index + delta);
+    queuePatch({ op: "moveNode", nodeId: selectedId, target: location.target, parentId: location.parentId, index: nextIndex });
+  }
+
+  function updateCrop(nodeId: string, crop: [number, number, number, number] | null) {
+    queuePatch({ op: "cropAsset", nodeId, crop });
+  }
+
+  function updateHotspot(nodeId: string, hotspot: NonNullable<Extract<ContentNodeV2, { type: "figure" | "diagram" }>['hotspots']>[number]) {
+    queuePatch({ op: "setHotspot", nodeId, hotspot });
+  }
+
+  function renderSelectedContentInspector() {
+    if (!selectedContent) return null;
+    const canMove = Boolean(locateContentNode(draft!, selectedContent.id));
+    const media = selectedContent.type === "figure" || selectedContent.type === "image" || selectedContent.type === "diagram" ? selectedContent : undefined;
+    return <>
+      {canMove ? <div className="inspector-edit-actions"><div className="inspector-section-heading"><span>节点操作</span><small>结构化 patch</small></div><div className="button-row compact"><button className="ghost small" onClick={insertAfterSelected}>新增段落</button><button className="ghost small" onClick={() => moveSelected(-1)}>上移</button><button className="ghost small" onClick={() => moveSelected(1)}>下移</button><button className="danger small" onClick={deleteSelectedNode}>删除节点</button></div><p className="inspector-note">新增、删除和移动会写入同一棵 V2 文档树，并可用撤销/重做恢复。</p></div> : null}
+      {media ? <div className="inspector-media-editor"><div className="inspector-section-heading"><span>资源 / 裁剪</span><small>{media.assetId}</small></div>{media.type === "image" ? <label className="inspector-field">替代文字<input value={media.altText ?? ""} onChange={(event) => queuePatch({ op: "setNodeAttrs", nodeId: media.id, attrs: { altText: event.target.value } })} /></label> : null}<div className="crop-grid">{(media.crop ?? [0, 0, 1, 1]).map((value, index) => <label key={index}>{["x", "y", "宽", "高"][index]}<input type="number" min={0} max={1} step={0.01} value={value} onChange={(event) => { const next = [...(media.crop ?? [0, 0, 1, 1])] as [number, number, number, number]; next[index] = Number(event.target.value); updateCrop(media.id, next); }} /></label>)}</div><button type="button" className="ghost small" onClick={() => updateCrop(media.id, null)}>恢复完整资源</button></div> : null}
+      {media && (media.type === "figure" || media.type === "diagram") ? <div className="inspector-hotspot-editor"><div className="inspector-section-heading"><span>热点 / 答案位</span><small>{media.hotspots?.length ?? 0} 个</small></div><div className="hotspot-editor-board">{(media.hotspots ?? []).map((hotspot) => <button key={hotspot.hotspotId} type="button" draggable className="hotspot-editor-chip" style={{ left: `${hotspot.normalizedRect[0] * 100}%`, top: `${hotspot.normalizedRect[1] * 100}%`, width: `${hotspot.normalizedRect[2] * 100}%`, height: `${hotspot.normalizedRect[3] * 100}%` }} onDragEnd={(event) => { const board = event.currentTarget.parentElement?.getBoundingClientRect(); if (!board) return; const x = Math.max(0, Math.min(1 - hotspot.normalizedRect[2], (event.clientX - board.left) / board.width)); const y = Math.max(0, Math.min(1 - hotspot.normalizedRect[3], (event.clientY - board.top) / board.height)); updateHotspot(media.id, { ...hotspot, normalizedRect: [x, y, hotspot.normalizedRect[2], hotspot.normalizedRect[3]] }); }}>{hotspot.slotId}</button>)}</div>{(media.hotspots ?? []).map((hotspot) => <div className="hotspot-row" key={hotspot.hotspotId}><strong>{hotspot.slotId}</strong>{hotspot.normalizedRect.map((value, index) => <input key={index} type="number" min={0} max={1} step={0.01} value={value} aria-label={`${hotspot.slotId} ${["x", "y", "宽", "高"][index]}`} onChange={(event) => { const rect = [...hotspot.normalizedRect] as [number, number, number, number]; rect[index] = Number(event.target.value); updateHotspot(media.id, { ...hotspot, normalizedRect: rect }); }} />)}<button type="button" className="ghost small" onClick={() => queuePatch({ op: "removeHotspot", nodeId: media.id, hotspotId: hotspot.hotspotId })}>移除</button></div>)}<button type="button" className="ghost small" onClick={() => { const slot = Object.values(draft?.answerSlots ?? {})[0]; if (!slot) return; updateHotspot(media.id, { hotspotId: `${media.id}-hotspot-${(media.hotspots?.length ?? 0) + 1}`, slotId: slot.slotId, normalizedRect: [0.1, 0.1, 0.25, 0.15] }); }}>新增热点</button></div> : null}
+    </>;
   }
 
   function toggleAnswer(slot: AnswerSlotV2, label: string) {
@@ -275,8 +475,8 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
     const bank = task.optionBank;
     return <section className={"structured-response-card " + (selectedId === group.responseGroupId ? "selected" : "")} data-editor-id={group.responseGroupId} onClick={() => setSelectedId(group.responseGroupId)}>
       <div className="structured-card-heading"><div><span className="node-kicker">Response group</span><h4>{group.slotIds.map((slotId) => draft?.answerSlots[slotId]?.displayLabel).join("、")} · 共享题干</h4></div><small>{group.allowOptionReuse ? "选项可复用" : "选项不可复用"}</small></div>
-      <div className="shared-prompt"><span className="node-kicker">Prompt</span>{contentNodeEditor(group.prompt, selectedId, setSelectedId, editText)}</div>
-      {bank ? <div className="option-bank-editor" data-editor-id={bank.optionBankId}><div className="option-bank-heading"><strong>{nodeText(bank.title)}</strong><small>{bank.options.length} 个公共选项</small></div>{bank.options.map((option) => <div className="option-editor-row" key={option.optionId} data-editor-id={option.optionId}><b>{option.label}</b><div>{contentNodeEditor(option.content, selectedId, setSelectedId, editText)}</div></div>)}</div> : null}
+      <div className="shared-prompt"><span className="node-kicker">Prompt</span><AuthoringTiptapEditor nodes={group.prompt ?? []} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "responsePrompt", responseGroupId: group.responseGroupId }, nodes)} ariaLabel="共享题干编辑器" /></div>
+      {bank ? <div className="option-bank-editor" data-editor-id={bank.optionBankId}><div className="option-bank-heading"><strong>{nodeText(bank.title)}</strong><small>{bank.options.length} 个公共选项</small></div>{bank.options.map((option) => <div className="option-editor-row" key={option.optionId} data-editor-id={option.optionId}><b>{option.label}</b><AuthoringTiptapEditor nodes={option.content} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "option", optionId: option.optionId }, nodes)} ariaLabel={`选项 ${option.label} 编辑器`} /></div>)}</div> : null}
       <div className="slot-editor-grid">{group.slotIds.map((slotId) => {
         const slot = draft?.answerSlots[slotId];
         if (!slot) return null;
@@ -295,7 +495,8 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
     return <section className="structured-task-card" data-editor-id={task.taskId}>
       <div className="structured-card-heading"><div><span className="node-kicker">Task group</span><h3>{expressionLabel(task)}</h3></div><span className={"editor-review-state " + task.reviewState}>{task.reviewState === "confirmed" ? "已确认" : "待确认"}</span></div>
       <div className="structured-task-controls"><label>题型<select value={task.taskType} onChange={(event) => queuePatch({ op: "setTaskType", taskId: task.taskId, taskType: event.target.value as TaskTypeV2 })}>{TASK_TYPES.map((type) => <option key={type} value={type}>{taskTypeLabel(type)}</option>)}</select></label><div className="semantic-rule"><span>选择规则</span><strong>{group?.cardinality.exact ?? group?.cardinality.max ?? 1} 个答案 · {group?.assignment === "unordered_set" ? "无序集合" : "按序"}</strong></div></div>
-      <div className="structured-instruction"><span className="node-kicker">Instruction</span>{contentNodeEditor(task.instructions, selectedId, setSelectedId, editText)}</div>
+      <div className="structured-instruction"><span className="node-kicker">Instruction</span><AuthoringTiptapEditor nodes={task.instructions} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "taskInstructions", taskId: task.taskId }, nodes)} ariaLabel="题组说明编辑器" /></div>
+      {task.stimulus?.length ? <div className="structured-stimulus"><span className="node-kicker">Stimulus</span><AuthoringTiptapEditor nodes={task.stimulus} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "taskStimulus", taskId: task.taskId }, nodes)} ariaLabel="题组刺激材料编辑器" /></div> : null}
       {group ? renderResponseGroup(task, group) : <div className="empty">当前题组没有 response group。</div>}
     </section>;
   }
@@ -304,15 +505,17 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
   if (!draft || !session) return <section className="page-enter phase5-empty"><p className="eyebrow">Phase 5 · 结构化编辑器</p><h2>当前任务还没有 V2 编辑稿</h2><p>{error ?? "需要先生成 authoring-ir-v2.shadow.json，或从 Phase 5 架构 fixture 开始。"}</p><div className="button-row"><button className="ghost" onClick={() => go("/jobs")}>返回任务列表</button><button className="primary" onClick={() => go("/phase5")}>打开 Phase 5 fixture</button></div></section>;
 
   return <section className="page-enter phase5-editor" data-testid="structured-authoring-editor-v2">
-    <header className="phase5-editor-header"><div><p className="eyebrow">Phase 5 · Schema-driven authoring</p><h2>{draft.exam.title}</h2><p>编辑结构化题源；学生预览、答案位和发布输入都来自同一棵文档树。</p></div><div className="phase5-header-actions"><span className={"editor-save-state " + status}>{status === "saving" ? "自动保存中" : status === "dirty" ? "有未保存修改" : status === "saved" ? "已保存" : "revision " + session.revision}</span><button className="ghost" onClick={() => go(jobId === "phase5-editor-fixture" ? "/phase5" : "/jobs/" + jobId + "/preview")}>退出编辑</button><button className="primary" onClick={() => setViewMode(viewMode === "edit" ? "preview" : "edit")}>{viewMode === "edit" ? "学生端预览" : "返回编辑"}</button></div></header>
-    {recoveryCandidate ? <div className="info-box phase5-recovery-banner"><strong>发现未提交的本地修改</strong><p>浏览器关闭前留下 {recoveryCandidate.patches.length} 个 patch，基于 revision {recoveryCandidate.baseRevision}。</p><div className="button-row"><button className="primary small" onClick={() => { const recovered = applyLocalPatches(draft, recoveryCandidate.patches); draftRef.current = recovered; setDraft(recovered); pendingRef.current = recoveryCandidate.patches; setPendingPatches(recoveryCandidate.patches); setRecoveryCandidate(undefined); }}>恢复修改</button><button className="ghost small" onClick={() => { window.localStorage.removeItem(recoveryKey(jobId)); setRecoveryCandidate(undefined); }}>放弃</button></div></div> : null}
+    <header className="phase5-editor-header"><div><p className="eyebrow">Phase 5 · Schema-driven authoring</p><h2>{draft.exam.title}</h2><p>编辑结构化题源；学生预览、答案位和发布输入都来自同一棵文档树。</p></div><div className="phase5-header-actions"><span className={"editor-save-state " + status}>{status === "saving" ? "自动保存中" : status === "dirty" ? "有未保存修改" : status === "saved" ? "已保存" : "revision " + session.revision}</span><button className="ghost small" disabled={!undoDepth} onClick={undo}>撤销 {undoDepth ? `(${undoDepth})` : ""}</button><button className="ghost small" disabled={!redoDepth} onClick={redo}>重做 {redoDepth ? `(${redoDepth})` : ""}</button><button className="ghost" disabled={exporting || Boolean(pendingPatches.length) || exportBlocked} title={exportBlocked ? "请先处理导出阻断项" : undefined} onClick={runExport}>{exporting ? "导出中…" : "导出 V2 包"}</button><button className="ghost" onClick={() => go(jobId === "phase5-editor-fixture" ? "/phase5" : "/jobs/" + jobId + "/preview")}>退出编辑</button><button className="primary" onClick={() => setViewMode(viewMode === "edit" ? "preview" : "edit")}>{viewMode === "edit" ? "学生端预览" : "返回编辑"}</button></div></header>
+    {exportResult ? <div className="info-box phase5-recovery-banner"><strong>V2 导出完成 · revision {exportResult.revision}</strong><p>学生预览与导出使用同一份 authoring V2：{exportResult.outputDir}</p><button className="ghost small" onClick={() => setExportResult(undefined)}>关闭</button></div> : null}
+    {recoveryCandidate ? <div className={"info-box phase5-recovery-banner " + (recoveryCandidate.baseRevision === session.revision ? "" : "warning-box")}><strong>{recoveryCandidate.baseRevision === session.revision ? "发现未提交的本地修改" : "发现与服务器 revision 冲突的本地修改"}</strong><p>浏览器关闭前留下 {recoveryCandidate.patches.length} 个 patch，基于 revision {recoveryCandidate.baseRevision}；当前服务器 revision 为 {session.revision}。恢复会尝试在当前版本上重放，失败时不会覆盖服务器稿。</p><div className="button-row"><button className="primary small" onClick={() => { try { const recovered = applyLocalPatches(draft, recoveryCandidate.patches); draftRef.current = recovered; setDraft(recovered); pendingRef.current = recoveryCandidate.patches; setPendingPatches(recoveryCandidate.patches); setRecoveryCandidate(undefined); } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); } }}>恢复并尝试重放</button><button className="ghost small" onClick={() => { window.localStorage.removeItem(recoveryKey(jobId)); setRecoveryCandidate(undefined); }}>放弃</button></div></div> : null}
     {status === "conflict" ? <div className="warning-box phase5-recovery-banner"><strong>保存冲突：服务器已有新 revision</strong><p>为避免覆盖另一窗口的修改，当前本地 patch 已保留。请重新加载后手工合并。</p><div className="button-row"><button className="primary small" onClick={() => void load()}>重新加载服务器版本</button></div></div> : null}
     {error && status !== "conflict" ? <div className="warning-box phase5-recovery-banner"><strong>编辑器提示</strong><p>{error}</p></div> : null}
+    <div className={"phase5-export-blockers " + (exportBlocked ? "blocked" : "ready")} data-testid="phase5-export-blockers"><strong>{exportBlocked ? "导出已阻断" : "导出检查通过"}</strong>{exportBlocked ? <ul>{exportBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul> : <p>答案位、质量硬失败和阻断 issue 均满足 V2 发布门槛。</p>}</div>
     <div className="phase5-editor-toolbar"><div className="phase5-stat"><span>Task groups</span><strong>{draft.taskGroups.length}</strong></div><div className="phase5-stat"><span>Answer slots</span><strong>{Object.keys(draft.answerSlots).length}</strong></div><div className="phase5-stat"><span>Issues</span><strong>{issues.length}</strong></div><div className="phase5-stat"><span>Source coverage</span><strong>{Math.round(draft.quality.sourceCoverage * 100)}%</strong></div><small>来源：{session.source} · V1 文件保持可读</small></div>
     {viewMode === "preview" ? <StudentPreview authoring={draft} /> : <div className="phase5-editor-grid">
-      <aside className="phase5-outline"><div className="inspector-section-heading"><span>文档结构</span><small>点击定位</small></div><button className={"outline-row " + (selectedId === draft.passage?.content[0]?.id ? "active" : "")} onClick={() => setSelectedId(draft.passage?.content[0]?.id)}><strong>Passage</strong><small>{draft.passage?.content.length ?? 0} 个内容节点</small></button>{draft.taskGroups.map((task) => <div key={task.taskId} className="outline-group"><button className={"outline-row " + (selectedId === task.taskId ? "active" : "")} onClick={() => setSelectedId(task.taskId)}><strong>{expressionLabel(task)}</strong><small>{taskTypeLabel(task.taskType)}</small></button>{task.responseGroups.map((group) => <button key={group.responseGroupId} className={"outline-row nested " + (selectedId === group.responseGroupId ? "active" : "")} onClick={() => setSelectedId(group.responseGroupId)}>共享 response group <small>{group.slotIds.map((slotId) => draft.answerSlots[slotId]?.displayLabel).join("、")}</small></button>)}{task.optionBank ? <button className={"outline-row nested " + (selectedId === task.optionBank.optionBankId ? "active" : "")} onClick={() => setSelectedId(task.optionBank?.optionBankId)}>公共选项池 <small>{task.optionBank.options.length} 项</small></button> : null}</div>)}<div className="issue-rail"><div className="inspector-section-heading"><span>需要确认</span><small>{issues.length} 项</small></div>{issues.map((issue) => <button key={issue.issueId} className={"issue-rail-item " + issue.severity} onClick={() => setSelectedId(issue.targetId)}><strong>{issue.code}</strong><span>{issue.message}</span></button>)}</div></aside>
-      <main className="phase5-editor-canvas"><article className="structured-paper" data-editor-id={draft.passage?.content[0]?.id}><div className="structured-paper-label">PASSAGE · 可编辑节点树</div><h3>{draft.passage?.title}</h3>{contentNodeEditor(draft.passage?.content, selectedId, setSelectedId, editText)}</article>{activeTask ? renderTaskEditor(activeTask) : <div className="empty">暂无题组。</div>}</main>
-      <aside className="phase5-inspector"><div className="inspector-section-heading"><span>节点检查器</span><small>{selectedId ?? "未选择"}</small></div>{selectedId ? <><p className="selected-node-name">{String(findEntity(draft, selectedId)?.type ?? "semantic entity")}</p><p className="source-summary">{sourceSummary(selectedAnchors)}</p><dl className="phase5-detail-list"><dt>节点 / 实体</dt><dd>{selectedId}</dd><dt>来源模式</dt><dd>{selectedAnchors[0]?.extractionMode ?? "unknown"}</dd><dt>来源节点</dt><dd>{selectedAnchors.flatMap((anchor) => anchor.nodeIds).join("、") || "—"}</dd></dl></> : <p className="empty">从左侧结构、题干或选项开始。</p>}<SourceOverlay authoring={draft} selectedId={selectedId} /><div className="inspector-section-heading"><span>编辑协议</span><small>V2 patch</small></div><p className="inspector-note">文字输入会在 650ms 后以 replaceText patch 保存；服务器按 base revision 拒绝覆盖并发修改。</p></aside>
+      <aside className="phase5-outline"><div className="inspector-section-heading"><span>文档结构</span><small>点击定位</small></div><button className={"outline-row " + (selectedId === draft.passage?.content[0]?.id ? "active" : "")} onClick={() => setSelectedId(draft.passage?.content[0]?.id)}><strong>Passage</strong><small>{draft.passage?.content.length ?? 0} 个内容节点</small></button>{draft.taskGroups.map((task) => <div key={task.taskId} className="outline-group"><button className={"outline-row " + (selectedId === task.taskId ? "active" : "")} onClick={() => setSelectedId(task.taskId)}><strong>{expressionLabel(task)}</strong><small>{taskTypeLabel(task.taskType)}</small></button>{task.responseGroups.map((group) => <button key={group.responseGroupId} className={"outline-row nested " + (selectedId === group.responseGroupId ? "active" : "")} onClick={() => setSelectedId(group.responseGroupId)}>共享 response group <small>{group.slotIds.map((slotId) => draft.answerSlots[slotId]?.displayLabel).join("、")}</small></button>)}{task.optionBank ? <button className={"outline-row nested " + (selectedId === task.optionBank.optionBankId ? "active" : "")} onClick={() => setSelectedId(task.optionBank?.optionBankId)}>公共选项池 <small>{task.optionBank.options.length} 项</small></button> : null}</div>)}<div className="issue-rail"><div className="inspector-section-heading"><span>需要确认</span><small>{issues.length} 项</small></div>{issues.map((issue) => <button key={issue.issueId} className={"issue-rail-item " + issue.severity} onClick={() => selectIssue(issue)}><strong>{issue.code}</strong><span>{issue.message}</span></button>)}</div></aside>
+      <main className="phase5-editor-canvas"><article className="structured-paper" data-editor-id={draft.passage?.content[0]?.id}><div className="structured-paper-label">PASSAGE · 可编辑节点树 · Tiptap schema</div><h3>{draft.passage?.title}</h3><AuthoringTiptapEditor nodes={draft.passage?.content ?? []} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "passage" }, nodes)} ariaLabel="阅读文章编辑器" /></article>{activeTask ? renderTaskEditor(activeTask) : <div className="empty">暂无题组。</div>}</main>
+      <aside className="phase5-inspector"><div className="inspector-section-heading"><span>节点检查器</span><small>{selectedId ?? "未选择"}</small></div>{selectedId ? <><p className="selected-node-name">{String(findEntity(draft, selectedId)?.type ?? "semantic entity")}</p><p className="source-summary">{sourceSummary(selectedAnchors)}</p><dl className="phase5-detail-list"><dt>节点 / 实体</dt><dd>{selectedId}</dd><dt>来源模式</dt><dd>{selectedAnchors[0]?.extractionMode ?? "unknown"}</dd><dt>来源节点</dt><dd>{selectedAnchors.flatMap((anchor) => anchor.nodeIds).join("、") || "—"}</dd></dl>{renderSelectedContentInspector()}</> : <p className="empty">从左侧结构、题干或选项开始。</p>}<SourceOverlay authoring={draft} selectedId={selectedId} anchorsOverride={selectedAnchors} /><div className="inspector-section-heading"><span>编辑协议</span><small>V2 patch</small></div><p className="inspector-note">Tiptap 事务会映射成 replaceContent；节点操作、表格、资源裁剪和热点均以 append-only revision 保存。服务器按 base revision 拒绝并发覆盖。</p></aside>
     </div>}
   </section>;
 }

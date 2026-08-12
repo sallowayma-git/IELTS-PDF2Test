@@ -189,6 +189,8 @@ pub struct FigureNodeV2 {
     pub caption: Option<Vec<ContentNodeV2>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hotspots: Option<Vec<DiagramHotspotV2>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<[f64; 4]>,
     pub display: ContentDisplayV2,
 }
 
@@ -200,6 +202,8 @@ pub struct ImageNodeV2 {
     pub asset_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alt_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<[f64; 4]>,
     pub display: ContentDisplayV2,
 }
 
@@ -241,6 +245,8 @@ pub struct DiagramNodeV2 {
     pub asset_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hotspots: Option<Vec<DiagramHotspotV2>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<[f64; 4]>,
     pub display: ContentDisplayV2,
 }
 

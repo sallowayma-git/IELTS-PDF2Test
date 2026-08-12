@@ -4,7 +4,9 @@ use authoring_commands::{
     parse_document_core, render_group_html_core, resolve_source_review_core, run_rule_split_core,
     save_split_adjustments_core, update_authoring_ir_core,
 };
-use authoring_v2_commands::{apply_authoring_v2_patches_core, get_authoring_v2_core};
+use authoring_v2_commands::{
+    apply_authoring_v2_patches_core, export_authoring_v2_core, get_authoring_v2_core,
+};
 use auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
 use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
@@ -1009,6 +1011,12 @@ async fn apply_authoring_v2_patches(input: Value, app: AppHandle) -> CommandResu
 }
 
 #[tauri::command]
+async fn export_authoring_v2(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    export_authoring_v2_core(&root, input)
+}
+
+#[tauri::command]
 async fn render_group_html(
     job_id: String,
     group_id: String,
@@ -1376,6 +1384,7 @@ pub fn run() {
             update_authoring_ir,
             get_authoring_v2,
             apply_authoring_v2_patches,
+            export_authoring_v2,
             render_group_html,
             list_llm_profiles,
             run_environment_preflight,

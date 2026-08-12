@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { createImportJob, importSourceFile, runAutoPipeline } from "../api/tauriCommands";
+import { createImportJob, getAuthoringV2, importSourceFile, runAutoPipeline } from "../api/tauriCommands";
 import { choosePdfFolderSources, chooseSourceFile, chooseSourceFiles, type PickedPath } from "../api/desktopDialogs";
 import { go } from "../app/router";
 import type { AutoPipelineReport, Frequency, PassageCategory } from "../types";
 import { jobStatusLabel, workflowStepLabel } from "../utils/displayLabels";
 import { enqueueBackgroundCloudReview, startBackgroundCloudReviewScheduler } from "./UnifiedPreview";
+import { isPhase5EditorEnabled } from "../config/featureFlags";
 
 type BusyStage = "idle" | "creating" | "uploading" | "processing";
 
@@ -179,7 +180,19 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
       }
       setAutoReport(latestReport);
       refresh();
-      if (firstJobId) go(`/jobs/${firstJobId}/${firstRoute}`);
+      if (firstJobId) {
+        let destination: "preview" | "document" | "groups" | "llm-review" | "authoring-v2" = firstRoute;
+        if (isPhase5EditorEnabled()) {
+          try {
+            await getAuthoringV2(firstJobId);
+            destination = "authoring-v2";
+          } catch {
+            // Keep the legacy preview as a safe fallback when the controlled
+            // V2 shadow rollout is not enabled for this packaged runtime.
+          }
+        }
+        go(`/jobs/${firstJobId}/${destination}`);
+      }
     } catch (caught) {
       setError(formatImportError(caught));
     } finally {

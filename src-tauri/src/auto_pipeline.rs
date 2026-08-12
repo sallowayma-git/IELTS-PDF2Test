@@ -5,8 +5,13 @@ use crate::{
     },
     authoring_review::refresh_authoring_review_state,
     cleanup::minimize_process_artifacts_after_authoring,
-    environment::quality_gate_v2_enabled,
-    ielts_grammar::build_authoring_v2_shadow,
+    environment::{authoring_v2_shadow_enabled, quality_gate_v2_enabled},
+    ielts_grammar::{
+        build_authoring_v2_shadow, write_authoring_v2_shadow,
+        SHADOW_ARTIFACT_FILE as AUTHORING_V2_SHADOW_ARTIFACT_FILE,
+        SHADOW_COMPARE_FILE as AUTHORING_V2_SHADOW_COMPARE_FILE,
+        SHADOW_ERROR_FILE as AUTHORING_V2_SHADOW_ERROR_FILE,
+    },
     job_store::{load_job, update_job},
     llm_gateway::run_llm_gateway,
     llm_profiles::{find_profile, load_llm_api_key, load_profiles},
@@ -35,6 +40,7 @@ use crate::{
 };
 use chrono::Utc;
 use serde_json::{json, Value};
+use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -259,6 +265,48 @@ fn current_physical_shadow(dir: &Path, job: &ImportJob) -> Option<Value> {
         .ok()
         .flatten()
         .filter(|shadow| physical_shadow_matches_source(shadow, job))
+}
+
+fn write_pipeline_authoring_v2_shadow(
+    dir: &Path,
+    job: &ImportJob,
+    authoring: &Value,
+    split: &Value,
+    document: Option<&Value>,
+    physical_shadow: Option<&Value>,
+) -> CommandResult<()> {
+    if !authoring_v2_shadow_enabled() {
+        return Ok(());
+    }
+    let shadow_path = dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE);
+    let error_path = dir.join(AUTHORING_V2_SHADOW_ERROR_FILE);
+    match write_authoring_v2_shadow(
+        dir,
+        job,
+        authoring,
+        split,
+        document,
+        physical_shadow,
+        &shadow_path,
+    ) {
+        Ok(_) => {
+            let _ = fs::remove_file(error_path);
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&shadow_path);
+            let _ = fs::remove_file(dir.join(AUTHORING_V2_SHADOW_COMPARE_FILE));
+            write_json(
+                &error_path,
+                &json!({
+                    "schemaVersion": "IeltsAuthoringIRV2ShadowErrorV1",
+                    "jobId": job.job_id,
+                    "error": error,
+                    "recordedAt": Utc::now().to_rfc3339()
+                }),
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn legacy_has_reliable_question_groups(split: &Value) -> bool {
@@ -1672,6 +1720,14 @@ where
         );
     }
     write_json(&dir.join("authoring-ir.json"), &ir)?;
+    write_pipeline_authoring_v2_shadow(
+        &dir,
+        &job,
+        &ir,
+        &split,
+        doc.as_ref(),
+        physical_shadow.as_ref(),
+    )?;
 
     let report = validate_for_runtime_gate(root, &job_id, &ir, false)?;
     let report_passed = report

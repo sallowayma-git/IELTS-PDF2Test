@@ -41,7 +41,8 @@ import type {
   LibraryMetaPatch,
   LibraryStats,
   AuthoringEditorSessionV2,
-  ApplyAuthoringV2PatchesInput
+  ApplyAuthoringV2PatchesInput,
+  AuthoringV2ExportResultV2
 } from "../types";
 import { devFallbackInvoke, type JobDetail } from "../services/devFallbackBackend";
 
@@ -142,6 +143,10 @@ export async function getAuthoringV2(jobId: string): Promise<AuthoringEditorSess
 
 export async function applyAuthoringV2Patches(input: ApplyAuthoringV2PatchesInput): Promise<AuthoringEditorSessionV2> {
   return command("apply_authoring_v2_patches", { input });
+}
+
+export async function exportAuthoringV2(input: { jobId: string; exportDir: string; revision?: number }): Promise<AuthoringV2ExportResultV2> {
+  return command("export_authoring_v2", { input });
 }
 
 export async function renderGroupHtml(jobId: string, groupId: string): Promise<{ groupId: string; bodyHtml: string }> {

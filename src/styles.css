@@ -971,6 +971,41 @@ textarea.structured-node {
   flex-wrap: wrap;
   margin-top: 8px;
 }
+.source-coordinate-overlay {
+  position: relative;
+  min-height: 104px;
+  display: block;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(255,255,255,.72), rgba(247,236,214,.72));
+}
+.source-anchor-card {
+  position: relative;
+  min-height: 20px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.source-anchor-card.has-geometry {
+  position: absolute;
+  min-width: 24px;
+  min-height: 16px;
+  border: 2px solid rgba(199,120,56,.86);
+  border-radius: 4px;
+  background: rgba(199,120,56,.16);
+  pointer-events: none;
+}
+.source-anchor-card.has-geometry span {
+  position: absolute;
+  top: -16px;
+  left: 0;
+  white-space: nowrap;
+  font-size: 9px;
+}
+.source-anchor-card small {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
 .source-page-grid i {
   display: inline-block;
   width: 18px;
@@ -1042,6 +1077,165 @@ textarea.structured-node {
   color: var(--muted);
   background: white;
   font-size: 12px;
+}
+.tiptap-authoring-shell {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.tiptap-authoring-shell.is-loading {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.tiptap-authoring-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255,255,255,.78);
+}
+.tiptap-authoring-toolbar button {
+  padding: 4px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  background: white;
+  font-size: 11px;
+}
+.tiptap-authoring-toolbar button.active,
+.tiptap-authoring-toolbar button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(31,138,112,.08);
+}
+.tiptap-authoring-shell .ProseMirror {
+  min-height: 34px;
+  outline: none;
+}
+.tiptap-authoring-shell .ProseMirror > [data-authoring-block] {
+  margin: 5px 0;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+.tiptap-authoring-shell .ProseMirror > [data-authoring-block]:hover,
+.tiptap-authoring-shell .ProseMirror > [data-authoring-block].ProseMirror-selectednode {
+  border-color: rgba(31,138,112,.24);
+  background: rgba(31,138,112,.05);
+}
+.tiptap-authoring-shell .ProseMirror p,
+.tiptap-authoring-shell .ProseMirror h1,
+.tiptap-authoring-shell .ProseMirror h2,
+.tiptap-authoring-shell .ProseMirror h3,
+.tiptap-authoring-shell .ProseMirror h4,
+.tiptap-authoring-shell .ProseMirror h5,
+.tiptap-authoring-shell .ProseMirror h6 {
+  margin: 3px 0;
+}
+.tiptap-answer-slot {
+  display: inline-flex;
+  align-items: center;
+  min-width: 30px;
+  padding: 2px 6px;
+  border: 1px solid rgba(31,138,112,.55);
+  border-radius: 6px;
+  color: var(--accent);
+  background: rgba(31,138,112,.11);
+  font-weight: 800;
+}
+.tiptap-media {
+  min-height: 52px;
+  margin: 6px 0;
+  padding: 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: rgba(255,250,240,.78);
+}
+.tiptap-media-label,
+.tiptap-flowchart {
+  color: var(--muted);
+  font-size: 12px;
+}
+.inspector-edit-actions,
+.inspector-media-editor,
+.inspector-hotspot-editor {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.button-row.compact {
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.button-row button.small,
+.phase5-header-actions button.small {
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.button-row button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+.danger {
+  border: 1px solid rgba(184,75,63,.42);
+  border-radius: 8px;
+  color: var(--danger);
+  background: rgba(184,75,63,.08);
+}
+.inspector-field,
+.crop-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.inspector-field input,
+.crop-grid input,
+.hotspot-row input {
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: white;
+}
+.crop-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+.hotspot-editor-board {
+  position: relative;
+  min-height: 130px;
+  overflow: hidden;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(31,138,112,.09), rgba(199,120,56,.09));
+}
+.hotspot-editor-chip {
+  position: absolute;
+  min-width: 20px;
+  padding: 2px;
+  overflow: hidden;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  background: rgba(31,138,112,.22);
+  font-size: 10px;
+  cursor: grab;
+}
+.hotspot-row {
+  display: grid;
+  grid-template-columns: 44px repeat(4, minmax(0, 1fr)) auto;
+  gap: 4px;
+  align-items: center;
+}
+.hotspot-row strong {
+  color: var(--accent);
+  font-size: 11px;
 }
 
 @media (max-width: 1180px) {
