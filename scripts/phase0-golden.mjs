@@ -43,6 +43,8 @@ if (command === "verify") {
   runV1CliFreshnessSelfTest();
 } else if (command === "self-test-feature-flags") {
   runFeatureFlagSelfTest();
+} else if (command === "self-test-diff-summary") {
+  runDifferenceSummarySelfTest();
 } else {
   console.error(`[phase0-golden] unknown command: ${command}`);
   printUsageAndExit(2);
@@ -771,9 +773,73 @@ function validateActualV1Baseline(fixture, sourcePath, baseline, errors, cliInsp
     return;
   }
   const actual = normalizePayload(readJson(outputPath));
-  if (!sameJsonValue(canonicalize(actual), canonicalize(normalizePayload(baseline.payload)))) {
-    errors.push(`V1 baseline drift: ${fixture.fixtureId}`);
+  const expected = normalizePayload(baseline.payload);
+  if (!sameJsonValue(canonicalize(actual), canonicalize(expected))) {
+    const summary = summarizeJsonDifferences(expected, actual);
+    errors.push(
+      `V1 baseline drift: ${fixture.fixtureId}: ${summary.total} difference(s); `
+      + `sections=${JSON.stringify(summary.sections)}; sample=${summary.sample.join(", ")}`
+    );
   }
+}
+
+function summarizeJsonDifferences(expected, actual, sampleLimit = 5) {
+  const paths = [];
+
+  function visit(left, right, currentPath) {
+    if (sameJsonValue(left, right)) return;
+    if (Array.isArray(left) && Array.isArray(right)) {
+      if (left.length !== right.length) paths.push(`${currentPath}.length`);
+      const length = Math.max(left.length, right.length);
+      for (let index = 0; index < length; index += 1) {
+        visit(left[index], right[index], `${currentPath}[${index}]`);
+      }
+      return;
+    }
+    if (left && right && typeof left === "object" && typeof right === "object") {
+      const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+      for (const key of [...keys].sort()) {
+        visit(left[key], right[key], currentPath ? `${currentPath}.${key}` : key);
+      }
+      return;
+    }
+    paths.push(currentPath || "/");
+  }
+
+  visit(expected, actual, "");
+  const sections = {};
+  for (const differencePath of paths) {
+    const section = differencePath.split(/[.[\]]/, 1)[0] || "/";
+    sections[section] = (sections[section] ?? 0) + 1;
+  }
+  return { total: paths.length, sections, sample: paths.slice(0, sampleLimit) };
+}
+
+function runDifferenceSummarySelfTest(options = {}) {
+  const summary = summarizeJsonDifferences(
+    {
+      authoringIr: { groups: [{ kind: "matching", questions: [1, 2] }] },
+      documentIr: { pages: [{ width: 595 }] },
+      readingSource: { answerKey: { q1: "" } }
+    },
+    {
+      authoringIr: { groups: [{ kind: "multiple_choice", questions: [1] }] },
+      documentIr: { pages: [{ width: 612 }] },
+      readingSource: { answerKey: {} }
+    }
+  );
+  const expectedSections = { authoringIr: 3, documentIr: 1, readingSource: 1 };
+  if (summary.total !== 5 || !sameJsonValue(summary.sections, expectedSections)) {
+    throw new Error(`difference summary self-test failed: ${JSON.stringify(summary)}`);
+  }
+  const report = {
+    schemaVersion: "Phase0DifferenceSummarySelfTestV1",
+    status: "passed",
+    differenceCount: summary.total,
+    sections: summary.sections
+  };
+  if (!options.quiet) console.log(JSON.stringify(report, null, 2));
+  return report;
 }
 
 function inspectV1ComparisonCli(errors) {

@@ -15,7 +15,12 @@ const localSmokeFixtures = [
   {
     id: "demanding-reading-passage-3",
     pdfPath: path.join(repoRoot, "fixtures", "parser", "demanding-reading-passage-3.pdf"),
-    expect: { validatorPass: true, minGroups: 1, minAnswers: 1 }
+    expect: {
+      validatorPass: true,
+      minGroups: 1,
+      maxAnswers: 0,
+      manualReviewAuditIssue: /no answer key detected|answers must be entered manually/i
+    }
   },
   {
     id: "no-text-manual-review",
@@ -215,13 +220,25 @@ function runSmokeRegression({ cli: cliPath, outDir: outputDir, seed: seedValue }
     fs.writeFileSync(readingSourcePath, JSON.stringify(readingSource, null, 2));
     const validator = validateReadingSource(readingSourcePath);
     const parserWarnings = generation.payload?.documentIr?.parser?.warnings ?? [];
+    const authoringAuditIssues = generation.payload?.authoringIr?.audit?.issues ?? [];
     const groupCount = readingSource?.questionGroups?.length ?? 0;
     const answerCount = Object.keys(readingSource?.answerKey ?? {}).length;
-    const manualReviewExpected = Boolean(fixture.expect.manualReviewWarning);
-    const manualReviewMatched = manualReviewExpected
+    const manualReviewExpected = Boolean(
+      fixture.expect.manualReviewWarning || fixture.expect.manualReviewAuditIssue
+    );
+    const manualReviewWarningMatched = fixture.expect.manualReviewWarning
       ? fixture.expect.manualReviewWarning.test(parserWarnings.join("\n"))
-        && groupCount <= (fixture.expect.maxGroups ?? 0)
-        && answerCount <= (fixture.expect.maxAnswers ?? 0)
+      : true;
+    const manualReviewAuditMatched = fixture.expect.manualReviewAuditIssue
+      ? fixture.expect.manualReviewAuditIssue.test(authoringAuditIssues.join("\n"))
+      : true;
+    const manualReviewMatched = manualReviewExpected
+      ? manualReviewWarningMatched
+        && manualReviewAuditMatched
+        && groupCount >= (fixture.expect.minGroups ?? 0)
+        && groupCount <= (fixture.expect.maxGroups ?? Number.POSITIVE_INFINITY)
+        && answerCount >= (fixture.expect.minAnswers ?? 0)
+        && answerCount <= (fixture.expect.maxAnswers ?? Number.POSITIVE_INFINITY)
       : false;
     const validatorMatched = fixture.expect.validatorPass === true
       ? validator.passed
@@ -236,6 +253,9 @@ function runSmokeRegression({ cli: cliPath, outDir: outputDir, seed: seedValue }
       validatorPassed: validator.passed,
       parserProvider: generation.payload?.documentIr?.parser?.provider ?? null,
       parserWarnings,
+      authoringAuditIssues,
+      manualReviewWarningMatched,
+      manualReviewAuditMatched,
       groupCount,
       answerCount,
       generatedPath: outputPath,

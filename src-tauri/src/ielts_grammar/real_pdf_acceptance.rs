@@ -35,6 +35,50 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     fs::write(path, bytes).map_err(|error| format!("{}: {error}", path.display()))
 }
 
+fn copy_asset_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    let source_metadata =
+        fs::symlink_metadata(source).map_err(|error| format!("{}: {error}", source.display()))?;
+    if !source_metadata.is_dir() {
+        return Err(format!(
+            "phase5_asset_source_not_directory:{}",
+            source.display()
+        ));
+    }
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("{}: {error}", destination.display()))?;
+    for entry in fs::read_dir(source).map_err(|error| format!("{}: {error}", source.display()))? {
+        let entry = entry.map_err(|error| format!("{}: {error}", source.display()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("{}: {error}", entry.path().display()))?;
+        if file_type.is_symlink() {
+            return Err(format!(
+                "phase5_asset_source_symlink:{}",
+                entry.path().display()
+            ));
+        }
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_asset_tree(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&source_path, &destination_path).map_err(|error| {
+                format!(
+                    "phase5_asset_copy_failed:{}:{}",
+                    source_path.display(),
+                    error
+                )
+            })?;
+        } else {
+            return Err(format!(
+                "phase5_asset_source_unsupported:{}",
+                source_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn file_sha256(path: &Path) -> Result<String, String> {
     let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
@@ -1517,6 +1561,36 @@ fn run_phase5_real_pdf_edit_export(
     let job_id = format!("phase5-real-{fixture_id}-{unique}");
     let job_dir = root.join("jobs").join(&job_id);
     fs::create_dir_all(&job_dir).map_err(|error| error.to_string())?;
+    let phase4_assets = root
+        .join("tmp/phase4-real-pdf-acceptance")
+        .join(fixture_id)
+        .join("assets");
+    let authoring_asset_count = authoring
+        .get("assets")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    if authoring_asset_count > 0 {
+        if !phase4_assets.is_dir() {
+            return Err(format!(
+                "{fixture_id}: phase4 asset source missing: {}",
+                phase4_assets.display()
+            ));
+        }
+        copy_asset_tree(&phase4_assets, &job_dir.join("assets"))?;
+    }
+    let phase4_physical = root
+        .join("tmp/phase4-real-pdf-acceptance")
+        .join(fixture_id)
+        .join("document-ir-v2.physical.json");
+    if !phase4_physical.is_file() {
+        return Err(format!(
+            "{fixture_id}: phase4 physical shadow missing: {}",
+            phase4_physical.display()
+        ));
+    }
+    fs::copy(&phase4_physical, job_dir.join("document-ir-v2.shadow.json"))
+        .map_err(|error| format!("{fixture_id}: phase4 physical shadow handoff failed: {error}"))?;
     write_json(&job_dir.join("authoring-ir-v2.shadow.json"), authoring)?;
     let answer_patches = phase5_answer_resolution_patches(authoring);
     if answer_patches.is_empty() {

@@ -12,11 +12,11 @@
     },
     "ContentDocV2": {
       "path": "content-doc-v2.schema.json",
-      "sha256": "98a979be823710a3231118ab6e6b9c27e16e7664c0b204b983a12cbf41f97de2"
+      "sha256": "50b6b12ec2dd6b25f60c037c34fe735d4918b3700c63b2ff81c27d0ed9ecc3ad"
     },
     "IeltsAuthoringIRV2": {
       "path": "ielts-authoring-ir-v2.schema.json",
-      "sha256": "ee09788cc01074eef9dd79c6bf9dbd87036e11f137fd52ae945c885b4a648271"
+      "sha256": "e17a4007087b0c8e5d453f5273921084c1f451f5e671883c3dcc0cd55627ca89"
     },
     "QualityReportV2": {
       "path": "quality-report-v2.schema.json",
@@ -24,19 +24,19 @@
     },
     "ReadingExamSourceV2": {
       "path": "reading-exam-source-v2.schema.json",
-      "sha256": "172bd2f129071a1fd81186bf5c15a9d5752686d43976745d3588179fa5286ac3"
+      "sha256": "ca1929c952f0478dc6adb6689611f86ed60fcde5f645e1b8d680ba75e9caf154"
     },
     "ListeningExamSourceV1": {
       "path": "listening-exam-source-v1.schema.json",
-      "sha256": "4d5872434e21a13ab1a78637b02be0d019fb3fa0d12ccd91d0e0dbac906d8d91"
+      "sha256": "d55b0773165a6bac2449b8c0b724923001c1ca88eaa5c604d030c6b77e7c06a0"
     },
     "ListeningAttemptV1": {
       "path": "listening-attempt-v1.schema.json",
-      "sha256": "51a2fa2717aa293711fd63a34b9cf86b7437d1a1c0bd87d28edee2107c1c0c43"
+      "sha256": "e96bf1a0ebc7f6b1a649018e6f21f3cf9682429df40487fac7b884d9ffba7fda"
     },
     "ListeningAudioProbeResultV1": {
       "path": "listening-audio-probe-result-v1.schema.json",
-      "sha256": "37e9c21a6a0e4d2b1475ad084be98f69eff1781066efa96bc00f2efedabb2355"
+      "sha256": "bc97d249ef7cda0358a43b04e65ec33c2e0d516240808b632eb53c44b6769aaf"
     }
   },
   "compatibility": {

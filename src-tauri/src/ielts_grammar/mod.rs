@@ -23,6 +23,8 @@ mod reading;
 #[cfg(test)]
 mod real_pdf_acceptance;
 
+pub(crate) use quality::evaluate_quality;
+
 use crate::artifact_store::write_canonical_json_atomic;
 use crate::schema::ielts_authoring_v2::{QuestionNumberExpressionV2, TaskTypeV2};
 use crate::schema::IeltsAuthoringIRV2;

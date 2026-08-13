@@ -10,22 +10,26 @@ use crate::artifact_store::{
     append_revision, ensure_job_artifact_layout, list_revision_records, read_revision,
     recover_current_revision, write_artifact_json, write_canonical_json_atomic, RevisionSourceV2,
 };
+use crate::ielts_grammar::evaluate_quality;
 use crate::reading_source_v2::compile_reading_source_v2;
 use crate::schema::common::AssetDescriptorV2;
 use crate::schema::ielts_authoring_v2::AnswerValueV2;
 use crate::schema::IeltsAuthoringIRV2;
-use crate::util::{is_safe_path_segment, job_dir, read_json_opt, safe_job_dir, stage_file_with_hash};
+use crate::util::{
+    is_safe_path_segment, job_dir, read_json_opt, safe_job_dir, stage_file_with_hash,
+};
 use crate::CommandResult;
 use chrono::Utc;
 use fs2::FileExt;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
 use std::{fs, fs::OpenOptions, path::PathBuf};
-use std::collections::BTreeSet;
 use uuid::Uuid;
 
 const AUTHORING_V2_SHADOW_FILE: &str = "authoring-ir-v2.shadow.json";
+const DOCUMENT_V2_SHADOW_FILE: &str = "document-ir-v2.shadow.json";
 const SESSION_SCHEMA_VERSION: &str = "AuthoringEditorSessionV1";
 
 #[derive(Debug, Deserialize)]
@@ -72,6 +76,7 @@ pub(crate) fn apply_authoring_v2_patches_core(root: &Path, input: Value) -> Comm
         apply_patch(&mut authoring, patch)?;
     }
     mark_user_audit(&mut authoring, input.base_revision.saturating_add(1));
+    refresh_quality_report(root, &input.job_id, &mut authoring)?;
     validate_authoring(&authoring)?;
 
     let result = append_revision(
@@ -112,7 +117,7 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
     export_lock
         .lock_exclusive()
         .map_err(|error| format!("authoring_v2_export_lock_acquire:{error}"))?;
-    let (authoring_value, revision) = load_current_authoring(root, &input.job_id)?;
+    let (mut authoring_value, revision) = load_current_authoring(root, &input.job_id)?;
     if let Some(expected_revision) = input.revision {
         if expected_revision != revision {
             return Err(format!(
@@ -120,8 +125,19 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
             ));
         }
     }
+    refresh_quality_report(root, &input.job_id, &mut authoring_value)?;
     let authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value.clone())
         .map_err(|error| format!("AUTHORING_SCHEMA_INVALID:{error}"))?;
+    let quality_state = match &authoring.quality.state {
+        crate::schema::quality_report_v2::ReadinessStateV2::Ready => "ready",
+        crate::schema::quality_report_v2::ReadinessStateV2::ReviewRequired => "review_required",
+        crate::schema::quality_report_v2::ReadinessStateV2::Blocked => "blocked",
+    };
+    if quality_state != "ready" {
+        return Err(format!(
+            "authoring_v2_export_blocked:quality_state={quality_state}"
+        ));
+    }
     let unresolved_answer_slots = authoring
         .answer_key
         .iter()
@@ -135,12 +151,10 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
             unresolved_answer_slots.join(",")
         ));
     }
-    let derived_quality_failures = ["ANSWER_KEY_MISSING_SLOT", "RUNTIME_COMPILER_FAILED"];
     let hard_failures = authoring
         .quality
         .hard_failures
         .iter()
-        .filter(|code| !derived_quality_failures.contains(&code.as_str()))
         .cloned()
         .collect::<Vec<_>>();
     if !hard_failures.is_empty() {
@@ -157,13 +171,12 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
             matches!(
                 issue.severity,
                 crate::schema::quality_report_v2::ReviewSeverityV2::Blocking
-            ) && !derived_quality_failures.contains(&issue.code.as_str())
-                && issue
-                    .details
-                    .as_ref()
-                    .and_then(|details| details.get("resolution"))
-                    .and_then(Value::as_str)
-                    .is_none_or(|resolution| !matches!(resolution, "resolved" | "ignored"))
+            ) && issue
+                .details
+                .as_ref()
+                .and_then(|details| details.get("resolution"))
+                .and_then(Value::as_str)
+                .is_none_or(|resolution| !matches!(resolution, "resolved" | "ignored"))
         })
         .map(|issue| issue.issue_id.clone())
         .collect::<Vec<_>>();
@@ -245,7 +258,7 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
             })).collect::<Vec<_>>(),
             "v1FilesRemainReadable": true,
             "pdfPerQuestionLlmRepair": false,
-            "reviewRequired": false
+            "reviewRequired": quality_state != "ready"
         });
         write_canonical_json_atomic(&manifest_path, &manifest_value)?;
         fs::rename(&staging_dir, &output_dir)
@@ -355,9 +368,8 @@ fn materialize_authoring_assets(
             ));
         }
         let target = staging_dir.join(&relative);
-        let (actual_hash, actual_size) = stage_file_with_hash(&source_real, &target).map_err(|error| {
-            format!("authoring_v2_asset_stage:{}:{error}", asset.asset_id)
-        })?;
+        let (actual_hash, actual_size) = stage_file_with_hash(&source_real, &target)
+            .map_err(|error| format!("authoring_v2_asset_stage:{}:{error}", asset.asset_id))?;
         if actual_size != asset.byte_length {
             let _ = fs::remove_file(&target);
             return Err(format!(
@@ -425,6 +437,92 @@ fn load_current_authoring(root: &Path, job_id: &str) -> CommandResult<(Value, u6
     })?;
     validate_authoring(&value)?;
     Ok((value, 0))
+}
+
+fn refresh_quality_report(root: &Path, job_id: &str, authoring: &mut Value) -> CommandResult<()> {
+    let previous_quality = authoring.get("quality").cloned();
+    let physical_shadow = read_json_opt(&job_dir(root, job_id).join(DOCUMENT_V2_SHADOW_FILE))?
+        .filter(|shadow| physical_shadow_matches_authoring(shadow, authoring));
+    let mut quality = evaluate_quality(authoring, physical_shadow.as_ref());
+    preserve_issue_resolutions(&mut quality, previous_quality.as_ref());
+    authoring
+        .as_object_mut()
+        .ok_or_else(|| "AUTHORING_SCHEMA_INVALID:authoring must be an object".to_string())?
+        .insert("quality".to_string(), quality);
+    Ok(())
+}
+
+fn physical_shadow_matches_authoring(shadow: &Value, authoring: &Value) -> bool {
+    let authoring_source_ids = authoring
+        .get("exam")
+        .and_then(|exam| exam.get("sourceFiles"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|source| source.get("sourceFileId").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let mut physical_source_ids = shadow
+        .get("sourceFiles")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|source| source.get("sourceFileId").and_then(Value::as_str));
+    shadow.get("schemaVersion").and_then(Value::as_str) == Some("DocumentIRV2")
+        && shadow.get("jobId").and_then(Value::as_str)
+            == authoring.get("jobId").and_then(Value::as_str)
+        && shadow.get("documentId").and_then(Value::as_str)
+            == authoring.get("sourceDocumentId").and_then(Value::as_str)
+        && physical_source_ids.any(|source_id| authoring_source_ids.contains(source_id))
+}
+
+fn preserve_issue_resolutions(quality: &mut Value, previous_quality: Option<&Value>) {
+    let previous_details = previous_quality
+        .and_then(|value| value.get("issues"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|issue| {
+            let issue_id = issue.get("issueId").and_then(Value::as_str)?;
+            let details = issue.get("details").and_then(Value::as_object)?;
+            let resolution = details.get("resolution").and_then(Value::as_str)?;
+            if !matches!(resolution, "resolved" | "ignored") {
+                return None;
+            }
+            let mut preserved = BTreeMap::new();
+            preserved.insert(
+                "resolution".to_string(),
+                Value::String(resolution.to_string()),
+            );
+            if let Some(note) = details.get("note") {
+                preserved.insert("note".to_string(), note.clone());
+            }
+            Some((issue_id.to_string(), preserved))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let Some(issues) = quality.get_mut("issues").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for issue in issues {
+        let Some(issue_id) = issue.get("issueId").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(preserved) = previous_details.get(issue_id) else {
+            continue;
+        };
+        let Some(issue_object) = issue.as_object_mut() else {
+            continue;
+        };
+        let details = issue_object
+            .entry("details")
+            .or_insert_with(|| Value::Object(Map::new()));
+        let Some(details_object) = details.as_object_mut() else {
+            continue;
+        };
+        for (key, value) in preserved {
+            details_object.insert(key.clone(), value.clone());
+        }
+    }
 }
 
 fn validate_authoring(value: &Value) -> CommandResult<()> {
@@ -1444,7 +1542,11 @@ fn parse_number_array(value: Option<&Value>) -> CommandResult<Vec<u64>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_patch, expand_question_expression, materialize_authoring_assets};
+    use super::{
+        apply_patch, expand_question_expression, export_authoring_v2_core,
+        materialize_authoring_assets, physical_shadow_matches_authoring,
+        preserve_issue_resolutions, AUTHORING_V2_SHADOW_FILE,
+    };
     use crate::schema::common::{AssetDescriptorV2, AssetExtractionModeV2, AssetKindV2};
     use serde_json::json;
     use std::fs;
@@ -1750,5 +1852,77 @@ mod tests {
             .expect_err("asset hash mismatch must fail closed");
         assert!(error.contains("authoring_v2_asset_hash_mismatch"));
         let _ = fs::remove_dir_all(source_root);
+    }
+
+    #[test]
+    fn export_rejects_non_ready_quality_state_before_materialization() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ielts-authoring-v2-quality-gate-{suffix}"));
+        let job_id = "quality-gate";
+        let job_dir = root.join("jobs").join(job_id);
+        fs::create_dir_all(&job_dir).unwrap();
+        let authoring: serde_json::Value = serde_json::from_str(include_str!(
+            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        let mut authoring = authoring;
+        authoring["quality"]["state"] = json!("ready");
+        fs::write(
+            job_dir.join(AUTHORING_V2_SHADOW_FILE),
+            serde_json::to_vec(&authoring).unwrap(),
+        )
+        .unwrap();
+
+        let export_dir = root.join("exports");
+        let error = export_authoring_v2_core(
+            &root,
+            json!({
+                "jobId": job_id,
+                "exportDir": export_dir.to_string_lossy()
+            }),
+        )
+        .expect_err("review_required authoring must not pass strict export");
+        assert_eq!(
+            error,
+            "authoring_v2_export_blocked:quality_state=review_required"
+        );
+        assert!(!export_dir.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn quality_refresh_rejects_stale_physical_shadow_and_preserves_resolution() {
+        let authoring = json!({
+            "jobId": "job-1",
+            "sourceDocumentId": "document-1",
+            "exam": {"sourceFiles": [{"sourceFileId": "source-1"}]},
+            "quality": {
+                "issues": [{
+                    "issueId": "issue-1",
+                    "details": {"resolution": "ignored", "note": "reviewed"}
+                }]
+            }
+        });
+        let physical = json!({
+            "schemaVersion": "DocumentIRV2",
+            "jobId": "job-1",
+            "documentId": "document-1",
+            "sourceFiles": [{"sourceFileId": "source-1"}]
+        });
+        assert!(physical_shadow_matches_authoring(&physical, &authoring));
+
+        let mut stale = physical.clone();
+        stale["jobId"] = json!("other-job");
+        assert!(!physical_shadow_matches_authoring(&stale, &authoring));
+
+        let mut quality = json!({
+            "issues": [{"issueId": "issue-1", "details": {"source": "recomputed"}}]
+        });
+        preserve_issue_resolutions(&mut quality, authoring.get("quality"));
+        assert_eq!(quality["issues"][0]["details"]["resolution"], "ignored");
+        assert_eq!(quality["issues"][0]["details"]["note"], "reviewed");
     }
 }

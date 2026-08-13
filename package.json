@@ -15,6 +15,7 @@
     "verify:phase0:ci": "node scripts/phase0-golden.mjs verify --ci-contract",
     "test:phase0:cli-freshness": "node scripts/phase0-golden.mjs self-test-cli-freshness",
     "test:phase0:feature-flags": "node scripts/phase0-golden.mjs self-test-feature-flags",
+    "test:phase0:diff-summary": "node scripts/phase0-golden.mjs self-test-diff-summary",
     "verify:phase1:schema": "node scripts/verify-schema-contract.mjs",
     "verify:phase1:schema:local": "node scripts/verify-schema-contract.mjs --local-only",
     "sync:phase1:peer": "node scripts/sync-phase1-peer-contract.mjs",
