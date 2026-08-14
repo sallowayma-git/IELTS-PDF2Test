@@ -42,6 +42,73 @@ fn review_warning_count(value: &Value) -> usize {
         .unwrap_or(0)
 }
 
+fn question_prompt_is_empty(question: &Value) -> bool {
+    question
+        .get("prompt")
+        .and_then(Value::as_str)
+        .map(|prompt| prompt.trim().is_empty())
+        .unwrap_or(true)
+}
+
+fn interaction_type(question: &Value) -> &str {
+    question
+        .pointer("/interaction/type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
+fn choice_option_labels(question: &Value) -> Vec<String> {
+    let mut labels = Vec::new();
+    if let Some(options) = question
+        .pointer("/interaction/options")
+        .and_then(Value::as_array)
+    {
+        for option in options {
+            if let Some(label) = option.as_str() {
+                let trimmed = label.trim();
+                if !trimmed.is_empty() {
+                    labels.push(trimmed.to_string());
+                }
+            } else if let Some(label) = option.get("label").and_then(Value::as_str) {
+                let trimmed = label.trim();
+                if !trimmed.is_empty() {
+                    labels.push(trimmed.to_string());
+                }
+            } else if let Some(text) = option.get("text").and_then(Value::as_str) {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    labels.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+    if labels.is_empty() {
+        if let Some(option_texts) = question
+            .pointer("/interaction/optionTexts")
+            .and_then(Value::as_object)
+        {
+            for (label, text) in option_texts {
+                let label = label.trim();
+                let text = text.as_str().unwrap_or("").trim();
+                if !label.is_empty() && !text.is_empty() {
+                    labels.push(label.to_string());
+                }
+            }
+        }
+    }
+    labels
+}
+
+fn choice_option_set_incomplete(question: &Value) -> bool {
+    // Authoring interaction types are radio/checkbox; group kinds stay single_choice/multi_choice.
+    match interaction_type(question) {
+        "radio" | "checkbox" | "single_choice" | "multi_choice" => {
+            choice_option_labels(question).len() < 2
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
     let mut needs_review = 0u32;
     let mut total_questions = 0u32;
@@ -60,6 +127,12 @@ pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
                         group_verified_questions += 1;
                     }
                     if value_confidence(question) < 0.85 && !value_verified(question) {
+                        needs_review += 1;
+                    }
+                    if question_prompt_is_empty(question) {
+                        needs_review += 1;
+                    }
+                    if choice_option_set_incomplete(question) {
                         needs_review += 1;
                     }
                 }
@@ -159,6 +232,25 @@ pub(crate) fn authoring_review_issues(ir: &Value) -> Vec<Value> {
                     "AuthoringIR",
                     &format!("$.groups[{}].questions[{}].prompt", group_id, qid),
                     "Question prompt must be manually imported from the source before publish",
+                ));
+            }
+            // Empty prompt is a hard product gate: student runtime cannot render a usable item.
+            // Marking verified alone must not clear this — the author must supply text.
+            if question_prompt_is_empty(question) {
+                issues.push(json_issue(
+                    "AuthoringIR",
+                    &format!("$.groups[{}].questions[{}].prompt", group_id, qid),
+                    "Question prompt is empty and must be completed before publish",
+                ));
+            }
+            if choice_option_set_incomplete(question) {
+                issues.push(json_issue(
+                    "AuthoringIR",
+                    &format!(
+                        "$.groups[{}].questions[{}].interaction.options",
+                        group_id, qid
+                    ),
+                    "Single/multi choice question needs at least two complete options before publish",
                 ));
             }
             if value_confidence(question) < 0.85 && !value_verified(question) {

@@ -323,6 +323,11 @@ textarea { min-height: 120px; resize: vertical; }
 .group-tab span { margin-top: 4px; font-size: 13px; color: var(--ink); }
 .group-tab small { margin-top: 6px; color: var(--muted); }
 .preview-groups-workbench { display: grid; gap: 14px; min-height: 0; }
+.student-runtime-pane { border: 1px solid rgba(216,208,192,.88); border-radius: 20px; padding: 16px; background: rgba(255,255,255,.46); display: grid; gap: 12px; }
+.student-runtime-sheet { border: 1px solid rgba(31,138,112,.22); border-radius: 16px; padding: 16px 18px; background: rgba(255,255,255,.82); max-height: 280px; overflow: auto; line-height: 1.65; }
+.student-runtime-lead { margin-bottom: 12px; color: var(--muted); }
+.student-runtime-body { color: var(--ink); }
+.student-runtime-body input, .student-runtime-body select, .student-runtime-body textarea { pointer-events: none; }
 .group-meta-panel { border: 1px solid rgba(216,208,192,.88); border-radius: 20px; padding: 16px; background: rgba(255,255,255,.46); }
 .group-meta-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .group-meta-head strong, .group-meta-head small { display: block; }

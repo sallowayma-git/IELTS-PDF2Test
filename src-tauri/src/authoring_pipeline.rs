@@ -4014,8 +4014,10 @@ fn dynamic_question_prompt_and_options(
         .unwrap_or(group_blocks.len());
     let mut prompt_parts = Vec::new();
     let mut options = Vec::new();
-    for (relative, block) in group_blocks[start_index..end_index].iter().enumerate() {
-        let absolute_index = start_index + relative;
+    let mut absolute_index = start_index;
+    while absolute_index < end_index {
+        let relative = absolute_index - start_index;
+        let block = &group_blocks[absolute_index];
         let raw_text = dynamic_block_text(block);
         let option_bank_context = has_dynamic_prompt_option_bank_context(kind, group_text);
         if relative > 0
@@ -4069,6 +4071,7 @@ fn dynamic_question_prompt_and_options(
             .map(|(prompt, options)| prompt.is_empty() && !options.is_empty())
             .unwrap_or(false)
         {
+            absolute_index += 1;
             continue;
         }
         if matches!(kind, "single_choice" | "multi_choice") {
@@ -4092,6 +4095,7 @@ fn dynamic_question_prompt_and_options(
                 if stop_after_block {
                     break;
                 }
+                absolute_index += 1;
                 continue;
             }
             let inline_choice = dynamic_inline_choice_parts(&text).or_else(|| {
@@ -4121,18 +4125,48 @@ fn dynamic_question_prompt_and_options(
                 if stop_after_block {
                     break;
                 }
+                absolute_index += 1;
                 continue;
             }
-            if let Some((label, option_text)) = dynamic_leading_option_label_and_text(&text) {
-                if label.len() == 1
-                    && label.chars().all(|ch| matches!(ch, 'A'..='J'))
-                    && !option_text.is_empty()
-                {
-                    options.push((label, option_text));
-                    if stop_after_block {
-                        break;
+            if let Some((label, mut option_text)) = dynamic_leading_option_label_and_text(&text) {
+                if label.len() == 1 && label.chars().all(|ch| matches!(ch, 'A'..='J')) {
+                    // PDF layouts frequently emit the choice letter alone, then
+                    // the option prose on the next block:
+                    //   "A"
+                    //   "changing the bed linen"
+                    // Absorb one following non-label prose block so the option
+                    // set closes instead of discarding the bare letter.
+                    let mut consumed_continuation = false;
+                    if option_text.is_empty() {
+                        if let Some(next_block) = group_blocks.get(absolute_index + 1) {
+                            let next_text = collapse_whitespace(&dynamic_block_text(next_block));
+                            let next_is_question =
+                                dynamic_leading_question_number(&next_text).is_some();
+                            let next_is_option =
+                                dynamic_leading_option_label_and_text(&next_text).is_some();
+                            if !next_text.is_empty()
+                                && !next_is_question
+                                && !next_is_option
+                                && !is_dynamic_instruction_signal(&next_text)
+                                && !is_dynamic_prompt_terminal_heading(&next_text)
+                            {
+                                option_text = next_text;
+                                consumed_continuation = true;
+                            }
+                        }
                     }
-                    continue;
+                    if !option_text.is_empty()
+                        && !options
+                            .iter()
+                            .any(|(existing_label, _)| existing_label == &label)
+                    {
+                        options.push((label, option_text));
+                        if stop_after_block {
+                            break;
+                        }
+                        absolute_index += if consumed_continuation { 2 } else { 1 };
+                        continue;
+                    }
                 }
             }
         }
@@ -4142,6 +4176,7 @@ fn dynamic_question_prompt_and_options(
         if stop_after_block {
             break;
         }
+        absolute_index += 1;
     }
     let mut prompt = collapse_whitespace(&prompt_parts.join(" "));
     if options.is_empty() && matches!(kind, "single_choice" | "multi_choice") {
@@ -5288,6 +5323,73 @@ mod tests {
                 ("B".to_string(), "Eurasia".to_string()),
                 ("C".to_string(), "the Americas".to_string()),
                 ("D".to_string(), "Oceania".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn bare_question_number_with_split_option_lines_recovers_prompt_and_abc() {
+        // Customer PDF layout: number alone, stem alone, each option label alone.
+        let blocks = vec![
+            json!({
+                "blockId": "n5",
+                "blockType": "paragraph",
+                "text": "5"
+            }),
+            json!({
+                "blockId": "stem5",
+                "blockType": "paragraph",
+                "text": "Which extra service does the agency agree to provide?"
+            }),
+            json!({"blockId": "a5", "blockType": "paragraph", "text": "A"}),
+            json!({
+                "blockId": "a5t",
+                "blockType": "paragraph",
+                "text": "changing the bed linen"
+            }),
+            json!({"blockId": "b5", "blockType": "paragraph", "text": "B"}),
+            json!({
+                "blockId": "b5t",
+                "blockType": "paragraph",
+                "text": "washing the windows"
+            }),
+            json!({"blockId": "c5", "blockType": "paragraph", "text": "C"}),
+            json!({
+                "blockId": "c5t",
+                "blockType": "paragraph",
+                "text": "cleaning the fridge"
+            }),
+            json!({
+                "blockId": "n6",
+                "blockType": "paragraph",
+                "text": "6"
+            }),
+            json!({
+                "blockId": "stem6",
+                "blockType": "paragraph",
+                "text": "What does the agent say about the parking?"
+            }),
+        ];
+
+        let (prompt, options) = dynamic_question_prompt_and_options(
+            &blocks,
+            "Questions 5-7 Choose the correct answer.",
+            5,
+            "Questions 5-7",
+            7,
+            "single_choice",
+        );
+
+        assert_eq!(
+            prompt,
+            "Which extra service does the agency agree to provide?"
+        );
+        assert_eq!(
+            options,
+            vec![
+                ("A".to_string(), "changing the bed linen".to_string()),
+                ("B".to_string(), "washing the windows".to_string()),
+                ("C".to_string(), "cleaning the fridge".to_string()),
             ]
         );
     }

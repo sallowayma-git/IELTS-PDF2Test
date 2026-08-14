@@ -20,8 +20,30 @@ pub(crate) struct OptionRun {
 pub(crate) fn detect_option_runs(lines: &[SemanticLine]) -> Vec<OptionRun> {
     let mut runs = Vec::new();
     let mut current = Vec::new();
-    for line in lines {
-        if let Some(option) = parse_option_line(line) {
+    let mut index = 0usize;
+    while index < lines.len() {
+        let line = &lines[index];
+        if let Some(mut option) = parse_option_line(line) {
+            // PDF extractors often split "A" and "changing the bed linen" onto
+            // separate lines. Absorb the next non-label prose line as option text
+            // before deciding whether the run is incomplete.
+            if option.text.is_empty() {
+                if let Some(continuation) = lines.get(index + 1) {
+                    if parse_option_line(continuation).is_none()
+                        && !looks_like_question_number_line(&continuation.text)
+                    {
+                        let continuation_text = normalize_instruction_text(&continuation.text);
+                        if !continuation_text.is_empty() {
+                            option.text = continuation_text;
+                            option.source_anchor = merge_source_anchors(
+                                &option.source_anchor,
+                                &continuation.source_anchor,
+                            );
+                            index += 1;
+                        }
+                    }
+                }
+            }
             if current.is_empty() || advances_option_sequence(&current, &option) {
                 current.push(option);
             } else {
@@ -31,11 +53,47 @@ pub(crate) fn detect_option_runs(lines: &[SemanticLine]) -> Vec<OptionRun> {
         } else if !current.is_empty() {
             runs.push(materialize_run(std::mem::take(&mut current)));
         }
+        index += 1;
     }
     if !current.is_empty() {
         runs.push(materialize_run(current));
     }
     runs
+}
+
+fn looks_like_question_number_line(text: &str) -> bool {
+    let trimmed = normalize_instruction_text(text);
+    let mut end = 0usize;
+    for (index, ch) in trimmed.char_indices() {
+        if ch.is_ascii_digit() {
+            end = index + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    end > 0 && end <= 3 && trimmed[end..].trim().is_empty()
+}
+
+fn merge_source_anchors(primary: &Value, secondary: &Value) -> Value {
+    let mut merged = primary.clone();
+    let mut node_ids = primary
+        .get("nodeIds")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(extra) = secondary.get("nodeIds").and_then(Value::as_array) {
+        for node_id in extra {
+            if !node_ids.iter().any(|existing| existing == node_id) {
+                node_ids.push(node_id.clone());
+            }
+        }
+    }
+    if !node_ids.is_empty() {
+        merged["nodeIds"] = Value::Array(node_ids);
+    }
+    merged
 }
 
 pub(crate) fn expected_option_labels(option_alphabet: Option<&str>) -> Option<Vec<String>> {
@@ -211,7 +269,27 @@ mod tests {
         ]);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].options.len(), 4);
+        // Bare "C" absorbs the next prose line "D Fourth option" only when that
+        // line is not itself an option label. Here D is a label, so C stays empty
+        // and the run remains incomplete.
         assert!(runs[0].incomplete);
+    }
+
+    #[test]
+    fn split_label_and_text_lines_form_complete_option_run() {
+        let runs = detect_option_runs(&[
+            line("a", "A"),
+            line("a-text", "changing the bed linen"),
+            line("b", "B"),
+            line("b-text", "washing the windows"),
+            line("c", "C"),
+            line("c-text", "cleaning the fridge"),
+        ]);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].options.len(), 3);
+        assert!(!runs[0].incomplete);
+        assert_eq!(runs[0].options[0].text, "changing the bed linen");
+        assert_eq!(runs[0].options[2].label, "C");
     }
 
     #[test]

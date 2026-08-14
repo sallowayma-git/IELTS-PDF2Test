@@ -10,7 +10,7 @@ import {
 import { go } from "../app/router";
 import { isPhase5EditorEnabled } from "../config/featureFlags";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
-import type { AutoPipelineReport, GroupKind, QuestionDraft, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
+import type { AutoPipelineReport, GroupKind, PreviewAssets, QuestionDraft, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
 
 const CLOUD_REVIEW_PENDING_KEY_PREFIX = "ielts-author-studio.cloud-review.";
 const CLOUD_REVIEW_FAILED_KEY_PREFIX = "ielts-author-studio.cloud-review.failed.";
@@ -222,11 +222,17 @@ function cloudStateIsTerminal(state: CloudState): boolean {
   return state === "done" || state === "warning" || state === "unavailable" || state === "error";
 }
 
-function startBackgroundArtifacts(jobId: string): void {
-  void Promise.all([
-    validateAuthoringIr(jobId),
-    generatePreviewAssets(jobId)
-  ]).catch(() => undefined);
+async function loadPreviewArtifacts(jobId: string): Promise<PreviewAssets | undefined> {
+  try {
+    await validateAuthoringIr(jobId);
+  } catch {
+    // Validation failures still leave authors on the edit surface; student HTML may still compile.
+  }
+  try {
+    return await generatePreviewAssets(jobId);
+  } catch {
+    return undefined;
+  }
 }
 
 function auditIssueText(issue: AuditIssue | undefined): string {
@@ -320,6 +326,8 @@ function visionConfigurationHint(issue: AuditIssue | undefined): string {
 export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () => void }) {
   const [ir, setIr] = useState<ReadingAuthoringIr | undefined>();
   const [pipelineReport, setPipelineReport] = useState<AutoPipelineReport | undefined>();
+  const [previewAssets, setPreviewAssets] = useState<PreviewAssets | undefined>();
+  const [studentPreviewStatus, setStudentPreviewStatus] = useState<"idle" | "loading" | "ready" | "unavailable">("idle");
   const [runtimeError, setRuntimeError] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
   const [cloudState, setCloudState] = useState<CloudState>("idle");
@@ -327,6 +335,21 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   const [activeGroupId, setActiveGroupId] = useState<string | undefined>();
   const [activeQuestionId, setActiveQuestionId] = useState<string | undefined>();
   const cloudPollTimer = useRef<number | undefined>(undefined);
+  const previewRequestId = useRef(0);
+
+  async function refreshStudentPreview() {
+    const requestId = ++previewRequestId.current;
+    setStudentPreviewStatus("loading");
+    const assets = await loadPreviewArtifacts(jobId);
+    if (requestId !== previewRequestId.current) return;
+    if (assets?.source?.questionGroups?.length) {
+      setPreviewAssets(assets);
+      setStudentPreviewStatus("ready");
+      return;
+    }
+    setPreviewAssets(undefined);
+    setStudentPreviewStatus("unavailable");
+  }
 
   async function load(autoWarm = false) {
     const detail = await getJob(jobId);
@@ -355,7 +378,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     }
 
     if (autoWarm && nextIr) {
-      startBackgroundArtifacts(jobId);
+      void refreshStudentPreview();
     }
   }
 
@@ -492,6 +515,22 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     const ids = activeQuestion?.sourceBlockIds?.length ? activeQuestion.sourceBlockIds : activeGroup?.sourceBlockIds ?? [];
     return new Set(ids);
   }, [activeGroup?.sourceBlockIds, activeQuestion?.sourceBlockIds]);
+  const studentGroupPreview = useMemo(() => {
+    if (!activeGroup || !previewAssets?.source?.questionGroups?.length) return undefined;
+    return previewAssets.source.questionGroups.find((group) => group.groupId === activeGroup.groupId);
+  }, [activeGroup, previewAssets]);
+  const incompleteChoiceCount = useMemo(() => {
+    if (!activeGroup) return 0;
+    return activeGroup.questions.filter((question) => {
+      if (question.interaction.type !== "radio" && question.interaction.type !== "checkbox") {
+        return false;
+      }
+      const labels = (question.interaction.options ?? []).map((item) => item.trim()).filter(Boolean);
+      if (labels.length >= 2) return false;
+      const optionTextCount = Object.values(question.interaction.optionTexts ?? {}).filter((text) => text.trim()).length;
+      return optionTextCount < 2;
+    }).length;
+  }, [activeGroup]);
 
   function updateGroup(groupId: string, mutator: (group: QuestionGroupDraft) => QuestionGroupDraft) {
     setIr((current) => current ? {
@@ -575,7 +614,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       await resolveSourceReview(jobId, "批量核对确认");
       setIr(saved);
       refresh();
-      startBackgroundArtifacts(jobId);
+      void refreshStudentPreview();
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -591,7 +630,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       const saved = await updateAuthoringIr(jobId, { ir: nextIr });
       setIr(saved);
       refresh();
-      startBackgroundArtifacts(jobId);
+      void refreshStudentPreview();
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -606,7 +645,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     try {
       const saved = await updateAuthoringIr(jobId, { ir });
       setIr(saved);
-      startBackgroundArtifacts(jobId);
+      void refreshStudentPreview();
       refresh();
       go(`/jobs/${jobId}/export`);
     } catch (error) {
@@ -771,10 +810,50 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                 {(activeGroup.requiresManualQuestionImport || activeGroupMissingPromptIds.length) ? (
                   <div className="warning-box group-warning-box">
                     <strong>题干待补充</strong>
-                    <p>当前题组仍有 {Math.max(activeGroupMissingPromptIds.length, activeGroup.questions.filter((question) => !question.prompt.trim()).length)} 题题干留空。系统不再自动补占位文本，请根据源文档补齐后再确认。</p>
+                    <p>当前题组仍有 {Math.max(activeGroupMissingPromptIds.length, activeGroup.questions.filter((question) => !question.prompt.trim()).length)} 题题干留空。系统不再自动补占位文本，请根据源文档补齐后再确认。空题干会阻断发布。</p>
                     {visionTranscriptionIssue ? <small>{auditIssueText(visionTranscriptionIssue)}</small> : null}
                     {visionConfigHint ? <small>{visionConfigHint}</small> : null}
                   </div>
+                ) : null}
+                {incompleteChoiceCount > 0 ? (
+                  <div className="warning-box group-warning-box" data-testid="incomplete-choice-warning">
+                    <strong>选项不完整</strong>
+                    <p>当前题组有 {incompleteChoiceCount} 道单选/多选题选项少于 2 个。发布前必须补齐完整选项。</p>
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="student-runtime-pane" data-testid="student-runtime-preview">
+                <div className="pane-heading">
+                  <div>
+                    <h3>学生端渲染对照</h3>
+                    <small>与 NAS / 学生运行时同一套 bodyHtml 编译结果</small>
+                  </div>
+                  <button className="ghost small" type="button" onClick={() => void refreshStudentPreview()} disabled={studentPreviewStatus === "loading"}>
+                    {studentPreviewStatus === "loading" ? "编译中..." : "刷新学生预览"}
+                  </button>
+                </div>
+                {studentPreviewStatus === "loading" && !studentGroupPreview ? (
+                  <p className="empty">正在编译学生端 HTML…</p>
+                ) : null}
+                {studentPreviewStatus === "unavailable" ? (
+                  <p className="empty">学生端预览暂不可用。请先保存完整题稿，或检查校验是否通过运行时门禁。</p>
+                ) : null}
+                {studentGroupPreview ? (
+                  <article className="student-runtime-sheet">
+                    {studentGroupPreview.leadHtml?.trim() ? (
+                      <div
+                        className="student-runtime-lead"
+                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(studentGroupPreview.leadHtml) }}
+                      />
+                    ) : null}
+                    <div
+                      className="student-runtime-body"
+                      dangerouslySetInnerHTML={{ __html: sanitizeHtml(studentGroupPreview.bodyHtml || "") }}
+                    />
+                  </article>
+                ) : studentPreviewStatus === "ready" ? (
+                  <p className="empty">当前题组尚未出现在编译后的学生端 source 中。</p>
                 ) : null}
               </section>
 

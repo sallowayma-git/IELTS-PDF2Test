@@ -2710,6 +2710,51 @@ mod tests {
                 .into_iter()
                 .flatten()
             {
+                // Confidence verification alone is not enough: empty prompts and
+                // incomplete choice sets remain hard review debt on the default path.
+                if question
+                    .get("prompt")
+                    .and_then(Value::as_str)
+                    .map(|prompt| prompt.trim().is_empty())
+                    .unwrap_or(true)
+                {
+                    if let Some(obj) = question.as_object_mut() {
+                        obj.insert("prompt".to_string(), json!("Author-completed prompt"));
+                    }
+                }
+                let interaction_type = question
+                    .pointer("/interaction/type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if matches!(
+                    interaction_type.as_str(),
+                    "radio" | "checkbox" | "single_choice" | "multi_choice"
+                ) {
+                    let option_count = question
+                        .pointer("/interaction/options")
+                        .and_then(Value::as_array)
+                        .map(|items| items.len())
+                        .unwrap_or(0);
+                    if option_count < 2 {
+                        if let Some(interaction) = question
+                            .get_mut("interaction")
+                            .and_then(Value::as_object_mut)
+                        {
+                            interaction
+                                .insert("options".to_string(), json!(["A", "B", "C", "D"]));
+                            interaction.insert(
+                                "optionTexts".to_string(),
+                                json!({
+                                    "A": "Option A",
+                                    "B": "Option B",
+                                    "C": "Option C",
+                                    "D": "Option D"
+                                }),
+                            );
+                        }
+                    }
+                }
                 if let Some(obj) = question.as_object_mut() {
                     obj.insert("verified".to_string(), json!(true));
                 }
@@ -2722,6 +2767,11 @@ mod tests {
         assert_eq!(
             ir.pointer("/audit/humanVerified").and_then(Value::as_bool),
             Some(true)
+        );
+        assert!(
+            authoring_review_issues(&ir).is_empty(),
+            "completed + verified IR should clear hard review gates: {:?}",
+            authoring_review_issues(&ir)
         );
     }
 
@@ -2739,6 +2789,78 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .contains("requires human verification")));
+    }
+
+    #[test]
+    fn authoring_review_issues_block_empty_prompt_even_when_verified() {
+        let ir = json!({
+            "schemaVersion": "ReadingAuthoringIRV1",
+            "jobId": "job-empty-prompt",
+            "groups": [{
+                "groupId": "group-1",
+                "kind": "short_answer",
+                "confidence": 0.95,
+                "verified": true,
+                "questions": [{
+                    "id": "q1",
+                    "displayNumber": "1",
+                    "prompt": "   ",
+                    "interaction": {"type": "short_answer"},
+                    "confidence": 0.95,
+                    "verified": true
+                }]
+            }],
+            "audit": {"humanVerified": true}
+        });
+
+        let issues = authoring_review_issues(&ir);
+        assert!(
+            issues.iter().any(|issue| issue
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("Question prompt is empty and must be completed before publish")),
+            "expected empty-prompt hard gate, got {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn authoring_review_issues_block_incomplete_choice_options() {
+        let ir = json!({
+            "schemaVersion": "ReadingAuthoringIRV1",
+            "jobId": "job-incomplete-choice",
+            "groups": [{
+                "groupId": "group-sc",
+                "kind": "single_choice",
+                "confidence": 0.95,
+                "verified": true,
+                "questions": [{
+                    "id": "q5",
+                    "displayNumber": "5",
+                    "prompt": "Choose the best answer.",
+                    "interaction": {
+                        "type": "radio",
+                        "options": ["A"],
+                        "optionTexts": {"A": "Only one recovered option"}
+                    },
+                    "confidence": 0.95,
+                    "verified": true
+                }]
+            }],
+            "audit": {"humanVerified": true}
+        });
+
+        let issues = authoring_review_issues(&ir);
+        assert!(
+            issues.iter().any(|issue| issue
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("at least two complete options")),
+            "expected incomplete-option hard gate, got {:?}",
+            issues
+        );
     }
 
     #[test]

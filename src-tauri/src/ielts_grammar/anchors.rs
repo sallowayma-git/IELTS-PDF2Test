@@ -66,19 +66,23 @@ fn parse_leading_question_number(text: &str) -> Option<(u32, f64)> {
             break;
         }
     }
-    if end == 0 {
+    if end == 0 || end > 3 {
         return None;
     }
     let number = trimmed[..end].parse::<u32>().ok()?;
     let remainder = trimmed[end..].trim_start();
+    // Bare question numbers are first-class anchors. PDFs commonly emit:
+    //   line: "5"
+    //   line: "Which extra service does the agency agree to provide?"
+    // Rejecting bare numbers forces empty prompts even when the stem is intact
+    // on the next geometric line. Page numbers that collide with the expected
+    // range are filtered later by expected_numbers + score ranking.
     if remainder.is_empty() {
-        return None;
+        return Some((number, 0.62));
     }
     let punctuation = remainder.chars().next();
     let score = if matches!(punctuation, Some('.') | Some(')') | Some(':')) {
         0.9
-    } else if remainder.is_empty() {
-        0.55
     } else {
         0.72
     };
@@ -105,11 +109,25 @@ mod tests {
     fn question_anchor_requires_declared_number() {
         let lines = vec![
             line("q1", "1. First statement"),
-            line("page", "1"),
+            // Bare page numbers outside the declared range stay ignored.
+            line("page", "12"),
             line("q3", "3) Third statement"),
         ];
         let anchors = detect_question_anchors(&lines, &[1, 3]);
         assert_eq!(anchors.len(), 2);
         assert_eq!(anchor_coverage(&anchors, &[1, 2, 3]), 2.0 / 3.0);
+    }
+
+    #[test]
+    fn bare_declared_question_number_is_an_anchor() {
+        let lines = vec![
+            line("n5", "5"),
+            line("stem", "Which extra service does the agency agree to provide?"),
+            line("a", "A changing the bed linen"),
+        ];
+        let anchors = detect_question_anchors(&lines, &[5, 6, 7]);
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].question_number, 5);
+        assert_eq!(anchors[0].line_id, "n5");
     }
 }
