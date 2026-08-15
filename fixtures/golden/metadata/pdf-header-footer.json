@@ -66,7 +66,7 @@
     "v1Path": "fixtures/golden/baseline/v1/pdf-header-footer.json",
     "observed": {
       "pageCount": 2,
-      "blockCount": 14,
+      "blockCount": 13,
       "groupCount": 1,
       "slotCount": 3,
       "assetCount": 0,

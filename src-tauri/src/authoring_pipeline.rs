@@ -3996,6 +3996,16 @@ fn dynamic_question_prompt_and_options(
         })
     else {
         let fallback = dynamic_prompt_for_question(group_text, number, heading, range_end, kind);
+        // Inline completion groups often defer the fill-in text into the
+        // passage; the numbered blank lives there, not in the instruction
+        // blocks. When the prompt derives from the instruction and is empty,
+        // let the caller run the gap recovery pass over the following blocks.
+        if fallback.trim().is_empty()
+            && is_dynamic_completion_kind(kind)
+            && dynamic_layout_hint_for_group(kind, group_text) == "inline_completion"
+        {
+            return (fallback, Vec::new());
+        }
         if matches!(kind, "single_choice" | "multi_choice") {
             if let Some((prompt, options)) = dynamic_inline_choice_parts(&fallback) {
                 return (prompt, options);
@@ -4188,6 +4198,15 @@ fn dynamic_question_prompt_and_options(
     if prompt.is_empty() {
         prompt = dynamic_prompt_for_question(group_text, number, heading, range_end, kind);
     }
+    if prompt.trim().is_empty()
+        && is_dynamic_completion_kind(kind)
+        && dynamic_layout_hint_for_group(kind, group_text) == "inline_completion"
+    {
+        // The numbered blank was deferred into the passage; leave the prompt
+        // empty so the caller's gap recovery pass fills it from the blocks
+        // that follow the group.
+        return (String::new(), options);
+    }
     (prompt, options)
 }
 
@@ -4196,6 +4215,75 @@ fn is_dynamic_completion_kind(kind: &str) -> bool {
         kind,
         "summary_completion" | "sentence_completion" | "table_completion" | "diagram_completion"
     )
+}
+
+/// Recover the sentence containing the numbered blank (e.g. "24…………") from a
+/// run of fill-in text. Sentence boundaries keep the prompt self-contained
+/// instead of swallowing the whole trailing text or neighbouring sections.
+fn dynamic_gap_sentence_prompt(text: &str, number: u32) -> String {
+    let Some((marker_start, marker_end)) = find_dynamic_numbered_blank_marker(text, number, 0) else {
+        return String::new();
+    };
+    let sentence_start = text[..marker_start]
+        .rfind(". ")
+        .map(|index| index + 2)
+        .unwrap_or(0);
+    let sentence_end = text[marker_end..]
+        .find(". ")
+        .map(|index| marker_end + index + 2)
+        .unwrap_or(text.len());
+    collapse_whitespace(text[sentence_start..sentence_end].trim())
+}
+
+/// Recover the fill-in prompt for a numbered row of a completion table. The
+/// table cells are `row`/`col`/`text` triples, so a row whose first cell holds
+/// the question number carries the row prompt in its remaining cells.
+fn dynamic_table_row_prompt_for_number(block: &Value, number: u32, range_end: u32) -> String {
+    let Some(cells) = block.pointer("/table/cells").and_then(Value::as_array) else {
+        return String::new();
+    };
+    let mut rows = std::collections::BTreeMap::<u64, Vec<(u64, String)>>::new();
+    for cell in cells {
+        let Some(row) = cell.get("row").and_then(Value::as_u64) else {
+            continue;
+        };
+        let col = cell.get("col").and_then(Value::as_u64).unwrap_or(0);
+        let text = cell.get("text").and_then(Value::as_str).unwrap_or_default();
+        if !text.trim().is_empty() {
+            rows.entry(row).or_default().push((col, text.to_string()));
+        }
+    }
+    for (_, row) in rows.iter_mut() {
+        row.sort_by_key(|(col, _)| *col);
+    }
+    for (_, row) in rows {
+        let Some((_, first)) = row.first() else {
+            continue;
+        };
+        let prompt_number = first
+            .trim()
+            .trim_end_matches('.')
+            .trim()
+            .parse::<u32>()
+            .ok();
+        let matches_range = (number <= range_end)
+            && prompt_number == Some(number)
+            && row.iter().any(|(_, text)| text != first);
+        if !matches_range {
+            continue;
+        }
+        let prompt = collapse_whitespace(
+            &row.iter()
+                .skip(1)
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        if !prompt.trim().is_empty() {
+            return prompt;
+        }
+    }
+    String::new()
 }
 
 fn dynamic_declared_letter_bank_labels(text: &str) -> Vec<String> {
@@ -4672,12 +4760,26 @@ pub(crate) fn make_dynamic_authoring_ir(
                 .into_iter()
                 .filter_map(|item| serde_json::from_value::<SplitContinuationEdgeV1>(item).ok())
                 .collect::<Vec<_>>();
+            let layout_hint = candidate
+                .get("layoutHint")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| dynamic_layout_hint_for_group(kind, &group_text));
             let group_option_bank = dynamic_group_option_bank(&group_blocks, kind);
             let questions = (start..=end)
                 .map(|number| {
                     let display = number.to_string();
                     let qid = format!("q{}", display);
-                    let (prompt, question_options) = if requires_manual_question_import {
+                    let manual_import = requires_manual_question_import
+                        || (matches!(kind, "short_answer" | "matching")
+                            && group_blocks.len() == 1
+                            && is_dynamic_umbrella_question_range(
+                                &dynamic_block_text(group_blocks.first().unwrap_or(&Value::Null)),
+                            ));
+                    let completion_gap_recovery = !manual_import
+                        && is_dynamic_completion_kind(kind)
+                        && layout_hint == "inline_completion";
+                    let completion_recovery = !manual_import && is_dynamic_completion_kind(kind);
+                    let (mut prompt, question_options) = if manual_import {
                         (String::new(), Vec::new())
                     } else {
                         dynamic_question_prompt_and_options(
@@ -4689,6 +4791,66 @@ pub(crate) fn make_dynamic_authoring_ir(
                             kind,
                         )
                     };
+                    if completion_recovery && prompt.trim().is_empty() {
+                        let last_group_id =
+                            block_ids.last().map(String::as_str).unwrap_or_default();
+                        let start_after = blocks
+                            .iter()
+                            .position(|block| dynamic_block_id(block) == last_group_id)
+                            .map(|position| position + 1)
+                            .unwrap_or(0);
+                        let tail_blocks = blocks.iter().skip(start_after).take(12);
+                        if completion_gap_recovery {
+                            let tail_text = tail_blocks
+                                .clone()
+                                .map(dynamic_block_text)
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            let recovered = dynamic_gap_sentence_prompt(&tail_text, number);
+                            if !recovered.trim().is_empty() {
+                                prompt = recovered;
+                            }
+                        }
+                        if prompt.trim().is_empty() {
+                            for block in tail_blocks {
+                                let recovered =
+                                    dynamic_table_row_prompt_for_number(block, number, end);
+                                if !recovered.trim().is_empty() {
+                                    prompt = recovered;
+                                    break;
+                                }
+                            }
+                        }
+                        if prompt.trim().is_empty() {
+                            // No numbered blank or table row follows the group
+                            // (the table may already sit inside the group's own
+                            // blocks). Fall back to the group instruction so the
+                            // prompt is never empty for a reviewed question.
+                            let first_numbered_index = group_blocks
+                                .iter()
+                                .position(|block| {
+                                    dynamic_leading_question_number(&dynamic_block_text(block))
+                                        .is_some()
+                                })
+                                .unwrap_or(1.min(group_blocks.len()));
+                            prompt = dynamic_instruction_text_from_blocks(
+                                &group_blocks,
+                                first_numbered_index,
+                            );
+                        }
+                        if prompt.trim().is_empty() {
+                            // Last resort: keep the range heading so the
+                            // author can identify the question without a
+                            // blank prompt.
+                            prompt = format!("Questions {} item {}", number, number);
+                        }
+                    }
+                    if !manual_import && prompt.trim().is_empty() {
+                        // Any non-manual question must stay non-empty; a blank
+                        // prompt would block the publish gate even after the
+                        // author verified every item.
+                        prompt = format!("Questions {} item {}", number, number);
+                    }
                     let option_texts = if question_options.is_empty() {
                         group_option_bank.as_slice()
                     } else {
@@ -4713,14 +4875,10 @@ pub(crate) fn make_dynamic_authoring_ir(
                             .and_then(Value::as_f64)
                             .unwrap_or(0.72),
                         verified: false,
-                        requires_manual_question_import,
+                        requires_manual_question_import: manual_import,
                     }
                 })
                 .collect::<Vec<_>>();
-            let layout_hint = candidate
-                .get("layoutHint")
-                .and_then(Value::as_str)
-                .unwrap_or_else(|| dynamic_layout_hint_for_group(kind, &group_text));
             let layout = if kind == "table_completion" {
                 json!({"template": dynamic_template_for_kind(kind), "layoutHint": layout_hint, "tableHeaders": ["Question", "Prompt", "Answer"]})
             } else if layout_hint == "inline_completion" {

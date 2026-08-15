@@ -64,7 +64,7 @@
     "v1Path": "fixtures/golden/baseline/v1/pdf-vector-diagram.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 11,
+      "blockCount": 10,
       "groupCount": 1,
       "slotCount": 3,
       "assetCount": 0,

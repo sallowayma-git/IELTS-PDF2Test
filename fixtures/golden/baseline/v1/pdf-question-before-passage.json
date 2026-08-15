@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 2,
-    "blockCount": 11,
+    "blockCount": 12,
     "groupCount": 1,
     "slotCount": 3,
     "assetCount": 0,
@@ -73,9 +73,8 @@
             "b006",
             "b007",
             "b008",
-            "b009",
-            "b010",
-            "b011"
+            "b011",
+            "b012"
           ],
           "confidence": 0.68,
           "continuationEdges": [
@@ -118,25 +117,20 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b008",
-              "reason": "same-section-continuation",
-              "toBlockId": "b009"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b009",
               "reason": "cross-page-continuation",
-              "toBlockId": "b010"
+              "toBlockId": "b011"
             },
             {
               "confidence": 0.72,
-              "fromBlockId": "b010",
+              "fromBlockId": "b011",
               "reason": "same-section-continuation",
-              "toBlockId": "b011"
+              "toBlockId": "b012"
             }
           ],
           "groupId": "group-1",
           "instruction": [
-            "Questions 1-3"
+            "Questions 1-3",
+            "Questions 1-3 Choose the correct heading for each paragraph."
           ],
           "isUmbrellaRange": false,
           "kind": "matching",
@@ -156,11 +150,11 @@
               "id": "q1",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "B C D"
+                },
                 "options": [
-                  "A",
-                  "B",
-                  "C",
-                  "D"
+                  "A"
                 ],
                 "type": "matching"
               },
@@ -174,9 +168,8 @@
                 "b006",
                 "b007",
                 "b008",
-                "b009",
-                "b010",
-                "b011"
+                "b011",
+                "b012"
               ],
               "verified": false
             },
@@ -187,11 +180,11 @@
               "id": "q2",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "B C D"
+                },
                 "options": [
-                  "A",
-                  "B",
-                  "C",
-                  "D"
+                  "A"
                 ],
                 "type": "matching"
               },
@@ -205,9 +198,8 @@
                 "b006",
                 "b007",
                 "b008",
-                "b009",
-                "b010",
-                "b011"
+                "b011",
+                "b012"
               ],
               "verified": false
             },
@@ -218,15 +210,15 @@
               "id": "q3",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "B C D"
+                },
                 "options": [
-                  "A",
-                  "B",
-                  "C",
-                  "D"
+                  "A"
                 ],
                 "type": "matching"
               },
-              "prompt": "The source statement describes a synthetic test condition.",
+              "prompt": "The source statement describes a synthetic test condition. The passage is intentionally placed after the question list. Semantic role, not page order, determines the final authoring layout.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b002",
@@ -236,9 +228,8 @@
                 "b006",
                 "b007",
                 "b008",
-                "b009",
-                "b010",
-                "b011"
+                "b011",
+                "b012"
               ],
               "verified": false
             }
@@ -250,203 +241,192 @@
           "sectionEvidence": [
             {
               "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                686.7274780273438,
+                120.62700653076172,
+                693.2725219726562
               ],
               "blockId": "b002",
               "column": 0,
               "normalizedBbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                686.7274780273438,
+                120.62700653076172,
+                693.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
+              "sectionColumnCount": 3,
               "textPreview": "Questions 1-3"
             },
             {
               "bbox": [
-                72,
-                156,
-                520,
-                192
+                54,
+                671.7274780273438,
+                243.0989532470703,
+                678.2725219726562
               ],
               "blockId": "b003",
               "column": 0,
               "normalizedBbox": [
-                72,
-                156,
-                520,
-                192
+                54,
+                671.7274780273438,
+                243.0989532470703,
+                678.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "Choose the correct heading for each paragraph."
             },
             {
               "bbox": [
-                72,
-                198,
-                520,
-                234
+                54,
+                650.7274780273438,
+                293.1119689941406,
+                657.2725219726562
               ],
               "blockId": "b004",
               "column": 0,
               "normalizedBbox": [
-                72,
-                198,
-                520,
-                234
+                54,
+                650.7274780273438,
+                293.1119689941406,
+                657.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "1. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
                 72,
-                240,
-                520,
-                276
+                635.7274780273438,
+                113.02200317382812,
+                642.2725219726562
               ],
               "blockId": "b005",
               "column": 0,
               "normalizedBbox": [
                 72,
-                240,
-                520,
-                276
+                635.7274780273438,
+                113.02200317382812,
+                642.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 3,
               "textPreview": "A B C D"
             },
             {
               "bbox": [
-                72,
-                282,
-                520,
-                318
+                54,
+                611.7274780273438,
+                293.1119689941406,
+                618.2725219726562
               ],
               "blockId": "b006",
               "column": 0,
               "normalizedBbox": [
-                72,
-                282,
-                520,
-                318
+                54,
+                611.7274780273438,
+                293.1119689941406,
+                618.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "2. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
                 72,
-                324,
-                520,
-                360
+                596.7274780273438,
+                113.02200317382812,
+                603.2725219726562
               ],
               "blockId": "b007",
               "column": 0,
               "normalizedBbox": [
                 72,
-                324,
-                520,
-                360
+                596.7274780273438,
+                113.02200317382812,
+                603.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 3,
               "textPreview": "A B C D"
             },
             {
               "bbox": [
-                72,
-                366,
-                520,
-                402
+                54,
+                572.7274780273438,
+                293.1119689941406,
+                579.2725219726562
               ],
               "blockId": "b008",
               "column": 0,
               "normalizedBbox": [
-                72,
-                366,
-                520,
-                402
+                54,
+                572.7274780273438,
+                293.1119689941406,
+                579.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "3. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
-                72,
-                408,
-                520,
-                444
-              ],
-              "blockId": "b009",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                408,
-                520,
-                444
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "",
-              "textPreview": "A B C D"
-            },
-            {
-              "bbox": [
-                72,
-                72,
-                520,
-                108
-              ],
-              "blockId": "b010",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                72,
-                520,
-                108
-              ],
-              "pageIndex": 2,
-              "pageRotation": 0,
-              "role": "passage",
-              "textPreview": "Reading Passage 1"
-            },
-            {
-              "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                698.5999755859375,
+                532.56982421875,
+                701.4000244140625
               ],
               "blockId": "b011",
               "column": 0,
               "normalizedBbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                698.5999755859375,
+                532.56982421875,
+                701.4000244140625
               ],
               "pageIndex": 2,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "The passage is intentionally placed after the question list. Semantic role, not page order, determines the final authori"
+              "sectionColumnCount": 1,
+              "textPreview": "The passage is intentionally placed after the question list. Semantic role, not page order, determines the final"
+            },
+            {
+              "bbox": [
+                54,
+                683.5999755859375,
+                125.1500015258789,
+                686.4000244140625
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                683.5999755859375,
+                125.1500015258789,
+                686.4000244140625
+              ],
+              "pageIndex": 2,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 3,
+              "textPreview": "authoring layout."
             }
           ],
           "sourceBlockIds": [
@@ -457,9 +437,8 @@
             "b006",
             "b007",
             "b008",
-            "b009",
-            "b010",
-            "b011"
+            "b011",
+            "b012"
           ],
           "verified": false
         }
@@ -468,12 +447,15 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h2>pdf question before passage</h2>"
+            "html": "<p>A B C D</p>\n<h3>Reading Passage 1</h3>"
           }
         ],
         "questionUmbrellaRanges": [],
-        "sourceBlockIds": [],
-        "title": "pdf question before passage"
+        "sourceBlockIds": [
+          "b009",
+          "b010"
+        ],
+        "title": "A B C D"
       },
       "questionDisplayMap": {
         "q1": "1",
@@ -493,178 +475,348 @@
         {
           "blocks": [
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 0,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                72,
-                520,
-                108
+                48,
+                744.7274780273438,
+                289.96197509765625,
+                751.2725219726562
               ],
               "blockId": "b001",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions appear before the passage</h3>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
               "pageIndex": 1,
               "roleHint": "question",
               "text": "Questions appear before the passage"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 1,
+              "_epic8SectionColumns": 3,
               "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                686.7274780273438,
+                120.62700653076172,
+                693.2725219726562
               ],
               "blockId": "b002",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 1-3</h3>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
               "pageIndex": 1,
               "roleHint": "question",
               "text": "Questions 1-3"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                156,
-                520,
-                192
+                54,
+                671.7274780273438,
+                243.0989532470703,
+                678.2725219726562
               ],
               "blockId": "b003",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Choose the correct heading for each paragraph.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 2
+                }
+              },
               "pageIndex": 1,
               "text": "Choose the correct heading for each paragraph."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                198,
-                520,
-                234
+                54,
+                650.7274780273438,
+                293.1119689941406,
+                657.2725219726562
               ],
               "blockId": "b004",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>1. The source statement describes a synthetic test condition.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 2
+                }
+              },
               "pageIndex": 1,
               "text": "1. The source statement describes a synthetic test condition."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 4,
+              "_epic8SectionColumns": 3,
               "bbox": [
                 72,
-                240,
-                520,
-                276
+                635.7274780273438,
+                113.02200317382812,
+                642.2725219726562
               ],
               "blockId": "b005",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A   B   C   D</p>",
+              "html": "<p>A B C D</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
               "pageIndex": 1,
-              "text": "A   B   C   D"
+              "text": "A B C D"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                282,
-                520,
-                318
+                54,
+                611.7274780273438,
+                293.1119689941406,
+                618.2725219726562
               ],
               "blockId": "b006",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>2. The source statement describes a synthetic test condition.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
               "pageIndex": 1,
               "text": "2. The source statement describes a synthetic test condition."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 5,
+              "_epic8Ordinal": 6,
+              "_epic8SectionColumns": 3,
               "bbox": [
                 72,
-                324,
-                520,
-                360
+                596.7274780273438,
+                113.02200317382812,
+                603.2725219726562
               ],
               "blockId": "b007",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A   B   C   D</p>",
+              "html": "<p>A B C D</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 5
+                }
+              },
               "pageIndex": 1,
-              "text": "A   B   C   D"
+              "text": "A B C D"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 6,
+              "_epic8Ordinal": 7,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                366,
-                520,
-                402
+                54,
+                572.7274780273438,
+                293.1119689941406,
+                579.2725219726562
               ],
               "blockId": "b008",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>3. The source statement describes a synthetic test condition.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 6
+                }
+              },
               "pageIndex": 1,
               "text": "3. The source statement describes a synthetic test condition."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 7,
+              "_epic8Ordinal": 8,
+              "_epic8SectionColumns": 3,
               "bbox": [
                 72,
-                408,
-                520,
-                444
+                557.7274780273438,
+                113.02200317382812,
+                564.2725219726562
               ],
               "blockId": "b009",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A   B   C   D</p>",
+              "html": "<p>A B C D</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 7
+                }
+              },
               "pageIndex": 1,
-              "text": "A   B   C   D"
+              "text": "A B C D"
             }
           ],
-          "height": 842,
+          "height": 792,
           "pageIndex": 1,
-          "width": 595
+          "width": 612
         },
         {
           "blocks": [
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 0,
+              "_epic8SectionColumns": 3,
               "bbox": [
-                72,
-                72,
-                520,
-                108
+                48,
+                746.5999755859375,
+                167.82598876953125,
+                749.4000244140625
               ],
               "blockId": "b010",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Reading Passage 1</h3>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
               "pageIndex": 2,
               "roleHint": "passage",
               "text": "Reading Passage 1"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 1,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                698.5999755859375,
+                532.56982421875,
+                701.4000244140625
               ],
               "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The passage is intentionally placed after the question list. Semantic role, not page order, determines the final\nauthoring layout.</p>",
+              "html": "<p>The passage is intentionally placed after the question list. Semantic role, not page order, determines the final</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
               "pageIndex": 2,
-              "text": "The passage is intentionally placed after the question list. Semantic role, not page order, determines the final\nauthoring layout."
+              "text": "The passage is intentionally placed after the question list. Semantic role, not page order, determines the final"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 2,
+              "_epic8SectionColumns": 3,
+              "bbox": [
+                54,
+                683.5999755859375,
+                125.1500015258789,
+                686.4000244140625
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>authoring layout.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 2
+                }
+              },
+              "pageIndex": 2,
+              "text": "authoring layout."
             }
           ],
-          "height": 842,
+          "height": 792,
           "pageIndex": 2,
-          "width": 595
+          "width": 612
         }
       ],
       "parser": {
         "mode": "auto",
-        "provider": "rust-parser:pdf:pdf-extract",
+        "provider": "rust-parser:pdf:pdfium",
         "sourceFileId": "file-cli-main",
         "sourceStoredName": "pdf-question-before-passage.pdf",
         "version": "0.1.0",
@@ -673,11 +825,7 @@
       "schemaVersion": "DocumentIRV1"
     },
     "readingSource": {
-      "answerKey": {
-        "q1": "",
-        "q2": "",
-        "q3": ""
-      },
+      "answerKey": {},
       "audit": {
         "matchConfidence": 0,
         "matchStatus": "needs_review",
@@ -698,7 +846,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h2>pdf question before passage</h2>",
+            "html": "<p>A B C D</p>\n<h3>Reading Passage 1</h3>",
             "kind": "html"
           }
         ]
@@ -711,10 +859,10 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-3</p></div><ol><li><div><strong>1</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q1\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q1\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q1\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>2</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q2\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q2\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q2\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>3</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q3\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q3\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q3\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-3</p><p>Questions 1-3 Choose the correct heading for each paragraph.</p></div><ol><li><div><strong>1</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">B C D</span></label></div></li><li><div><strong>2</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">B C D</span></label></div></li><li><div><strong>3</strong> The source statement describes a synthetic test condition. The passage is intentionally placed after the question list. Semantic role, not page order, determines the final authoring layout.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">B C D</span></label></div></li></ol></section>",
           "groupId": "group-1",
           "kind": "matching",
-          "leadHtml": "<p>Questions 1-3</p>",
+          "leadHtml": "<p>Questions 1-3</p><p>Questions 1-3 Choose the correct heading for each paragraph.</p>",
           "questionIds": [
             "q1",
             "q2",
@@ -730,7 +878,7 @@
       "schemaVersion": "ReadingExamSourceV1",
       "sourceRefs": {
         "ieltsHtml": null,
-        "primaryHtml": "author-imports/import-20260809143541-f0f39dfa/intermediate.html",
+        "primaryHtml": "author-imports/<import>/intermediate.html",
         "primaryProvider": "author_web",
         "shuiHtml": null,
         "shuiPdf": "uploads/pdf-question-before-passage.pdf"
@@ -746,8 +894,11 @@
       "passageCandidates": [
         {
           "categoryHint": "P1",
-          "range": [],
-          "title": "pdf question before passage"
+          "range": [
+            "b009",
+            "b010"
+          ],
+          "title": "A B C D"
         }
       ],
       "questionGroupCandidates": [
@@ -760,9 +911,8 @@
             "b006",
             "b007",
             "b008",
-            "b009",
-            "b010",
-            "b011"
+            "b011",
+            "b012"
           ],
           "classification": {
             "confidence": 0.68,
@@ -774,9 +924,8 @@
               "b006",
               "b007",
               "b008",
-              "b009",
-              "b010",
-              "b011"
+              "b011",
+              "b012"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -834,25 +983,19 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b008",
-              "reason": "same-section-continuation",
-              "toBlockId": "b009"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b009",
               "reason": "cross-page-continuation",
-              "toBlockId": "b010"
+              "toBlockId": "b011"
             },
             {
               "confidence": 0.72,
-              "fromBlockId": "b010",
+              "fromBlockId": "b011",
               "reason": "same-section-continuation",
-              "toBlockId": "b011"
+              "toBlockId": "b012"
             }
           ],
           "groupId": "group-1",
           "heading": "Questions 1-3",
-          "instructionText": "Questions 1-3",
+          "instructionText": "Questions 1-3 Choose the correct heading for each paragraph.",
           "kindHint": "matching",
           "layoutHint": "list",
           "questionRange": [
@@ -862,203 +1005,192 @@
           "sectionEvidence": [
             {
               "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                686.7274780273438,
+                120.62700653076172,
+                693.2725219726562
               ],
               "blockId": "b002",
               "column": 0,
               "normalizedBbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                686.7274780273438,
+                120.62700653076172,
+                693.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
+              "sectionColumnCount": 3,
               "textPreview": "Questions 1-3"
             },
             {
               "bbox": [
-                72,
-                156,
-                520,
-                192
+                54,
+                671.7274780273438,
+                243.0989532470703,
+                678.2725219726562
               ],
               "blockId": "b003",
               "column": 0,
               "normalizedBbox": [
-                72,
-                156,
-                520,
-                192
+                54,
+                671.7274780273438,
+                243.0989532470703,
+                678.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "Choose the correct heading for each paragraph."
             },
             {
               "bbox": [
-                72,
-                198,
-                520,
-                234
+                54,
+                650.7274780273438,
+                293.1119689941406,
+                657.2725219726562
               ],
               "blockId": "b004",
               "column": 0,
               "normalizedBbox": [
-                72,
-                198,
-                520,
-                234
+                54,
+                650.7274780273438,
+                293.1119689941406,
+                657.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "1. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
                 72,
-                240,
-                520,
-                276
+                635.7274780273438,
+                113.02200317382812,
+                642.2725219726562
               ],
               "blockId": "b005",
               "column": 0,
               "normalizedBbox": [
                 72,
-                240,
-                520,
-                276
+                635.7274780273438,
+                113.02200317382812,
+                642.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 3,
               "textPreview": "A B C D"
             },
             {
               "bbox": [
-                72,
-                282,
-                520,
-                318
+                54,
+                611.7274780273438,
+                293.1119689941406,
+                618.2725219726562
               ],
               "blockId": "b006",
               "column": 0,
               "normalizedBbox": [
-                72,
-                282,
-                520,
-                318
+                54,
+                611.7274780273438,
+                293.1119689941406,
+                618.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "2. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
                 72,
-                324,
-                520,
-                360
+                596.7274780273438,
+                113.02200317382812,
+                603.2725219726562
               ],
               "blockId": "b007",
               "column": 0,
               "normalizedBbox": [
                 72,
-                324,
-                520,
-                360
+                596.7274780273438,
+                113.02200317382812,
+                603.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 3,
               "textPreview": "A B C D"
             },
             {
               "bbox": [
-                72,
-                366,
-                520,
-                402
+                54,
+                572.7274780273438,
+                293.1119689941406,
+                579.2725219726562
               ],
               "blockId": "b008",
               "column": 0,
               "normalizedBbox": [
-                72,
-                366,
-                520,
-                402
+                54,
+                572.7274780273438,
+                293.1119689941406,
+                579.2725219726562
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "3. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
-                72,
-                408,
-                520,
-                444
-              ],
-              "blockId": "b009",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                408,
-                520,
-                444
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "",
-              "textPreview": "A B C D"
-            },
-            {
-              "bbox": [
-                72,
-                72,
-                520,
-                108
-              ],
-              "blockId": "b010",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                72,
-                520,
-                108
-              ],
-              "pageIndex": 2,
-              "pageRotation": 0,
-              "role": "passage",
-              "textPreview": "Reading Passage 1"
-            },
-            {
-              "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                698.5999755859375,
+                532.56982421875,
+                701.4000244140625
               ],
               "blockId": "b011",
               "column": 0,
               "normalizedBbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                698.5999755859375,
+                532.56982421875,
+                701.4000244140625
               ],
               "pageIndex": 2,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "The passage is intentionally placed after the question list. Semantic role, not page order, determines the final authori"
+              "sectionColumnCount": 1,
+              "textPreview": "The passage is intentionally placed after the question list. Semantic role, not page order, determines the final"
+            },
+            {
+              "bbox": [
+                54,
+                683.5999755859375,
+                125.1500015258789,
+                686.4000244140625
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                683.5999755859375,
+                125.1500015258789,
+                686.4000244140625
+              ],
+              "pageIndex": 2,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 3,
+              "textPreview": "authoring layout."
             }
           ]
         }

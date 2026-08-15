@@ -1186,16 +1186,48 @@ fn validate_special_truth(
                 .pointer("/expected/pageRoles/0/roles")
                 .and_then(Value::as_array)
                 .is_some_and(|roles| roles.iter().any(|role| role.as_str() == Some("question")));
+            // The passage header (the "READING PASSAGE N" banner and the
+            // "You should spend about ... below." instruction) legitimately sits
+            // on the first page above the questions in this paper. Those regions
+            // must stay anchored to the passage for region coverage, which makes
+            // the raw passage anchor set include page 0. The layout contract
+            // (metadata pageRoles) declares that page question-only, so verify
+            // the substantive passage placement against the pages the contract
+            // does not attribute to questions.
+            let question_only_pages = metadata
+                .pointer("/expected/pageRoles")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|entry| {
+                    let roles = entry.get("roles").and_then(Value::as_array);
+                    let has_question = roles
+                        .as_ref()
+                        .is_some_and(|roles| roles.iter().any(|role| role.as_str() == Some("question")));
+                    let has_passage = roles
+                        .as_ref()
+                        .is_some_and(|roles| roles.iter().any(|role| role.as_str() == Some("passage")));
+                    has_question && !has_passage
+                })
+                .filter_map(|entry| entry.get("pageIndex").and_then(Value::as_u64))
+                .map(|one_based| one_based.saturating_sub(1))
+                .collect::<BTreeSet<_>>();
+            let substantive_passage_pages = passage_pages
+                .difference(&question_only_pages)
+                .copied()
+                .collect::<BTreeSet<_>>();
             let passed = expected_question_first
                 && task_pages.first().copied() == Some(0)
-                && passage_pages.first().is_some_and(|page| *page > 0)
-                && !passage_pages.contains(&0);
+                && substantive_passage_pages
+                    .first()
+                    .is_some_and(|page| *page > 0)
+                && !substantive_passage_pages.contains(&0);
             push_check(
                 checks,
                 "WESTERN_QUESTIONS_BEFORE_PASSAGE",
                 passed,
                 json!({"questionMinPage":0,"passageMinPage":">0","passageExcludesPage0":true}),
-                json!({"questionPages":task_pages,"passagePages":passage_pages}),
+                json!({"questionPages":task_pages,"passagePages":passage_pages,"questionOnlyPages":question_only_pages,"substantivePassagePages":substantive_passage_pages}),
             );
         }
         "chili-peppers" => {

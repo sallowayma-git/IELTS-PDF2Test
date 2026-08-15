@@ -102,13 +102,13 @@
           "q12",
           "q13"
         ],
-      "responseGroupIds": [
+        "responseGroupIds": [
           "group-3-response-9",
           "group-3-response-10",
           "group-3-response-11",
           "group-3-response-12",
           "group-3-response-13"
-      ],
+        ],
         "sourceEvidenceIds": [
           "group-3-source"
         ]
@@ -272,62 +272,142 @@
       {
         "id": "group-3-response-9",
         "taskGroupId": "group-3",
-        "slotIds": ["q9"],
+        "slotIds": [
+          "q9"
+        ],
         "promptMode": "per_slot",
-        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
         "assignment": "per_slot",
-        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "optionBinding": {
+          "mode": "inline",
+          "inlineLabels": [
+            "A",
+            "B",
+            "C",
+            "D"
+          ]
+        },
         "reusePolicy": "disallowed",
         "scoringPolicy": "per_slot_binary",
-        "sourceEvidenceIds": ["group-3-source"]
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
       },
       {
         "id": "group-3-response-10",
         "taskGroupId": "group-3",
-        "slotIds": ["q10"],
+        "slotIds": [
+          "q10"
+        ],
         "promptMode": "per_slot",
-        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
         "assignment": "per_slot",
-        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "optionBinding": {
+          "mode": "inline",
+          "inlineLabels": [
+            "A",
+            "B",
+            "C",
+            "D"
+          ]
+        },
         "reusePolicy": "disallowed",
         "scoringPolicy": "per_slot_binary",
-        "sourceEvidenceIds": ["group-3-source"]
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
       },
       {
         "id": "group-3-response-11",
         "taskGroupId": "group-3",
-        "slotIds": ["q11"],
+        "slotIds": [
+          "q11"
+        ],
         "promptMode": "per_slot",
-        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
         "assignment": "per_slot",
-        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "optionBinding": {
+          "mode": "inline",
+          "inlineLabels": [
+            "A",
+            "B",
+            "C",
+            "D"
+          ]
+        },
         "reusePolicy": "disallowed",
         "scoringPolicy": "per_slot_binary",
-        "sourceEvidenceIds": ["group-3-source"]
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
       },
       {
         "id": "group-3-response-12",
         "taskGroupId": "group-3",
-        "slotIds": ["q12"],
+        "slotIds": [
+          "q12"
+        ],
         "promptMode": "per_slot",
-        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
         "assignment": "per_slot",
-        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "optionBinding": {
+          "mode": "inline",
+          "inlineLabels": [
+            "A",
+            "B",
+            "C",
+            "D"
+          ]
+        },
         "reusePolicy": "disallowed",
         "scoringPolicy": "per_slot_binary",
-        "sourceEvidenceIds": ["group-3-source"]
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
       },
       {
         "id": "group-3-response-13",
         "taskGroupId": "group-3",
-        "slotIds": ["q13"],
+        "slotIds": [
+          "q13"
+        ],
         "promptMode": "per_slot",
-        "cardinality": {"min": 1, "max": 1, "exact": 1},
+        "cardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
         "assignment": "per_slot",
-        "optionBinding": {"mode": "inline", "inlineLabels": ["A", "B", "C", "D"]},
+        "optionBinding": {
+          "mode": "inline",
+          "inlineLabels": [
+            "A",
+            "B",
+            "C",
+            "D"
+          ]
+        },
         "reusePolicy": "disallowed",
         "scoringPolicy": "per_slot_binary",
-        "sourceEvidenceIds": ["group-3-source"]
+        "sourceEvidenceIds": [
+          "group-3-source"
+        ]
       }
     ],
     "sourceEvidence": [
@@ -397,7 +477,7 @@
     "v1Path": "fixtures/golden/baseline/v1/listening-to-the-ocean.json",
     "observed": {
       "pageCount": 6,
-      "blockCount": 42,
+      "blockCount": 62,
       "groupCount": 3,
       "slotCount": 13,
       "assetCount": 0,

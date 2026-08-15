@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 4,
-    "blockCount": 25,
+    "blockCount": 45,
     "groupCount": 1,
     "slotCount": 13,
     "assetCount": 0,
@@ -34,6 +34,7 @@
       "q13"
     ],
     "roles": [
+      "passage",
       "question"
     ]
   },
@@ -91,7 +92,8 @@
           "confidence": 0.35,
           "groupId": "group-1",
           "instruction": [
-            "Questions 1-13"
+            "Questions 1-13",
+            "You should spend about 20 minutes on Questions 1–13, which are based on Reading"
           ],
           "isUmbrellaRange": true,
           "kind": "short_answer",
@@ -338,7 +340,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>RE ADI NG  P AS S AGE   1</p>\n<p>Lever Brothers’ Sunlight Soap</p>\n<p>A Revolution in Hygiene and Industry</p>\n<p>Sunlight Soap, produced by the Lever Brothers in \nthe late 19th century, was a groundbreaking \ninnovation in the world of consumer goods. At a \ntime when hygiene and cleanliness were not \nuniversally prioritised, Sunlight Soap not only \nintroduced a revolutionary product but also played \na crucial role in transforming industrial production, \nmarketing strategies and public health. The \nsuccess of Sunlight Soap laid the foundation for \nwhat would later become Unilever, one of the \nworld’s largest multinational corporations.</p>\n<p>Origins and Innovation</p>\n<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother \nJames Darcy Lever established the Lever Brothers company in England. They sought to \ncreate a high-quality soap that was both affordable and effective in promoting hygiene. \nTraditional soaps at the time were often harsh on the skin and required extensive \npreparation. The Lever Brothers aimed to change this by producing a soap that was easy to \nuse and gentle while maintaining strong cleansing properties.</p>\n<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional \nmethod of soap-making, which relied on animal fats and wood ash, Sunlight Soap was \nmanufactured using a blend of vegetable oils and alkali, resulting in a more consistent and \nsuperior-quality product. This not only improved the soap’s effectiveness but also made it a \nmore ethical and sustainable option compared with its contemporaries.</p>\n<p>Marketing and Branding</p>\n<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ \npioneering approach to marketing and branding. At a time when consumer goods were \nlargely sold in bulk without much branding, Sunlight Soap was among the first products to \nbe packaged and advertised extensively. The Lever Brothers recognised the power of \nbranding and used eye-catching designs and slogans to establish a strong presence in the \nmarket.</p>\n<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding \nthat set it apart from competitors. The company also employed creative advertising \ncampaigns, utilising newspapers, posters and, later, radio and television advertisements. \nOne of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the \nsoap’s superior cleaning abilities and resonated with consumers.</p>\n<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional \nstrategies. They introduced coupons, free samples and competitions to attract customers \nand build brand loyalty. These marketing techniques, which are now standard in the \nconsumer-goods industry, were groundbreaking at the time and played a crucial role in \nestablishing Sunlight Soap as a household name.</p>\n<p>Impact on Hygiene and Public Health</p>\n<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public \nhealth. In the late 19th and early 20th centuries, diseases related to poor hygiene were \nrampant, and access to effective cleansing products was limited. The affordability and \nwidespread availability of Sunlight Soap helped improve sanitation and hygiene standards \nin homes across Britain and beyond.</p>\n<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap \ncontributed to reducing the spread of infectious diseases. Public-health campaigns, often \nsupported by the Lever Brothers, emphasised the importance of cleanliness, particularly in \nurban areas where overcrowding and poor sanitation were major issues. The soap’s role in \npromoting hygiene was especially crucial during times of public-health crises, such as \ncholera outbreaks and the Spanish-flu pandemic.</p>\n<p>Industrial and Social Innovations</p>\n<p>The Lever Brothers not only revolutionised soap production but also set new standards in \nindustrial practices and social responsibility. In 1888, William Lever established Port \nSunlight, a model village on the Wirral Peninsula, to house the workers of the company’s \nsoap factory. Unlike the cramped and unsanitary living conditions common in industrial \ncities, Port Sunlight provided employees with well-built homes, access to education, \nrecreational facilities and **health-**care services. This initiative was groundbreaking and \ndemonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>\n<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility \n(CSR) initiatives. It set an example for other industrialists and showcased the benefits of \ntreating workers with dignity and providing them with a better quality of life. Many of the \nprinciples applied in Port Sunlight would later influence labour policies and welfare \nprogrammes in various industries.</p>\n<p>Expansion and Global Reach</p>\n<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded \ntheir operations internationally, establishing factories and distribution networks across \nEurope, Africa, Asia and the Americas. The soap’s reputation for quality and affordability \nhelped it gain popularity in various markets, and the company’s aggressive marketing \nstrategies ensured its continued growth.</p>\n<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding \nand marketing campaigns. The Lever Brothers tailored their advertisements and \npromotional efforts to suit different cultural and economic contexts. In many countries, \nSunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its \nstatus as a trusted product worldwide.</p>\n<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to \nform Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in \nthe soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying \nforward the legacy of Sunlight Soap.</p>\n<p>Legacy and Modern Relevance</p>\n<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original \nproduct has evolved over time, its core values of cleanliness, affordability and innovation \nremain relevant. The principles established by the Lever Brothers continue to influence \nmodern consumer-goods companies, particularly in areas such as sustainability and social \nresponsibility.</p>\n<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to \nprioritise sustainability and social impact. Initiatives such as reducing plastic waste, \npromoting handwashing in developing countries and supporting fair-trade practices reflect \nthe same pioneering spirit that defined the success of Sunlight Soap.</p>"
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Lever Brothers’ Sunlight Soap</p>\n<p>A Revolution in Hygiene and Industry</p>\n<p>Sunlight Soap, produced by the Lever Brothers in the late 19th century, was a groundbreaking innovation in the world of consumer goods. At a time when hygiene and cleanliness were not universally prioritised, Sunlight Soap not only introduced a revolutionary product but also played a crucial role in transforming industrial production, marketing strategies and public health. The success of Sunlight Soap laid the foundation for what would later become Unilever, one of the world’s largest multinational corporations.</p>\n<p>Origins and Innovation</p>\n<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother James Darcy Lever established the Lever Brothers company in England. They sought to create a high-quality soap that was both affordable and effective in promoting hygiene. Traditional soaps at the time were often harsh on the skin and required extensive preparation. The Lever Brothers aimed to change this by producing a soap that was easy to</p>\n<p>use and gentle while maintaining strong cleansing properties.</p>\n<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional method of soap-making, which relied on animal fats and wood ash, Sunlight Soap was manufactured using a blend of vegetable oils and alkali, resulting in a more consistent and superior-quality product. This not only improved the soap’s effectiveness but also made it a</p>\n<p>more ethical and sustainable option compared with its contemporaries.</p>\n<p>Marketing and Branding</p>\n<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ pioneering approach to marketing and branding. At a time when consumer goods were largely sold in bulk without much branding, Sunlight Soap was among the first products to be packaged and advertised extensively. The Lever Brothers recognised the power of branding and used eye-catching designs and slogans to establish a strong presence in the</p>\n<p>market.</p>\n<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding that set it apart from competitors. The company also employed creative advertising campaigns, utilising newspapers, posters and, later, radio and television advertisements. One of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the</p>\n<p>soap’s superior cleaning abilities and resonated with consumers.</p>\n<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional strategies. They introduced coupons, free samples and competitions to attract customers and build brand loyalty. These marketing techniques, which are now standard in the consumer-goods industry, were groundbreaking at the time and played a crucial role in</p>\n<p>establishing Sunlight Soap as a household name.</p>\n<p>Impact on Hygiene and Public Health</p>\n<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public health. In the late 19th and early 20th centuries, diseases related to poor hygiene were rampant, and access to effective cleansing products was limited. The affordability and widespread availability of Sunlight Soap helped improve sanitation and hygiene standards</p>\n<p>in homes across Britain and beyond.</p>\n<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap contributed to reducing the spread of infectious diseases. Public-health campaigns, often supported by the Lever Brothers, emphasised the importance of cleanliness, particularly in urban areas where overcrowding and poor sanitation were major issues. The soap’s role in promoting hygiene was especially crucial during times of public-health crises, such as</p>\n<p>cholera outbreaks and the Spanish-flu pandemic.</p>\n<p>Industrial and Social Innovations</p>\n<p>The Lever Brothers not only revolutionised soap production but also set new standards in industrial practices and social responsibility. In 1888, William Lever established Port Sunlight, a model village on the Wirral Peninsula, to house the workers of the company’s soap factory. Unlike the cramped and unsanitary living conditions common in industrial cities, Port Sunlight provided employees with well-built homes, access to education, recreational facilities and **health-**care services. This initiative was groundbreaking and demonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>\n<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility (CSR) initiatives. It set an example for other industrialists and showcased the benefits of treating workers with dignity and providing them with a better quality of life. Many of the principles applied in Port Sunlight would later influence labour policies and welfare</p>\n<p>programmes in various industries.</p>\n<p>Expansion and Global Reach</p>\n<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded</p>\n<p>their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing</p>\n<p>strategies ensured its continued growth.</p>\n<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding and marketing campaigns. The Lever Brothers tailored their advertisements and promotional efforts to suit different cultural and economic contexts. In many countries, Sunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its</p>\n<p>status as a trusted product worldwide.</p>\n<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to form Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in the soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying</p>\n<p>forward the legacy of Sunlight Soap.</p>\n<p>Legacy and Modern Relevance</p>\n<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original</p>\n<p>product has evolved over time, its core values of cleanliness, affordability and innovation</p>\n<p>remain relevant. The principles established by the Lever Brothers continue to influence</p>\n<p>modern consumer-goods companies, particularly in areas such as sustainability and social</p>\n<p>responsibility.</p>\n<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to</p>\n<p>prioritise sustainability and social impact. Initiatives such as reducing plastic waste,</p>\n<p>promoting handwashing in developing countries and supporting fair-trade practices reflect</p>\n<p>the same pioneering spirit that defined the success of Sunlight Soap.</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -349,7 +351,7 @@
               1,
               13
             ],
-            "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below."
+            "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading"
           }
         ],
         "sourceBlockIds": [
@@ -376,9 +378,29 @@
           "b022",
           "b023",
           "b024",
-          "b025"
+          "b025",
+          "b026",
+          "b027",
+          "b028",
+          "b029",
+          "b030",
+          "b031",
+          "b032",
+          "b033",
+          "b034",
+          "b035",
+          "b036",
+          "b037",
+          "b038",
+          "b039",
+          "b040",
+          "b041",
+          "b042",
+          "b043",
+          "b044",
+          "b045"
         ],
-        "title": "RE ADI NG P AS S AGE 1"
+        "title": "Passage 1 below."
       },
       "questionDisplayMap": {
         "q1": "1",
@@ -418,386 +440,1287 @@
         {
           "blocks": [
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 0,
+              "_epic8SectionColumns": 3,
               "bbox": [
-                72,
-                72,
-                520,
-                108
+                54,
+                744.8400268554688,
+                218.7654266357422,
+                753.2400512695312
               ],
               "blockId": "b001",
-              "blockType": "paragraph",
+              "blockType": "header",
               "confidence": 0.98,
-              "html": "<p>RE ADI NG  P AS S AGE   1</p>",
+              "html": "<h3>READING PASSAGE 1</h3>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
               "pageIndex": 1,
-              "text": "RE ADI NG  P AS S AGE   1  "
+              "roleHint": "passage",
+              "text": "READING PASSAGE 1"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 1,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                722.280029296875,
+                512.97265625,
+                730.6800537109375
               ],
               "blockId": "b002",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>You should spend about 20 minutes on Questions 1–13, which are based on Reading \nPassage 1 below.</p>",
+              "html": "<p>You should spend about 20 minutes on Questions 1–13, which are based on Reading</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
               "pageIndex": 1,
               "roleHint": "question",
-              "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading \nPassage 1 below. "
+              "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 2,
+              "_epic8SectionColumns": 3,
               "bbox": [
-                72,
-                156,
-                520,
-                192
+                54,
+                706.6799926757812,
+                145.3970184326172,
+                715.0800170898438
               ],
               "blockId": "b003",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Lever Brothers’ Sunlight Soap</p>",
+              "html": "<p>Passage 1 below.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 2
+                }
+              },
               "pageIndex": 1,
-              "text": "Lever Brothers’ Sunlight Soap "
+              "roleHint": "passage",
+              "text": "Passage 1 below."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                198,
-                520,
-                234
+                54,
+                667.3200073242188,
+                302.0435791015625,
+                675.7200317382812
               ],
               "blockId": "b004",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A Revolution in Hygiene and Industry</p>",
+              "html": "<p>Lever Brothers’ Sunlight Soap</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
               "pageIndex": 1,
-              "text": "A Revolution in Hygiene and Industry "
+              "text": "Lever Brothers’ Sunlight Soap"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 4,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                240,
-                520,
-                276
+                54,
+                645.9600219726562,
+                245.4575958251953,
+                654.3600463867188
               ],
               "blockId": "b005",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Sunlight Soap, produced by the Lever Brothers in \nthe late 19th century, was a groundbreaking \ninnovation in the world of consumer goods. At a \ntime when hygiene and cleanliness were not \nuniversally prioritised, Sunlight Soap not only \nintroduced a revolutionary product but also played \na crucial role in transforming industrial production, \nmarketing strategies and public health. The \nsuccess of Sunlight Soap laid the foundation for \nwhat would later become Unilever, one of the \nworld’s largest multinational corporations.</p>",
+              "html": "<p>A Revolution in Hygiene and Industry</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
               "pageIndex": 1,
-              "text": "Sunlight Soap, produced by the Lever Brothers in \nthe late 19th century, was a groundbreaking \ninnovation in the world of consumer goods. At a \ntime when hygiene and cleanliness were not \nuniversally prioritised, Sunlight Soap not only \nintroduced a revolutionary product but also played \na crucial role in transforming industrial production, \nmarketing strategies and public health. The \nsuccess of Sunlight Soap laid the foundation for \nwhat would later become Unilever, one of the \nworld’s largest multinational corporations. "
+              "text": "A Revolution in Hygiene and Industry"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                282,
-                520,
-                318
+                54,
+                460.20001220703125,
+                319.505126953125,
+                624.6000366210938
               ],
               "blockId": "b006",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Origins and Innovation</p>",
+              "html": "<p>Sunlight Soap, produced by the Lever Brothers in the late 19th century, was a groundbreaking innovation in the world of consumer goods. At a time when hygiene and cleanliness were not universally prioritised, Sunlight Soap not only introduced a revolutionary product but also played a crucial role in transforming industrial production, marketing strategies and public health. The success of Sunlight Soap laid the foundation for what would later become Unilever, one of the world’s largest multinational corporations.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
               "pageIndex": 1,
-              "text": "Origins and Innovation "
+              "text": "Sunlight Soap, produced by the Lever Brothers in the late 19th century, was a groundbreaking innovation in the world of consumer goods. At a time when hygiene and cleanliness were not universally prioritised, Sunlight Soap not only introduced a revolutionary product but also played a crucial role in transforming industrial production, marketing strategies and public health. The success of Sunlight Soap laid the foundation for what would later become Unilever, one of the world’s largest multinational corporations."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 6,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                324,
-                520,
-                360
+                54,
+                420.3600158691406,
+                197.88131713867188,
+                428.7600402832031
               ],
               "blockId": "b007",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother \nJames Darcy Lever established the Lever Brothers company in England. They sought to \ncreate a high-quality soap that was both affordable and effective in promoting hygiene. \nTraditional soaps at the time were often harsh on the skin and required extensive \npreparation. The Lever Brothers aimed to change this by producing a soap that was easy to \nuse and gentle while maintaining strong cleansing properties.</p>",
+              "html": "<p>Origins and Innovation</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
               "pageIndex": 1,
-              "text": "The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother \nJames Darcy Lever established the Lever Brothers company in England. They sought to \ncreate a high-quality soap that was both affordable and effective in promoting hygiene. \nTraditional soaps at the time were often harsh on the skin and required extensive \npreparation. The Lever Brothers aimed to change this by producing a soap that was easy to \nuse and gentle while maintaining strong cleansing properties. "
+              "text": "Origins and Innovation"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 7,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                366,
-                520,
-                402
+                54,
+                335.4000244140625,
+                539.6351318359375,
+                406.20001220703125
               ],
               "blockId": "b008",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional \nmethod of soap-making, which relied on animal fats and wood ash, Sunlight Soap was \nmanufactured using a blend of vegetable oils and alkali, resulting in a more consistent and \nsuperior-quality product. This not only improved the soap’s effectiveness but also made it a \nmore ethical and sustainable option compared with its contemporaries.</p>",
+              "html": "<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother James Darcy Lever established the Lever Brothers company in England. They sought to create a high-quality soap that was both affordable and effective in promoting hygiene. Traditional soaps at the time were often harsh on the skin and required extensive preparation. The Lever Brothers aimed to change this by producing a soap that was easy to</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
               "pageIndex": 1,
-              "text": "The innovation behind Sunlight Soap lay in its production process. Unlike the traditional \nmethod of soap-making, which relied on animal fats and wood ash, Sunlight Soap was \nmanufactured using a blend of vegetable oils and alkali, resulting in a more consistent and \nsuperior-quality product. This not only improved the soap’s effectiveness but also made it a \nmore ethical and sustainable option compared with its contemporaries. "
-            }
-          ],
-          "height": 842,
-          "pageIndex": 1,
-          "width": 595
-        },
-        {
-          "blocks": [
+              "text": "The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother James Darcy Lever established the Lever Brothers company in England. They sought to create a high-quality soap that was both affordable and effective in promoting hygiene. Traditional soaps at the time were often harsh on the skin and required extensive preparation. The Lever Brothers aimed to change this by producing a soap that was easy to"
+            },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 8,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                72,
-                520,
-                108
+                54,
+                319.8000183105469,
+                375.54962158203125,
+                328.2000427246094
               ],
               "blockId": "b009",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Marketing and Branding</p>",
-              "pageIndex": 2,
-              "text": "Marketing and Branding "
+              "html": "<p>use and gentle while maintaining strong cleansing properties.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 1,
+              "text": "use and gentle while maintaining strong cleansing properties."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 9,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                243.4800262451172,
+                536.26318359375,
+                298.6800231933594
               ],
               "blockId": "b010",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ \npioneering approach to marketing and branding. At a time when consumer goods were \nlargely sold in bulk without much branding, Sunlight Soap was among the first products to \nbe packaged and advertised extensively. The Lever Brothers recognised the power of \nbranding and used eye-catching designs and slogans to establish a strong presence in the \nmarket.</p>",
-              "pageIndex": 2,
-              "text": "One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ \npioneering approach to marketing and branding. At a time when consumer goods were \nlargely sold in bulk without much branding, Sunlight Soap was among the first products to \nbe packaged and advertised extensively. The Lever Brothers recognised the power of \nbranding and used eye-catching designs and slogans to establish a strong presence in the \nmarket. "
+              "html": "<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional method of soap-making, which relied on animal fats and wood ash, Sunlight Soap was manufactured using a blend of vegetable oils and alkali, resulting in a more consistent and superior-quality product. This not only improved the soap’s effectiveness but also made it a</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 1,
+              "text": "The innovation behind Sunlight Soap lay in its production process. Unlike the traditional method of soap-making, which relied on animal fats and wood ash, Sunlight Soap was manufactured using a blend of vegetable oils and alkali, resulting in a more consistent and superior-quality product. This not only improved the soap’s effectiveness but also made it a"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 10,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                156,
-                520,
-                192
+                54,
+                227.88002014160156,
+                425.54638671875,
+                236.28001403808594
               ],
               "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding \nthat set it apart from competitors. The company also employed creative advertising \ncampaigns, utilising newspapers, posters and, later, radio and television advertisements. \nOne of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the \nsoap’s superior cleaning abilities and resonated with consumers.</p>",
-              "pageIndex": 2,
-              "text": "The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding \nthat set it apart from competitors. The company also employed creative advertising \ncampaigns, utilising newspapers, posters and, later, radio and television advertisements. \nOne of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the \nsoap’s superior cleaning abilities and resonated with consumers. "
-            },
+              "html": "<p>more ethical and sustainable option compared with its contemporaries.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 1,
+              "text": "more ethical and sustainable option compared with its contemporaries."
+            }
+          ],
+          "height": 841.9199829101562,
+          "pageIndex": 1,
+          "width": 595.2000122070312
+        },
+        {
+          "blocks": [
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 0,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                198,
-                520,
-                234
+                54,
+                744.8400268554688,
+                205.7112579345703,
+                753.2400512695312
               ],
               "blockId": "b012",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional \nstrategies. They introduced coupons, free samples and competitions to attract customers \nand build brand loyalty. These marketing techniques, which are now standard in the \nconsumer-goods industry, were groundbreaking at the time and played a crucial role in \nestablishing Sunlight Soap as a household name.</p>",
+              "html": "<p>Marketing and Branding</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
               "pageIndex": 2,
-              "text": "In addition to traditional advertising, the Lever Brothers pioneered innovative promotional \nstrategies. They introduced coupons, free samples and competitions to attract customers \nand build brand loyalty. These marketing techniques, which are now standard in the \nconsumer-goods industry, were groundbreaking at the time and played a crucial role in \nestablishing Sunlight Soap as a household name. "
+              "text": "Marketing and Branding"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 1,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                240,
-                520,
-                276
+                54,
+                659.8800048828125,
+                533.6635131835938,
+                730.6800537109375
               ],
               "blockId": "b013",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Impact on Hygiene and Public Health</p>",
+              "html": "<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ pioneering approach to marketing and branding. At a time when consumer goods were largely sold in bulk without much branding, Sunlight Soap was among the first products to be packaged and advertised extensively. The Lever Brothers recognised the power of branding and used eye-catching designs and slogans to establish a strong presence in the</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
               "pageIndex": 2,
-              "text": "Impact on Hygiene and Public Health "
+              "text": "One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ pioneering approach to marketing and branding. At a time when consumer goods were largely sold in bulk without much branding, Sunlight Soap was among the first products to be packaged and advertised extensively. The Lever Brothers recognised the power of branding and used eye-catching designs and slogans to establish a strong presence in the"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                282,
-                520,
-                318
+                54,
+                644.280029296875,
+                90.67439270019531,
+                652.6800537109375
               ],
               "blockId": "b014",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public \nhealth. In the late 19th and early 20th centuries, diseases related to poor hygiene were \nrampant, and access to effective cleansing products was limited. The affordability and \nwidespread availability of Sunlight Soap helped improve sanitation and hygiene standards \nin homes across Britain and beyond.</p>",
+              "html": "<p>market.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
               "pageIndex": 2,
-              "text": "Sunlight Soap was not just a commercial success; it also had a significant impact on public \nhealth. In the late 19th and early 20th centuries, diseases related to poor hygiene were \nrampant, and access to effective cleansing products was limited. The affordability and \nwidespread availability of Sunlight Soap helped improve sanitation and hygiene standards \nin homes across Britain and beyond. "
+              "text": "market."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                324,
-                520,
-                360
+                54,
+                567.9600219726562,
+                536.3109741210938,
+                623.1600341796875
               ],
               "blockId": "b015",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap \ncontributed to reducing the spread of infectious diseases. Public-health campaigns, often \nsupported by the Lever Brothers, emphasised the importance of cleanliness, particularly in \nurban areas where overcrowding and poor sanitation were major issues. The soap’s role in \npromoting hygiene was especially crucial during times of public-health crises, such as \ncholera outbreaks and the Spanish-flu pandemic.</p>",
+              "html": "<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding that set it apart from competitors. The company also employed creative advertising campaigns, utilising newspapers, posters and, later, radio and television advertisements. One of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
               "pageIndex": 2,
-              "text": "By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap \ncontributed to reducing the spread of infectious diseases. Public-health campaigns, often \nsupported by the Lever Brothers, emphasised the importance of cleanliness, particularly in \nurban areas where overcrowding and poor sanitation were major issues. The soap’s role in \npromoting hygiene was especially crucial during times of public-health crises, such as \ncholera outbreaks and the Spanish-flu pandemic. "
-            }
-          ],
-          "height": 842,
-          "pageIndex": 2,
-          "width": 595
-        },
-        {
-          "blocks": [
+              "text": "The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding that set it apart from competitors. The company also employed creative advertising campaigns, utilising newspapers, posters and, later, radio and television advertisements. One of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the"
+            },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 4,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                72,
-                520,
-                108
+                54,
+                552.3599853515625,
+                393.5376281738281,
+                560.760009765625
               ],
               "blockId": "b016",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Industrial and Social Innovations</p>",
-              "pageIndex": 3,
-              "text": "Industrial and Social Innovations "
+              "html": "<p>soap’s superior cleaning abilities and resonated with consumers.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 2,
+              "text": "soap’s superior cleaning abilities and resonated with consumers."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                475.79998779296875,
+                525.5807495117188,
+                531.0000610351562
               ],
               "blockId": "b017",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The Lever Brothers not only revolutionised soap production but also set new standards in \nindustrial practices and social responsibility. In 1888, William Lever established Port \nSunlight, a model village on the Wirral Peninsula, to house the workers of the company’s \nsoap factory. Unlike the cramped and unsanitary living conditions common in industrial \ncities, Port Sunlight provided employees with well-built homes, access to education, \nrecreational facilities and **health-**care services. This initiative was groundbreaking and \ndemonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>",
-              "pageIndex": 3,
-              "text": "The Lever Brothers not only revolutionised soap production but also set new standards in \nindustrial practices and social responsibility. In 1888, William Lever established Port \nSunlight, a model village on the Wirral Peninsula, to house the workers of the company’s \nsoap factory. Unlike the cramped and unsanitary living conditions common in industrial \ncities, Port Sunlight provided employees with well-built homes, access to education, \nrecreational facilities and **health-**care services. This initiative was groundbreaking and \ndemonstrated Lever’s belief in corporate responsibility and the welfare of workers. "
+              "html": "<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional strategies. They introduced coupons, free samples and competitions to attract customers and build brand loyalty. These marketing techniques, which are now standard in the consumer-goods industry, were groundbreaking at the time and played a crucial role in</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 2,
+              "text": "In addition to traditional advertising, the Lever Brothers pioneered innovative promotional strategies. They introduced coupons, free samples and competitions to attract customers and build brand loyalty. These marketing techniques, which are now standard in the consumer-goods industry, were groundbreaking at the time and played a crucial role in"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 6,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                156,
-                520,
-                192
+                54,
+                460.20001220703125,
+                313.53118896484375,
+                468.60003662109375
               ],
               "blockId": "b018",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility \n(CSR) initiatives. It set an example for other industrialists and showcased the benefits of \ntreating workers with dignity and providing them with a better quality of life. Many of the \nprinciples applied in Port Sunlight would later influence labour policies and welfare \nprogrammes in various industries.</p>",
-              "pageIndex": 3,
-              "text": "The Port Sunlight experiment was a precursor to modern corporate social-responsibility \n(CSR) initiatives. It set an example for other industrialists and showcased the benefits of \ntreating workers with dignity and providing them with a better quality of life. Many of the \nprinciples applied in Port Sunlight would later influence labour policies and welfare \nprogrammes in various industries. "
+              "html": "<p>establishing Sunlight Soap as a household name.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 2,
+              "text": "establishing Sunlight Soap as a household name."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 7,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                198,
-                520,
-                234
+                54,
+                420.3600158691406,
+                291.28863525390625,
+                428.7600402832031
               ],
               "blockId": "b019",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Expansion and Global Reach</p>",
-              "pageIndex": 3,
-              "text": "Expansion and Global Reach "
+              "html": "<p>Impact on Hygiene and Public Health</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 2,
+              "text": "Impact on Hygiene and Public Health"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 8,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                240,
-                520,
-                276
+                54,
+                351,
+                534.923828125,
+                406.20001220703125
               ],
               "blockId": "b020",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded \ntheir operations internationally, establishing factories and distribution networks across \nEurope, Africa, Asia and the Americas. The soap’s reputation for quality and affordability \nhelped it gain popularity in various markets, and the company’s aggressive marketing \nstrategies ensured its continued growth.</p>",
-              "pageIndex": 3,
-              "text": "The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded \ntheir operations internationally, establishing factories and distribution networks across \nEurope, Africa, Asia and the Americas. The soap’s reputation for quality and affordability \nhelped it gain popularity in various markets, and the company’s aggressive marketing \nstrategies ensured its continued growth. "
+              "html": "<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public health. In the late 19th and early 20th centuries, diseases related to poor hygiene were rampant, and access to effective cleansing products was limited. The affordability and widespread availability of Sunlight Soap helped improve sanitation and hygiene standards</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 2,
+              "text": "Sunlight Soap was not just a commercial success; it also had a significant impact on public health. In the late 19th and early 20th centuries, diseases related to poor hygiene were rampant, and access to effective cleansing products was limited. The affordability and widespread availability of Sunlight Soap helped improve sanitation and hygiene standards"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 9,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                282,
-                520,
-                318
+                54,
+                335.4000244140625,
+                244.783203125,
+                343.800048828125
               ],
               "blockId": "b021",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding \nand marketing campaigns. The Lever Brothers tailored their advertisements and \npromotional efforts to suit different cultural and economic contexts. In many countries, \nSunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its \nstatus as a trusted product worldwide.</p>",
-              "pageIndex": 3,
-              "text": "One of the key factors in Sunlight Soap’s global success was the adaptability of its branding \nand marketing campaigns. The Lever Brothers tailored their advertisements and \npromotional efforts to suit different cultural and economic contexts. In many countries, \nSunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its \nstatus as a trusted product worldwide. "
+              "html": "<p>in homes across Britain and beyond.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 2,
+              "text": "in homes across Britain and beyond."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 10,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                324,
-                520,
-                360
+                54,
+                243.4800262451172,
+                535.60791015625,
+                314.280029296875
               ],
               "blockId": "b022",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to \nform Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in \nthe soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying \nforward the legacy of Sunlight Soap.</p>",
-              "pageIndex": 3,
-              "text": "As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to \nform Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in \nthe soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying \nforward the legacy of Sunlight Soap. "
-            }
-          ],
-          "height": 842,
-          "pageIndex": 3,
-          "width": 595
-        },
-        {
-          "blocks": [
+              "html": "<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap contributed to reducing the spread of infectious diseases. Public-health campaigns, often supported by the Lever Brothers, emphasised the importance of cleanliness, particularly in urban areas where overcrowding and poor sanitation were major issues. The soap’s role in promoting hygiene was especially crucial during times of public-health crises, such as</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 2,
+              "text": "By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap contributed to reducing the spread of infectious diseases. Public-health campaigns, often supported by the Lever Brothers, emphasised the importance of cleanliness, particularly in urban areas where overcrowding and poor sanitation were major issues. The soap’s role in promoting hygiene was especially crucial during times of public-health crises, such as"
+            },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 11,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                72,
-                520,
-                108
+                54,
+                227.88002014160156,
+                311.4993591308594,
+                236.28001403808594
               ],
               "blockId": "b023",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Legacy and Modern Relevance</p>",
-              "pageIndex": 4,
-              "text": "Legacy and Modern Relevance "
-            },
+              "html": "<p>cholera outbreaks and the Spanish-flu pandemic.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 2,
+              "text": "cholera outbreaks and the Spanish-flu pandemic."
+            }
+          ],
+          "height": 841.9199829101562,
+          "pageIndex": 2,
+          "width": 595.2000122070312
+        },
+        {
+          "blocks": [
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 0,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                114,
-                520,
-                150
+                54,
+                744.8400268554688,
+                265.5950927734375,
+                753.2400512695312
               ],
               "blockId": "b024",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original \nproduct has evolved over time, its core values of cleanliness, affordability and innovation \nremain relevant. The principles established by the Lever Brothers continue to influence \nmodern consumer-goods companies, particularly in areas such as sustainability and social \nresponsibility.</p>",
-              "pageIndex": 4,
-              "text": "Despite being over a century old, the legacy of Sunlight Soap endures. While the original \nproduct has evolved over time, its core values of cleanliness, affordability and innovation \nremain relevant. The principles established by the Lever Brothers continue to influence \nmodern consumer-goods companies, particularly in areas such as sustainability and social \nresponsibility. "
+              "html": "<p>Industrial and Social Innovations</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 3,
+              "text": "Industrial and Social Innovations"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 1,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                156,
-                520,
-                192
+                54,
+                628.6799926757812,
+                526.9630126953125,
+                730.6800537109375
               ],
               "blockId": "b025",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to \nprioritise sustainability and social impact. Initiatives such as reducing plastic waste, \npromoting handwashing in developing countries and supporting fair-trade practices reflect \nthe same pioneering spirit that defined the success of Sunlight Soap.</p>",
-              "pageIndex": 4,
-              "text": "Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to \nprioritise sustainability and social impact. Initiatives such as reducing plastic waste, \npromoting handwashing in developing countries and supporting fair-trade practices reflect \nthe same pioneering spirit that defined the success of Sunlight Soap. "
+              "html": "<p>The Lever Brothers not only revolutionised soap production but also set new standards in industrial practices and social responsibility. In 1888, William Lever established Port Sunlight, a model village on the Wirral Peninsula, to house the workers of the company’s soap factory. Unlike the cramped and unsanitary living conditions common in industrial cities, Port Sunlight provided employees with well-built homes, access to education, recreational facilities and **health-**care services. This initiative was groundbreaking and demonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 3,
+              "text": "The Lever Brothers not only revolutionised soap production but also set new standards in industrial practices and social responsibility. In 1888, William Lever established Port Sunlight, a model village on the Wirral Peninsula, to house the workers of the company’s soap factory. Unlike the cramped and unsanitary living conditions common in industrial cities, Port Sunlight provided employees with well-built homes, access to education, recreational facilities and **health-**care services. This initiative was groundbreaking and demonstrated Lever’s belief in corporate responsibility and the welfare of workers."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 2,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                552.3599853515625,
+                520.8945922851562,
+                607.56005859375
+              ],
+              "blockId": "b026",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility (CSR) initiatives. It set an example for other industrialists and showcased the benefits of treating workers with dignity and providing them with a better quality of life. Many of the principles applied in Port Sunlight would later influence labour policies and welfare</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 3,
+              "text": "The Port Sunlight experiment was a precursor to modern corporate social-responsibility (CSR) initiatives. It set an example for other industrialists and showcased the benefits of treating workers with dignity and providing them with a better quality of life. Many of the principles applied in Port Sunlight would later influence labour policies and welfare"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 3,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                536.760009765625,
+                230.7432098388672,
+                545.1600341796875
+              ],
+              "blockId": "b027",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>programmes in various industries.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 3,
+              "text": "programmes in various industries."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 2,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 4,
+              "_epic8SectionColumns": 3,
+              "bbox": [
+                54,
+                496.67999267578125,
+                238.3982696533203,
+                505.08001708984375
+              ],
+              "blockId": "b028",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Expansion and Global Reach</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 2
+                }
+              },
+              "pageIndex": 3,
+              "text": "Expansion and Global Reach"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 3,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                474.3600158691406,
+                522.2901611328125,
+                482.7600402832031
+              ],
+              "blockId": "b029",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 3,
+              "text": "The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 4,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 6,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                427.55999755859375,
+                522.253662109375,
+                467.1600341796875
+              ],
+              "blockId": "b030",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
+              "pageIndex": 3,
+              "text": "their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 4,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 7,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                411.96002197265625,
+                262.7951965332031,
+                420.36004638671875
+              ],
+              "blockId": "b031",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>strategies ensured its continued growth.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
+              "pageIndex": 3,
+              "text": "strategies ensured its continued growth."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 4,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 8,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                335.4000244140625,
+                540.2974243164062,
+                390.60003662109375
+              ],
+              "blockId": "b032",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding and marketing campaigns. The Lever Brothers tailored their advertisements and promotional efforts to suit different cultural and economic contexts. In many countries, Sunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
+              "pageIndex": 3,
+              "text": "One of the key factors in Sunlight Soap’s global success was the adaptability of its branding and marketing campaigns. The Lever Brothers tailored their advertisements and promotional efforts to suit different cultural and economic contexts. In many countries, Sunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 4,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 9,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                319.8000183105469,
+                252.10562133789062,
+                328.2000427246094
+              ],
+              "blockId": "b033",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>status as a trusted product worldwide.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
+              "pageIndex": 3,
+              "text": "status as a trusted product worldwide."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 4,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 10,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                259.08001708984375,
+                534.9190673828125,
+                298.6800231933594
+              ],
+              "blockId": "b034",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to form Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in the soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
+              "pageIndex": 3,
+              "text": "As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to form Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in the soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 4,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 11,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                243.4800262451172,
+                243.4583740234375,
+                251.88002014160156
+              ],
+              "blockId": "b035",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>forward the legacy of Sunlight Soap.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
+              "pageIndex": 3,
+              "text": "forward the legacy of Sunlight Soap."
             }
           ],
-          "height": 842,
+          "height": 841.9199829101562,
+          "pageIndex": 3,
+          "width": 595.2000122070312
+        },
+        {
+          "blocks": [
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 3,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 0,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                746.2176513671875,
+                250.84825134277344,
+                751.8624267578125
+              ],
+              "blockId": "b036",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Legacy and Modern Relevance</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 4,
+              "text": "Legacy and Modern Relevance"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 3,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 1,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                723.6576538085938,
+                524.3037109375,
+                729.3024291992188
+              ],
+              "blockId": "b037",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 4,
+              "text": "Despite being over a century old, the legacy of Sunlight Soap endures. While the original"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 3,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 2,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                708.0576171875,
+                522.9429931640625,
+                713.702392578125
+              ],
+              "blockId": "b038",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>product has evolved over time, its core values of cleanliness, affordability and innovation</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 4,
+              "text": "product has evolved over time, its core values of cleanliness, affordability and innovation"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 3,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 3,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                692.4576416015625,
+                513.594970703125,
+                698.1024169921875
+              ],
+              "blockId": "b039",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>remain relevant. The principles established by the Lever Brothers continue to influence</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 4,
+              "text": "remain relevant. The principles established by the Lever Brothers continue to influence"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 4,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 4,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                676.8576049804688,
+                533.5882568359375,
+                682.5023803710938
+              ],
+              "blockId": "b040",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>modern consumer-goods companies, particularly in areas such as sustainability and social</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
+              "pageIndex": 4,
+              "text": "modern consumer-goods companies, particularly in areas such as sustainability and social"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 5,
+              "_epic8LayoutSection": 5,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 3,
+              "bbox": [
+                54,
+                661.2576293945312,
+                123.36719512939453,
+                666.9024047851562
+              ],
+              "blockId": "b041",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>responsibility.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 5
+                }
+              },
+              "pageIndex": 4,
+              "text": "responsibility."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 6,
+              "_epic8LayoutSection": 6,
+              "_epic8Ordinal": 6,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                631.7376098632812,
+                530.9326782226562,
+                637.3823852539062
+              ],
+              "blockId": "b042",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 6
+                }
+              },
+              "pageIndex": 4,
+              "text": "Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 6,
+              "_epic8LayoutSection": 6,
+              "_epic8Ordinal": 7,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                616.1376342773438,
+                493.5504150390625,
+                621.7824096679688
+              ],
+              "blockId": "b043",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>prioritise sustainability and social impact. Initiatives such as reducing plastic waste,</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 6
+                }
+              },
+              "pageIndex": 4,
+              "text": "prioritise sustainability and social impact. Initiatives such as reducing plastic waste,"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 6,
+              "_epic8LayoutSection": 6,
+              "_epic8Ordinal": 8,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                600.5376586914062,
+                528.9441528320312,
+                606.1824340820312
+              ],
+              "blockId": "b044",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>promoting handwashing in developing countries and supporting fair-trade practices reflect</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 6
+                }
+              },
+              "pageIndex": 4,
+              "text": "promoting handwashing in developing countries and supporting fair-trade practices reflect"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8GlobalSection": 6,
+              "_epic8LayoutSection": 6,
+              "_epic8Ordinal": 9,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                54,
+                584.9376220703125,
+                415.57196044921875,
+                590.5823974609375
+              ],
+              "blockId": "b045",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>the same pioneering spirit that defined the success of Sunlight Soap.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 6
+                }
+              },
+              "pageIndex": 4,
+              "text": "the same pioneering spirit that defined the success of Sunlight Soap."
+            }
+          ],
+          "height": 841.9199829101562,
           "pageIndex": 4,
-          "width": 595
+          "width": 595.2000122070312
         }
       ],
       "parser": {
         "mode": "auto",
-        "provider": "rust-parser:pdf:pdf-extract",
+        "provider": "rust-parser:pdf:pdfium",
         "sourceFileId": "file-cli-main",
         "sourceStoredName": "private-random-08.pdf",
         "version": "0.1.0",
@@ -806,21 +1729,7 @@
       "schemaVersion": "DocumentIRV1"
     },
     "readingSource": {
-      "answerKey": {
-        "q1": "",
-        "q10": "",
-        "q11": "",
-        "q12": "",
-        "q13": "",
-        "q2": "",
-        "q3": "",
-        "q4": "",
-        "q5": "",
-        "q6": "",
-        "q7": "",
-        "q8": "",
-        "q9": ""
-      },
+      "answerKey": {},
       "audit": {
         "matchConfidence": 0,
         "matchStatus": "needs_review",
@@ -842,7 +1751,7 @@
               1,
               13
             ],
-            "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below."
+            "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading"
           }
         ],
         "title": "private random 08"
@@ -851,7 +1760,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>RE ADI NG  P AS S AGE   1</p>\n<p>Lever Brothers’ Sunlight Soap</p>\n<p>A Revolution in Hygiene and Industry</p>\n<p>Sunlight Soap, produced by the Lever Brothers in \nthe late 19th century, was a groundbreaking \ninnovation in the world of consumer goods. At a \ntime when hygiene and cleanliness were not \nuniversally prioritised, Sunlight Soap not only \nintroduced a revolutionary product but also played \na crucial role in transforming industrial production, \nmarketing strategies and public health. The \nsuccess of Sunlight Soap laid the foundation for \nwhat would later become Unilever, one of the \nworld’s largest multinational corporations.</p>\n<p>Origins and Innovation</p>\n<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother \nJames Darcy Lever established the Lever Brothers company in England. They sought to \ncreate a high-quality soap that was both affordable and effective in promoting hygiene. \nTraditional soaps at the time were often harsh on the skin and required extensive \npreparation. The Lever Brothers aimed to change this by producing a soap that was easy to \nuse and gentle while maintaining strong cleansing properties.</p>\n<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional \nmethod of soap-making, which relied on animal fats and wood ash, Sunlight Soap was \nmanufactured using a blend of vegetable oils and alkali, resulting in a more consistent and \nsuperior-quality product. This not only improved the soap’s effectiveness but also made it a \nmore ethical and sustainable option compared with its contemporaries.</p>\n<p>Marketing and Branding</p>\n<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ \npioneering approach to marketing and branding. At a time when consumer goods were \nlargely sold in bulk without much branding, Sunlight Soap was among the first products to \nbe packaged and advertised extensively. The Lever Brothers recognised the power of \nbranding and used eye-catching designs and slogans to establish a strong presence in the \nmarket.</p>\n<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding \nthat set it apart from competitors. The company also employed creative advertising \ncampaigns, utilising newspapers, posters and, later, radio and television advertisements. \nOne of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the \nsoap’s superior cleaning abilities and resonated with consumers.</p>\n<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional \nstrategies. They introduced coupons, free samples and competitions to attract customers \nand build brand loyalty. These marketing techniques, which are now standard in the \nconsumer-goods industry, were groundbreaking at the time and played a crucial role in \nestablishing Sunlight Soap as a household name.</p>\n<p>Impact on Hygiene and Public Health</p>\n<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public \nhealth. In the late 19th and early 20th centuries, diseases related to poor hygiene were \nrampant, and access to effective cleansing products was limited. The affordability and \nwidespread availability of Sunlight Soap helped improve sanitation and hygiene standards \nin homes across Britain and beyond.</p>\n<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap \ncontributed to reducing the spread of infectious diseases. Public-health campaigns, often \nsupported by the Lever Brothers, emphasised the importance of cleanliness, particularly in \nurban areas where overcrowding and poor sanitation were major issues. The soap’s role in \npromoting hygiene was especially crucial during times of public-health crises, such as \ncholera outbreaks and the Spanish-flu pandemic.</p>\n<p>Industrial and Social Innovations</p>\n<p>The Lever Brothers not only revolutionised soap production but also set new standards in \nindustrial practices and social responsibility. In 1888, William Lever established Port \nSunlight, a model village on the Wirral Peninsula, to house the workers of the company’s \nsoap factory. Unlike the cramped and unsanitary living conditions common in industrial \ncities, Port Sunlight provided employees with well-built homes, access to education, \nrecreational facilities and **health-**care services. This initiative was groundbreaking and \ndemonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>\n<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility \n(CSR) initiatives. It set an example for other industrialists and showcased the benefits of \ntreating workers with dignity and providing them with a better quality of life. Many of the \nprinciples applied in Port Sunlight would later influence labour policies and welfare \nprogrammes in various industries.</p>\n<p>Expansion and Global Reach</p>\n<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded \ntheir operations internationally, establishing factories and distribution networks across \nEurope, Africa, Asia and the Americas. The soap’s reputation for quality and affordability \nhelped it gain popularity in various markets, and the company’s aggressive marketing \nstrategies ensured its continued growth.</p>\n<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding \nand marketing campaigns. The Lever Brothers tailored their advertisements and \npromotional efforts to suit different cultural and economic contexts. In many countries, \nSunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its \nstatus as a trusted product worldwide.</p>\n<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to \nform Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in \nthe soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying \nforward the legacy of Sunlight Soap.</p>\n<p>Legacy and Modern Relevance</p>\n<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original \nproduct has evolved over time, its core values of cleanliness, affordability and innovation \nremain relevant. The principles established by the Lever Brothers continue to influence \nmodern consumer-goods companies, particularly in areas such as sustainability and social \nresponsibility.</p>\n<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to \nprioritise sustainability and social impact. Initiatives such as reducing plastic waste, \npromoting handwashing in developing countries and supporting fair-trade practices reflect \nthe same pioneering spirit that defined the success of Sunlight Soap.</p>",
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Lever Brothers’ Sunlight Soap</p>\n<p>A Revolution in Hygiene and Industry</p>\n<p>Sunlight Soap, produced by the Lever Brothers in the late 19th century, was a groundbreaking innovation in the world of consumer goods. At a time when hygiene and cleanliness were not universally prioritised, Sunlight Soap not only introduced a revolutionary product but also played a crucial role in transforming industrial production, marketing strategies and public health. The success of Sunlight Soap laid the foundation for what would later become Unilever, one of the world’s largest multinational corporations.</p>\n<p>Origins and Innovation</p>\n<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother James Darcy Lever established the Lever Brothers company in England. They sought to create a high-quality soap that was both affordable and effective in promoting hygiene. Traditional soaps at the time were often harsh on the skin and required extensive preparation. The Lever Brothers aimed to change this by producing a soap that was easy to</p>\n<p>use and gentle while maintaining strong cleansing properties.</p>\n<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional method of soap-making, which relied on animal fats and wood ash, Sunlight Soap was manufactured using a blend of vegetable oils and alkali, resulting in a more consistent and superior-quality product. This not only improved the soap’s effectiveness but also made it a</p>\n<p>more ethical and sustainable option compared with its contemporaries.</p>\n<p>Marketing and Branding</p>\n<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ pioneering approach to marketing and branding. At a time when consumer goods were largely sold in bulk without much branding, Sunlight Soap was among the first products to be packaged and advertised extensively. The Lever Brothers recognised the power of branding and used eye-catching designs and slogans to establish a strong presence in the</p>\n<p>market.</p>\n<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding that set it apart from competitors. The company also employed creative advertising campaigns, utilising newspapers, posters and, later, radio and television advertisements. One of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the</p>\n<p>soap’s superior cleaning abilities and resonated with consumers.</p>\n<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional strategies. They introduced coupons, free samples and competitions to attract customers and build brand loyalty. These marketing techniques, which are now standard in the consumer-goods industry, were groundbreaking at the time and played a crucial role in</p>\n<p>establishing Sunlight Soap as a household name.</p>\n<p>Impact on Hygiene and Public Health</p>\n<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public health. In the late 19th and early 20th centuries, diseases related to poor hygiene were rampant, and access to effective cleansing products was limited. The affordability and widespread availability of Sunlight Soap helped improve sanitation and hygiene standards</p>\n<p>in homes across Britain and beyond.</p>\n<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap contributed to reducing the spread of infectious diseases. Public-health campaigns, often supported by the Lever Brothers, emphasised the importance of cleanliness, particularly in urban areas where overcrowding and poor sanitation were major issues. The soap’s role in promoting hygiene was especially crucial during times of public-health crises, such as</p>\n<p>cholera outbreaks and the Spanish-flu pandemic.</p>\n<p>Industrial and Social Innovations</p>\n<p>The Lever Brothers not only revolutionised soap production but also set new standards in industrial practices and social responsibility. In 1888, William Lever established Port Sunlight, a model village on the Wirral Peninsula, to house the workers of the company’s soap factory. Unlike the cramped and unsanitary living conditions common in industrial cities, Port Sunlight provided employees with well-built homes, access to education, recreational facilities and **health-**care services. This initiative was groundbreaking and demonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>\n<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility (CSR) initiatives. It set an example for other industrialists and showcased the benefits of treating workers with dignity and providing them with a better quality of life. Many of the principles applied in Port Sunlight would later influence labour policies and welfare</p>\n<p>programmes in various industries.</p>\n<p>Expansion and Global Reach</p>\n<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded</p>\n<p>their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing</p>\n<p>strategies ensured its continued growth.</p>\n<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding and marketing campaigns. The Lever Brothers tailored their advertisements and promotional efforts to suit different cultural and economic contexts. In many countries, Sunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its</p>\n<p>status as a trusted product worldwide.</p>\n<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to form Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in the soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying</p>\n<p>forward the legacy of Sunlight Soap.</p>\n<p>Legacy and Modern Relevance</p>\n<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original</p>\n<p>product has evolved over time, its core values of cleanliness, affordability and innovation</p>\n<p>remain relevant. The principles established by the Lever Brothers continue to influence</p>\n<p>modern consumer-goods companies, particularly in areas such as sustainability and social</p>\n<p>responsibility.</p>\n<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to</p>\n<p>prioritise sustainability and social impact. Initiatives such as reducing plastic waste,</p>\n<p>promoting handwashing in developing countries and supporting fair-trade practices reflect</p>\n<p>the same pioneering spirit that defined the success of Sunlight Soap.</p>",
             "kind": "html"
           }
         ]
@@ -874,10 +1783,10 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-13</p></div><ol><li><label><strong>1</strong>  <input type=\"text\" id=\"q1_input\" name=\"q1\"></label></li><li><label><strong>2</strong>  <input type=\"text\" id=\"q2_input\" name=\"q2\"></label></li><li><label><strong>3</strong>  <input type=\"text\" id=\"q3_input\" name=\"q3\"></label></li><li><label><strong>4</strong>  <input type=\"text\" id=\"q4_input\" name=\"q4\"></label></li><li><label><strong>5</strong>  <input type=\"text\" id=\"q5_input\" name=\"q5\"></label></li><li><label><strong>6</strong>  <input type=\"text\" id=\"q6_input\" name=\"q6\"></label></li><li><label><strong>7</strong>  <input type=\"text\" id=\"q7_input\" name=\"q7\"></label></li><li><label><strong>8</strong>  <input type=\"text\" id=\"q8_input\" name=\"q8\"></label></li><li><label><strong>9</strong>  <input type=\"text\" id=\"q9_input\" name=\"q9\"></label></li><li><label><strong>10</strong>  <input type=\"text\" id=\"q10_input\" name=\"q10\"></label></li><li><label><strong>11</strong>  <input type=\"text\" id=\"q11_input\" name=\"q11\"></label></li><li><label><strong>12</strong>  <input type=\"text\" id=\"q12_input\" name=\"q12\"></label></li><li><label><strong>13</strong>  <input type=\"text\" id=\"q13_input\" name=\"q13\"></label></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-13</p><p>You should spend about 20 minutes on Questions 1–13, which are based on Reading</p></div><ol><li><label><strong>1</strong>  <input type=\"text\" id=\"q1_input\" name=\"q1\"></label></li><li><label><strong>2</strong>  <input type=\"text\" id=\"q2_input\" name=\"q2\"></label></li><li><label><strong>3</strong>  <input type=\"text\" id=\"q3_input\" name=\"q3\"></label></li><li><label><strong>4</strong>  <input type=\"text\" id=\"q4_input\" name=\"q4\"></label></li><li><label><strong>5</strong>  <input type=\"text\" id=\"q5_input\" name=\"q5\"></label></li><li><label><strong>6</strong>  <input type=\"text\" id=\"q6_input\" name=\"q6\"></label></li><li><label><strong>7</strong>  <input type=\"text\" id=\"q7_input\" name=\"q7\"></label></li><li><label><strong>8</strong>  <input type=\"text\" id=\"q8_input\" name=\"q8\"></label></li><li><label><strong>9</strong>  <input type=\"text\" id=\"q9_input\" name=\"q9\"></label></li><li><label><strong>10</strong>  <input type=\"text\" id=\"q10_input\" name=\"q10\"></label></li><li><label><strong>11</strong>  <input type=\"text\" id=\"q11_input\" name=\"q11\"></label></li><li><label><strong>12</strong>  <input type=\"text\" id=\"q12_input\" name=\"q12\"></label></li><li><label><strong>13</strong>  <input type=\"text\" id=\"q13_input\" name=\"q13\"></label></li></ol></section>",
           "groupId": "group-1",
           "kind": "short_answer",
-          "leadHtml": "<p>Questions 1-13</p>",
+          "leadHtml": "<p>Questions 1-13</p><p>You should spend about 20 minutes on Questions 1–13, which are based on Reading</p>",
           "questionIds": [
             "q1",
             "q2",
@@ -913,7 +1822,7 @@
       "schemaVersion": "ReadingExamSourceV1",
       "sourceRefs": {
         "ieltsHtml": null,
-        "primaryHtml": "author-imports/import-20260809143545-bdaa3199/intermediate.html",
+        "primaryHtml": "author-imports/<import>/intermediate.html",
         "primaryProvider": "author_web",
         "shuiHtml": null,
         "shuiPdf": "uploads/private-random-08.pdf"
@@ -954,9 +1863,29 @@
             "b022",
             "b023",
             "b024",
-            "b025"
+            "b025",
+            "b026",
+            "b027",
+            "b028",
+            "b029",
+            "b030",
+            "b031",
+            "b032",
+            "b033",
+            "b034",
+            "b035",
+            "b036",
+            "b037",
+            "b038",
+            "b039",
+            "b040",
+            "b041",
+            "b042",
+            "b043",
+            "b044",
+            "b045"
           ],
-          "title": "RE ADI NG P AS S AGE 1"
+          "title": "Passage 1 below."
         }
       ],
       "questionGroupCandidates": [
@@ -980,7 +1909,7 @@
           "confidence": 0.35,
           "groupId": "group-1",
           "heading": "Questions 1-13",
-          "instructionText": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below.",
+          "instructionText": "You should spend about 20 minutes on Questions 1–13, which are based on Reading",
           "isUmbrellaRange": true,
           "kindHint": "short_answer",
           "layoutHint": "list",
@@ -999,7 +1928,7 @@
             1,
             13
           ],
-          "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading Passage 1 below."
+          "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading"
         }
       ]
     }

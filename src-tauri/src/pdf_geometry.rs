@@ -15,12 +15,29 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use pdfium_render::prelude::*;
 use serde_json::{json, Value};
 
 use crate::CommandResult;
 use crate::{ImportJob, SourceFile};
+
+/// pdfium binds the native library process-wide on first use. Multiple tests
+/// in the same process each call `bind_pdfium()`, which the binding registry
+/// (`BINDINGS`) rejects a second time. Cache one `Pdfium` instance and hand
+/// out a guard to the shared instance so geometry tests can run back-to-back
+/// in the default parallel harness (the guard serializes them).
+static PDFIUM_INSTANCE: OnceLock<Mutex<Result<Pdfium, String>>> = OnceLock::new();
+
+fn pdfium_instance() -> Result<MutexGuard<'static, Result<Pdfium, String>>, String> {
+    let cached = PDFIUM_INSTANCE.get_or_init(|| Mutex::new(bind_pdfium()));
+    let guard = cached.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if guard.is_err() {
+        return Err("pdfium_bind_failed_global".to_string());
+    }
+    Ok(guard)
+}
 
 /// Resolve the native pdfium library path, trying env override, the exe
 /// directory, a platform resources folder, and finally the system library.
@@ -50,6 +67,19 @@ pub(crate) fn pdfium_library_path() -> Option<PathBuf> {
         // Common resources sub-directories produced by Tauri bundling.
         for sub in ["resources", "../resources"] {
             let candidate = dir.join(sub).join(Pdfium::pdfium_platform_library_name());
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    // Developer/test trees: `npm run fetch:pdfium` installs the library next
+    // to the crate manifest (`src-tauri/lib/pdfium-<platform>/`). Cargo test
+    // binaries live under `target/debug/deps/`, which the exe-relative probes
+    // above cannot see, so fall back to the manifest directory when Cargo
+    // exposed it at runtime (dev/test only; packaged apps resolve via the exe).
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        if let Some(folder) = platform_pdfium_folder(Path::new(&manifest_dir)) {
+            let candidate = folder.join(Pdfium::pdfium_platform_library_name());
             if candidate.exists() {
                 return Some(candidate);
             }
@@ -130,7 +160,8 @@ pub(crate) fn parse_pdf_with_pdfium(
     output_path: &Path,
     mode: &str,
 ) -> CommandResult<Value> {
-    let pdfium = bind_pdfium()?;
+    let _pdfium_guard = pdfium_instance()?;
+    let pdfium = _pdfium_guard.as_ref().map_err(|error| error.clone())?;
     let document = pdfium
         .load_pdf_from_file(upload_path, None)
         .map_err(|error| format!("pdfium_open_failed:{}:{}", upload_path.display(), error))?;
@@ -1220,7 +1251,8 @@ pub(crate) fn render_pdf_pages_with_pdfium(
     asset_dir: &Path,
     prior_warnings: Vec<String>,
 ) -> CommandResult<Value> {
-    let pdfium = bind_pdfium()?;
+    let _pdfium_guard = pdfium_instance()?;
+    let pdfium = _pdfium_guard.as_ref().map_err(|error| error.clone())?;
     let document = pdfium
         .load_pdf_from_file(input_path, None)
         .map_err(|error| format!("pdfium_open_failed:{}:{}", input_path.display(), error))?;

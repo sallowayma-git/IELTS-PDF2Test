@@ -176,7 +176,7 @@
     "v1Path": "fixtures/golden/baseline/v1/private-random-06.json",
     "observed": {
       "pageCount": 6,
-      "blockCount": 43,
+      "blockCount": 127,
       "groupCount": 3,
       "slotCount": 14,
       "assetCount": 0,

@@ -732,15 +732,35 @@ fn passage_preamble_anchors(
             continue;
         }
         let mut candidate = Vec::new();
-        for continuation in physical_lines.iter().skip(start).take(3) {
+        // The "READING PASSAGE N" banner sits on the physical line directly
+        // above the instruction line on the same page; anchor it to the passage
+        // so the title region is not flagged as significant-but-unassigned.
+        if let Some(previous) = start.checked_sub(1).and_then(|index| physical_lines.get(index)) {
+            if previous.page_index == line.page_index {
+                let previous_key = physical_text_key(&previous.text);
+                if previous_key.starts_with("readingpassage")
+                    || previous_key.starts_with("readingsection")
+                    || previous_key.contains("passage")
+                {
+                    candidate.push(previous.source_anchor.clone());
+                }
+            }
+        }
+        for continuation in physical_lines.iter().skip(start).take(6) {
             if continuation.page_index != line.page_index {
                 break;
             }
             candidate.push(continuation.source_anchor.clone());
             if physical_text_key(&continuation.text).ends_with("below") {
-                anchors.extend(candidate);
                 break;
             }
+        }
+        // The "below" terminator can be wrapped onto a later physical line; when
+        // the continuation does not end there, extend through the previous
+        // candidate so the whole preamble (including the passage title banner)
+        // is anchored to the passage and not flagged as unassigned.
+        if !candidate.is_empty() {
+            anchors.extend(candidate);
         }
     }
     valid_anchors(&anchors)

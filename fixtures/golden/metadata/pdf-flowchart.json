@@ -70,7 +70,7 @@
     "v1Path": "fixtures/golden/baseline/v1/pdf-flowchart.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 15,
+      "blockCount": 14,
       "groupCount": 1,
       "slotCount": 4,
       "assetCount": 0,

@@ -347,7 +347,7 @@
     "v1Path": "fixtures/golden/baseline/v1/conformity.json",
     "observed": {
       "pageCount": 5,
-      "blockCount": 48,
+      "blockCount": 63,
       "groupCount": 3,
       "slotCount": 14,
       "assetCount": 0,
@@ -375,6 +375,7 @@
         "q40"
       ],
       "roles": [
+        "answer",
         "passage",
         "question"
       ]

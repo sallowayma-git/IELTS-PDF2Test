@@ -516,7 +516,7 @@
     "v1Path": "fixtures/golden/baseline/v1/organisational-design.json",
     "observed": {
       "pageCount": 8,
-      "blockCount": 55,
+      "blockCount": 140,
       "groupCount": 5,
       "slotCount": 13,
       "assetCount": 0,
@@ -545,6 +545,7 @@
         "q26"
       ],
       "roles": [
+        "passage",
         "question"
       ]
     }

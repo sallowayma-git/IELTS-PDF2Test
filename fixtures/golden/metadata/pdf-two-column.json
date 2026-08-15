@@ -64,7 +64,7 @@
     "v1Path": "fixtures/golden/baseline/v1/pdf-two-column.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 12,
+      "blockCount": 14,
       "groupCount": 1,
       "slotCount": 4,
       "assetCount": 0,

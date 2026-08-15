@@ -74,6 +74,7 @@
         {
           "blocks": [
             {
+              "_epic8Ordinal": 0,
               "bbox": [
                 72,
                 72,
@@ -88,14 +89,14 @@
               "text": "[No extractable text on page 1]"
             }
           ],
-          "height": 842,
+          "height": 792,
           "pageIndex": 1,
-          "width": 595
+          "width": 612
         }
       ],
       "parser": {
         "mode": "auto",
-        "provider": "rust-parser:pdf:pdf-extract",
+        "provider": "rust-parser:pdf:pdfium",
         "sourceFileId": "file-cli-main",
         "sourceStoredName": "pdf-image-only.pdf",
         "version": "0.1.0",
@@ -138,7 +139,7 @@
       "schemaVersion": "ReadingExamSourceV1",
       "sourceRefs": {
         "ieltsHtml": null,
-        "primaryHtml": "author-imports/import-20260809143540-4b1de633/intermediate.html",
+        "primaryHtml": "author-imports/<import>/intermediate.html",
         "primaryProvider": "author_web",
         "shuiHtml": null,
         "shuiPdf": "uploads/pdf-image-only.pdf"

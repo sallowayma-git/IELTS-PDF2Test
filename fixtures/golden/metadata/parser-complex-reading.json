@@ -76,19 +76,18 @@
   },
   "knownIssues": [
     "V1 falls back from rust pdf-extract because this tiny fixture has an invalid PDF trailer.",
-    "V1 creates q4/q5 but leaves their prompts empty; this is a baseline defect, not an expected success.",
     "The answer block is present in the same page and must remain distinguishable from question content."
   ],
   "baseline": {
     "v1Path": "fixtures/golden/baseline/v1/parser-complex-reading.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 5,
+      "blockCount": 13,
       "groupCount": 2,
       "slotCount": 5,
       "assetCount": 0,
       "answerCount": 5,
-      "warningCount": 1,
+      "warningCount": 0,
       "groupKinds": [
         "true_false_not_given",
         "table_completion"

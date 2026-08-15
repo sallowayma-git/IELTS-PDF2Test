@@ -9,12 +9,12 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 1,
-    "blockCount": 5,
+    "blockCount": 13,
     "groupCount": 2,
     "slotCount": 5,
     "assetCount": 0,
     "answerCount": 5,
-    "warningCount": 1,
+    "warningCount": 0,
     "groupKinds": [
       "true_false_not_given",
       "table_completion"
@@ -70,12 +70,36 @@
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
-            "b002"
+            "b005",
+            "b006",
+            "b007",
+            "b008"
           ],
           "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b005",
+              "reason": "same-section-continuation",
+              "toBlockId": "b006"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b006",
+              "reason": "same-section-continuation",
+              "toBlockId": "b007"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b007",
+              "reason": "same-section-continuation",
+              "toBlockId": "b008"
+            }
+          ],
           "groupId": "group-1",
           "instruction": [
-            "Questions 1-3"
+            "Questions 1-3",
+            "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN"
           ],
           "isUmbrellaRange": false,
           "kind": "true_false_not_given",
@@ -105,7 +129,10 @@
               "prompt": "The archive moved into a renovated warehouse.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b002"
+                "b005",
+                "b006",
+                "b007",
+                "b008"
               ],
               "verified": false
             },
@@ -126,7 +153,10 @@
               "prompt": "Visitors cannot inspect maps at the new site.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b002"
+                "b005",
+                "b006",
+                "b007",
+                "b008"
               ],
               "verified": false
             },
@@ -147,7 +177,10 @@
               "prompt": "The passage says the museum opened in 1901.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b002"
+                "b005",
+                "b006",
+                "b007",
+                "b008"
               ],
               "verified": false
             }
@@ -158,47 +191,129 @@
             {
               "bbox": [
                 72,
-                114,
-                520,
-                150
+                687.7999877929688,
+                680.9267578125,
+                696.2000122070312
               ],
-              "blockId": "b002",
+              "blockId": "b005",
               "column": 0,
               "normalizedBbox": [
                 72,
-                114,
-                520,
-                150
+                687.7999877929688,
+                680.9267578125,
+                696.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
-              "textPreview": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 "
+              "sectionColumnCount": 1,
+              "textPreview": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN"
+            },
+            {
+              "bbox": [
+                72,
+                665.7999877929688,
+                313.50494384765625,
+                674.2000122070312
+              ],
+              "blockId": "b006",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                665.7999877929688,
+                313.50494384765625,
+                674.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "1 The archive moved into a renovated warehouse."
+            },
+            {
+              "bbox": [
+                72,
+                643.7999877929688,
+                295.1569519042969,
+                652.2000122070312
+              ],
+              "blockId": "b007",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                643.7999877929688,
+                295.1569519042969,
+                652.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "2 Visitors cannot inspect maps at the new site."
+            },
+            {
+              "bbox": [
+                72,
+                621.7999877929688,
+                312.91094970703125,
+                630.2000122070312
+              ],
+              "blockId": "b008",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                621.7999877929688,
+                312.91094970703125,
+                630.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "3 The passage says the museum opened in 1901."
             }
           ],
           "sourceBlockIds": [
-            "b002"
+            "b005",
+            "b006",
+            "b007",
+            "b008"
           ],
           "verified": false
         },
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
-            "b003",
-            "b004"
+            "b009",
+            "b010",
+            "b011",
+            "b012"
           ],
           "confidence": 0.82,
           "continuationEdges": [
             {
               "confidence": 0.72,
-              "fromBlockId": "b003",
+              "fromBlockId": "b009",
               "reason": "same-section-continuation",
-              "toBlockId": "b004"
+              "toBlockId": "b010"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b010",
+              "reason": "same-section-continuation",
+              "toBlockId": "b011"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
             }
           ],
           "groupId": "group-2",
           "instruction": [
-            "Questions 4-5"
+            "Questions 4-5",
+            "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer."
           ],
           "isUmbrellaRange": false,
           "kind": "table_completion",
@@ -226,11 +341,13 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "",
+              "prompt": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b003",
-                "b004"
+                "b009",
+                "b010",
+                "b011",
+                "b012"
               ],
               "verified": false
             },
@@ -244,11 +361,13 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "",
+              "prompt": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b003",
-                "b004"
+                "b009",
+                "b010",
+                "b011",
+                "b012"
               ],
               "verified": false
             }
@@ -259,47 +378,93 @@
             {
               "bbox": [
                 72,
-                156,
-                520,
-                192
+                599.7999877929688,
+                578.8140258789062,
+                608.2000122070312
               ],
-              "blockId": "b003",
+              "blockId": "b009",
               "column": 0,
               "normalizedBbox": [
                 72,
-                156,
-                520,
-                192
+                599.7999877929688,
+                578.8140258789062,
+                608.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
-              "textPreview": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each"
+              "sectionColumnCount": 1,
+              "textPreview": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer."
             },
             {
               "bbox": [
                 72,
-                198,
-                520,
-                234
+                577.7999877929688,
+                137.8350067138672,
+                586.2000122070312
               ],
-              "blockId": "b004",
+              "blockId": "b010",
               "column": 0,
               "normalizedBbox": [
                 72,
-                198,
-                520,
-                234
+                577.7999877929688,
+                137.8350067138672,
+                586.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "answer. Item | Location maps | room diaries | room"
+              "sectionColumnCount": 3,
+              "textPreview": "Item | Location"
+            },
+            {
+              "bbox": [
+                72,
+                555.7999877929688,
+                123.76599884033203,
+                564.2000122070312
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                555.7999877929688,
+                123.76599884033203,
+                564.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 3,
+              "textPreview": "maps | room"
+            },
+            {
+              "bbox": [
+                72,
+                533.7999877929688,
+                129.2659912109375,
+                542.2000122070312
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                533.7999877929688,
+                129.2659912109375,
+                542.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "diaries | room"
             }
           ],
           "sourceBlockIds": [
-            "b003",
-            "b004"
+            "b009",
+            "b010",
+            "b011",
+            "b012"
           ],
           "verified": false
         }
@@ -308,14 +473,17 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1 Complex Fixture Passage This passage describes a museum that moved its archive into a renovated warehouse. The new site allowed visitors to inspect maps, tools, and diaries in one room.</h3>"
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Complex Fixture Passage</p>\n<p>This passage describes a museum that moved its archive into a renovated warehouse.</p>\n<p>The new site allowed visitors to inspect maps, tools, and diaries in one room.</p>"
           }
         ],
         "questionUmbrellaRanges": [],
         "sourceBlockIds": [
-          "b001"
+          "b001",
+          "b002",
+          "b003",
+          "b004"
         ],
-        "title": "complex reading"
+        "title": "Complex Fixture Passage"
       },
       "questionDisplayMap": {
         "q1": "1",
@@ -339,71 +507,357 @@
         {
           "blocks": [
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 0,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
-                72,
-                520,
-                108
+                775.7999877929688,
+                180.81198120117188,
+                784.2000122070312
               ],
               "blockId": "b001",
               "blockType": "header",
               "confidence": 0.98,
-              "html": "<h3>READING PASSAGE 1 Complex Fixture Passage This passage describes a museum that moved its archive into a renovated warehouse. The new site allowed visitors to inspect maps, tools, and diaries in one room.</h3>",
+              "html": "<h3>READING PASSAGE 1</h3>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
+              "pageIndex": 1,
               "roleHint": "passage",
-              "text": "READING PASSAGE 1 Complex Fixture Passage This passage describes a museum that moved its archive into a renovated warehouse. The new site allowed visitors to inspect maps, tools, and diaries in one room."
+              "text": "READING PASSAGE 1"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 1,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
-                114,
-                520,
-                150
+                753.7999877929688,
+                191.81198120117188,
+                762.2000122070312
               ],
               "blockId": "b002",
-              "blockType": "header",
+              "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<h3>Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 The archive moved into a renovated warehouse. 2 Visitors cannot inspect maps at the new site. 3 The passage says the museum opened in 1901.</h3>",
-              "roleHint": "question",
-              "text": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 The archive moved into a renovated warehouse. 2 Visitors cannot inspect maps at the new site. 3 The passage says the museum opened in 1901."
+              "html": "<p>Complex Fixture Passage</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
+              "pageIndex": 1,
+              "text": "Complex Fixture Passage"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
-                156,
-                520,
-                192
+                731.7999877929688,
+                490.79193115234375,
+                740.2000122070312
               ],
               "blockId": "b003",
-              "blockType": "header",
+              "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<h3>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each</h3>",
-              "roleHint": "question",
-              "text": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each"
+              "html": "<p>This passage describes a museum that moved its archive into a renovated warehouse.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
+              "pageIndex": 1,
+              "text": "This passage describes a museum that moved its archive into a renovated warehouse."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
-                198,
-                520,
-                234
+                709.7999877929688,
+                442.47991943359375,
+                718.2000122070312
               ],
               "blockId": "b004",
-              "blockType": "table",
+              "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<table><tr><td>answer. Item</td><td>Location maps</td><td>room diaries</td><td>room</td></tr></table>",
-              "text": "answer. Item | Location maps | room diaries | room"
+              "html": "<p>The new site allowed visitors to inspect maps, tools, and diaries in one room.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
+              "pageIndex": 1,
+              "text": "The new site allowed visitors to inspect maps, tools, and diaries in one room."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 4,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
-                240,
-                520,
-                276
+                687.7999877929688,
+                680.9267578125,
+                696.2000122070312
               ],
               "blockId": "b005",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN</h3>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                72,
+                665.7999877929688,
+                313.50494384765625,
+                674.2000122070312
+              ],
+              "blockId": "b006",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>1 The archive moved into a renovated warehouse.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
+              "pageIndex": 1,
+              "text": "1 The archive moved into a renovated warehouse."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 6,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                72,
+                643.7999877929688,
+                295.1569519042969,
+                652.2000122070312
+              ],
+              "blockId": "b007",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>2 Visitors cannot inspect maps at the new site.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
+              "pageIndex": 1,
+              "text": "2 Visitors cannot inspect maps at the new site."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 7,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                72,
+                621.7999877929688,
+                312.91094970703125,
+                630.2000122070312
+              ],
+              "blockId": "b008",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>3 The passage says the museum opened in 1901.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
+              "pageIndex": 1,
+              "text": "3 The passage says the museum opened in 1901."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 8,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                72,
+                599.7999877929688,
+                578.8140258789062,
+                608.2000122070312
+              ],
+              "blockId": "b009",
+              "blockType": "header",
+              "confidence": 0.98,
+              "html": "<h3>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</h3>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 1,
+              "roleHint": "question",
+              "text": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 9,
+              "_epic8SectionColumns": 3,
+              "bbox": [
+                72,
+                577.7999877929688,
+                137.8350067138672,
+                586.2000122070312
+              ],
+              "blockId": "b010",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Item | Location</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 2
+                }
+              },
+              "pageIndex": 1,
+              "text": "Item | Location"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 10,
+              "_epic8SectionColumns": 3,
+              "bbox": [
+                72,
+                555.7999877929688,
+                123.76599884033203,
+                564.2000122070312
+              ],
+              "blockId": "b011",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>maps | room</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 2
+                }
+              },
+              "pageIndex": 1,
+              "text": "maps | room"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 11,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                72,
+                533.7999877929688,
+                129.2659912109375,
+                542.2000122070312
+              ],
+              "blockId": "b012",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>diaries | room</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 1,
+              "text": "diaries | room"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 12,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                72,
+                511.79998779296875,
+                354.4249267578125,
+                520.2000122070312
+              ],
+              "blockId": "b013",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 maps 5 diaries</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 1,
               "roleHint": "answer",
               "text": "Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 maps 5 diaries"
             }
@@ -415,11 +869,11 @@
       ],
       "parser": {
         "mode": "auto",
-        "provider": "python-parser-sidecar:pdf:pypdf",
-        "version": "0.3.0",
-        "warnings": [
-          "rust pdf-extract failed; used Python parser fallback: rust_pdf_extract_failed:PDF error: couldn't parse input: invalid file trailer"
-        ]
+        "provider": "rust-parser:pdf:pdfium",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "complex-reading.pdf",
+        "version": "0.1.0",
+        "warnings": []
       },
       "schemaVersion": "DocumentIRV1"
     },
@@ -451,7 +905,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1 Complex Fixture Passage This passage describes a museum that moved its archive into a renovated warehouse. The new site allowed visitors to inspect maps, tools, and diaries in one room.</h3>",
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Complex Fixture Passage</p>\n<p>This passage describes a museum that moved its archive into a renovated warehouse.</p>\n<p>The new site allowed visitors to inspect maps, tools, and diaries in one room.</p>",
             "kind": "html"
           }
         ]
@@ -466,10 +920,10 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-3</p></div><ol><li><div><strong>1</strong> The archive moved into a renovated warehouse.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> Visitors cannot inspect maps at the new site.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> The passage says the museum opened in 1901.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-3</p><p>Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN</p></div><ol><li><div><strong>1</strong> The archive moved into a renovated warehouse.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> Visitors cannot inspect maps at the new site.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> The passage says the museum opened in 1901.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
           "groupId": "group-1",
           "kind": "true_false_not_given",
-          "leadHtml": "<p>Questions 1-3</p>",
+          "leadHtml": "<p>Questions 1-3</p><p>Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN</p>",
           "questionIds": [
             "q1",
             "q2",
@@ -478,10 +932,10 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 4-5</p></div><table class=\"completion-table\"><thead><tr><th>Question</th><th>Prompt</th><th>Answer</th></tr></thead><tbody><tr><td><strong>4</strong></td><td></td><td><input type=\"text\" id=\"q4_input\" name=\"q4\" placeholder=\"answer\"></td></tr><tr><td><strong>5</strong></td><td></td><td><input type=\"text\" id=\"q5_input\" name=\"q5\" placeholder=\"answer\"></td></tr></tbody></table></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 4-5</p><p>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</p></div><table class=\"completion-table\"><thead><tr><th>Question</th><th>Prompt</th><th>Answer</th></tr></thead><tbody><tr><td><strong>4</strong></td><td>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</td><td><input type=\"text\" id=\"q4_input\" name=\"q4\" placeholder=\"answer\"></td></tr><tr><td><strong>5</strong></td><td>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</td><td><input type=\"text\" id=\"q5_input\" name=\"q5\" placeholder=\"answer\"></td></tr></tbody></table></section>",
           "groupId": "group-2",
           "kind": "table_completion",
-          "leadHtml": "<p>Questions 4-5</p>",
+          "leadHtml": "<p>Questions 4-5</p><p>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</p>",
           "questionIds": [
             "q4",
             "q5"
@@ -498,7 +952,7 @@
       "schemaVersion": "ReadingExamSourceV1",
       "sourceRefs": {
         "ieltsHtml": null,
-        "primaryHtml": "author-imports/import-20260809143539-16b2e47f/intermediate.html",
+        "primaryHtml": "author-imports/<import>/intermediate.html",
         "primaryProvider": "author_web",
         "shuiHtml": null,
         "shuiPdf": "uploads/complex-reading.pdf"
@@ -516,7 +970,7 @@
             "4": "maps",
             "5": "diaries"
           },
-          "source": "b005"
+          "source": "b013"
         }
       ],
       "issues": [],
@@ -524,20 +978,29 @@
         {
           "categoryHint": "P1",
           "range": [
-            "b001"
+            "b001",
+            "b002",
+            "b003",
+            "b004"
           ],
-          "title": "complex reading"
+          "title": "Complex Fixture Passage"
         }
       ],
       "questionGroupCandidates": [
         {
           "blockIds": [
-            "b002"
+            "b005",
+            "b006",
+            "b007",
+            "b008"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
-              "b002"
+              "b005",
+              "b006",
+              "b007",
+              "b008"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -552,9 +1015,29 @@
             "warnings": []
           },
           "confidence": 0.82,
+          "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b005",
+              "reason": "same-section-continuation",
+              "toBlockId": "b006"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b006",
+              "reason": "same-section-continuation",
+              "toBlockId": "b007"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b007",
+              "reason": "same-section-continuation",
+              "toBlockId": "b008"
+            }
+          ],
           "groupId": "group-1",
           "heading": "Questions 1-3",
-          "instructionText": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 The archive moved into a renovated warehouse. 2 Visitors cannot inspect maps at the new site. 3 The passage says the museum opened in 1901.",
+          "instructionText": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN",
           "kindHint": "true_false_not_given",
           "layoutHint": "list",
           "questionRange": [
@@ -565,35 +1048,103 @@
             {
               "bbox": [
                 72,
-                114,
-                520,
-                150
+                687.7999877929688,
+                680.9267578125,
+                696.2000122070312
               ],
-              "blockId": "b002",
+              "blockId": "b005",
               "column": 0,
               "normalizedBbox": [
                 72,
-                114,
-                520,
-                150
+                687.7999877929688,
+                680.9267578125,
+                696.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
-              "textPreview": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN 1 "
+              "sectionColumnCount": 1,
+              "textPreview": "Questions 1-3 Do the following statements agree with the information given in Reading Passage 1? TRUE FALSE NOT GIVEN"
+            },
+            {
+              "bbox": [
+                72,
+                665.7999877929688,
+                313.50494384765625,
+                674.2000122070312
+              ],
+              "blockId": "b006",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                665.7999877929688,
+                313.50494384765625,
+                674.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "1 The archive moved into a renovated warehouse."
+            },
+            {
+              "bbox": [
+                72,
+                643.7999877929688,
+                295.1569519042969,
+                652.2000122070312
+              ],
+              "blockId": "b007",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                643.7999877929688,
+                295.1569519042969,
+                652.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "2 Visitors cannot inspect maps at the new site."
+            },
+            {
+              "bbox": [
+                72,
+                621.7999877929688,
+                312.91094970703125,
+                630.2000122070312
+              ],
+              "blockId": "b008",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                621.7999877929688,
+                312.91094970703125,
+                630.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "3 The passage says the museum opened in 1901."
             }
           ]
         },
         {
           "blockIds": [
-            "b003",
-            "b004"
+            "b009",
+            "b010",
+            "b011",
+            "b012"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
-              "b003",
-              "b004"
+              "b009",
+              "b010",
+              "b011",
+              "b012"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -607,14 +1158,26 @@
           "continuationEdges": [
             {
               "confidence": 0.72,
-              "fromBlockId": "b003",
+              "fromBlockId": "b009",
               "reason": "same-section-continuation",
-              "toBlockId": "b004"
+              "toBlockId": "b010"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b010",
+              "reason": "same-section-continuation",
+              "toBlockId": "b011"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b011",
+              "reason": "same-section-continuation",
+              "toBlockId": "b012"
             }
           ],
           "groupId": "group-2",
           "heading": "Questions 4-5",
-          "instructionText": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each",
+          "instructionText": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.",
           "kindHint": "table_completion",
           "layoutHint": "table",
           "questionRange": [
@@ -625,42 +1188,86 @@
             {
               "bbox": [
                 72,
-                156,
-                520,
-                192
+                599.7999877929688,
+                578.8140258789062,
+                608.2000122070312
               ],
-              "blockId": "b003",
+              "blockId": "b009",
               "column": 0,
               "normalizedBbox": [
                 72,
-                156,
-                520,
-                192
+                599.7999877929688,
+                578.8140258789062,
+                608.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
-              "textPreview": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each"
+              "sectionColumnCount": 1,
+              "textPreview": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer."
             },
             {
               "bbox": [
                 72,
-                198,
-                520,
-                234
+                577.7999877929688,
+                137.8350067138672,
+                586.2000122070312
               ],
-              "blockId": "b004",
+              "blockId": "b010",
               "column": 0,
               "normalizedBbox": [
                 72,
-                198,
-                520,
-                234
+                577.7999877929688,
+                137.8350067138672,
+                586.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "answer. Item | Location maps | room diaries | room"
+              "sectionColumnCount": 3,
+              "textPreview": "Item | Location"
+            },
+            {
+              "bbox": [
+                72,
+                555.7999877929688,
+                123.76599884033203,
+                564.2000122070312
+              ],
+              "blockId": "b011",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                555.7999877929688,
+                123.76599884033203,
+                564.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 3,
+              "textPreview": "maps | room"
+            },
+            {
+              "bbox": [
+                72,
+                533.7999877929688,
+                129.2659912109375,
+                542.2000122070312
+              ],
+              "blockId": "b012",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                533.7999877929688,
+                129.2659912109375,
+                542.2000122070312
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "diaries | room"
             }
           ]
         }

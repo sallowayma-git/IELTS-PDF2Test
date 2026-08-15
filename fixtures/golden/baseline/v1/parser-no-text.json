@@ -14,7 +14,7 @@
     "slotCount": 0,
     "assetCount": 0,
     "answerCount": 0,
-    "warningCount": 2,
+    "warningCount": 1,
     "groupKinds": [],
     "questionIds": [],
     "roles": []
@@ -74,6 +74,7 @@
         {
           "blocks": [
             {
+              "_epic8Ordinal": 0,
               "bbox": [
                 72,
                 72,
@@ -84,6 +85,7 @@
               "blockType": "paragraph",
               "confidence": 0.2,
               "html": "<p>[No extractable text on page 1]</p>",
+              "pageIndex": 1,
               "text": "[No extractable text on page 1]"
             }
           ],
@@ -94,11 +96,12 @@
       ],
       "parser": {
         "mode": "auto",
-        "provider": "python-parser-sidecar:pdf:pypdf",
-        "version": "0.3.0",
+        "provider": "rust-parser:pdf:pdfium",
+        "sourceFileId": "file-cli-main",
+        "sourceStoredName": "no-text.pdf",
+        "version": "0.1.0",
         "warnings": [
-          "page 1 has no extractable text; OCR/manual review required",
-          "rust pdf-extract failed; used Python parser fallback: rust_pdf_extract_failed:PDF error: couldn't parse input: invalid file trailer"
+          "page 1 has no extractable text; OCR/manual review required"
         ]
       },
       "schemaVersion": "DocumentIRV1"
@@ -136,7 +139,7 @@
       "schemaVersion": "ReadingExamSourceV1",
       "sourceRefs": {
         "ieltsHtml": null,
-        "primaryHtml": "author-imports/import-20260809143540-9aabba12/intermediate.html",
+        "primaryHtml": "author-imports/<import>/intermediate.html",
         "primaryProvider": "author_web",
         "shuiHtml": null,
         "shuiPdf": "uploads/no-text.pdf"

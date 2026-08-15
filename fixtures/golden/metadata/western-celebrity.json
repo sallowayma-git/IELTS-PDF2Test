@@ -357,7 +357,7 @@
     "v1Path": "fixtures/golden/baseline/v1/western-celebrity.json",
     "observed": {
       "pageCount": 5,
-      "blockCount": 64,
+      "blockCount": 105,
       "groupCount": 3,
       "slotCount": 13,
       "assetCount": 0,

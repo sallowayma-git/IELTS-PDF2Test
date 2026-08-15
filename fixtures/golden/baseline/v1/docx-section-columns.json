@@ -84,6 +84,23 @@
               "blockType": "paragraph",
               "confidence": 0.99,
               "html": "<p>two column section</p>",
+              "layoutHints": {
+                "basedOnStyleId": null,
+                "headingLevel": null,
+                "numbering": null,
+                "resolvedStyleId": null,
+                "runFormat": {
+                  "bold": false,
+                  "centered": false,
+                  "fontSize": null,
+                  "italic": false,
+                  "pageBreakBefore": false
+                },
+                "section": null,
+                "source": "docx-ooxml-paragraph",
+                "styleId": null,
+                "styleName": null
+              },
               "pageIndex": 1,
               "text": "two column section"
             }

@@ -59,7 +59,7 @@
     "v1Path": "fixtures/golden/baseline/v1/pdf-mixed-text-image.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 8,
+      "blockCount": 7,
       "groupCount": 1,
       "slotCount": 2,
       "assetCount": 0,

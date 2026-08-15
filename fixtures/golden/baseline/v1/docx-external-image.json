@@ -14,7 +14,7 @@
     "slotCount": 0,
     "assetCount": 0,
     "answerCount": 0,
-    "warningCount": 0,
+    "warningCount": 1,
     "groupKinds": [],
     "questionIds": [],
     "roles": []
@@ -84,6 +84,23 @@
               "blockType": "paragraph",
               "confidence": 0.99,
               "html": "<p>fixture</p>",
+              "layoutHints": {
+                "basedOnStyleId": null,
+                "headingLevel": null,
+                "numbering": null,
+                "resolvedStyleId": null,
+                "runFormat": {
+                  "bold": false,
+                  "centered": false,
+                  "fontSize": null,
+                  "italic": false,
+                  "pageBreakBefore": false
+                },
+                "section": null,
+                "source": "docx-ooxml-paragraph",
+                "styleId": null,
+                "styleName": null
+              },
               "pageIndex": 1,
               "text": "fixture"
             }
@@ -99,7 +116,9 @@
         "sourceFileId": "file-cli-main",
         "sourceStoredName": "docx-external-image.docx",
         "version": "0.1.0",
-        "warnings": []
+        "warnings": [
+          "DOCX contains embedded drawings or images that are not yet copied into student assets; diagram, map, or plan questions require source review before export."
+        ]
       },
       "schemaVersion": "DocumentIRV1"
     },

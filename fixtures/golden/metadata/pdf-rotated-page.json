@@ -58,7 +58,7 @@
     "v1Path": "fixtures/golden/baseline/v1/pdf-rotated-page.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 10,
+      "blockCount": 9,
       "groupCount": 1,
       "slotCount": 3,
       "assetCount": 0,

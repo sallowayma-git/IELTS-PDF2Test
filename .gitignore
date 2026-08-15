@@ -15,6 +15,9 @@ Files/*.pdf
 # Test artifacts and generated data
 output/
 
+# Local runtime job artifacts (created by manual runs and E2E helpers)
+jobs/
+
 # Fetched pdfium native binaries (downloaded by `npm run fetch:pdfium`,
 # shipped as Tauri resources at build time — not committed to the repo)
 src-tauri/lib/pdfium-windows/

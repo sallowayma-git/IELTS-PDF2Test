@@ -169,7 +169,7 @@
     "v1Path": "fixtures/golden/baseline/v1/private-random-05.json",
     "observed": {
       "pageCount": 5,
-      "blockCount": 43,
+      "blockCount": 58,
       "groupCount": 3,
       "slotCount": 14,
       "assetCount": 0,
@@ -197,6 +197,7 @@
         "q40"
       ],
       "roles": [
+        "passage",
         "question"
       ]
     }

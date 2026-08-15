@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 1,
-    "blockCount": 12,
+    "blockCount": 14,
     "groupCount": 1,
     "slotCount": 4,
     "assetCount": 0,
@@ -67,8 +67,6 @@
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
-            "b003",
-            "b004",
             "b005",
             "b006",
             "b007",
@@ -76,22 +74,12 @@
             "b009",
             "b010",
             "b011",
-            "b012"
+            "b012",
+            "b013",
+            "b014"
           ],
           "confidence": 0.82,
           "continuationEdges": [
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b003",
-              "reason": "same-section-continuation",
-              "toBlockId": "b004"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b004",
-              "reason": "same-section-continuation",
-              "toBlockId": "b005"
-            },
             {
               "confidence": 0.72,
               "fromBlockId": "b005",
@@ -133,11 +121,24 @@
               "fromBlockId": "b011",
               "reason": "same-section-continuation",
               "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
             }
           ],
           "groupId": "group-1",
           "instruction": [
-            "Questions 1-4"
+            "Questions 1-4",
+            "Questions 1-4 Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN"
           ],
           "isUmbrellaRange": false,
           "kind": "true_false_not_given",
@@ -167,8 +168,6 @@
               "prompt": "The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b003",
-                "b004",
                 "b005",
                 "b006",
                 "b007",
@@ -176,7 +175,9 @@
                 "b009",
                 "b010",
                 "b011",
-                "b012"
+                "b012",
+                "b013",
+                "b014"
               ],
               "verified": false
             },
@@ -197,8 +198,6 @@
               "prompt": "The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b003",
-                "b004",
                 "b005",
                 "b006",
                 "b007",
@@ -206,7 +205,9 @@
                 "b009",
                 "b010",
                 "b011",
-                "b012"
+                "b012",
+                "b013",
+                "b014"
               ],
               "verified": false
             },
@@ -227,8 +228,6 @@
               "prompt": "The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b003",
-                "b004",
                 "b005",
                 "b006",
                 "b007",
@@ -236,7 +235,9 @@
                 "b009",
                 "b010",
                 "b011",
-                "b012"
+                "b012",
+                "b013",
+                "b014"
               ],
               "verified": false
             },
@@ -257,8 +258,6 @@
               "prompt": "The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b003",
-                "b004",
                 "b005",
                 "b006",
                 "b007",
@@ -266,7 +265,9 @@
                 "b009",
                 "b010",
                 "b011",
-                "b012"
+                "b012",
+                "b013",
+                "b014"
               ],
               "verified": false
             }
@@ -276,208 +277,216 @@
           "sectionEvidence": [
             {
               "bbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "blockId": "b003",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "question",
-              "textPreview": "Questions 1-4"
-            },
-            {
-              "bbox": [
-                72,
-                198,
-                520,
-                234
-              ],
-              "blockId": "b004",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                198,
-                520,
-                234
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "question",
-              "textPreview": "Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN"
-            },
-            {
-              "bbox": [
-                72,
-                240,
-                520,
-                276
+                330,
+                615.7999877929688,
+                396.62701416015625,
+                624.2000122070312
               ],
               "blockId": "b005",
               "column": 0,
               "normalizedBbox": [
-                72,
-                240,
-                520,
-                276
+                330,
+                615.7999877929688,
+                396.62701416015625,
+                624.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
-              "textPreview": "1. The source statement describes a synthetic test condition."
+              "role": "question",
+              "sectionColumnCount": 1,
+              "textPreview": "Questions 1-4"
             },
             {
               "bbox": [
-                72,
-                282,
-                520,
-                318
+                330,
+                600.7999877929688,
+                617.1270141601562,
+                609.2000122070312
               ],
               "blockId": "b006",
               "column": 0,
               "normalizedBbox": [
-                72,
-                282,
-                520,
-                318
+                330,
+                600.7999877929688,
+                617.1270141601562,
+                609.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
-              "textPreview": "A B C D"
+              "role": "question",
+              "sectionColumnCount": 1,
+              "textPreview": "Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN"
             },
             {
               "bbox": [
-                72,
-                324,
-                520,
-                360
+                330,
+                579.7999877929688,
+                569.1119384765625,
+                588.2000122070312
               ],
               "blockId": "b007",
               "column": 0,
               "normalizedBbox": [
-                72,
-                324,
-                520,
-                360
+                330,
+                579.7999877929688,
+                569.1119384765625,
+                588.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "2. The source statement describes a synthetic test condition."
+              "sectionColumnCount": 1,
+              "textPreview": "1. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
-                72,
-                366,
-                520,
-                402
+                348,
+                564.7999877929688,
+                389.0220031738281,
+                573.2000122070312
               ],
               "blockId": "b008",
               "column": 0,
               "normalizedBbox": [
-                72,
-                366,
-                520,
-                402
+                348,
+                564.7999877929688,
+                389.0220031738281,
+                573.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
               "bbox": [
-                72,
-                408,
-                520,
-                444
+                330,
+                540.7999877929688,
+                569.1119384765625,
+                549.2000122070312
               ],
               "blockId": "b009",
               "column": 0,
               "normalizedBbox": [
-                72,
-                408,
-                520,
-                444
+                330,
+                540.7999877929688,
+                569.1119384765625,
+                549.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "3. The source statement describes a synthetic test condition."
+              "sectionColumnCount": 1,
+              "textPreview": "2. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
-                72,
-                450,
-                520,
-                486
+                348,
+                525.7999877929688,
+                389.0220031738281,
+                534.2000122070312
               ],
               "blockId": "b010",
               "column": 0,
               "normalizedBbox": [
-                72,
-                450,
-                520,
-                486
+                348,
+                525.7999877929688,
+                389.0220031738281,
+                534.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
               "bbox": [
-                72,
-                492,
-                520,
-                528
+                330,
+                501.79998779296875,
+                569.1119384765625,
+                510.20001220703125
               ],
               "blockId": "b011",
               "column": 0,
               "normalizedBbox": [
-                72,
-                492,
-                520,
-                528
+                330,
+                501.79998779296875,
+                569.1119384765625,
+                510.20001220703125
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "4. The source statement describes a synthetic test condition."
+              "sectionColumnCount": 1,
+              "textPreview": "3. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
-                72,
-                534,
-                520,
-                570
+                348,
+                486.79998779296875,
+                389.0220031738281,
+                495.20001220703125
               ],
               "blockId": "b012",
               "column": 0,
               "normalizedBbox": [
-                72,
-                534,
-                520,
-                570
+                348,
+                486.79998779296875,
+                389.0220031738281,
+                495.20001220703125
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A B C D"
+            },
+            {
+              "bbox": [
+                330,
+                462.79998779296875,
+                569.1119384765625,
+                471.20001220703125
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                330,
+                462.79998779296875,
+                569.1119384765625,
+                471.20001220703125
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "4. The source statement describes a synthetic test condition."
+            },
+            {
+              "bbox": [
+                348,
+                447.79998779296875,
+                389.0220031738281,
+                456.20001220703125
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                348,
+                447.79998779296875,
+                389.0220031738281,
+                456.20001220703125
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ],
           "sourceBlockIds": [
-            "b003",
-            "b004",
             "b005",
             "b006",
             "b007",
@@ -485,7 +494,9 @@
             "b009",
             "b010",
             "b011",
-            "b012"
+            "b012",
+            "b013",
+            "b014"
           ],
           "verified": false
         }
@@ -494,13 +505,15 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic two-column reading fixture</p>\n<p>The left column contains a passage whose lines\nmust be read top to bottom before the right column.\nThis is a controlled reading-order fixture.\n Column two contains question material and must\nnot be merged into the passage text.</p>"
+            "html": "<p>Synthetic two-column reading fixture</p>\n<p>The left column contains a passage whose lines Column two contains question material and must</p>\n<p>must be read top to bottom before the right column. not be merged into the passage text.</p>\n<p>This is a controlled reading-order fixture.</p>"
           }
         ],
         "questionUmbrellaRanges": [],
         "sourceBlockIds": [
           "b001",
-          "b002"
+          "b002",
+          "b003",
+          "b004"
         ],
         "title": "Synthetic two-column reading fixture"
       },
@@ -524,184 +537,394 @@
         {
           "blocks": [
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 0,
+              "_epic8SectionColumns": 3,
               "bbox": [
-                72,
-                72,
-                520,
-                108
+                48,
+                743.7999877929688,
+                286.81201171875,
+                752.2000122070312
               ],
               "blockId": "b001",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Synthetic two-column reading fixture</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 3,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
               "pageIndex": 1,
               "text": "Synthetic two-column reading fixture"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 1,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                114,
-                520,
-                150
+                48,
+                695.7999877929688,
+                542.8599853515625,
+                704.2000122070312
               ],
               "blockId": "b002",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The left column contains a passage whose lines\nmust be read top to bottom before the right column.\nThis is a controlled reading-order fixture.\n Column two contains question material and must\nnot be merged into the passage text.</p>",
+              "html": "<p>The left column contains a passage whose lines Column two contains question material and must</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
               "pageIndex": 1,
-              "text": "The left column contains a passage whose lines\nmust be read top to bottom before the right column.\nThis is a controlled reading-order fixture.\n Column two contains question material and must\nnot be merged into the passage text."
+              "text": "The left column contains a passage whose lines Column two contains question material and must"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                156,
-                520,
-                192
+                48,
+                680.7999877929688,
+                489.53997802734375,
+                689.2000122070312
               ],
               "blockId": "b003",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>must be read top to bottom before the right column. not be merged into the passage text.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 2
+                }
+              },
+              "pageIndex": 1,
+              "text": "must be read top to bottom before the right column. not be merged into the passage text."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 3,
+              "_epic8SectionColumns": 2,
+              "bbox": [
+                48,
+                665.7999877929688,
+                224.16998291015625,
+                674.2000122070312
+              ],
+              "blockId": "b004",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>This is a controlled reading-order fixture.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 2,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 1,
+              "text": "This is a controlled reading-order fixture."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 4,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                330,
+                615.7999877929688,
+                396.62701416015625,
+                624.2000122070312
+              ],
+              "blockId": "b005",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 1-4</h3>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
               "pageIndex": 1,
               "roleHint": "question",
               "text": "Questions 1-4"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                198,
-                520,
-                234
+                330,
+                600.7999877929688,
+                617.1270141601562,
+                609.2000122070312
               ],
-              "blockId": "b004",
+              "blockId": "b006",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
               "pageIndex": 1,
               "roleHint": "question",
               "text": "Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 6,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                240,
-                520,
-                276
-              ],
-              "blockId": "b005",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>1. The source statement describes a synthetic test condition.</p>",
-              "pageIndex": 1,
-              "text": "1. The source statement describes a synthetic test condition."
-            },
-            {
-              "bbox": [
-                72,
-                282,
-                520,
-                318
-              ],
-              "blockId": "b006",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>A   B   C   D</p>",
-              "pageIndex": 1,
-              "text": "A   B   C   D"
-            },
-            {
-              "bbox": [
-                72,
-                324,
-                520,
-                360
+                330,
+                579.7999877929688,
+                569.1119384765625,
+                588.2000122070312
               ],
               "blockId": "b007",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>2. The source statement describes a synthetic test condition.</p>",
+              "html": "<p>1. The source statement describes a synthetic test condition.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
               "pageIndex": 1,
-              "text": "2. The source statement describes a synthetic test condition."
+              "text": "1. The source statement describes a synthetic test condition."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 7,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                366,
-                520,
-                402
+                348,
+                564.7999877929688,
+                389.0220031738281,
+                573.2000122070312
               ],
               "blockId": "b008",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A   B   C   D</p>",
+              "html": "<p>A B C D</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
               "pageIndex": 1,
-              "text": "A   B   C   D"
+              "text": "A B C D"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 8,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                408,
-                520,
-                444
+                330,
+                540.7999877929688,
+                569.1119384765625,
+                549.2000122070312
               ],
               "blockId": "b009",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>3. The source statement describes a synthetic test condition.</p>",
+              "html": "<p>2. The source statement describes a synthetic test condition.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
               "pageIndex": 1,
-              "text": "3. The source statement describes a synthetic test condition."
+              "text": "2. The source statement describes a synthetic test condition."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 9,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                450,
-                520,
-                486
+                348,
+                525.7999877929688,
+                389.0220031738281,
+                534.2000122070312
               ],
               "blockId": "b010",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A   B   C   D</p>",
+              "html": "<p>A B C D</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
               "pageIndex": 1,
-              "text": "A   B   C   D"
+              "text": "A B C D"
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 10,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                492,
-                520,
-                528
+                330,
+                501.79998779296875,
+                569.1119384765625,
+                510.20001220703125
               ],
               "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>4. The source statement describes a synthetic test condition.</p>",
+              "html": "<p>3. The source statement describes a synthetic test condition.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
               "pageIndex": 1,
-              "text": "4. The source statement describes a synthetic test condition."
+              "text": "3. The source statement describes a synthetic test condition."
             },
             {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 11,
+              "_epic8SectionColumns": 1,
               "bbox": [
-                72,
-                534,
-                520,
-                570
+                348,
+                486.79998779296875,
+                389.0220031738281,
+                495.20001220703125
               ],
               "blockId": "b012",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A   B   C   D</p>",
+              "html": "<p>A B C D</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
               "pageIndex": 1,
-              "text": "A   B   C   D"
+              "text": "A B C D"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 12,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                330,
+                462.79998779296875,
+                569.1119384765625,
+                471.20001220703125
+              ],
+              "blockId": "b013",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>4. The source statement describes a synthetic test condition.</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
+              "pageIndex": 1,
+              "text": "4. The source statement describes a synthetic test condition."
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 4,
+              "_epic8Ordinal": 13,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                348,
+                447.79998779296875,
+                389.0220031738281,
+                456.20001220703125
+              ],
+              "blockId": "b014",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>A B C D</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 4
+                }
+              },
+              "pageIndex": 1,
+              "text": "A B C D"
             }
           ],
-          "height": 842,
+          "height": 792,
           "pageIndex": 1,
-          "width": 595
+          "width": 612
         }
       ],
       "parser": {
         "mode": "auto",
-        "provider": "rust-parser:pdf:pdf-extract",
+        "provider": "rust-parser:pdf:pdfium",
         "sourceFileId": "file-cli-main",
         "sourceStoredName": "pdf-two-column.pdf",
         "version": "0.1.0",
@@ -710,12 +933,7 @@
       "schemaVersion": "DocumentIRV1"
     },
     "readingSource": {
-      "answerKey": {
-        "q1": "",
-        "q2": "",
-        "q3": "",
-        "q4": ""
-      },
+      "answerKey": {},
       "audit": {
         "matchConfidence": 0,
         "matchStatus": "needs_review",
@@ -736,7 +954,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic two-column reading fixture</p>\n<p>The left column contains a passage whose lines\nmust be read top to bottom before the right column.\nThis is a controlled reading-order fixture.\n Column two contains question material and must\nnot be merged into the passage text.</p>",
+            "html": "<p>Synthetic two-column reading fixture</p>\n<p>The left column contains a passage whose lines Column two contains question material and must</p>\n<p>must be read top to bottom before the right column. not be merged into the passage text.</p>\n<p>This is a controlled reading-order fixture.</p>",
             "kind": "html"
           }
         ]
@@ -750,10 +968,10 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-4</p></div><ol><li><div><strong>1</strong> The source statement describes a synthetic test condition. A B C D</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> The source statement describes a synthetic test condition. A B C D</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> The source statement describes a synthetic test condition. A B C D</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>4</strong> The source statement describes a synthetic test condition. A B C D</div><div class=\"choice-row\"><label><input name=\"q4\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q4\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q4\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-4</p><p>Questions 1-4 Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN</p></div><ol><li><div><strong>1</strong> The source statement describes a synthetic test condition. A B C D</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> The source statement describes a synthetic test condition. A B C D</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> The source statement describes a synthetic test condition. A B C D</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>4</strong> The source statement describes a synthetic test condition. A B C D</div><div class=\"choice-row\"><label><input name=\"q4\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q4\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q4\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
           "groupId": "group-1",
           "kind": "true_false_not_given",
-          "leadHtml": "<p>Questions 1-4</p>",
+          "leadHtml": "<p>Questions 1-4</p><p>Questions 1-4 Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN</p>",
           "questionIds": [
             "q1",
             "q2",
@@ -771,7 +989,7 @@
       "schemaVersion": "ReadingExamSourceV1",
       "sourceRefs": {
         "ieltsHtml": null,
-        "primaryHtml": "author-imports/import-20260809143541-b01c8d17/intermediate.html",
+        "primaryHtml": "author-imports/<import>/intermediate.html",
         "primaryProvider": "author_web",
         "shuiHtml": null,
         "shuiPdf": "uploads/pdf-two-column.pdf"
@@ -789,7 +1007,9 @@
           "categoryHint": "P1",
           "range": [
             "b001",
-            "b002"
+            "b002",
+            "b003",
+            "b004"
           ],
           "title": "Synthetic two-column reading fixture"
         }
@@ -797,8 +1017,6 @@
       "questionGroupCandidates": [
         {
           "blockIds": [
-            "b003",
-            "b004",
             "b005",
             "b006",
             "b007",
@@ -806,13 +1024,13 @@
             "b009",
             "b010",
             "b011",
-            "b012"
+            "b012",
+            "b013",
+            "b014"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
-              "b003",
-              "b004",
               "b005",
               "b006",
               "b007",
@@ -820,7 +1038,9 @@
               "b009",
               "b010",
               "b011",
-              "b012"
+              "b012",
+              "b013",
+              "b014"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -836,18 +1056,6 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b003",
-              "reason": "same-section-continuation",
-              "toBlockId": "b004"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b004",
-              "reason": "same-section-continuation",
-              "toBlockId": "b005"
-            },
             {
               "confidence": 0.72,
               "fromBlockId": "b005",
@@ -889,11 +1097,23 @@
               "fromBlockId": "b011",
               "reason": "same-section-continuation",
               "toBlockId": "b012"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b012",
+              "reason": "same-section-continuation",
+              "toBlockId": "b013"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b013",
+              "reason": "same-section-continuation",
+              "toBlockId": "b014"
             }
           ],
           "groupId": "group-1",
           "heading": "Questions 1-4",
-          "instructionText": "Questions 1-4",
+          "instructionText": "Questions 1-4 Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN",
           "kindHint": "true_false_not_given",
           "layoutHint": "list",
           "questionRange": [
@@ -903,202 +1123,212 @@
           "sectionEvidence": [
             {
               "bbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "blockId": "b003",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                156,
-                520,
-                192
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "question",
-              "textPreview": "Questions 1-4"
-            },
-            {
-              "bbox": [
-                72,
-                198,
-                520,
-                234
-              ],
-              "blockId": "b004",
-              "column": 0,
-              "normalizedBbox": [
-                72,
-                198,
-                520,
-                234
-              ],
-              "pageIndex": 1,
-              "pageRotation": 0,
-              "role": "question",
-              "textPreview": "Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN"
-            },
-            {
-              "bbox": [
-                72,
-                240,
-                520,
-                276
+                330,
+                615.7999877929688,
+                396.62701416015625,
+                624.2000122070312
               ],
               "blockId": "b005",
               "column": 0,
               "normalizedBbox": [
-                72,
-                240,
-                520,
-                276
+                330,
+                615.7999877929688,
+                396.62701416015625,
+                624.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
-              "textPreview": "1. The source statement describes a synthetic test condition."
+              "role": "question",
+              "sectionColumnCount": 1,
+              "textPreview": "Questions 1-4"
             },
             {
               "bbox": [
-                72,
-                282,
-                520,
-                318
+                330,
+                600.7999877929688,
+                617.1270141601562,
+                609.2000122070312
               ],
               "blockId": "b006",
               "column": 0,
               "normalizedBbox": [
-                72,
-                282,
-                520,
-                318
+                330,
+                600.7999877929688,
+                617.1270141601562,
+                609.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
-              "textPreview": "A B C D"
+              "role": "question",
+              "sectionColumnCount": 1,
+              "textPreview": "Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN"
             },
             {
               "bbox": [
-                72,
-                324,
-                520,
-                360
+                330,
+                579.7999877929688,
+                569.1119384765625,
+                588.2000122070312
               ],
               "blockId": "b007",
               "column": 0,
               "normalizedBbox": [
-                72,
-                324,
-                520,
-                360
+                330,
+                579.7999877929688,
+                569.1119384765625,
+                588.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "2. The source statement describes a synthetic test condition."
+              "sectionColumnCount": 1,
+              "textPreview": "1. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
-                72,
-                366,
-                520,
-                402
+                348,
+                564.7999877929688,
+                389.0220031738281,
+                573.2000122070312
               ],
               "blockId": "b008",
               "column": 0,
               "normalizedBbox": [
-                72,
-                366,
-                520,
-                402
+                348,
+                564.7999877929688,
+                389.0220031738281,
+                573.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
               "bbox": [
-                72,
-                408,
-                520,
-                444
+                330,
+                540.7999877929688,
+                569.1119384765625,
+                549.2000122070312
               ],
               "blockId": "b009",
               "column": 0,
               "normalizedBbox": [
-                72,
-                408,
-                520,
-                444
+                330,
+                540.7999877929688,
+                569.1119384765625,
+                549.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "3. The source statement describes a synthetic test condition."
+              "sectionColumnCount": 1,
+              "textPreview": "2. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
-                72,
-                450,
-                520,
-                486
+                348,
+                525.7999877929688,
+                389.0220031738281,
+                534.2000122070312
               ],
               "blockId": "b010",
               "column": 0,
               "normalizedBbox": [
-                72,
-                450,
-                520,
-                486
+                348,
+                525.7999877929688,
+                389.0220031738281,
+                534.2000122070312
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
               "bbox": [
-                72,
-                492,
-                520,
-                528
+                330,
+                501.79998779296875,
+                569.1119384765625,
+                510.20001220703125
               ],
               "blockId": "b011",
               "column": 0,
               "normalizedBbox": [
-                72,
-                492,
-                520,
-                528
+                330,
+                501.79998779296875,
+                569.1119384765625,
+                510.20001220703125
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "textPreview": "4. The source statement describes a synthetic test condition."
+              "sectionColumnCount": 1,
+              "textPreview": "3. The source statement describes a synthetic test condition."
             },
             {
               "bbox": [
-                72,
-                534,
-                520,
-                570
+                348,
+                486.79998779296875,
+                389.0220031738281,
+                495.20001220703125
               ],
               "blockId": "b012",
               "column": 0,
               "normalizedBbox": [
-                72,
-                534,
-                520,
-                570
+                348,
+                486.79998779296875,
+                389.0220031738281,
+                495.20001220703125
               ],
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A B C D"
+            },
+            {
+              "bbox": [
+                330,
+                462.79998779296875,
+                569.1119384765625,
+                471.20001220703125
+              ],
+              "blockId": "b013",
+              "column": 0,
+              "normalizedBbox": [
+                330,
+                462.79998779296875,
+                569.1119384765625,
+                471.20001220703125
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "4. The source statement describes a synthetic test condition."
+            },
+            {
+              "bbox": [
+                348,
+                447.79998779296875,
+                389.0220031738281,
+                456.20001220703125
+              ],
+              "blockId": "b014",
+              "column": 0,
+              "normalizedBbox": [
+                348,
+                447.79998779296875,
+                389.0220031738281,
+                456.20001220703125
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ]
