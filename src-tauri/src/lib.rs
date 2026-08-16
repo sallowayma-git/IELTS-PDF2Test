@@ -65,6 +65,7 @@ mod llm_commands;
 mod llm_gateway;
 mod llm_profiles;
 mod llm_suggestions;
+mod nas_package_v2;
 mod parser;
 mod pdf_facts_shadow;
 mod pdf_geometry;
@@ -73,7 +74,6 @@ mod preview_commands;
 mod reading_runtime_v2;
 mod reading_source;
 mod reading_source_v2;
-mod nas_package_v2;
 mod runtime_compiler;
 mod runtime_validation;
 pub mod schema;
@@ -2751,8 +2751,7 @@ mod tests {
                             .get_mut("interaction")
                             .and_then(Value::as_object_mut)
                         {
-                            interaction
-                                .insert("options".to_string(), json!(["A", "B", "C", "D"]));
+                            interaction.insert("options".to_string(), json!(["A", "B", "C", "D"]));
                             interaction.insert(
                                 "optionTexts".to_string(),
                                 json!({

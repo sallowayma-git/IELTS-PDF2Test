@@ -574,7 +574,9 @@ fn commit_package(
                     backup_resources.join(source.exam_id.as_str()),
                     &paths.resource_path,
                 ) {
-                    errors.push(format!("restore_resources_before_incomplete:{restore_error}"));
+                    errors.push(format!(
+                        "restore_resources_before_incomplete:{restore_error}"
+                    ));
                 }
             }
             errors.push(format!("backup_incomplete:{error}"));
@@ -921,10 +923,7 @@ fn copy_file_verified(source: &Path, destination: &Path) -> CommandResult<()> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let temporary = destination.with_extension(format!(
-        "copy-{}",
-        Uuid::new_v4().simple()
-    ));
+    let temporary = destination.with_extension(format!("copy-{}", Uuid::new_v4().simple()));
     fs::copy(source, &temporary).map_err(|error| error.to_string())?;
     let source_bytes = fs::read(source).map_err(|error| error.to_string())?;
     let destination_bytes = fs::read(&temporary).map_err(|error| error.to_string())?;
@@ -948,9 +947,8 @@ fn atomic_replace_file(source: &Path, destination: &Path) -> CommandResult<()> {
             fs::remove_file(destination).map_err(|error| {
                 format!("replace_remove_destination:{error};rename={rename_error}")
             })?;
-            fs::rename(source, destination).map_err(|error| {
-                format!("replace_rename_source:{error};initial={rename_error}")
-            })
+            fs::rename(source, destination)
+                .map_err(|error| format!("replace_rename_source:{error};initial={rename_error}"))
         }
         Err(error) => Err(error.to_string()),
     }
@@ -1029,7 +1027,10 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> CommandResult<()> {
         } else if source_path.is_file() {
             copy_file_verified(&source_path, &destination_path)?;
         } else {
-            return Err(format!("backup_source_not_regular:{}", source_path.display()));
+            return Err(format!(
+                "backup_source_not_regular:{}",
+                source_path.display()
+            ));
         }
     }
     Ok(())
@@ -1301,7 +1302,10 @@ mod tests {
         .unwrap();
         let parsed = load_existing_manifest(&manifest).unwrap();
         assert_eq!(
-            parsed.get("legacy").and_then(Value::as_object).and_then(|value| value.get("schemaVersion")),
+            parsed
+                .get("legacy")
+                .and_then(Value::as_object)
+                .and_then(|value| value.get("schemaVersion")),
             Some(&Value::String("ReadingExamManifestV1".to_string()))
         );
         let _ = fs::remove_dir_all(root);
@@ -1431,7 +1435,10 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.contains("nas_package_v2_fault_backup_resources"), "{error}");
+        assert!(
+            error.contains("nas_package_v2_fault_backup_resources"),
+            "{error}"
+        );
         assert!(error.contains("rollback=complete"), "{error}");
         assert_eq!(fs::read(&manifest_path).unwrap(), old_manifest);
         assert_eq!(fs::read(&exam_path).unwrap(), old_exam);
@@ -1738,7 +1745,10 @@ mod tests {
             fs::read_to_string(paths.resource_path.join("asset.bin")).unwrap(),
             "old-asset"
         );
-        assert_eq!(fs::read_to_string(&paths.manifest_path).unwrap(), "old-manifest");
+        assert_eq!(
+            fs::read_to_string(&paths.manifest_path).unwrap(),
+            "old-manifest"
+        );
         assert!(!paths.backup_root.exists());
         let recovered: Value =
             serde_json::from_str(&fs::read_to_string(&paths.journal_path).unwrap()).unwrap();
@@ -1800,7 +1810,10 @@ mod tests {
             fs::read_to_string(paths.resource_path.join("asset.bin")).unwrap(),
             "old-asset"
         );
-        assert_eq!(fs::read_to_string(&paths.manifest_path).unwrap(), "old-manifest");
+        assert_eq!(
+            fs::read_to_string(&paths.manifest_path).unwrap(),
+            "old-manifest"
+        );
         assert!(!paths.backup_root.exists());
 
         let _ = fs::remove_dir_all(root);

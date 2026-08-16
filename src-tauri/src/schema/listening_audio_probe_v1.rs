@@ -8,15 +8,14 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 use symphonia::core::audio::GenericAudioBufferRef;
-use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::codecs::audio::well_known::{
-    CODEC_ID_AAC, CODEC_ID_MP3, CODEC_ID_PCM_F32BE,
-    CODEC_ID_PCM_F32LE, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64LE, CODEC_ID_PCM_S16BE,
-    CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24BE, CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32BE,
-    CODEC_ID_PCM_S32LE, CODEC_ID_PCM_S8, CODEC_ID_PCM_U16BE, CODEC_ID_PCM_U16LE,
-    CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U24LE, CODEC_ID_PCM_U32BE, CODEC_ID_PCM_U32LE,
-    CODEC_ID_PCM_U8,
+    CODEC_ID_AAC, CODEC_ID_MP3, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32LE, CODEC_ID_PCM_F64BE,
+    CODEC_ID_PCM_F64LE, CODEC_ID_PCM_S16BE, CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24BE,
+    CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32BE, CODEC_ID_PCM_S32LE, CODEC_ID_PCM_S8,
+    CODEC_ID_PCM_U16BE, CODEC_ID_PCM_U16LE, CODEC_ID_PCM_U24BE, CODEC_ID_PCM_U24LE,
+    CODEC_ID_PCM_U32BE, CODEC_ID_PCM_U32LE, CODEC_ID_PCM_U8,
 };
+use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
@@ -24,8 +23,7 @@ use symphonia::core::meta::MetadataOptions;
 
 pub const LISTENING_AUDIO_PROBE_V1_PROVIDER: &str = "symphonia";
 pub const LISTENING_AUDIO_PROBE_V1_PROVIDER_VERSION: &str = "0.6.0";
-pub const LISTENING_AUDIO_PROBE_RESULT_V1_SCHEMA_VERSION: &str =
-    "ListeningAudioProbeResultV1";
+pub const LISTENING_AUDIO_PROBE_RESULT_V1_SCHEMA_VERSION: &str = "ListeningAudioProbeResultV1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -398,11 +396,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         write_wav(&path, &samples, 16_000);
-        let result = probe_listening_audio_v1(
-            &path,
-            None,
-            &ListeningAudioProbePolicyV1::default(),
-        );
+        let result = probe_listening_audio_v1(&path, None, &ListeningAudioProbePolicyV1::default());
         assert!(result.is_passed(), "{:?}", result.probe.issue_codes);
         assert_eq!(result.codec.as_deref(), Some("pcm_s16le"));
         assert_eq!(result.duration_ms, Some(1000));
@@ -416,11 +410,8 @@ mod tests {
     fn silent_clipped_corrupt_and_hash_mismatch_inputs_fail_closed() {
         let silent_path = fixture_path("silent");
         write_wav(&silent_path, &vec![0; 1600], 16_000);
-        let silent = probe_listening_audio_v1(
-            &silent_path,
-            None,
-            &ListeningAudioProbePolicyV1::default(),
-        );
+        let silent =
+            probe_listening_audio_v1(&silent_path, None, &ListeningAudioProbePolicyV1::default());
         assert!(silent
             .probe
             .issue_codes
@@ -428,11 +419,8 @@ mod tests {
 
         let clipped_path = fixture_path("clipped");
         write_wav(&clipped_path, &vec![i16::MAX; 1600], 16_000);
-        let clipped = probe_listening_audio_v1(
-            &clipped_path,
-            None,
-            &ListeningAudioProbePolicyV1::default(),
-        );
+        let clipped =
+            probe_listening_audio_v1(&clipped_path, None, &ListeningAudioProbePolicyV1::default());
         assert!(clipped
             .probe
             .issue_codes

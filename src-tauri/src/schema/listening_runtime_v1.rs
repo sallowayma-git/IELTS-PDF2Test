@@ -1,8 +1,8 @@
 use super::common::{AssetDescriptorV2, AssetKindV2};
 use super::ielts_authoring_v2::{
     AnswerSlotParticipationV2, AnswerSlotV2, AnswerValueV2, ListeningPartV2,
-    ListeningPlaybackModeV2, ListeningPlaybackPolicyV2, ListeningScopeV2,
-    ListeningRecoveryBehaviorV2, ListeningTranscriptV2, RevisionSourceV2, TaskGroupV2,
+    ListeningPlaybackModeV2, ListeningPlaybackPolicyV2, ListeningRecoveryBehaviorV2,
+    ListeningScopeV2, ListeningTranscriptV2, RevisionSourceV2, TaskGroupV2,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -213,15 +213,26 @@ pub fn validate_listening_exam_source_v1(
         .iter()
         .find(|asset| asset.asset_id == source.media.asset_id);
     match media_asset {
-        None => push_issue(&mut issues, "ASSET_REFERENCE_MISSING", &source.media.asset_id),
+        None => push_issue(
+            &mut issues,
+            "ASSET_REFERENCE_MISSING",
+            &source.media.asset_id,
+        ),
         Some(asset) => {
             if asset.kind != AssetKindV2::Audio || asset.mime != source.media.mime {
-                push_issue(&mut issues, "AUDIO_CODEC_UNSUPPORTED", &source.media.asset_id);
+                push_issue(
+                    &mut issues,
+                    "AUDIO_CODEC_UNSUPPORTED",
+                    &source.media.asset_id,
+                );
             }
             if !asset.sha256.eq_ignore_ascii_case(&source.media.sha256) {
                 push_issue(&mut issues, "AUDIO_HASH_MISMATCH", &source.media.asset_id);
             }
-            if asset.duration_ms.is_some_and(|duration| duration != source.media.duration_ms) {
+            if asset
+                .duration_ms
+                .is_some_and(|duration| duration != source.media.duration_ms)
+            {
                 push_issue(&mut issues, "AUDIO_DECODE_FAILED", &source.media.asset_id);
             }
         }
@@ -274,9 +285,17 @@ pub fn validate_listening_exam_source_v1(
     }
 
     let all_slot_ids = source.answer_slots.keys().cloned().collect::<BTreeSet<_>>();
-    let ordered_slot_ids = source.question_order.iter().cloned().collect::<BTreeSet<_>>();
+    let ordered_slot_ids = source
+        .question_order
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     if all_slot_ids != ordered_slot_ids || ordered_slot_ids.len() != source.question_order.len() {
-        push_issue(&mut issues, "RUNTIME_QUESTION_ORDER_INVALID", &source.exam_id);
+        push_issue(
+            &mut issues,
+            "RUNTIME_QUESTION_ORDER_INVALID",
+            &source.exam_id,
+        );
     }
     let display_slot_ids = source
         .question_display_map
@@ -357,11 +376,7 @@ pub fn validate_listening_exam_source_v1(
         }
         for number in expected_part_numbers {
             if !expected_numbers_across_parts.insert(number) {
-                push_issue(
-                    &mut issues,
-                    "QUESTION_NUMBER_DUPLICATE",
-                    &part.part_id,
-                );
+                push_issue(&mut issues, "QUESTION_NUMBER_DUPLICATE", &part.part_id);
             }
         }
     }

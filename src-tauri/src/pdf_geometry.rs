@@ -32,7 +32,9 @@ static PDFIUM_INSTANCE: OnceLock<Mutex<Result<Pdfium, String>>> = OnceLock::new(
 
 fn pdfium_instance() -> Result<MutexGuard<'static, Result<Pdfium, String>>, String> {
     let cached = PDFIUM_INSTANCE.get_or_init(|| Mutex::new(bind_pdfium()));
-    let guard = cached.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = cached
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if guard.is_err() {
         return Err("pdfium_bind_failed_global".to_string());
     }
@@ -1387,10 +1389,17 @@ mod tests {
     fn pdfium_parse_yields_real_bbox_when_library_present() {
         let sample =
             Path::new(r"D:\xwechat_files\wxid_zg93z3d7b4aq21_8fcc\msg\file\2026-06\PDF(1).pdf");
-        if !sample.exists() || bind_pdfium().is_err() {
+        if !sample.exists() {
             return; // sample or pdfium library not available in this environment
         }
-        let pdfium = bind_pdfium().unwrap();
+        let guard = match pdfium_instance() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        let pdfium = match guard.as_ref() {
+            Ok(pdfium) => pdfium,
+            Err(_) => return,
+        };
         let document = pdfium
             .load_pdf_from_file(sample, None)
             .expect("sample pdf should open");

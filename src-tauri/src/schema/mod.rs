@@ -2,8 +2,8 @@ pub mod common;
 pub mod content_doc_v2;
 pub mod document_ir_v2;
 pub mod ielts_authoring_v2;
-pub mod listening_runtime_v1;
 pub mod listening_audio_probe_v1;
+pub mod listening_runtime_v1;
 pub mod migration_v1;
 pub mod quality_report_v2;
 

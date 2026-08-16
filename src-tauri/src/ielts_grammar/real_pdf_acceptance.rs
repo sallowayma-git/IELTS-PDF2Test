@@ -1201,12 +1201,12 @@ fn validate_special_truth(
                 .flatten()
                 .filter(|entry| {
                     let roles = entry.get("roles").and_then(Value::as_array);
-                    let has_question = roles
-                        .as_ref()
-                        .is_some_and(|roles| roles.iter().any(|role| role.as_str() == Some("question")));
-                    let has_passage = roles
-                        .as_ref()
-                        .is_some_and(|roles| roles.iter().any(|role| role.as_str() == Some("passage")));
+                    let has_question = roles.as_ref().is_some_and(|roles| {
+                        roles.iter().any(|role| role.as_str() == Some("question"))
+                    });
+                    let has_passage = roles.as_ref().is_some_and(|roles| {
+                        roles.iter().any(|role| role.as_str() == Some("passage"))
+                    });
                     has_question && !has_passage
                 })
                 .filter_map(|entry| entry.get("pageIndex").and_then(Value::as_u64))

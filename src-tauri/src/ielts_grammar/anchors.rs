@@ -122,7 +122,10 @@ mod tests {
     fn bare_declared_question_number_is_an_anchor() {
         let lines = vec![
             line("n5", "5"),
-            line("stem", "Which extra service does the agency agree to provide?"),
+            line(
+                "stem",
+                "Which extra service does the agency agree to provide?",
+            ),
             line("a", "A changing the bed linen"),
         ];
         let anchors = detect_question_anchors(&lines, &[5, 6, 7]);

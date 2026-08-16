@@ -735,7 +735,10 @@ fn passage_preamble_anchors(
         // The "READING PASSAGE N" banner sits on the physical line directly
         // above the instruction line on the same page; anchor it to the passage
         // so the title region is not flagged as significant-but-unassigned.
-        if let Some(previous) = start.checked_sub(1).and_then(|index| physical_lines.get(index)) {
+        if let Some(previous) = start
+            .checked_sub(1)
+            .and_then(|index| physical_lines.get(index))
+        {
             if previous.page_index == line.page_index {
                 let previous_key = physical_text_key(&previous.text);
                 if previous_key.starts_with("readingpassage")
