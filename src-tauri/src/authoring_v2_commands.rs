@@ -1842,6 +1842,7 @@ mod tests {
             alt_text: None,
             decorative: Some(false),
             source_anchor: None,
+            diagram_question_region: None,
         };
         materialize_authoring_assets(&source_root, &staging, &[descriptor.clone()]).unwrap();
         assert_eq!(fs::read(staging.join(relative_path)).unwrap(), bytes);

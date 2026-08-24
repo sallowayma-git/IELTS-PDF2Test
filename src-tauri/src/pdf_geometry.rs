@@ -152,6 +152,15 @@ struct BlockWithLayout {
     column_count: u8,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct DiagramQuestionRegionCandidate {
+    page_index: usize,
+    insert_after: usize,
+    question_start: u32,
+    question_end: u32,
+    bbox: [f32; 4],
+}
+
 /// Parse a PDF into a `DocumentIRV1` JSON value with REAL per-line bounding
 /// boxes and REAL page dimensions. Each line (group of characters at the same
 /// y) becomes one document block carrying a true `bbox: [x0, y0, x1, y1]`.
@@ -286,11 +295,29 @@ pub(crate) fn parse_pdf_with_pdfium(
         }));
     }
 
+    let diagram_asset_dir = output_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(
+            "{}-assets/diagram-question-regions",
+            output_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("document-ir")
+        ));
+    let diagram_assets = recover_diagram_question_region_assets(
+        &document,
+        &mut pages,
+        &diagram_asset_dir,
+        &mut block_counter,
+        &mut warnings,
+    )?;
+
     let ir = json!({
         "schemaVersion": "DocumentIRV1",
         "jobId": job.job_id,
         "pages": pages,
-        "assets": [],
+        "assets": diagram_assets,
         "parser": {
             "provider": "rust-parser:pdf:pdfium",
             "version": "0.1.0",
@@ -1889,6 +1916,395 @@ fn document_block_with_layout(
     block
 }
 
+/// Finds raster-backed diagram/plan/map tasks for which the PDF text layer
+/// contains the declared question range and instructions, but not the labels
+/// drawn into the image. The candidate is deliberately strict: without both
+/// an explicit range heading and a nearby `Label the ... below` instruction,
+/// no visual question region is manufactured.
+fn diagram_question_region_candidates(pages: &[Value]) -> Vec<DiagramQuestionRegionCandidate> {
+    let mut candidates = Vec::new();
+    for page in pages {
+        let page_index = page.get("pageIndex").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let page_width = page.get("width").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        let page_height = page.get("height").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        let Some(blocks) = page.get("blocks").and_then(Value::as_array) else {
+            continue;
+        };
+        if page_index == 0 || page_width <= 72.0 || page_height <= 144.0 {
+            continue;
+        }
+
+        for (heading_index, heading) in blocks.iter().enumerate() {
+            let heading_text = heading
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let Some((question_start, question_end)) = strict_questions_range(heading_text) else {
+                continue;
+            };
+
+            let mut label_index = None;
+            let mut instruction_end = heading_index;
+            for (index, block) in blocks.iter().enumerate().skip(heading_index + 1).take(7) {
+                let text = block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if strict_questions_range(text).is_some() {
+                    break;
+                }
+                let normalized = normalized_instruction_text(text);
+                if is_diagram_label_instruction(&normalized) {
+                    label_index = Some(index);
+                    instruction_end = index;
+                    continue;
+                }
+                if label_index.is_some() && is_diagram_instruction_tail(&normalized) {
+                    instruction_end = index;
+                    continue;
+                }
+                if label_index.is_some() && !normalized.is_empty() {
+                    break;
+                }
+            }
+            let Some(_label_index) = label_index else {
+                continue;
+            };
+
+            let instruction_bottom = blocks[instruction_end]
+                .get("bbox")
+                .and_then(json_bbox)
+                .map(|bbox| bbox[1]);
+            let Some(instruction_bottom) = instruction_bottom else {
+                continue;
+            };
+
+            // If another declared question group begins on this page, stop the
+            // crop above it. This prevents a diagram region from swallowing a
+            // later question or an unrelated lower-page passage section.
+            let next_heading = blocks
+                .iter()
+                .enumerate()
+                .skip(instruction_end + 1)
+                .find_map(|(index, block)| {
+                    let text = block.get("text").and_then(Value::as_str)?;
+                    strict_questions_range(text)?;
+                    json_bbox(block.get("bbox")?).map(|bbox| (index, bbox[3]))
+                });
+            let region_end = next_heading.map(|(index, _)| index).unwrap_or(blocks.len());
+            let native_region_blocks = &blocks[instruction_end + 1..region_end];
+            let native_number_closure = (question_start..=question_end).all(|number| {
+                native_region_blocks.iter().any(|block| {
+                    block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| text_contains_standalone_number(text, number))
+                })
+            });
+            if native_number_closure {
+                // The source text layer already exposes every declared slot.
+                // Do not add an OCR-required asset or downgrade a recoverable
+                // vector/text diagram merely because it also has visuals.
+                continue;
+            }
+
+            let x0 = 36.0_f32;
+            let x1 = (page_width - 36.0).max(x0);
+            let y1 = (instruction_bottom - 10.0).min(page_height - 1.0);
+            let y0 = next_heading
+                .map(|(_, value)| value + 10.0)
+                .unwrap_or(36.0)
+                .max(0.0);
+            if x1 - x0 < 100.0 || y1 - y0 < 72.0 {
+                continue;
+            }
+            candidates.push(DiagramQuestionRegionCandidate {
+                page_index,
+                insert_after: instruction_end,
+                question_start,
+                question_end,
+                bbox: [x0, y0, x1, y1],
+            });
+        }
+    }
+    candidates
+}
+
+fn normalized_instruction_text(text: &str) -> String {
+    text.to_lowercase()
+        .replace(['\u{2013}', '\u{2014}'], "-")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn is_diagram_label_instruction(normalized: &str) -> bool {
+    let starts_with_label = normalized.starts_with("label the ");
+    let visual_kind =
+        normalized.contains("diagram") || normalized.contains("plan") || normalized.contains("map");
+    starts_with_label && visual_kind && normalized.contains("below")
+}
+
+fn is_diagram_instruction_tail(normalized: &str) -> bool {
+    normalized.starts_with("choose ")
+        || normalized.starts_with("write ")
+        || normalized.starts_with("use ")
+        || normalized.contains("word only")
+        || normalized.contains("words from the passage")
+        || normalized.contains("answer sheet")
+}
+
+fn strict_questions_range(text: &str) -> Option<(u32, u32)> {
+    let normalized = normalized_instruction_text(text);
+    let suffix = normalized
+        .strip_prefix("questions ")
+        .or_else(|| normalized.strip_prefix("question "))?;
+    let numeric = suffix
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '-' || ch.is_whitespace())
+        .collect::<String>();
+    let mut parts = numeric.split('-');
+    let start = parts.next()?.trim().parse::<u32>().ok()?;
+    let end = parts.next()?.trim().parse::<u32>().ok()?;
+    if parts.next().is_some() || start == 0 || end < start || end - start > 40 {
+        return None;
+    }
+    Some((start, end))
+}
+
+fn text_contains_standalone_number(text: &str, number: u32) -> bool {
+    let digits = number.to_string();
+    text.match_indices(&digits).any(|(start, matched)| {
+        let end = start + matched.len();
+        let before_ok = text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !ch.is_ascii_digit());
+        let after_ok = text[end..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !ch.is_ascii_digit());
+        before_ok && after_ok
+    })
+}
+
+fn json_bbox(value: &Value) -> Option<[f32; 4]> {
+    let values = value.as_array()?;
+    if values.len() != 4 {
+        return None;
+    }
+    Some([
+        values[0].as_f64()? as f32,
+        values[1].as_f64()? as f32,
+        values[2].as_f64()? as f32,
+        values[3].as_f64()? as f32,
+    ])
+}
+
+fn recover_diagram_question_region_assets(
+    document: &PdfDocument<'_>,
+    pages: &mut [Value],
+    asset_dir: &Path,
+    block_counter: &mut usize,
+    warnings: &mut Vec<String>,
+) -> CommandResult<Vec<Value>> {
+    let mut candidates = diagram_question_region_candidates(pages);
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Insert lower regions first so an earlier insertion on the same page
+    // cannot shift the source index recorded for a later diagram task.
+    candidates.sort_by(|left, right| {
+        left.page_index
+            .cmp(&right.page_index)
+            .then(right.insert_after.cmp(&left.insert_after))
+    });
+    fs::create_dir_all(asset_dir).map_err(|error| {
+        format!(
+            "create_diagram_question_region_asset_dir:{}:{}",
+            asset_dir.display(),
+            error
+        )
+    })?;
+
+    let mut assets = Vec::new();
+    for candidate in candidates {
+        let page = document
+            .pages()
+            .get((candidate.page_index - 1) as PdfPageIndex)
+            .map_err(|error| {
+                format!(
+                    "diagram_question_region_page_{}_failed:{}",
+                    candidate.page_index, error
+                )
+            })?;
+        let bitmap = page
+            .render_with_config(
+                &PdfRenderConfig::new()
+                    .set_target_width(2000)
+                    .set_maximum_height(2800),
+            )
+            .map_err(|error| {
+                format!(
+                    "diagram_question_region_render_page_{}_failed:{}",
+                    candidate.page_index, error
+                )
+            })?;
+        let full_width = bitmap.width() as u32;
+        let full_height = bitmap.height() as u32;
+        let page_width = page.width().value;
+        let page_height = page.height().value;
+        let (rgba, crop_width, crop_height) = crop_pdf_bbox_from_rgba(
+            &bitmap.as_rgba_bytes(),
+            full_width,
+            full_height,
+            page_width,
+            page_height,
+            candidate.bbox,
+        )?;
+
+        let asset_id = format!(
+            "diagram-question-region-p{:03}-q{}-{}",
+            candidate.page_index, candidate.question_start, candidate.question_end
+        );
+        let file_name = format!("{}.png", asset_id);
+        let asset_path = asset_dir.join(&file_name);
+        write_rgba_png(&asset_path, crop_width, crop_height, &rgba)?;
+        let bytes = fs::read(&asset_path).map_err(|error| {
+            format!(
+                "read_diagram_question_region_asset:{}:{}",
+                asset_path.display(),
+                error
+            )
+        })?;
+        let expected_numbers =
+            (candidate.question_start..=candidate.question_end).collect::<Vec<_>>();
+        assets.push(json!({
+            "assetId": asset_id,
+            "type": "image",
+            "sourceKind": "page_crop",
+            "pageIndex": candidate.page_index,
+            "path": asset_path.to_string_lossy(),
+            "fileName": file_name,
+            "mimeType": "image/png",
+            "width": crop_width,
+            "height": crop_height,
+            "bbox": candidate.bbox,
+            "sha256": crate::hash_bytes(&bytes),
+            "sizeBytes": bytes.len() as u64,
+            "diagramQuestionRegion": {
+                "questionRange": [candidate.question_start, candidate.question_end],
+                "expectedNumbers": expected_numbers,
+                "recoveryStatus": "ocr_required",
+                "numberClosure": false,
+                "sourceBacked": true
+            }
+        }));
+
+        let block = json!({
+            "blockId": format!("b{:03}", *block_counter),
+            "blockType": "image",
+            "text": "",
+            "html": "",
+            "bbox": candidate.bbox,
+            "confidence": 1.0,
+            "pageIndex": candidate.page_index,
+            "roleHint": "question",
+            "assetId": asset_id,
+            "layoutHints": {
+                "diagramQuestionRegion": {
+                    "questionRange": [candidate.question_start, candidate.question_end],
+                    "expectedNumbers": expected_numbers,
+                    "regionBbox": candidate.bbox,
+                    "recoveryStatus": "ocr_required",
+                    "numberClosure": false,
+                    "sourceBacked": true
+                }
+            }
+        });
+        *block_counter += 1;
+        if let Some(blocks) = pages
+            .iter_mut()
+            .find(|page| {
+                page.get("pageIndex").and_then(Value::as_u64) == Some(candidate.page_index as u64)
+            })
+            .and_then(|page| page.get_mut("blocks"))
+            .and_then(Value::as_array_mut)
+        {
+            let insertion = (candidate.insert_after + 1).min(blocks.len());
+            blocks.insert(insertion, block);
+            for (ordinal, block) in blocks.iter_mut().enumerate() {
+                if let Some(obj) = block.as_object_mut() {
+                    obj.insert("_epic8Ordinal".to_string(), json!(ordinal));
+                }
+            }
+        }
+        warnings.push(format!(
+            "DIAGRAM_QUESTION_REGION_OCR_REQUIRED:page={}:questions={}-{}:assetId={}",
+            candidate.page_index, candidate.question_start, candidate.question_end, asset_id
+        ));
+    }
+    Ok(assets)
+}
+
+fn crop_pdf_bbox_from_rgba(
+    rgba: &[u8],
+    full_width: u32,
+    full_height: u32,
+    page_width: f32,
+    page_height: f32,
+    bbox: [f32; 4],
+) -> CommandResult<(Vec<u8>, u32, u32)> {
+    if full_width == 0 || full_height == 0 || page_width <= 0.0 || page_height <= 0.0 {
+        return Err("diagram_question_region_invalid_page_geometry".to_string());
+    }
+    let x0 = ((bbox[0] / page_width) * full_width as f32)
+        .floor()
+        .clamp(0.0, full_width.saturating_sub(1) as f32) as u32;
+    let x1 = ((bbox[2] / page_width) * full_width as f32)
+        .ceil()
+        .clamp((x0 + 1) as f32, full_width as f32) as u32;
+    let top = (((page_height - bbox[3]) / page_height) * full_height as f32)
+        .floor()
+        .clamp(0.0, full_height.saturating_sub(1) as f32) as u32;
+    let bottom = (((page_height - bbox[1]) / page_height) * full_height as f32)
+        .ceil()
+        .clamp((top + 1) as f32, full_height as f32) as u32;
+    let crop_width = x1 - x0;
+    let crop_height = bottom - top;
+    let stride = full_width as usize * 4;
+    if rgba.len() < stride * full_height as usize {
+        return Err("diagram_question_region_rgba_buffer_too_short".to_string());
+    }
+    let mut cropped = Vec::with_capacity(crop_width as usize * crop_height as usize * 4);
+    for row in top..bottom {
+        let start = row as usize * stride + x0 as usize * 4;
+        let end = start + crop_width as usize * 4;
+        cropped.extend_from_slice(&rgba[start..end]);
+    }
+    Ok((cropped, crop_width, crop_height))
+}
+
+fn write_rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> CommandResult<()> {
+    let file = fs::File::create(path).map_err(|error| {
+        format!(
+            "create_diagram_question_region_png:{}:{}",
+            path.display(),
+            error
+        )
+    })?;
+    let buffered = std::io::BufWriter::new(file);
+    let mut encoder = png::Encoder::new(buffered, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|error| format!("diagram_question_region_png_header:{}", error))?;
+    writer
+        .write_image_data(rgba)
+        .map_err(|error| format!("diagram_question_region_png_write:{}", error))
+}
+
 /// Render every page of the PDF to a PNG (2× scale ≈ 144 DPI) for the
 /// vision/OCR rescue path. Emits a `PdfImageExtractionV1`-shaped value
 /// matching the contract `extract_pdf_images_for_vision` consumes.
@@ -2046,6 +2462,286 @@ mod tests {
     fn pdfium_library_path_does_not_panic() {
         // Resolution must be safe to call even when no library is bundled.
         let _ = pdfium_library_path();
+    }
+
+    fn diagram_test_block(id: &str, text: &str, y0: f64, y1: f64) -> Value {
+        json!({
+            "blockId": id,
+            "blockType": "paragraph",
+            "text": text,
+            "bbox": [54.0, y0, 520.0, y1],
+            "pageIndex": 3
+        })
+    }
+
+    #[test]
+    fn detects_roller_and_elephant_raster_diagram_question_regions() {
+        let pages = vec![json!({
+            "pageIndex": 3,
+            "width": 595.2,
+            "height": 841.92,
+            "blocks": [
+                diagram_test_block("b028", "Questions 14–16", 756.1, 759.2),
+                diagram_test_block("b029", "Label the diagram below.", 726.6, 729.7),
+                diagram_test_block("b030", "Choose ONE WORD ONLY from the passage for each answer.", 696.8, 699.9),
+                diagram_test_block("b031", "Write your answers in boxes 14–16 on your answer sheet.", 667.3, 670.4),
+                diagram_test_block("b040", "Questions 28-31", 320.0, 323.0),
+                diagram_test_block("b041", "Label the diagram below.", 290.0, 293.0),
+                diagram_test_block("b042", "Choose NO MORE THAN TWO WORDS from the passage for each answer.", 260.0, 263.0),
+                diagram_test_block("b043", "Write your answers in boxes 28-31 on your answer sheet.", 230.0, 233.0)
+            ]
+        })];
+
+        let candidates = diagram_question_region_candidates(&pages);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            (candidates[0].question_start, candidates[0].question_end),
+            (14, 16)
+        );
+        assert_eq!(
+            (candidates[1].question_start, candidates[1].question_end),
+            (28, 31)
+        );
+        assert!(
+            candidates[0].bbox[1] > candidates[1].bbox[3],
+            "the first crop must stop above the next declared question group"
+        );
+        assert_eq!(
+            candidates[1].bbox[1], 36.0,
+            "the final diagram crop should extend to the safe page margin"
+        );
+    }
+
+    #[test]
+    fn diagram_region_detection_fails_closed_without_strict_range_and_label_pair() {
+        let pages = vec![json!({
+            "pageIndex": 1,
+            "width": 595.2,
+            "height": 841.92,
+            "blocks": [
+                diagram_test_block("b001", "The questions raised by this diagram are important.", 756.0, 760.0),
+                diagram_test_block("b002", "Label the diagram below.", 726.0, 730.0),
+                diagram_test_block("b003", "Questions 10-12", 696.0, 700.0),
+                diagram_test_block("b004", "Complete the notes below.", 666.0, 670.0),
+                diagram_test_block("b005", "A map below the valley illustrates the route.", 636.0, 640.0)
+            ]
+        })];
+        assert!(diagram_question_region_candidates(&pages).is_empty());
+        assert_eq!(strict_questions_range("Questions 14–16"), Some((14, 16)));
+        assert_eq!(strict_questions_range("Questions 28-31"), Some((28, 31)));
+        assert_eq!(strict_questions_range("Questions in the passage"), None);
+    }
+
+    #[test]
+    fn diagram_region_detection_does_not_downgrade_complete_native_slot_text() {
+        let pages = vec![json!({
+            "pageIndex": 2,
+            "width": 595.2,
+            "height": 841.92,
+            "blocks": [
+                diagram_test_block("b001", "Questions 14-16", 756.0, 760.0),
+                diagram_test_block("b002", "Label the diagram below.", 726.0, 730.0),
+                diagram_test_block("b003", "Choose ONE WORD ONLY from the passage for each answer.", 696.0, 700.0),
+                diagram_test_block("b004", "Write your answers in boxes 14-16 on your answer sheet.", 666.0, 670.0),
+                diagram_test_block("b005", "14 ______ upper bearing", 540.0, 544.0),
+                diagram_test_block("b006", "15 ______ lower bearing", 470.0, 474.0),
+                diagram_test_block("b007", "16 ______ drive housing", 400.0, 404.0)
+            ]
+        })];
+
+        assert!(diagram_question_region_candidates(&pages).is_empty());
+        assert!(text_contains_standalone_number("slot 16 ______", 16));
+        assert!(!text_contains_standalone_number("year 2016", 16));
+    }
+
+    #[test]
+    fn crop_pdf_bbox_maps_bottom_left_pdf_coordinates_to_top_left_pixels() {
+        // Four 2x2 RGBA pixels: red/green on the top row, blue/white below.
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+        let (top_right, width, height) =
+            crop_pdf_bbox_from_rgba(&rgba, 2, 2, 100.0, 100.0, [50.0, 50.0, 100.0, 100.0])
+                .expect("valid crop");
+        assert_eq!((width, height), (1, 1));
+        assert_eq!(top_right, vec![0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn real_raster_diagram_fixtures_emit_source_backed_fail_closed_regions() {
+        let fixture_root =
+            Path::new(r"C:\Users\lenovo\Desktop\working space\0.3.1 working\ReadingPractice\PDF");
+        let fixtures = [
+            ("46. P2 - Roller coaster 过山车.pdf", 14_u64, 16_u64),
+            (
+                "66. P3 - Elephant Communication 大象交流.pdf",
+                28_u64,
+                31_u64,
+            ),
+        ];
+        if fixtures
+            .iter()
+            .any(|(name, _, _)| !fixture_root.join(name).exists())
+        {
+            return;
+        }
+
+        let artifact_root = std::env::temp_dir().join("epic8-diagram-region-real-fixtures");
+        fs::create_dir_all(&artifact_root).expect("create diagram artifact directory");
+        for (name, expected_start, expected_end) in fixtures {
+            let input = fixture_root.join(name);
+            let output = artifact_root.join(format!("{}-document-ir.json", expected_start));
+            let mut job = crate::job_store::make_job(crate::CreateJobInput {
+                title: Some(name.to_string()),
+                ..Default::default()
+            });
+            let source = SourceFile {
+                file_id: format!("diagram-fixture-{}", expected_start),
+                original_name: name.to_string(),
+                stored_name: name.to_string(),
+                file_type: "pdf".to_string(),
+                sha256: "fixture".to_string(),
+                size_bytes: fs::metadata(&input).map(|meta| meta.len()).unwrap_or(0),
+                role: "MainQuestion".to_string(),
+                imported_at: chrono::Utc::now(),
+            };
+            job.source_files = vec![source.clone()];
+
+            let ir = parse_pdf_with_pdfium(&job, &source, &input, &output, "auto")
+                .expect("real raster diagram fixture should parse");
+            let assets = ir
+                .get("assets")
+                .and_then(Value::as_array)
+                .expect("assets array");
+            let asset = assets
+                .iter()
+                .find(|asset| {
+                    asset
+                        .pointer("/diagramQuestionRegion/questionRange/0")
+                        .and_then(Value::as_u64)
+                        == Some(expected_start)
+                })
+                .expect("declared diagram question region asset");
+            assert_eq!(
+                asset
+                    .pointer("/diagramQuestionRegion/questionRange/1")
+                    .and_then(Value::as_u64),
+                Some(expected_end)
+            );
+            assert_eq!(
+                asset
+                    .pointer("/diagramQuestionRegion/recoveryStatus")
+                    .and_then(Value::as_str),
+                Some("ocr_required")
+            );
+            assert_eq!(
+                asset
+                    .pointer("/diagramQuestionRegion/numberClosure")
+                    .and_then(Value::as_bool),
+                Some(false)
+            );
+            let asset_path = asset
+                .get("path")
+                .and_then(Value::as_str)
+                .map(Path::new)
+                .expect("asset path");
+            assert!(asset_path.exists(), "rendered region must persist on disk");
+            assert!(
+                fs::metadata(asset_path)
+                    .map(|meta| meta.len() > 10_000)
+                    .unwrap_or(false),
+                "rendered region should contain substantial source pixels"
+            );
+            let image_block = ir
+                .get("pages")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .flat_map(|page| {
+                    page.get("blocks")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                })
+                .find(|block| {
+                    block.get("assetId").and_then(Value::as_str)
+                        == asset.get("assetId").and_then(Value::as_str)
+                })
+                .expect("source-backed image block");
+            assert_eq!(image_block.get("text").and_then(Value::as_str), Some(""));
+
+            let shadow_dir = artifact_root.join(format!("q{}-shadow", expected_start));
+            fs::create_dir_all(&shadow_dir).expect("create V2 shadow fixture directory");
+            let shadow_output = shadow_dir.join(crate::pdf_facts_shadow::SHADOW_ARTIFACT_FILE);
+            let shadow = crate::pdf_facts_shadow::write_pdf_facts_shadow_with_v1(
+                &job,
+                &source,
+                &input,
+                &shadow_output,
+                Some(&ir),
+            )
+            .expect("V1 region asset should bridge into the physical shadow");
+            let promoted = shadow
+                .get("assets")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|item| item.get("assetId") == asset.get("assetId"))
+                .expect("canonical V2 page_crop asset");
+            assert_eq!(
+                promoted.get("kind").and_then(Value::as_str),
+                Some("page_crop")
+            );
+            assert_eq!(
+                promoted.get("extractionMode").and_then(Value::as_str),
+                Some("page_crop")
+            );
+            serde_json::from_value::<crate::schema::DocumentIRV2>(shadow.clone())
+                .expect("promoted diagram asset must preserve the typed DocumentIRV2 contract");
+            let split = crate::authoring_pipeline::make_dynamic_split_candidates(
+                &job.job_id,
+                &job,
+                Some(&ir),
+            );
+            let v1_authoring =
+                crate::authoring_pipeline::make_dynamic_authoring_ir(&job, &split, Some(&ir));
+            let v2_authoring = crate::ielts_grammar::build_authoring_v2_shadow(
+                &job,
+                &v1_authoring,
+                &split,
+                Some(&ir),
+                Some(&shadow),
+            )
+            .expect("product grammar path should consume the promoted physical asset");
+            assert!(v2_authoring
+                .get("assets")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|item| item.get("assetId") == asset.get("assetId")));
+            assert!(v2_authoring
+                .pointer("/quality/hardFailures")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|failure| {
+                    failure.as_str() == Some("DIAGRAM_QUESTION_REGION_OCR_REQUIRED")
+                }));
+            let relative_path = promoted
+                .get("relativePath")
+                .and_then(Value::as_str)
+                .expect("V2 relative path");
+            assert!(
+                shadow_dir
+                    .join(relative_path.replace('/', std::path::MAIN_SEPARATOR_STR))
+                    .exists(),
+                "promoted V2 asset must be committed beside the product shadow artifact"
+            );
+        }
+        eprintln!(
+            "diagram question-region artifacts preserved at {}",
+            artifact_root.display()
+        );
     }
 
     #[test]

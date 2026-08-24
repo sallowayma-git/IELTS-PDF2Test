@@ -27,6 +27,7 @@ export interface DocumentBlock {
   pageIndex?: number;
   confidence: number;
   roleHint?: BlockRole;
+  assetId?: string;
 }
 
 export interface DocumentPage {
@@ -43,6 +44,23 @@ export interface DocumentAsset {
   type: "image" | "thumbnail";
   path: string;
   bbox?: [number, number, number, number];
+  sourceKind?: "page_crop" | string;
+  pageIndex?: number;
+  fileName?: string;
+  mimeType?: string;
+  width?: number;
+  height?: number;
+  sha256?: string;
+  sizeBytes?: number;
+  diagramQuestionRegion?: DiagramQuestionRegion;
+}
+
+export interface DiagramQuestionRegion {
+  questionRange: [number, number];
+  expectedNumbers: number[];
+  recoveryStatus: "ocr_required" | "recovered";
+  numberClosure: boolean;
+  sourceBacked: boolean;
 }
 
 export interface ParserInfo {

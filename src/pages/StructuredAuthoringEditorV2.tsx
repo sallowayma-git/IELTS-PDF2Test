@@ -185,12 +185,57 @@ function RuntimeAnswerControl({ interaction, name, options }: { interaction: Ans
   return <span className="student-control-group">{options.map((option) => <label key={option}><input type={inputType} name={name} value={option} />{option}</label>)}</span>;
 }
 
+function SharedRuntimeChoiceControl({ name, options, exact }: { name: string; options: string[]; exact: number }) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const atLimit = selected.length >= exact;
+  return <fieldset className="student-control-group" data-response-budget={exact}>
+    <legend>选择 {exact} 项（已选 {selected.length}/{exact}）</legend>
+    {options.map((option) => {
+      const checked = selected.includes(option);
+      return <label key={option}><input
+        type="checkbox"
+        name={name}
+        value={option}
+        checked={checked}
+        disabled={!checked && atLimit}
+        onChange={() => setSelected((current) => checked ? current.filter((label) => label !== option) : [...current, option])}
+      />{option}</label>;
+    })}
+  </fieldset>;
+}
+
+function RuntimeResponseControl({
+  group,
+  interactionModel,
+  questionDisplayMap
+}: {
+  group: ResponseGroupV2;
+  interactionModel: ReturnType<typeof buildReadingInteractionModelV2>;
+  questionDisplayMap: Record<string, string>;
+}) {
+  const interaction = interactionModel.responseGroups[group.responseGroupId];
+  if (!interaction) return null;
+  const options = interaction.options.map((option) => option.label);
+  const exact = interaction.cardinality.exact;
+  if (interaction.assignment === "unordered_set" && exact !== undefined && exact > 1) {
+    return <div className="student-answer-row student-shared-answer-row">
+      <strong>{group.slotIds.map((slotId) => questionDisplayMap[slotId]).join("、")}</strong>
+      <SharedRuntimeChoiceControl name={group.responseGroupId} options={options} exact={exact} />
+    </div>;
+  }
+  return <>{group.slotIds.map((slotId) => {
+    const slot = interactionModel.slots[slotId];
+    if (!slot) return null;
+    return <div key={slotId} className="student-answer-row"><strong>{questionDisplayMap[slotId]}</strong><RuntimeAnswerControl interaction={slot.slot.interaction} name={slotId} options={options.length ? options : slot.slot.constraints?.acceptedOptionLabels ?? []} /></div>;
+  })}</>;
+}
+
 function StudentPreview({ authoring }: { authoring: IeltsAuthoringIRV2 }) {
   const runtime = buildRuntimeViewModelV2(authoring);
   const interactionModel = buildReadingInteractionModelV2(runtime);
   return <div className="student-parity-grid">
     <article className="student-sheet"><p className="student-sheet-label">Passage · RuntimeViewModelV2</p><h3>{runtime.title}</h3>{contentNodeEditor(runtime.passage, undefined, () => undefined, () => undefined, true)}</article>
-    <article className="student-sheet"><p className="student-sheet-label">Questions · ReadingInteractionModelV2</p>{runtime.taskGroups.map((task) => <section key={task.taskId} className="student-task">{contentNodeEditor(task.instructions, undefined, () => undefined, () => undefined, true)}{task.stimulus?.length ? <div className="student-stimulus">{contentNodeEditor(task.stimulus, undefined, () => undefined, () => undefined, true)}</div> : null}{task.responseGroups.map((group) => { const interaction = interactionModel.responseGroups[group.responseGroupId]; if (!interaction) return null; const options = interaction.options.map((option) => option.label); return <div key={group.responseGroupId} className="student-response">{contentNodeEditor(group.prompt, undefined, () => undefined, () => undefined, true)}{group.slotIds.map((slotId) => { const slot = interactionModel.slots[slotId]; if (!slot) return null; return <div key={slotId} className="student-answer-row"><strong>{runtime.questionDisplayMap[slotId]}</strong><RuntimeAnswerControl interaction={slot.slot.interaction} name={slotId} options={options.length ? options : slot.slot.constraints?.acceptedOptionLabels ?? []} /></div>; })}</div>; })}</section>)}</article>
+    <article className="student-sheet"><p className="student-sheet-label">Questions · ReadingInteractionModelV2</p>{runtime.taskGroups.map((task) => <section key={task.taskId} className="student-task">{contentNodeEditor(task.instructions, undefined, () => undefined, () => undefined, true)}{task.stimulus?.length ? <div className="student-stimulus">{contentNodeEditor(task.stimulus, undefined, () => undefined, () => undefined, true)}</div> : null}{task.responseGroups.map((group) => <div key={group.responseGroupId} className="student-response">{contentNodeEditor(group.prompt, undefined, () => undefined, () => undefined, true)}<RuntimeResponseControl group={group} interactionModel={interactionModel} questionDisplayMap={runtime.questionDisplayMap} /></div>)}</section>)}</article>
   </div>;
 }
 

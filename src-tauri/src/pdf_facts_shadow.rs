@@ -486,12 +486,16 @@ pub(crate) fn write_pdf_facts_shadow_with_v1(
     fs::create_dir_all(staging_root.join("assets").join("shadow").join("pdf"))
         .map_err(|error| format!("pdf_shadow_staging_create_failed:{}", error))?;
     let result = (|| -> CommandResult<Value> {
-        let value = extract_pdf_facts_shadow_internal(
+        let mut value = extract_pdf_facts_shadow_internal(
             job,
             source,
             input_path,
             Some(staging_root.as_path()),
         )?;
+        merge_v1_diagram_question_region_assets(&mut value, v1_document, source, &staging_root)?;
+        let typed = serde_json::from_value::<DocumentIRV2>(value)
+            .map_err(|error| format!("pdf_facts_shadow_v1_asset_bridge_schema_failed:{}", error))?;
+        let value = serde_json::to_value(typed).map_err(|error| error.to_string())?;
         let output_name = output_path
             .file_name()
             .ok_or_else(|| "pdf_shadow_output_file_name_missing".to_string())?;
@@ -505,6 +509,160 @@ pub(crate) fn write_pdf_facts_shadow_with_v1(
         let _ = fs::remove_dir_all(&staging_root);
     }
     result
+}
+
+/// Promotes the source-backed page crops discovered by the live pdfium V1
+/// parser into the canonical V2 asset contract. The shadow extractor cannot
+/// infer this semantic crop from PDF object resources alone: the evidence is
+/// the V1 range heading + diagram instruction + real page geometry.
+fn merge_v1_diagram_question_region_assets(
+    shadow: &mut Value,
+    v1_document: Option<&Value>,
+    source: &SourceFile,
+    staging_root: &Path,
+) -> CommandResult<()> {
+    let Some(v1_document) = v1_document else {
+        return Ok(());
+    };
+    let v1_assets = v1_document
+        .get("assets")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for asset in v1_assets {
+        let Some(region) = asset.get("diagramQuestionRegion") else {
+            continue;
+        };
+        let Some(asset_id) = asset.get("assetId").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(source_path) = asset.get("path").and_then(Value::as_str).map(Path::new) else {
+            continue;
+        };
+        if !source_path.exists() {
+            return Err(format!(
+                "diagram_question_region_source_asset_missing:{}:{}",
+                asset_id,
+                source_path.display()
+            ));
+        }
+        let bytes = fs::read(source_path).map_err(|error| {
+            format!(
+                "diagram_question_region_source_asset_read_failed:{}:{}",
+                source_path.display(),
+                error
+            )
+        })?;
+        let relative_path = format!("assets/shadow/pdf/{asset_id}.png");
+        write_shadow_asset(staging_root, &relative_path, &bytes)?;
+        let page_number = asset.get("pageIndex").and_then(Value::as_u64).unwrap_or(1);
+        let v1_bbox = asset
+            .get("bbox")
+            .and_then(Value::as_array)
+            .filter(|bbox| bbox.len() == 4);
+        let page_height = v1_document
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|page| page.get("pageIndex").and_then(Value::as_u64) == Some(page_number))
+            .and_then(|page| page.get("height"))
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0);
+        let rects = v1_bbox.map(|bbox| {
+            let x0 = bbox[0].as_f64().unwrap_or(0.0);
+            let y0 = bbox[1].as_f64().unwrap_or(0.0);
+            let x1 = bbox[2].as_f64().unwrap_or(x0);
+            let y1 = bbox[3].as_f64().unwrap_or(y0);
+            let width = (x1 - x0).max(0.01);
+            let height = (y1 - y0).max(0.01);
+            (
+                rect_value(
+                    x0,
+                    (page_height - y1).max(0.0),
+                    width,
+                    height,
+                    "top-left",
+                    0,
+                ),
+                rect_value(x0, y0, width, height, "bottom-left", 0),
+            )
+        });
+        let display_bbox = rects.as_ref().map(|(display, _)| display.clone());
+        let native_bbox = rects.as_ref().map(|(_, native)| native.clone());
+        let descriptor = json!({
+            "assetId": asset_id,
+            "kind": "page_crop",
+            "mime": "image/png",
+            "relativePath": relative_path,
+            "sha256": crate::hash_bytes(&bytes),
+            "byteLength": bytes.len() as u64,
+            "widthPx": asset.get("width").and_then(Value::as_u64).unwrap_or(0),
+            "heightPx": asset.get("height").and_then(Value::as_u64).unwrap_or(0),
+            "extractionMode": "page_crop",
+            "altText": format!("Diagram question region on page {}", page_number),
+            "decorative": false,
+            "diagramQuestionRegion": region,
+            "sourceAnchor": {
+                "sourceFileId": source.file_id,
+                "pageIndex": page_number.saturating_sub(1),
+                "nodeIds": [format!("{}-source-region", asset_id)],
+                "bbox": display_bbox,
+                "displayBBox": display_bbox,
+                "nativeBBox": native_bbox,
+                "extractionMode": "pdf_rendered_crop",
+                "sourceHash": source.sha256
+            }
+        });
+        if let Some(assets) = shadow.get_mut("assets").and_then(Value::as_array_mut) {
+            if !assets
+                .iter()
+                .any(|item| item.get("assetId").and_then(Value::as_str) == Some(asset_id))
+            {
+                assets.push(descriptor);
+            }
+        }
+        if let Some(page) = shadow
+            .get_mut("pages")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+            .find(|page| {
+                page.get("pageIndex").and_then(Value::as_u64) == Some(page_number.saturating_sub(1))
+            })
+        {
+            let ids = page
+                .as_object_mut()
+                .map(|object| object.entry("assetIds").or_insert_with(|| json!([])))
+                .and_then(Value::as_array_mut);
+            if let Some(ids) = ids {
+                if !ids.iter().any(|id| id.as_str() == Some(asset_id)) {
+                    ids.push(json!(asset_id));
+                }
+            }
+        }
+        if let Some(ledger) = shadow
+            .get_mut("coverageLedger")
+            .and_then(Value::as_array_mut)
+        {
+            ledger.push(json!({
+                "sourceNodeId": asset_id,
+                "disposition": "unassigned",
+                "targetIds": [],
+                "reason": "diagram question region retained; targeted OCR and exact number closure required"
+            }));
+        }
+        if let Some(warnings) = shadow
+            .pointer_mut("/parser/warnings")
+            .and_then(Value::as_array_mut)
+        {
+            warnings.push(json!(format!(
+                "DIAGRAM_QUESTION_REGION_OCR_REQUIRED:page={}:assetId={}",
+                page_number, asset_id
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn remove_path_if_exists(path: &Path) -> CommandResult<()> {
@@ -3814,5 +3972,56 @@ mod tests {
             String::from_utf8_lossy(&repaired[1261..]),
             "xref\r\n0 6\r\n0000000000 65535 f\r\n0000000010 00000 n\r\n0000000062 00000 n\r\n0000000122 00000 n\r\n0000000251 00000 n\r\n0000000324 00000 n\r\ntrailer\r\n<< /Size 6 /Root 1 0 R >>\r\nstartxref\r\n1261\r\n%%EOF\r\n"
         );
+    }
+
+    #[test]
+    fn v1_diagram_region_bridge_emits_typed_v2_asset_and_page_ownership() {
+        let (job, source, input) =
+            fixture_source_named("fixtures/parser/complex-reading.pdf", "diagram-source");
+        let root = env::temp_dir().join(format!("epic8-diagram-v2-bridge-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let crop_path = root.join("source-crop.png");
+        fs::write(&crop_path, b"source-backed-diagram-region").unwrap();
+
+        let v1 = json!({
+            "pages": [{"pageIndex": 1, "height": 842.0}],
+            "assets": [{
+                "assetId": "diagram-question-region-p001-q4-5",
+                "pageIndex": 1,
+                "path": crop_path,
+                "width": 1200,
+                "height": 700,
+                "bbox": [36.0, 80.0, 559.0, 430.0],
+                "diagramQuestionRegion": {
+                    "questionRange": [4, 5],
+                    "expectedNumbers": [4, 5],
+                    "recoveryStatus": "ocr_required",
+                    "numberClosure": false,
+                    "sourceBacked": true
+                }
+            }]
+        });
+
+        let output = root.join(SHADOW_ARTIFACT_FILE);
+        let shadow =
+            write_pdf_facts_shadow_with_v1(&job, &source, &input, &output, Some(&v1)).unwrap();
+        let typed: DocumentIRV2 = serde_json::from_value(shadow).unwrap();
+        let asset = typed
+            .assets
+            .iter()
+            .find(|asset| asset.asset_id == "diagram-question-region-p001-q4-5")
+            .unwrap();
+        let region = asset.diagram_question_region.as_ref().unwrap();
+        assert_eq!(region.question_range, [4, 5]);
+        assert_eq!(region.expected_numbers, vec![4, 5]);
+        assert!(!region.number_closure);
+        assert!(asset.source_anchor.is_some());
+        assert!(typed.pages[0]
+            .asset_ids
+            .iter()
+            .any(|id| id == &asset.asset_id));
+        assert!(root.join(&asset.relative_path).exists());
+        assert!(output.exists());
+        let _ = fs::remove_dir_all(root);
     }
 }

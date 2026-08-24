@@ -374,6 +374,7 @@ mod tests {
             alt_text: Some("fixture".to_string()),
             decorative: Some(false),
             source_anchor: None,
+            diagram_question_region: None,
         }
     }
 

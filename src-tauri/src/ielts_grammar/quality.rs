@@ -2429,6 +2429,33 @@ fn validate_assets(
             .get("assetId")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        if asset
+            .pointer("/diagramQuestionRegion/recoveryStatus")
+            .and_then(Value::as_str)
+            == Some("ocr_required")
+            || asset
+                .pointer("/diagramQuestionRegion/numberClosure")
+                .and_then(Value::as_bool)
+                == Some(false)
+        {
+            push_issue(
+                issues,
+                hard_failures,
+                issue(
+                    DIAGRAM_QUESTION_REGION_OCR_REQUIRED,
+                    "blocking",
+                    "图示题区域已保留，但栅格题号和标签尚未完成 OCR 与编号闭包。",
+                    "asset",
+                    if asset_id.is_empty() {
+                        "unknown-asset"
+                    } else {
+                        asset_id
+                    },
+                    Vec::new(),
+                    vec!["confirm_figure", "edit_text"],
+                ),
+            );
+        }
         if !asset_id.is_empty() && !seen_asset_ids.insert(asset_id.to_string()) {
             push_issue(
                 issues,

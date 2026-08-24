@@ -786,15 +786,20 @@ fn build_responses_and_slots(
     let mut responses = Vec::new();
     let mut slots = Map::new();
     let mut used_answers = Map::new();
-    let shared = signature
+    let exact_selection_count = signature
         .selection_cardinality
         .as_ref()
-        .and_then(|cardinality| cardinality.exact)
-        .is_some_and(|count| count as usize == expected_numbers.len() && count > 1)
-        && matches!(
-            task_type,
-            TaskTypeV2::MultipleChoice | TaskTypeV2::ShortAnswer
-        );
+        .and_then(|cardinality| cardinality.exact);
+    // A Choose TWO/THREE multiple-choice instruction defines one unordered
+    // response budget for the whole task. Keep it shared even when the
+    // recovered question range is inconsistent: the quality gate must expose
+    // that mismatch instead of multiplying the instruction cardinality across
+    // one response group per recovered slot.
+    let shared = matches!(task_type, TaskTypeV2::MultipleChoice)
+        && exact_selection_count.is_some_and(|count| count > 1)
+        || matches!(task_type, TaskTypeV2::ShortAnswer)
+            && exact_selection_count
+                .is_some_and(|count| count as usize == expected_numbers.len() && count > 1);
     let shared_option_values = if let Some(run) = option_runs
         .iter()
         .find(|run| run_matches_alphabet(run, signature.option_alphabet.as_deref()))
@@ -2555,6 +2560,50 @@ mod tests {
         assert_eq!(
             value.pointer("/quality/compilerProbes/v1Compatibility/status"),
             Some(&json!("passed"))
+        );
+    }
+
+    #[test]
+    fn malformed_choose_two_range_keeps_one_shared_budget_and_fails_closed() {
+        let v1 = json!({
+            "schemaVersion":"ReadingAuthoringIRV1",
+            "groups":[{
+                "groupId":"group-1",
+                "questionRange":[14,16],
+                "questions":[
+                    {"id":"q14","displayNumber":"14","prompt":"shared","interaction":{"options":["A","B","C","D","E"]}},
+                    {"id":"q15","displayNumber":"15","prompt":"shared","interaction":{"options":["A","B","C","D","E"]}},
+                    {"id":"q16","displayNumber":"16","prompt":"shared","interaction":{"options":["A","B","C","D","E"]}}
+                ]
+            }],
+            "answerKey":{"q14":"A","q15":"D","q16":"B"},
+            "passage":{"htmlBlocks":[]}
+        });
+        let split = json!({
+            "questionGroupCandidates":[{
+                "groupId":"group-1",
+                "heading":"Questions 14-16",
+                "instructionText":"Questions 14-16 Choose TWO letters, A-E.",
+                "questionRange":[14,16],
+                "kindHint":"multi_choice",
+                "sectionEvidence":[
+                    {"blockId":"h","textPreview":"Questions 14-16 Choose TWO letters, A-E.","pageIndex":4},
+                    {"blockId":"prompt","textPreview":"Which TWO characteristics apply?","pageIndex":4},
+                    {"blockId":"options","textPreview":"A First B Second C Third D Fourth E Fifth","pageIndex":4}
+                ]
+            }],
+            "passageCandidates":[]
+        });
+
+        let value = build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap();
+        let responses = value["taskGroups"][0]["responseGroups"].as_array().unwrap();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0]["slotIds"], json!(["q14", "q15", "q16"]));
+        assert_eq!(responses[0]["cardinality"]["exact"], json!(2));
+        assert_eq!(responses[0]["assignment"], json!("unordered_set"));
+        assert_eq!(
+            value.pointer("/quality/compilerProbes/v2Runtime/status"),
+            Some(&json!("failed"))
         );
     }
 

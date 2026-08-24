@@ -51,6 +51,151 @@ fn review_warning_count(value: &Value) -> usize {
         .unwrap_or(0)
 }
 
+const PASSAGE_ONLY_SOURCE_CODE: &str = "PASSAGE_ONLY_SOURCE";
+const QUESTION_SHEET_MISSING_CODE: &str = "QUESTION_SHEET_MISSING";
+const PARTIAL_RECOVERY_FAILURE_CODE: &str = "PARTIAL_RECOVERY_FAILURE";
+const QUESTION_STRUCTURE_NOT_DETECTED_CODE: &str = "QUESTION_STRUCTURE_NOT_DETECTED";
+
+fn audit_has_stable_code(ir: &Value, code: &str) -> bool {
+    ir.pointer("/audit/issues")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|issue| issue.trim_start().starts_with(code))
+}
+
+fn audit_declares_explicit_passage_only(ir: &Value) -> bool {
+    ir.pointer("/audit/issues")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|issue| {
+            issue
+                .to_ascii_lowercase()
+                .contains("explicitly marked as passage-only")
+        })
+}
+
+fn authoring_input_completeness(ir: &Value) -> Value {
+    let groups = ir
+        .get("groups")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let passage_block_count = ir
+        .pointer("/passage/sourceBlockIds")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let umbrella_range_count = ir
+        .pointer("/passage/questionUmbrellaRanges")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let question_count = groups
+        .iter()
+        .map(|group| {
+            group
+                .get("questions")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0)
+        })
+        .sum::<usize>();
+    let manual_question_count = groups
+        .iter()
+        .flat_map(|group| {
+            group
+                .get("questions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter(|question| {
+            question
+                .get("requiresManualQuestionImport")
+                .and_then(Value::as_bool)
+                == Some(true)
+        })
+        .count();
+    let manual_group_count = groups
+        .iter()
+        .filter(|group| {
+            group
+                .get("requiresManualQuestionImport")
+                .and_then(Value::as_bool)
+                == Some(true)
+        })
+        .count();
+    let source_backed_concrete_question_count = groups
+        .iter()
+        .flat_map(|group| {
+            group
+                .get("questions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter(|question| {
+            !question_prompt_is_empty(question)
+                && question
+                    .get("sourceBlockIds")
+                    .and_then(Value::as_array)
+                    .is_some_and(|source_ids| !source_ids.is_empty())
+        })
+        .count();
+    let every_group_requires_manual_import = !groups.is_empty()
+        && groups.iter().all(|group| {
+            group
+                .get("requiresManualQuestionImport")
+                .and_then(Value::as_bool)
+                == Some(true)
+        });
+    let every_question_requires_manual_import =
+        question_count > 0 && manual_question_count == question_count;
+
+    let (classification, code) =
+        if audit_declares_explicit_passage_only(ir) && groups.is_empty() && passage_block_count > 0
+        {
+            ("passage_only_source", Some(PASSAGE_ONLY_SOURCE_CODE))
+        } else if groups.is_empty()
+            && passage_block_count > 0
+            && audit_has_stable_code(ir, QUESTION_STRUCTURE_NOT_DETECTED_CODE)
+        {
+            (
+                "unknown_question_structure",
+                Some(QUESTION_STRUCTURE_NOT_DETECTED_CODE),
+            )
+        } else if (groups.is_empty() && passage_block_count > 0 && umbrella_range_count > 0)
+            || (umbrella_range_count > 0
+                && source_backed_concrete_question_count == 0
+                && (every_group_requires_manual_import || every_question_requires_manual_import))
+        {
+            ("question_sheet_missing", Some(QUESTION_SHEET_MISSING_CODE))
+        } else if manual_group_count > 0 || manual_question_count > 0 {
+            (
+                "partial_recovery_failure",
+                Some(PARTIAL_RECOVERY_FAILURE_CODE),
+            )
+        } else {
+            ("complete", None)
+        };
+
+    json!({
+        "classification": classification,
+        "code": code,
+        "groupCount": groups.len(),
+        "questionCount": question_count,
+        "manualGroupCount": manual_group_count,
+        "manualQuestionCount": manual_question_count,
+        "sourceBackedConcreteQuestionCount": source_backed_concrete_question_count,
+        "passageBlockCount": passage_block_count,
+        "umbrellaRangeCount": umbrella_range_count
+    })
+}
+
 fn question_prompt_is_empty(question: &Value) -> bool {
     question
         .get("prompt")
@@ -473,6 +618,7 @@ pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
         }
     }
 
+    let input_completeness = authoring_input_completeness(ir);
     if let Some(audit) = ir.get_mut("audit").and_then(Value::as_object_mut) {
         audit.insert(
             "humanVerified".to_string(),
@@ -480,6 +626,7 @@ pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
                 total_questions > 0 && total_questions == verified_questions && hard_defects == 0
             ),
         );
+        audit.insert("inputCompleteness".to_string(), input_completeness);
         audit.insert("updatedAt".to_string(), json!(Utc::now().to_rfc3339()));
     }
 
@@ -488,6 +635,32 @@ pub(crate) fn refresh_authoring_review_state(ir: &mut Value) -> u32 {
 
 pub(crate) fn authoring_review_issues(ir: &Value) -> Vec<Value> {
     let mut issues = Vec::new();
+    let input_completeness = authoring_input_completeness(ir);
+    match input_completeness.get("code").and_then(Value::as_str) {
+        Some(PASSAGE_ONLY_SOURCE_CODE) => issues.push(coded_issue(
+            PASSAGE_ONLY_SOURCE_CODE,
+            "$.audit.inputCompleteness",
+            "Source is explicitly classified as passage-only; no question sheet was supplied",
+        )),
+        Some(QUESTION_SHEET_MISSING_CODE)
+            if ir
+                .get("groups")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty) =>
+        {
+            issues.push(coded_issue(
+                QUESTION_SHEET_MISSING_CODE,
+                "$.audit.inputCompleteness",
+                "Passage and umbrella range were found, but no concrete question sheet was recovered",
+            ));
+        }
+        Some(QUESTION_STRUCTURE_NOT_DETECTED_CODE) => issues.push(coded_issue(
+            QUESTION_STRUCTURE_NOT_DETECTED_CODE,
+            "$.audit.inputCompleteness",
+            "Numbered source prose was preserved as passage because explicit question structure could not be established",
+        )),
+        _ => {}
+    }
     for group in ir
         .get("groups")
         .and_then(Value::as_array)
@@ -933,5 +1106,194 @@ mod tests {
             .get("code")
             .and_then(Value::as_str)
             .is_some_and(|code| !code.is_empty())));
+    }
+
+    #[test]
+    fn explicit_passage_only_source_has_stable_classification_and_metrics() {
+        let mut ir = json!({
+            "groups": [],
+            "passage": {
+                "sourceBlockIds": ["p1", "p2", "p3"],
+                "questionUmbrellaRanges": [{
+                    "blockId": "u1",
+                    "questionRange": [14, 26]
+                }]
+            },
+            "audit": {
+                "humanVerified": false,
+                "issues": ["Source is explicitly marked as passage-only; no question groups were created."]
+            }
+        });
+
+        refresh_authoring_review_state(&mut ir);
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/classification"),
+            Some(&json!("passage_only_source"))
+        );
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/code"),
+            Some(&json!("PASSAGE_ONLY_SOURCE"))
+        );
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/passageBlockCount"),
+            Some(&json!(3))
+        );
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/umbrellaRangeCount"),
+            Some(&json!(1))
+        );
+        let issues = authoring_review_issues(&ir);
+        assert!(issues
+            .iter()
+            .any(|issue| issue.get("code") == Some(&json!("PASSAGE_ONLY_SOURCE"))));
+        assert!(!issues
+            .iter()
+            .any(|issue| issue.get("code") == Some(&json!("QUESTION_SHEET_MISSING"))));
+    }
+
+    #[test]
+    fn ambiguous_numbered_passage_has_stable_unknown_structure_blocker() {
+        let mut ir = json!({
+            "groups": [],
+            "passage": {
+                "sourceBlockIds": ["p1", "p2", "p3"],
+                "questionUmbrellaRanges": []
+            },
+            "audit": {
+                "humanVerified": false,
+                "issues": ["QUESTION_STRUCTURE_NOT_DETECTED: Consecutive numbered prose was preserved as passage."]
+            }
+        });
+
+        refresh_authoring_review_state(&mut ir);
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/classification"),
+            Some(&json!("unknown_question_structure"))
+        );
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/code"),
+            Some(&json!("QUESTION_STRUCTURE_NOT_DETECTED"))
+        );
+        assert!(authoring_review_issues(&ir).iter().any(|issue| {
+            issue.get("code") == Some(&json!("QUESTION_STRUCTURE_NOT_DETECTED"))
+                && issue.get("path") == Some(&json!("$.audit.inputCompleteness"))
+        }));
+    }
+
+    #[test]
+    fn umbrella_only_manual_group_is_classified_as_missing_question_sheet() {
+        let mut ir = json!({
+            "groups": [{
+                "groupId": "umbrella-only",
+                "kind": "short_answer",
+                "confidence": 0.78,
+                "requiresManualQuestionImport": true,
+                "questions": [
+                    {
+                        "id": "q1",
+                        "prompt": "",
+                        "interaction": {"type": "text"},
+                        "confidence": 0.78,
+                        "requiresManualQuestionImport": true
+                    },
+                    {
+                        "id": "q2",
+                        "prompt": "",
+                        "interaction": {"type": "text"},
+                        "confidence": 0.78,
+                        "requiresManualQuestionImport": true
+                    }
+                ]
+            }],
+            "passage": {
+                "sourceBlockIds": ["p1", "p2"],
+                "questionUmbrellaRanges": [{
+                    "blockId": "u1",
+                    "questionRange": [1, 2]
+                }]
+            },
+            "audit": {"humanVerified": false, "issues": []}
+        });
+
+        refresh_authoring_review_state(&mut ir);
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/classification"),
+            Some(&json!("question_sheet_missing"))
+        );
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/code"),
+            Some(&json!("QUESTION_SHEET_MISSING"))
+        );
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/manualGroupCount"),
+            Some(&json!(1))
+        );
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/manualQuestionCount"),
+            Some(&json!(2))
+        );
+        assert!(authoring_review_issues(&ir)
+            .iter()
+            .any(|issue| issue.get("code") == Some(&json!("QUESTION_SHEET_MISSING"))));
+    }
+
+    #[test]
+    fn one_manual_question_is_partial_recovery_not_missing_question_sheet() {
+        let mut ir = json!({
+            "groups": [{
+                "groupId": "questions-1-8",
+                "kind": "short_answer",
+                "requiresManualQuestionImport": false,
+                "questions": [
+                    {
+                        "id": "q7",
+                        "prompt": "Which harbour service was introduced?",
+                        "sourceBlockIds": ["q7-source"],
+                        "interaction": {"type": "text"},
+                        "requiresManualQuestionImport": false
+                    },
+                    {
+                        "id": "q8",
+                        "prompt": "",
+                        "sourceBlockIds": [],
+                        "interaction": {"type": "text"},
+                        "requiresManualQuestionImport": true
+                    }
+                ]
+            }],
+            "passage": {
+                "sourceBlockIds": ["p1", "p2"],
+                "questionUmbrellaRanges": [{
+                    "blockId": "u1",
+                    "questionRange": [1, 13]
+                }]
+            },
+            "audit": {"humanVerified": false, "issues": []}
+        });
+
+        refresh_authoring_review_state(&mut ir);
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/classification"),
+            Some(&json!("partial_recovery_failure"))
+        );
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/code"),
+            Some(&json!("PARTIAL_RECOVERY_FAILURE"))
+        );
+        assert_eq!(
+            ir.pointer("/audit/inputCompleteness/sourceBackedConcreteQuestionCount"),
+            Some(&json!(1))
+        );
+        let issues = authoring_review_issues(&ir);
+        assert!(!issues.iter().any(|issue| {
+            issue.get("code") == Some(&json!("QUESTION_SHEET_MISSING"))
+                && issue.get("path") == Some(&json!("$.audit.inputCompleteness"))
+        }));
+        assert!(issues
+            .iter()
+            .any(|issue| issue.get("code") == Some(&json!("QUESTION_SHEET_MISSING"))));
+        assert!(issues
+            .iter()
+            .any(|issue| issue.get("code") == Some(&json!("QUESTION_PROMPT_MISSING"))));
     }
 }

@@ -3909,18 +3909,64 @@ fn has_dynamic_concrete_question_number_evidence(text: &str) -> bool {
         )
 }
 
+/// Heading-free numbered material is ambiguous: articles, reports and source
+/// passages frequently use consecutive numbered sections.  Treat such a run as
+/// questions only when every number has local question syntax and the material
+/// between adjacent numbers remains question-sized.  Explicit IELTS range and
+/// instruction blocks bypass this inference gate elsewhere.
+fn has_credible_heading_free_numbered_questions(blocks: &[Value]) -> bool {
+    let markers = blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let text = dynamic_block_text(block);
+            let number = dynamic_leading_question_number(&text)?;
+            (number <= 40).then_some((index, text))
+        })
+        .collect::<Vec<_>>();
+    if markers.len() < 2 {
+        return false;
+    }
+    if !markers
+        .iter()
+        .all(|(_, text)| has_dynamic_concrete_question_number_evidence(text))
+    {
+        return false;
+    }
+
+    let mut segment_word_counts = markers
+        .iter()
+        .enumerate()
+        .map(|(position, (start, _))| {
+            let end = markers
+                .get(position + 1)
+                .map(|(index, _)| *index)
+                .unwrap_or(blocks.len());
+            blocks[*start..end]
+                .iter()
+                .map(dynamic_block_text)
+                .map(|text| text.split_whitespace().count())
+                .sum::<usize>()
+        })
+        .collect::<Vec<_>>();
+    segment_word_counts.sort_unstable();
+    let median_words = segment_word_counts[segment_word_counts.len() / 2];
+    let longest_words = segment_word_counts.last().copied().unwrap_or(0);
+    median_words <= 64 && longest_words <= 160
+}
+
 /// A parser role hint is only a routing hint: older DocumentIR artifacts can
 /// contain false `question` roles for ordinary prose using words such as
 /// "the author questions whether ...". Before any heading-free fallback can
 /// create a question group, require evidence that is specific to an IELTS
 /// task independently of that role hint.
 fn has_dynamic_fallback_question_group_evidence(blocks: &[Value]) -> bool {
-    blocks.iter().any(|block| {
+    let has_explicit_evidence = blocks.iter().any(|block| {
         let text = dynamic_block_text(block);
         detect_dynamic_question_heading_range(&text).is_some()
             || has_dynamic_ielts_question_instruction_evidence(&text)
-            || has_dynamic_concrete_question_number_evidence(&text)
-    })
+    });
+    has_explicit_evidence || has_credible_heading_free_numbered_questions(blocks)
 }
 
 fn dynamic_instruction_window_start(blocks: &[Value], question_index: usize) -> usize {
@@ -4589,7 +4635,14 @@ pub(crate) fn make_dynamic_split_candidates(
                 .to_string(),
         );
     } else if group_candidates.is_empty() {
-        issues.push("No question range heading detected; manual split required.".to_string());
+        if !numbered_spans.is_empty() && !fallback_question_group_evidence {
+            issues.push(
+                "QUESTION_STRUCTURE_NOT_DETECTED: Consecutive numbered prose was preserved as passage because no explicit question range, IELTS instruction, or credible question-sized sequence was found."
+                    .to_string(),
+            );
+        } else {
+            issues.push("No question range heading detected; manual split required.".to_string());
+        }
     } else if group_candidates
         .iter()
         .any(|candidate| candidate.requires_manual_question_import == Some(true))
@@ -6082,6 +6135,201 @@ fn dynamic_local_completion_prompt_for_number(
         return Some((local, dynamic_block_id(block)));
     }
     None
+}
+
+fn is_dynamic_note_bullet(text: &str) -> bool {
+    text.trim_start()
+        .chars()
+        .next()
+        .is_some_and(|ch| matches!(ch, '\u{2022}' | '\u{25cf}' | '-' | '\u{2013}' | '\u{2014}'))
+}
+
+fn dynamic_text_has_blank_run(text: &str) -> bool {
+    let mut width = 0usize;
+    for ch in text.chars() {
+        if is_dynamic_blank_marker_char(ch) {
+            width += dynamic_blank_marker_width(ch);
+            if width >= 3 {
+                return true;
+            }
+        } else if !ch.is_whitespace() {
+            width = 0;
+        }
+    }
+    false
+}
+
+fn dynamic_note_leading_number_span(text: &str, number: u32) -> Option<(usize, usize)> {
+    let mut start = 0usize;
+    for (index, ch) in text.char_indices() {
+        if ch.is_whitespace()
+            || matches!(ch, '\u{2022}' | '\u{25cf}' | '-' | '\u{2013}' | '\u{2014}')
+        {
+            start = index + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    let digits = number.to_string();
+    if !text[start..].starts_with(&digits) {
+        return None;
+    }
+    let end = start + digits.len();
+    let after_ok = text[end..]
+        .chars()
+        .next()
+        .map(|ch| !ch.is_ascii_digit())
+        .unwrap_or(true);
+    after_ok.then_some((start, end))
+}
+
+fn dynamic_note_response_marker(text: &str, number: u32) -> bool {
+    find_dynamic_numbered_blank_marker(text, number, 0).is_some()
+        || dynamic_note_leading_number_span(text, number)
+            .is_some_and(|(_, end)| dynamic_text_has_blank_run(&text[end..]))
+        || find_dynamic_completion_display_question_boundary(text, number, 0).is_some_and(
+            |marker_start| {
+                find_dynamic_number_marker(text, number, marker_start).is_some_and(
+                    |(_, content_start)| dynamic_text_has_blank_run(&text[content_start..]),
+                )
+            },
+        )
+}
+
+fn dynamic_note_row_text_prompt(text: &str, number: u32) -> String {
+    let direct = dynamic_gap_sentence_prompt(text, number);
+    if !direct.is_empty() {
+        return direct;
+    }
+    if let Some((marker_start, marker_end)) = dynamic_note_leading_number_span(text, number) {
+        if dynamic_text_has_blank_run(&text[marker_end..]) {
+            return collapse_whitespace(&format!(
+                "{}{}",
+                &text[..marker_start],
+                &text[marker_end..]
+            ));
+        }
+    }
+    let Some(marker_start) = find_dynamic_completion_display_question_boundary(text, number, 0)
+    else {
+        return String::new();
+    };
+    let Some((_, content_start)) = find_dynamic_number_marker(text, number, marker_start) else {
+        return String::new();
+    };
+    if !dynamic_text_has_blank_run(&text[content_start..]) {
+        return String::new();
+    }
+    collapse_whitespace(&format!(
+        "{}{}",
+        &text[..marker_start],
+        &text[content_start..]
+    ))
+}
+
+fn is_dynamic_note_section_heading(block: &Value, response_left: Option<f64>) -> bool {
+    let text = collapse_whitespace(&dynamic_block_text(block));
+    if text.is_empty()
+        || text.split_whitespace().count() > 6
+        || text.chars().count() > 64
+        || text.ends_with(['.', '?', '!', ';'])
+        || is_dynamic_note_bullet(&text)
+        || is_dynamic_instruction_signal(&text)
+        || is_dynamic_question_heading_text(&text)
+        || (1..=40).any(|candidate| dynamic_note_response_marker(&text, candidate))
+    {
+        return false;
+    }
+
+    match (dynamic_block_normalized_bbox(block), response_left) {
+        (Some(bbox), Some(response_left)) => bbox[0] + 8.0 <= response_left,
+        // Synthetic/unit inputs and some non-PDF sources have no geometry.
+        // Keep the textual fallback deliberately narrow; the caller still
+        // requires an explicit bullet-owned numbered blank.
+        _ => text.split_whitespace().count() <= 4,
+    }
+}
+
+/// Recover one row from a note-like completion tree.  PDF extraction commonly
+/// flattens the visual hierarchy into independent blocks:
+///
+/// ```text
+/// Construction
+/// • descriptive row without a response
+/// • Over a million tiles from 9 ______
+/// Use
+/// • 11 ______ companies ...
+/// ```
+///
+/// A question owns its numbered bullet plus wrapped continuations, while the
+/// most recent less-indented short heading supplies the row's semantic context.
+/// A new bullet, response slot, or section heading is a hard boundary.  This is
+/// source-backed and intentionally does not manufacture a heading or slot.
+fn dynamic_note_row_prompt_for_number(
+    blocks: &[Value],
+    number: u32,
+    range_start: u32,
+    range_end: u32,
+) -> Option<(String, Vec<String>)> {
+    let marker_index = blocks.iter().position(|block| {
+        dynamic_note_response_marker(&dynamic_block_text(block), number)
+            && is_dynamic_note_bullet(&dynamic_block_text(block))
+    })?;
+    let marker_block = &blocks[marker_index];
+    let response_left = dynamic_block_normalized_bbox(marker_block).map(|bbox| bbox[0]);
+
+    let heading_index = (0..marker_index)
+        .rev()
+        .find(|index| is_dynamic_note_section_heading(&blocks[*index], response_left))?;
+
+    // A note tree is stronger than an isolated bullet.  Require another bullet
+    // in the same source run so ordinary bulleted prose is never promoted to a
+    // completion layout solely because it happens to contain a number.
+    if !blocks.iter().enumerate().any(|(index, block)| {
+        index != marker_index && is_dynamic_note_bullet(&dynamic_block_text(block))
+    }) {
+        return None;
+    }
+
+    let mut row_end = marker_index + 1;
+    while row_end < blocks.len() {
+        let block = &blocks[row_end];
+        let text = dynamic_block_text(block);
+        let has_response_slot = (range_start..=range_end)
+            .any(|candidate| dynamic_note_response_marker(&text, candidate));
+        if has_response_slot
+            || is_dynamic_note_bullet(&text)
+            || is_dynamic_note_section_heading(block, response_left)
+            || is_dynamic_instruction_signal(&text)
+        {
+            break;
+        }
+        if !is_dynamic_local_completion_continuation(&blocks[row_end - 1], block) {
+            break;
+        }
+        row_end += 1;
+    }
+
+    let row_text = blocks[marker_index..row_end]
+        .iter()
+        .map(dynamic_block_text)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let row_prompt = dynamic_note_row_text_prompt(&row_text, number);
+    if row_prompt.trim().is_empty()
+        || !dynamic_completion_foreign_slots(&row_prompt, number, range_start, range_end).is_empty()
+    {
+        return None;
+    }
+
+    let heading = collapse_whitespace(&dynamic_block_text(&blocks[heading_index]));
+    let prompt = collapse_whitespace(&format!("{heading}: {row_prompt}"));
+    let source_ids = std::iter::once(&blocks[heading_index])
+        .chain(blocks[marker_index..row_end].iter())
+        .map(dynamic_block_id)
+        .filter(|block_id| !block_id.is_empty())
+        .collect::<Vec<_>>();
+    Some((prompt, source_ids))
 }
 
 fn dynamic_gap_sentence_prompt_from_blocks(
@@ -7699,6 +7947,25 @@ pub(crate) fn make_dynamic_authoring_ir(
                             }
                         }
                     }
+                    if completion_recovery && layout_hint == "inline_completion" {
+                        if let Some((recovered, source_ids)) = dynamic_note_row_prompt_for_number(
+                            &group_blocks,
+                            number,
+                            start,
+                            end,
+                        ) {
+                            // Prefer the geometry-closed note row over the
+                            // generic linear prompt.  The latter starts after
+                            // the numeric marker and can therefore discard the
+                            // row prefix or run into the following section.
+                            prompt = recovered;
+                            for source_id in source_ids {
+                                if !question_source_block_ids.iter().any(|id| id == &source_id) {
+                                    question_source_block_ids.push(source_id);
+                                }
+                            }
+                        }
+                    }
                     if completion_recovery && prompt.trim().is_empty() {
                         if let Some((recovered, block_id, inferred)) =
                             dynamic_table_row_prompt_for_number(&group_blocks, number, start, end)
@@ -9201,6 +9468,130 @@ mod tests {
     }
 
     #[test]
+    fn note_rows_keep_section_context_and_close_before_neighbouring_bullets() {
+        let block = |id: &str, text: &str, left: f64, top: f64, right: f64| {
+            json!({
+                "blockId": id,
+                "text": text,
+                "pageIndex": 4,
+                "bbox": [left, top - 8.4, right, top],
+                "_epic8LayoutSection": 0,
+                "_epic8SectionColumns": 1,
+                "_epic8ColumnIndex": 0
+            })
+        };
+        let blocks = vec![
+            block("title", "A landmark building", 227.0, 613.0, 360.0),
+            block("cost-heading", "Final cost", 61.0, 590.0, 114.0),
+            block("q8", "• 8 $ ____________", 82.0, 567.0, 184.0),
+            block("construction", "Construction", 61.0, 536.0, 129.0),
+            block(
+                "construction-row-1",
+                "• A large platform acting as a base for the building",
+                82.0,
+                512.0,
+                341.0,
+            ),
+            block(
+                "construction-row-2",
+                "• Concrete panels used to make shells",
+                82.0,
+                489.0,
+                427.0,
+            ),
+            block(
+                "q9",
+                "• Over a million tiles from 9 ____________",
+                82.0,
+                465.0,
+                303.0,
+            ),
+            block(
+                "q10",
+                "• 10 ____________ from Australia covering the outside walls",
+                82.0,
+                442.0,
+                399.0,
+            ),
+            block("use", "Use", 61.0, 411.0, 77.0),
+            block(
+                "q11",
+                "• 11 ____________ performing-arts companies have their home base at the Opera",
+                83.0,
+                388.0,
+                516.0,
+            ),
+            block("q11-wrap", "House", 107.0, 372.0, 136.0),
+            block("outside", "Outside", 61.0, 317.0, 100.0),
+            block(
+                "q12",
+                "• A large 12 ____________ at the foot of a wide staircase",
+                82.0,
+                294.0,
+                381.0,
+            ),
+            block("alterations", "Alterations", 61.0, 263.0, 118.0),
+            block(
+                "plain-alteration",
+                "• A colonnade was added in 2006",
+                82.0,
+                239.0,
+                255.0,
+            ),
+            block(
+                "q13",
+                "• Openings made the 13 ____________ visible from foyers",
+                82.0,
+                216.0,
+                389.0,
+            ),
+        ];
+
+        let expected = [
+            (8, "Final cost: • $ ____________"),
+            (
+                9,
+                "Construction: • Over a million tiles from ____________",
+            ),
+            (
+                10,
+                "Construction: • ____________ from Australia covering the outside walls",
+            ),
+            (
+                11,
+                "Use: • ____________ performing-arts companies have their home base at the Opera House",
+            ),
+            (
+                12,
+                "Outside: • A large ____________ at the foot of a wide staircase",
+            ),
+            (
+                13,
+                "Alterations: • Openings made the ____________ visible from foyers",
+            ),
+        ];
+        for (number, expected_prompt) in expected {
+            let (prompt, source_ids) =
+                dynamic_note_row_prompt_for_number(&blocks, number, 8, 13).expect("note row");
+            assert_eq!(prompt, expected_prompt, "Q{number}");
+            assert!(
+                dynamic_completion_foreign_slots(&prompt, number, 8, 13).is_empty(),
+                "Q{number} must not own another response slot"
+            );
+            assert!(source_ids.iter().any(|id| id == &format!("q{number}")));
+        }
+    }
+
+    #[test]
+    fn isolated_bulleted_numeric_prose_is_not_promoted_to_a_note_tree() {
+        let blocks = [json!({
+            "blockId": "only-row",
+            "text": "• In 8 regions the survey recorded ______ responses"
+        })];
+        assert!(dynamic_note_row_prompt_for_number(&blocks, 8, 8, 8).is_none());
+    }
+
+    #[test]
     fn sentence_completion_stops_at_next_display_number_before_its_later_gap() {
         let blocks = [
             json!({"blockId":"q6-a","text":"6 In France, people changed their opinion because the King put a"}),
@@ -9887,6 +10278,122 @@ mod tests {
                 .map(Vec::len),
             Some(0)
         );
+    }
+
+    #[test]
+    fn long_numbered_article_sections_do_not_become_heading_free_questions() {
+        let job = test_job();
+        let long_prose = "Tourism changes local institutions and economic relationships over many years while residents, public agencies, investors, and visitors respond to incentives that were never designed as examination tasks. The discussion continues with historical examples, qualifications, competing interpretations, and consequences for communities, infrastructure, culture, employment, public finance, conservation, and political authority across multiple regions and generations.";
+        let texts = [
+            "READING PASSAGE 3",
+            "Nine tensions in the development of tourism",
+            "1. Tourism promises authenticity while changing the host community.",
+            long_prose,
+            "2. Investment can expand access while increasing dependency.",
+            long_prose,
+            "3. What is environmentally sustainable is often commercially difficult.",
+            long_prose,
+            "4. Cultural preservation can also transform the culture being presented.",
+            long_prose,
+        ];
+        let blocks = texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| {
+                json!({
+                    "blockId": format!("b{:03}", index + 1),
+                    "blockType": "paragraph",
+                    "text": text,
+                    "html": format!("<p>{}</p>", text),
+                    "pageIndex": 1 + index / 4,
+                    "roleHint": if index >= 2 { "question" } else { "passage" },
+                    "confidence": 0.99
+                })
+            })
+            .collect::<Vec<_>>();
+        let all_block_ids = blocks.iter().map(dynamic_block_id).collect::<Vec<_>>();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "pages": [{"pageIndex": 1, "width": 595, "height": 842, "blocks": blocks}],
+            "assets": []
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split
+                .get("questionGroupCandidates")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(
+            split.pointer("/passageCandidates/0/range"),
+            Some(&json!(all_block_ids))
+        );
+        assert!(split
+            .get("issues")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .any(|issue| issue.starts_with("QUESTION_STRUCTURE_NOT_DETECTED:")));
+
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            authoring
+                .get("groups")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn short_explicit_questions_without_a_range_heading_remain_recoverable() {
+        let job = test_job();
+        let texts = [
+            "The archive preserves records from the nineteenth century.",
+            "1 What service did the archive introduce first?",
+            "2 Why did local researchers support the change?",
+        ];
+        let blocks = texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| {
+                json!({
+                    "blockId": format!("b{:03}", index + 1),
+                    "blockType": "paragraph",
+                    "text": text,
+                    "html": format!("<p>{}</p>", text),
+                    "pageIndex": 1,
+                    "roleHint": if index == 0 { "passage" } else { "question" },
+                    "confidence": 0.99
+                })
+            })
+            .collect::<Vec<_>>();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "pages": [{"pageIndex": 1, "width": 595, "height": 842, "blocks": blocks}],
+            "assets": []
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split.pointer("/questionGroupCandidates/0/questionRange"),
+            Some(&json!([1, 2]))
+        );
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            authoring
+                .pointer("/groups/0/questions")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert!(authoring
+            .pointer("/groups/0/questions/0/prompt")
+            .and_then(Value::as_str)
+            .is_some_and(|prompt| prompt.ends_with('?')));
     }
 
     #[test]

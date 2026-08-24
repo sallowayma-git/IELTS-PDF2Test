@@ -206,6 +206,26 @@ pub struct AssetDescriptorV2 {
     pub decorative: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_anchor: Option<SourceAnchorV2>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_question_region: Option<DiagramQuestionRegionV2>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct DiagramQuestionRegionV2 {
+    pub question_range: [u32; 2],
+    pub expected_numbers: Vec<u32>,
+    pub recovery_status: DiagramQuestionRecoveryStatusV2,
+    pub number_closure: bool,
+    pub source_backed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagramQuestionRecoveryStatusV2 {
+    OcrRequired,
+    Recovered,
 }
 
 pub type JsonObjectV2 = BTreeMap<String, Value>;
