@@ -205,7 +205,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the answer supported by the source."
             },
@@ -248,7 +248,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -290,7 +290,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ],
@@ -469,6 +469,7 @@
                 }
               },
               "pageIndex": 1,
+              "roleHint": "question",
               "text": "Choose the answer supported by the source."
             },
             {
@@ -500,9 +501,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 565.1849975585938,
@@ -516,10 +517,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -527,7 +528,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -546,7 +547,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -554,9 +555,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 526.1849975585938,
@@ -570,10 +571,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -779,7 +780,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the answer supported by the source."
             },
@@ -822,7 +823,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -864,7 +865,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ]

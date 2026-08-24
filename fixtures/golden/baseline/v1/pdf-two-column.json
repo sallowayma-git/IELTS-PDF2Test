@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 1,
-    "blockCount": 14,
+    "blockCount": 13,
     "groupCount": 1,
     "slotCount": 4,
     "assetCount": 0,
@@ -67,6 +67,7 @@
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
+            "b004",
             "b005",
             "b006",
             "b007",
@@ -75,11 +76,16 @@
             "b010",
             "b011",
             "b012",
-            "b013",
-            "b014"
+            "b013"
           ],
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b004",
+              "reason": "same-section-continuation",
+              "toBlockId": "b005"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b005",
@@ -127,12 +133,6 @@
               "fromBlockId": "b012",
               "reason": "same-section-continuation",
               "toBlockId": "b013"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b013",
-              "reason": "same-section-continuation",
-              "toBlockId": "b014"
             }
           ],
           "groupId": "group-1",
@@ -168,6 +168,7 @@
               "prompt": "The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b004",
                 "b005",
                 "b006",
                 "b007",
@@ -176,8 +177,7 @@
                 "b010",
                 "b011",
                 "b012",
-                "b013",
-                "b014"
+                "b013"
               ],
               "verified": false
             },
@@ -198,6 +198,7 @@
               "prompt": "The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b004",
                 "b005",
                 "b006",
                 "b007",
@@ -206,8 +207,7 @@
                 "b010",
                 "b011",
                 "b012",
-                "b013",
-                "b014"
+                "b013"
               ],
               "verified": false
             },
@@ -228,6 +228,7 @@
               "prompt": "The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b004",
                 "b005",
                 "b006",
                 "b007",
@@ -236,8 +237,7 @@
                 "b010",
                 "b011",
                 "b012",
-                "b013",
-                "b014"
+                "b013"
               ],
               "verified": false
             },
@@ -258,6 +258,7 @@
               "prompt": "The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b004",
                 "b005",
                 "b006",
                 "b007",
@@ -266,8 +267,7 @@
                 "b010",
                 "b011",
                 "b012",
-                "b013",
-                "b014"
+                "b013"
               ],
               "verified": false
             }
@@ -282,7 +282,7 @@
                 396.62701416015625,
                 624.2000122070312
               ],
-              "blockId": "b005",
+              "blockId": "b004",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -303,7 +303,7 @@
                 617.1270141601562,
                 609.2000122070312
               ],
-              "blockId": "b006",
+              "blockId": "b005",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -324,7 +324,7 @@
                 569.1119384765625,
                 588.2000122070312
               ],
-              "blockId": "b007",
+              "blockId": "b006",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -345,7 +345,7 @@
                 389.0220031738281,
                 573.2000122070312
               ],
-              "blockId": "b008",
+              "blockId": "b007",
               "column": 0,
               "normalizedBbox": [
                 348,
@@ -366,7 +366,7 @@
                 569.1119384765625,
                 549.2000122070312
               ],
-              "blockId": "b009",
+              "blockId": "b008",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -387,7 +387,7 @@
                 389.0220031738281,
                 534.2000122070312
               ],
-              "blockId": "b010",
+              "blockId": "b009",
               "column": 0,
               "normalizedBbox": [
                 348,
@@ -408,7 +408,7 @@
                 569.1119384765625,
                 510.20001220703125
               ],
-              "blockId": "b011",
+              "blockId": "b010",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -429,7 +429,7 @@
                 389.0220031738281,
                 495.20001220703125
               ],
-              "blockId": "b012",
+              "blockId": "b011",
               "column": 0,
               "normalizedBbox": [
                 348,
@@ -450,7 +450,7 @@
                 569.1119384765625,
                 471.20001220703125
               ],
-              "blockId": "b013",
+              "blockId": "b012",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -471,7 +471,7 @@
                 389.0220031738281,
                 456.20001220703125
               ],
-              "blockId": "b014",
+              "blockId": "b013",
               "column": 0,
               "normalizedBbox": [
                 348,
@@ -487,6 +487,7 @@
             }
           ],
           "sourceBlockIds": [
+            "b004",
             "b005",
             "b006",
             "b007",
@@ -495,8 +496,7 @@
             "b010",
             "b011",
             "b012",
-            "b013",
-            "b014"
+            "b013"
           ],
           "verified": false
         }
@@ -505,15 +505,14 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic two-column reading fixture</p>\n<p>The left column contains a passage whose lines Column two contains question material and must</p>\n<p>must be read top to bottom before the right column. not be merged into the passage text.</p>\n<p>This is a controlled reading-order fixture.</p>"
+            "html": "<p>Synthetic two-column reading fixture</p>\n<p>The left column contains a passage whose lines Column two contains question material and must must be read top to bottom before the right column. not be merged into the passage text.</p>\n<p>This is a controlled reading-order fixture.</p>"
           }
         ],
         "questionUmbrellaRanges": [],
         "sourceBlockIds": [
           "b001",
           "b002",
-          "b003",
-          "b004"
+          "b003"
         ],
         "title": "Synthetic two-column reading fixture"
       },
@@ -540,7 +539,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 48,
                 743.7999877929688,
@@ -554,7 +553,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -565,80 +564,53 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
                 48,
-                695.7999877929688,
+                680.7999877929688,
                 542.8599853515625,
                 704.2000122070312
               ],
               "blockId": "b002",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The left column contains a passage whose lines Column two contains question material and must</p>",
+              "html": "<p>The left column contains a passage whose lines Column two contains question material and must must be read top to bottom before the right column. not be merged into the passage text.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "The left column contains a passage whose lines Column two contains question material and must"
+              "text": "The left column contains a passage whose lines Column two contains question material and must must be read top to bottom before the right column. not be merged into the passage text."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
-              "bbox": [
-                48,
-                680.7999877929688,
-                489.53997802734375,
-                689.2000122070312
-              ],
-              "blockId": "b003",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>must be read top to bottom before the right column. not be merged into the passage text.</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 1,
-                    "current": 0
-                  },
-                  "index": 2
-                }
-              },
-              "pageIndex": 1,
-              "text": "must be read top to bottom before the right column. not be merged into the passage text."
-            },
-            {
-              "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 3,
-              "_epic8SectionColumns": 2,
               "bbox": [
                 48,
                 665.7999877929688,
                 224.16998291015625,
                 674.2000122070312
               ],
-              "blockId": "b004",
+              "blockId": "b003",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>This is a controlled reading-order fixture.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 2,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -646,8 +618,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 4,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
                 330,
@@ -655,7 +627,7 @@
                 396.62701416015625,
                 624.2000122070312
               ],
-              "blockId": "b005",
+              "blockId": "b004",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 1-4</h3>",
@@ -665,7 +637,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -674,8 +646,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 5,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
                 330,
@@ -683,7 +655,7 @@
                 617.1270141601562,
                 609.2000122070312
               ],
-              "blockId": "b006",
+              "blockId": "b005",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Do the statements agree with the passage? TRUE / FALSE / NOT GIVEN</p>",
@@ -693,7 +665,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -702,8 +674,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 6,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
                 330,
@@ -711,7 +683,7 @@
                 569.1119384765625,
                 588.2000122070312
               ],
-              "blockId": "b007",
+              "blockId": "b006",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>1. The source statement describes a synthetic test condition.</p>",
@@ -721,7 +693,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -729,8 +701,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 7,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
                 348,
@@ -738,7 +710,7 @@
                 389.0220031738281,
                 573.2000122070312
               ],
-              "blockId": "b008",
+              "blockId": "b007",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>A B C D</p>",
@@ -748,7 +720,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -756,8 +728,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 8,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
                 330,
@@ -765,7 +737,7 @@
                 569.1119384765625,
                 549.2000122070312
               ],
-              "blockId": "b009",
+              "blockId": "b008",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>2. The source statement describes a synthetic test condition.</p>",
@@ -775,7 +747,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -783,8 +755,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 9,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
                 348,
@@ -792,7 +764,7 @@
                 389.0220031738281,
                 534.2000122070312
               ],
-              "blockId": "b010",
+              "blockId": "b009",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>A B C D</p>",
@@ -802,7 +774,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -810,8 +782,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 10,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
                 330,
@@ -819,7 +791,7 @@
                 569.1119384765625,
                 510.20001220703125
               ],
-              "blockId": "b011",
+              "blockId": "b010",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>3. The source statement describes a synthetic test condition.</p>",
@@ -829,7 +801,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -837,8 +809,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 11,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
                 348,
@@ -846,7 +818,7 @@
                 389.0220031738281,
                 495.20001220703125
               ],
-              "blockId": "b012",
+              "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>A B C D</p>",
@@ -856,7 +828,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -864,8 +836,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 12,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
                 330,
@@ -873,7 +845,7 @@
                 569.1119384765625,
                 471.20001220703125
               ],
-              "blockId": "b013",
+              "blockId": "b012",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>4. The source statement describes a synthetic test condition.</p>",
@@ -883,7 +855,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -891,8 +863,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 13,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
                 348,
@@ -900,7 +872,7 @@
                 389.0220031738281,
                 456.20001220703125
               ],
-              "blockId": "b014",
+              "blockId": "b013",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>A B C D</p>",
@@ -910,7 +882,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -954,7 +926,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic two-column reading fixture</p>\n<p>The left column contains a passage whose lines Column two contains question material and must</p>\n<p>must be read top to bottom before the right column. not be merged into the passage text.</p>\n<p>This is a controlled reading-order fixture.</p>",
+            "html": "<p>Synthetic two-column reading fixture</p>\n<p>The left column contains a passage whose lines Column two contains question material and must must be read top to bottom before the right column. not be merged into the passage text.</p>\n<p>This is a controlled reading-order fixture.</p>",
             "kind": "html"
           }
         ]
@@ -1008,8 +980,7 @@
           "range": [
             "b001",
             "b002",
-            "b003",
-            "b004"
+            "b003"
           ],
           "title": "Synthetic two-column reading fixture"
         }
@@ -1017,6 +988,7 @@
       "questionGroupCandidates": [
         {
           "blockIds": [
+            "b004",
             "b005",
             "b006",
             "b007",
@@ -1025,12 +997,12 @@
             "b010",
             "b011",
             "b012",
-            "b013",
-            "b014"
+            "b013"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
+              "b004",
               "b005",
               "b006",
               "b007",
@@ -1039,8 +1011,7 @@
               "b010",
               "b011",
               "b012",
-              "b013",
-              "b014"
+              "b013"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -1056,6 +1027,12 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b004",
+              "reason": "same-section-continuation",
+              "toBlockId": "b005"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b005",
@@ -1103,12 +1080,6 @@
               "fromBlockId": "b012",
               "reason": "same-section-continuation",
               "toBlockId": "b013"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b013",
-              "reason": "same-section-continuation",
-              "toBlockId": "b014"
             }
           ],
           "groupId": "group-1",
@@ -1128,7 +1099,7 @@
                 396.62701416015625,
                 624.2000122070312
               ],
-              "blockId": "b005",
+              "blockId": "b004",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -1149,7 +1120,7 @@
                 617.1270141601562,
                 609.2000122070312
               ],
-              "blockId": "b006",
+              "blockId": "b005",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -1170,7 +1141,7 @@
                 569.1119384765625,
                 588.2000122070312
               ],
-              "blockId": "b007",
+              "blockId": "b006",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -1191,7 +1162,7 @@
                 389.0220031738281,
                 573.2000122070312
               ],
-              "blockId": "b008",
+              "blockId": "b007",
               "column": 0,
               "normalizedBbox": [
                 348,
@@ -1212,7 +1183,7 @@
                 569.1119384765625,
                 549.2000122070312
               ],
-              "blockId": "b009",
+              "blockId": "b008",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -1233,7 +1204,7 @@
                 389.0220031738281,
                 534.2000122070312
               ],
-              "blockId": "b010",
+              "blockId": "b009",
               "column": 0,
               "normalizedBbox": [
                 348,
@@ -1254,7 +1225,7 @@
                 569.1119384765625,
                 510.20001220703125
               ],
-              "blockId": "b011",
+              "blockId": "b010",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -1275,7 +1246,7 @@
                 389.0220031738281,
                 495.20001220703125
               ],
-              "blockId": "b012",
+              "blockId": "b011",
               "column": 0,
               "normalizedBbox": [
                 348,
@@ -1296,7 +1267,7 @@
                 569.1119384765625,
                 471.20001220703125
               ],
-              "blockId": "b013",
+              "blockId": "b012",
               "column": 0,
               "normalizedBbox": [
                 330,
@@ -1317,7 +1288,7 @@
                 389.0220031738281,
                 456.20001220703125
               ],
-              "blockId": "b014",
+              "blockId": "b013",
               "column": 0,
               "normalizedBbox": [
                 348,

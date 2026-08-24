@@ -386,7 +386,7 @@
     "v1Path": "fixtures/golden/baseline/v1/petri-dish.json",
     "observed": {
       "pageCount": 7,
-      "blockCount": 70,
+      "blockCount": 69,
       "groupCount": 3,
       "slotCount": 16,
       "assetCount": 0,

@@ -76,7 +76,7 @@
     "v1Path": "fixtures/golden/baseline/v1/pdf-three-column.json",
     "observed": {
       "pageCount": 1,
-      "blockCount": 18,
+      "blockCount": 19,
       "groupCount": 1,
       "slotCount": 6,
       "assetCount": 0,

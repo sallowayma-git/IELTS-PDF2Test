@@ -293,7 +293,7 @@
     "v1Path": "fixtures/golden/baseline/v1/fishbourne-roman-palace.json",
     "observed": {
       "pageCount": 5,
-      "blockCount": 48,
+      "blockCount": 50,
       "groupCount": 2,
       "slotCount": 13,
       "assetCount": 0,

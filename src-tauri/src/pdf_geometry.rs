@@ -406,6 +406,65 @@ fn line_bbox(line: &[CharWithOrigin], y_tol: f32) -> [f32; 4] {
     [x0, y0 - pad, x1, y1 + pad]
 }
 
+/// Normalize whitespace artifacts introduced by PDF text matrices without
+/// changing the source characters themselves.  Pdfium can expose a small
+/// positive advance as a word gap after a page rotation, which yields text
+/// such as `troubles .` or `High - level`.  Closing punctuation never needs a
+/// leading space, and an ASCII hyphen between a multi-letter word and a
+/// lowercase continuation is a compound-word join rather than a list/range
+/// separator.  Keep the rule deliberately narrow so `A - B` remains spaced.
+fn canonicalize_extracted_line_text(text: &str) -> String {
+    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let chars = collapsed.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(collapsed.len());
+    let mut index = 0usize;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if matches!(
+            ch,
+            '.' | ',' | ';' | ':' | '?' | '!' | '%' | ')' | ']' | '}'
+        ) {
+            while output.ends_with(' ') {
+                output.pop();
+            }
+            output.push(ch);
+            index += 1;
+            continue;
+        }
+
+        if ch == '-' {
+            let previous_word_len = output
+                .trim_end()
+                .chars()
+                .rev()
+                .take_while(|candidate| candidate.is_alphabetic())
+                .count();
+            let next = chars
+                .iter()
+                .skip(index + 1)
+                .copied()
+                .find(|candidate| !candidate.is_whitespace());
+            if previous_word_len >= 2 && next.is_some_and(|candidate| candidate.is_lowercase()) {
+                while output.ends_with(' ') {
+                    output.pop();
+                }
+                output.push('-');
+                index += 1;
+                while index < chars.len() && chars[index].is_whitespace() {
+                    index += 1;
+                }
+                continue;
+            }
+        }
+
+        output.push(ch);
+        index += 1;
+    }
+
+    output
+}
+
 fn line_split_gap(line: &[CharWithOrigin], split_x: f32) -> Option<f32> {
     let left = line.iter().rev().find(|ch| ch.x < split_x)?;
     let right = line.iter().find(|ch| ch.x >= split_x)?;
@@ -426,7 +485,82 @@ fn is_full_width_banner_row(
     let right_count = line.len().saturating_sub(left_count);
     if left_count > 0 && right_count > 0 {
         let split_gap = line_split_gap(line, split_x).unwrap_or(page_x_span);
-        let max_continuous_gap = line_word_gap_threshold(line).max(page_x_span * 0.035);
+        // Keep the crossing-gap threshold tied to typography rather than a
+        // percentage of the page width. A compact two-column gutter can be
+        // only ~18pt; treating that as a continuous banner line would merge
+        // both columns before the geometry splitter gets a chance to bucket
+        // them. Centered banners still have a normal word gap here.
+        let max_continuous_gap = line_word_gap_threshold(line).max(14.0).min(16.0);
+        // A row can have a short literal gap even though it is two independent
+        // column lines (a long left question ending just before an option in
+        // the right column). Preserve the split when both sides start from
+        // their respective column edges. Centered banners start near the
+        // middle of the page and therefore do not satisfy this geometry.
+        let left_start = line
+            .iter()
+            .filter(|ch| ch.x < split_x)
+            .map(|ch| ch.x)
+            .fold(f32::MAX, f32::min);
+        let right_start = line
+            .iter()
+            .filter(|ch| ch.x >= split_x)
+            .map(|ch| ch.x)
+            .fold(f32::MAX, f32::min);
+        // A reflowed two-column PDF can place a long left-column line right up
+        // against the next column's first glyph. In that case the right glyph
+        // starts only a few points after the gutter (the nominal 18pt gutter
+        // is consumed by the left line's final word). Treat this as two
+        // independent column starts when the left side is page-edge anchored
+        // and substantial enough to be a real text line. The old lower bound
+        // (`split + 2%`) rejected this exact geometry and classified it as a
+        // full-width banner.
+        let right_column_edge_offset = right_start - split_x;
+        let left_last_char = line
+            .iter()
+            .filter(|ch| ch.x < split_x && !ch.ch.is_whitespace())
+            .max_by(|a, b| a.x.total_cmp(&b.x))
+            .map(|ch| ch.ch);
+        let mut right_chars = line
+            .iter()
+            .filter(|ch| ch.x >= split_x && !ch.ch.is_whitespace())
+            .copied()
+            .collect::<Vec<_>>();
+        right_chars.sort_by(|a, b| a.x.total_cmp(&b.x));
+        let right_first_char = right_chars.first().map(|ch| ch.ch);
+        let right_lowercase_prefix_len = right_chars
+            .iter()
+            .take_while(|ch| ch.ch.is_ascii_lowercase())
+            .count();
+        let right_prefix_is_option_tail = right_lowercase_prefix_len > 0
+            && right_chars
+                .iter()
+                .nth(right_lowercase_prefix_len)
+                .is_some_and(|ch| ch.ch.is_ascii_uppercase())
+            && right_lowercase_prefix_len <= 3;
+        // A word may be physically split across a compact gutter (`Ques` +
+        // `tions`, or `Ne` + `il`). Treat that as one continuous row when the
+        // next fragment is long enough to be a word continuation. A short
+        // lowercase prefix followed by an uppercase option label (`n C`) is
+        // deliberately excluded; that is a question/option boundary and is
+        // repaired after column assignment instead.
+        let split_word_continuation = left_last_char.is_some_and(|ch| ch.is_ascii_lowercase())
+            && right_first_char.is_some_and(|ch| ch.is_ascii_lowercase())
+            && right_lowercase_prefix_len > 0
+            && !right_prefix_is_option_tail
+            && split_gap <= max_continuous_gap;
+        let split_number_continuation = left_last_char.is_some_and(|ch| ch.is_ascii_digit())
+            && right_first_char.is_some_and(|ch| ch.is_ascii_digit())
+            && split_gap <= max_continuous_gap;
+        let independent_column_starts = left_start <= x_min_global + page_x_span * 0.12
+            && right_column_edge_offset >= -1.0
+            && right_column_edge_offset <= 5.0
+            && left_count >= 20;
+        if independent_column_starts {
+            return false;
+        }
+        if split_word_continuation || split_number_continuation {
+            return true;
+        }
         return split_gap <= max_continuous_gap.max(14.0);
     }
 
@@ -439,6 +573,233 @@ fn is_full_width_banner_row(
         && width <= page_x_span * 0.42
         && bbox[0] >= split_x - page_x_span * 0.24
         && bbox[2] <= split_x + page_x_span * 0.24
+}
+
+/// Repair a word that was physically split at a narrow column boundary.
+///
+/// The safe legacy case is an option label following the final letter of a
+/// question (`a` + `n C ...`). Move only that short lowercase prefix back to
+/// the left row. Lowercase text alone is ambiguous and remains untouched
+/// unless the dominant-edge repair below can prove its source ownership.
+fn repair_cross_column_word_prefix(
+    left: &mut Vec<CharWithOrigin>,
+    right: &mut Vec<CharWithOrigin>,
+    split_x: f32,
+) {
+    if left.is_empty() || right.is_empty() {
+        return;
+    }
+    left.sort_by(|a, b| a.x.total_cmp(&b.x));
+    right.sort_by(|a, b| a.x.total_cmp(&b.x));
+    let left_last = left.last().copied();
+    let right_first = right.first().copied();
+    let (Some(left_last), Some(right_first)) = (left_last, right_first) else {
+        return;
+    };
+    if !left_last.ch.is_ascii_alphabetic()
+        || right_first.x - split_x < -1.0
+        || right_first.x - split_x > 5.0
+        || right_first.x - left_last.x > 14.0
+    {
+        return;
+    }
+
+    // Keep this legacy repair to the unambiguous option-tail shape (`n C`).
+    // Ordinary lowercase text, including a short all-lowercase right-column
+    // opening, is not sufficient evidence by itself. Longer source spans such
+    // as `from price` and whitespace-bearing `e time therapies` are handled
+    // below only after a repeated physical right edge has been established.
+    let lowercase_prefix_len = right
+        .iter()
+        .enumerate()
+        .take_while(|(index, ch)| {
+            if !ch.ch.is_ascii_lowercase() {
+                return false;
+            }
+            if *index == 0 {
+                return true;
+            }
+            ch.x - right[*index - 1].x <= 14.0
+        })
+        .count();
+    if lowercase_prefix_len == 0 || lowercase_prefix_len > 3 {
+        return;
+    }
+    let is_option_tail = right
+        .get(lowercase_prefix_len)
+        .is_some_and(|ch| ch.ch.is_ascii_uppercase());
+    if !is_option_tail {
+        return;
+    }
+    let moved = right.drain(..lowercase_prefix_len).collect::<Vec<_>>();
+    left.extend(moved);
+    left.sort_by(|a, b| a.x.total_cmp(&b.x));
+}
+
+/// Find the repeated physical start of the right column within one layout
+/// segment. The histogram gutter can be pulled left when a few long left
+/// lines enter the otherwise empty gutter. A true right-column edge is more
+/// stable: it recurs at (roughly) the same x on several independent rows.
+///
+/// Run starts, rather than just the first glyph to the right of `split_x`,
+/// matter here. A source row can contain both a left-column spill (`from`) and
+/// the real right-column text (`price ...`) separated by the remaining gutter.
+fn dominant_right_column_edge(rows: &[Vec<CharWithOrigin>], split_x: f32) -> Option<f32> {
+    #[derive(Clone, Copy)]
+    struct EdgeCluster {
+        x_sum: f32,
+        row_count: usize,
+        last_row: usize,
+    }
+
+    let mut candidates = Vec::<(usize, f32)>::new();
+    for (row_index, row) in rows.iter().enumerate() {
+        let mut glyphs = row
+            .iter()
+            .copied()
+            .filter(|ch| !ch.ch.is_whitespace())
+            .collect::<Vec<_>>();
+        glyphs.sort_by(|a, b| a.x.total_cmp(&b.x));
+        if glyphs.is_empty() {
+            continue;
+        }
+        let run_gap = line_word_gap_threshold(&glyphs).max(14.0);
+        for (index, ch) in glyphs.iter().enumerate() {
+            if ch.x < split_x {
+                continue;
+            }
+            let starts_run =
+                index == 0 || glyphs[index - 1].x < split_x || ch.x - glyphs[index - 1].x > run_gap;
+            if starts_run {
+                candidates.push((row_index, ch.x));
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+
+    candidates.sort_by(|left, right| left.1.total_cmp(&right.1));
+    let mut clusters = Vec::<EdgeCluster>::new();
+    for (row_index, x) in candidates {
+        let matching = clusters.iter_mut().find(|cluster| {
+            let center = cluster.x_sum / cluster.row_count as f32;
+            (center - x).abs() <= 6.0
+        });
+        if let Some(cluster) = matching {
+            // Count each physical row at most once in a cluster.
+            if cluster.last_row != row_index {
+                cluster.x_sum += x;
+                cluster.row_count += 1;
+                cluster.last_row = row_index;
+            }
+        } else {
+            clusters.push(EdgeCluster {
+                x_sum: x,
+                row_count: 1,
+                last_row: row_index,
+            });
+        }
+    }
+
+    clusters
+        .into_iter()
+        .filter(|cluster| {
+            let center = cluster.x_sum / cluster.row_count as f32;
+            center - split_x >= 16.0
+                && cluster.row_count >= 3
+                && cluster.row_count * 3 >= rows.len().max(1)
+        })
+        .max_by(|left, right| {
+            left.row_count.cmp(&right.row_count).then_with(|| {
+                let left_x = left.x_sum / left.row_count as f32;
+                let right_x = right.x_sum / right.row_count as f32;
+                left_x.total_cmp(&right_x)
+            })
+        })
+        .map(|cluster| cluster.x_sum / cluster.row_count as f32)
+}
+
+/// Reattach a left-column tail that the histogram gutter stranded in the
+/// right bucket. This deliberately requires three independent facts:
+///
+/// 1. a repeated right-column edge was established by other rows;
+/// 2. this row has real text at that edge as well as a prefix before it; and
+/// 3. that prefix is physically continuous with the left-column row.
+///
+/// The conjunction is what keeps genuine right-column openings such as
+/// `in contrast ...` or a standalone `map` in the right column: without a
+/// second run at the dominant edge they are never moved. Whitespace glyphs
+/// are retained with the moved source span, so the repair works with pdfium
+/// text layers that explicitly emit spaces.
+fn repair_cross_column_prefix_before_dominant_edge(
+    left: &mut Vec<CharWithOrigin>,
+    right: &mut Vec<CharWithOrigin>,
+    split_x: f32,
+    dominant_edge: f32,
+) {
+    if left.is_empty() || right.is_empty() || dominant_edge - split_x < 16.0 {
+        return;
+    }
+    left.sort_by(|a, b| a.x.total_cmp(&b.x));
+    right.sort_by(|a, b| a.x.total_cmp(&b.x));
+
+    let edge_floor = dominant_edge - 8.0;
+    let Some(left_last) = left.iter().rev().find(|ch| !ch.ch.is_whitespace()) else {
+        return;
+    };
+    let Some(prefix_first) = right
+        .iter()
+        .find(|ch| !ch.ch.is_whitespace() && ch.x < edge_floor)
+    else {
+        return;
+    };
+    let right_glyphs = right
+        .iter()
+        .copied()
+        .filter(|ch| !ch.ch.is_whitespace())
+        .collect::<Vec<_>>();
+    if let Some(edge_run_index) = right_glyphs.iter().position(|ch| ch.x >= edge_floor) {
+        if edge_run_index == 0 {
+            return;
+        }
+        let run_gap = line_word_gap_threshold(&right_glyphs).max(14.0);
+        if right_glyphs[edge_run_index].x - right_glyphs[edge_run_index - 1].x <= run_gap {
+            return;
+        }
+    } else if right_glyphs.len() > 3 {
+        // A very short row can consist solely of a stranded word tail (`Ne`
+        // + `il`). Once a repeated real right edge is known, up to three
+        // source-continuous glyphs entirely inside the gutter are not a real
+        // right-column opening. Longer text still needs a second run at the
+        // dominant edge as corroborating evidence.
+        return;
+    }
+
+    let mut combined = left.clone();
+    combined.extend(right.iter().copied().filter(|ch| ch.x < edge_floor));
+    combined.sort_by(|a, b| a.x.total_cmp(&b.x));
+    let continuity_limit = line_word_gap_threshold(&combined).max(14.0).min(16.0);
+    if prefix_first.x - left_last.x > continuity_limit {
+        return;
+    }
+
+    let mut moved = Vec::new();
+    let mut retained = Vec::new();
+    for ch in right.drain(..) {
+        if ch.x < edge_floor {
+            moved.push(ch);
+        } else {
+            retained.push(ch);
+        }
+    }
+    if !moved.iter().any(|ch| !ch.ch.is_whitespace()) {
+        *right = retained;
+        return;
+    }
+    left.extend(moved);
+    left.sort_by(|a, b| a.x.total_cmp(&b.x));
+    *right = retained;
 }
 
 fn band_looks_like_full_width_banner(
@@ -505,7 +866,16 @@ fn detect_column_split_x(
     }
     let min_gutter_width = (page_x_span * 0.10).max(28.0);
     let min_gutter_bins = ((min_gutter_width / bin_width).ceil() as usize).max(4);
-    if best_gutter_len < min_gutter_bins {
+    // A narrow gutter can still be a real column boundary when it repeats on
+    // the same baseline across several rows. Keep the old page-span minimum
+    // for ordinary layouts, but allow a >=16pt candidate through to the row
+    // evidence check below. This avoids manufacturing a split from one wide
+    // word gap while supporting compact two-column question sheets.
+    let narrow_gutter_min_width = 16.0;
+    let narrow_gutter_min_bins = (narrow_gutter_min_width / bin_width).ceil() as usize;
+    let is_narrow_candidate =
+        best_gutter_len >= narrow_gutter_min_bins && best_gutter_len < min_gutter_bins;
+    if best_gutter_len < min_gutter_bins && !is_narrow_candidate {
         return None;
     }
     let gutter_mid_bin = best_gutter_lo + best_gutter_len / 2;
@@ -552,27 +922,79 @@ fn detect_column_split_x(
     // old "rows_with_both_sides * 3 >= rows.len() * 2" heuristic, which
     // incorrectly rejected 3-column layouts.
     let mut straddle_with_small_gap = 0usize;
-    let small_gap_threshold = page_x_span * 0.035;
+    let mut straddle_rows = 0usize;
+    let mut repeated_large_gap = 0usize;
+    let mut left_supported_rows = 0usize;
+    let mut right_supported_rows = 0usize;
+    let small_gap_threshold = if is_narrow_candidate {
+        // A compact gutter is deliberately below the old page-span-derived
+        // threshold. Ordinary word spaces remain below this fixed bound.
+        14.0
+    } else {
+        page_x_span * 0.035
+    };
     for row in &rows {
         let has_left = row.2;
         let has_right = row.3;
-        if !(has_left && has_right) {
-            continue;
-        }
-        // Reconstruct this row's chars (sorted by x) to measure the gap at
-        // split_x. line_split_gap assumes an x-sorted line.
+        // Reconstruct this row's chars (sorted by x) both to count repeated
+        // vertical support on each side and, for crossing rows, to measure the
+        // gap at split_x. line_split_gap assumes an x-sorted line.
         let mut row_chars: Vec<CharWithOrigin> = chars
             .iter()
             .copied()
             .filter(|ch| (ch.y - row.0).abs() <= y_tol)
             .collect();
         row_chars.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+        let left_chars = row_chars.iter().filter(|ch| ch.x < split_x).count();
+        let right_chars = row_chars.len().saturating_sub(left_chars);
+        if left_chars >= 4 {
+            left_supported_rows += 1;
+        }
+        if right_chars >= 4 {
+            right_supported_rows += 1;
+        }
+        if !(has_left && has_right) {
+            continue;
+        }
+        if left_chars < 4 || right_chars < 4 {
+            continue;
+        }
+        straddle_rows += 1;
         let gap_at_split = line_split_gap(&row_chars, split_x).unwrap_or(page_x_span);
         if gap_at_split <= small_gap_threshold.max(14.0) {
             straddle_with_small_gap += 1;
         }
+        // Require a gap materially larger than a normal inter-word space for
+        // the narrow-candidate path. The repeated x-position plus this
+        // per-row gap evidence is what distinguishes a compact gutter from a
+        // paragraph whose words happen to leave one large space.
+        let row_gap_threshold = (line_word_gap_threshold(&row_chars) * 1.15).max(14.0);
+        if gap_at_split >= row_gap_threshold {
+            repeated_large_gap += 1;
+        }
     }
-    if rows.len() >= 2 && straddle_with_small_gap * 3 >= rows.len() * 2 {
+    // Character totals alone are not column evidence: one long instruction
+    // row can put dozens of glyphs on the otherwise empty side of a candidate
+    // while all table rows remain on the left. Require at least two distinct
+    // baselines with substantive text on each side. This intentionally favors
+    // a source-preserving single flow when there is not enough geometry to
+    // prove a second column.
+    if left_supported_rows < 2 || right_supported_rows < 2 {
+        return None;
+    }
+    if is_narrow_candidate && (straddle_rows < 3 || repeated_large_gap * 3 < straddle_rows * 2) {
+        return None;
+    }
+    // Judge word-gap evidence against the rows that actually CROSS the
+    // candidate, not every row in the band. A single-column completion block
+    // often has several short table rows plus two long control/answer rows;
+    // using all rows as the denominator let the repeated word gap in those
+    // long rows masquerade as a gutter (the checked-in complex fixture became
+    // three columns). Two or more crossing rows whose split gaps are mostly
+    // ordinary word spaces are affirmative evidence that this is continuous
+    // text. A lone crossing row is left to the banner logic so a centered
+    // heading does not erase a real surrounding column layout.
+    if straddle_rows >= 2 && straddle_with_small_gap * 3 >= straddle_rows * 2 {
         return None;
     }
     Some(split_x)
@@ -627,6 +1049,102 @@ fn detect_column_gutters_recursive(
     }
 }
 
+/// Return whether an apparent middle column is only a continuation of text
+/// that crossed the first gutter. A genuine middle column starts materially
+/// inside its bucket; a false recursive split has its first glyph almost on
+/// the candidate gutter in repeated rows.
+fn middle_bucket_is_gutter_continuation(
+    rows: &[Vec<CharWithOrigin>],
+    first_split: f32,
+    second_split: f32,
+) -> bool {
+    let mut middle_rows = 0usize;
+    let mut near_gutter_rows = 0usize;
+    let mut typographically_continuous_rows = 0usize;
+    for row in rows {
+        let middle = row
+            .iter()
+            .filter(|ch| ch.x >= first_split && ch.x < second_split)
+            .collect::<Vec<_>>();
+        if middle.len() < 4 {
+            continue;
+        }
+        middle_rows += 1;
+        let middle_start = middle.iter().map(|ch| ch.x).fold(f32::MAX, f32::min);
+        if middle_start - first_split <= 8.0 {
+            near_gutter_rows += 1;
+            // Starting close to the detected split is not sufficient evidence
+            // that this bucket is a stranded tail. Compact real columns can
+            // start immediately after a narrow gutter as well. Require the
+            // preceding glyph on the same baseline to be separated by no more
+            // than an ordinary word gap; a stable, wider separation is direct
+            // evidence for an independent middle column.
+            if let Some(split_gap) = line_split_gap(row, first_split) {
+                if split_gap <= line_word_gap_threshold(row) {
+                    typographically_continuous_rows += 1;
+                }
+            }
+        }
+    }
+    middle_rows >= 2
+        && near_gutter_rows * 3 >= middle_rows * 2
+        && typographically_continuous_rows * 3 >= middle_rows * 2
+}
+
+/// Decide whether moving a sparse edge band's gutter rightward only returns
+/// source-continuous text tails to the left column. The adjacent band must
+/// establish a repeated physical right-column edge, and every glyph whose
+/// owner would change must continue a same-baseline left run. Genuine shifted
+/// two-column panels fail this proof and retain their own gutter.
+fn sparse_edge_ownership_changes_are_left_continuations(
+    band_chars: &[CharWithOrigin],
+    current_split: f32,
+    adjacent_split: f32,
+    adjacent_chars: &[CharWithOrigin],
+) -> bool {
+    if current_split >= adjacent_split {
+        return false;
+    }
+    let adjacent_rows = build_raw_rows(adjacent_chars, estimate_y_tolerance(adjacent_chars));
+    let Some(dominant_edge) = dominant_right_column_edge(&adjacent_rows, adjacent_split) else {
+        return false;
+    };
+    if dominant_edge <= adjacent_split {
+        return false;
+    }
+
+    let rows = build_raw_rows(band_chars, estimate_y_tolerance(band_chars));
+    let mut changed_row_count = 0usize;
+    for row in rows {
+        let mut glyphs = row
+            .iter()
+            .copied()
+            .filter(|ch| !ch.ch.is_whitespace())
+            .collect::<Vec<_>>();
+        glyphs.sort_by(|left, right| left.x.total_cmp(&right.x));
+        let changed = glyphs
+            .iter()
+            .copied()
+            .filter(|ch| ch.x >= current_split && ch.x < adjacent_split)
+            .collect::<Vec<_>>();
+        if changed.is_empty() {
+            continue;
+        }
+        changed_row_count += 1;
+        if changed.iter().any(|ch| ch.x >= dominant_edge - 8.0) {
+            return false;
+        }
+        let Some(left_last) = glyphs.iter().rev().find(|ch| ch.x < current_split).copied() else {
+            return false;
+        };
+        let continuity_limit = line_word_gap_threshold(&glyphs).max(14.0).min(16.0);
+        if changed[0].x - left_last.x > continuity_limit {
+            return false;
+        }
+    }
+    changed_row_count > 0
+}
+
 fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
     if chars.is_empty() {
         return Vec::new();
@@ -669,14 +1187,15 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
         });
     }
 
-    // Fill thin empty bands between two bands that agree on their gutters, so a
-    // brief density valley doesn't split a continuous multi-column region in
-    // half. Only fills when the surrounding gutters match (same column count
-    // and close gutter x), and the band itself doesn't look like a full-width
-    // banner crossing the gutter.
+    // Fill empty bands between two bands that agree on their gutters, so a
+    // sparse or text-heavy row that does not independently expose a histogram
+    // valley does not split a continuous multi-column region in half. Only
+    // fills when the surrounding gutters match (same column count and close
+    // gutter x), and the band itself does not look like a full-width banner
+    // crossing the gutter.
     if bands.len() >= 3 {
         for index in 1..bands.len() - 1 {
-            if !bands[index].gutters.is_empty() || bands[index].char_count > 24 {
+            if !bands[index].gutters.is_empty() {
                 continue;
             }
             let prev = &bands[index - 1];
@@ -717,16 +1236,15 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
     // row is not a centered/full-width banner; otherwise it would be treated
     // as a new single-column section or have word gaps mistaken for gutters.
     if bands.len() >= 2 {
-        for index in [0usize, bands.len() - 1] {
-            if !bands[index].gutters.is_empty() {
-                continue;
-            }
+        // Repair the lower edge first so a reliable upper band is not
+        // overwritten by a misleading sparse lower-band candidate.
+        for index in [bands.len() - 1, 0usize] {
             let band_chars = chars
                 .iter()
                 .copied()
                 .filter(|ch| ch.y <= bands[index].y_top && ch.y > bands[index].y_bottom)
                 .collect::<Vec<_>>();
-            if build_raw_rows(&band_chars, estimate_y_tolerance(&band_chars)).len() > 1 {
+            if build_raw_rows(&band_chars, estimate_y_tolerance(&band_chars)).len() > 6 {
                 continue;
             }
             let neighbor_index = if index == 0 { 1 } else { bands.len() - 2 };
@@ -734,11 +1252,103 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
             if neighbor.gutters.is_empty() {
                 continue;
             }
+            // A sparse edge band may expose a misleading gutter, but equal
+            // column counts alone do not prove that it belongs to the same
+            // layout. An inset panel can have two real columns whose gutter
+            // is far from the adjacent two-column body. Replace an explicit
+            // edge candidate only when the gutter positions are close AND
+            // moving them would preserve every source glyph's column owner.
+            // An empty edge band can still inherit an established layout;
+            // that is the one-row continuation case this repair exists for.
+            if !bands[index].gutters.is_empty() {
+                if bands[index].gutters.len() != neighbor.gutters.len() {
+                    continue;
+                }
+                let gutter_tolerance = (page_x_span * 0.04).clamp(12.0, 24.0);
+                let gutters_close = bands[index]
+                    .gutters
+                    .iter()
+                    .zip(neighbor.gutters.iter())
+                    .all(|(edge, adjacent)| (edge - adjacent).abs() <= gutter_tolerance);
+                let ownership_unchanged = band_chars
+                    .iter()
+                    .filter(|ch| !ch.ch.is_whitespace())
+                    .all(|ch| {
+                        let edge_owner = bands[index]
+                            .gutters
+                            .iter()
+                            .filter(|&&gutter| ch.x >= gutter)
+                            .count();
+                        let adjacent_owner = neighbor
+                            .gutters
+                            .iter()
+                            .filter(|&&gutter| ch.x >= gutter)
+                            .count();
+                        edge_owner == adjacent_owner
+                    });
+                let source_continuation_proves_inheritance =
+                    if bands[index].gutters.len() == 1 && neighbor.gutters.len() == 1 {
+                        let neighbor_chars = chars
+                            .iter()
+                            .copied()
+                            .filter(|ch| ch.y <= neighbor.y_top && ch.y > neighbor.y_bottom)
+                            .collect::<Vec<_>>();
+                        sparse_edge_ownership_changes_are_left_continuations(
+                            &band_chars,
+                            bands[index].gutters[0],
+                            neighbor.gutters[0],
+                            &neighbor_chars,
+                        )
+                    } else {
+                        false
+                    };
+                if !(gutters_close && ownership_unchanged)
+                    && !source_continuation_proves_inheritance
+                {
+                    continue;
+                }
+            }
             let Some(&split_x) = neighbor.gutters.first() else {
                 continue;
             };
-            if !band_looks_like_full_width_banner(&band_chars, split_x, x_min_global, x_max_global)
-            {
+            let looks_like_banner =
+                band_looks_like_full_width_banner(&band_chars, split_x, x_min_global, x_max_global);
+            if !looks_like_banner {
+                bands[index].gutters = neighbor.gutters.clone();
+            }
+        }
+    }
+
+    // A recursive histogram split can create a fake middle column when a
+    // long line continues a few points past the first candidate gutter. Only
+    // collapse that extra gutter when repeated middle rows begin immediately
+    // at the gutter; genuine three-column transitions have a real inset
+    // middle-column start and remain untouched.
+    if bands.len() >= 2 {
+        for index in 0..bands.len() {
+            if bands[index].gutters.len() != 2 {
+                continue;
+            }
+            let neighbor_index = if index > 0 { index - 1 } else { 1 };
+            let neighbor = &bands[neighbor_index];
+            if neighbor.gutters.len() != 1 {
+                continue;
+            }
+            let Some(&neighbor_split) = neighbor.gutters.first() else {
+                continue;
+            };
+            let first_split = bands[index].gutters[0];
+            let second_split = bands[index].gutters[1];
+            if (second_split - neighbor_split).abs() > page_x_span * 0.08 {
+                continue;
+            }
+            let band_chars = chars
+                .iter()
+                .copied()
+                .filter(|ch| ch.y <= bands[index].y_top && ch.y > bands[index].y_bottom)
+                .collect::<Vec<_>>();
+            let rows = build_raw_rows(&band_chars, estimate_y_tolerance(&band_chars));
+            if middle_bucket_is_gutter_continuation(&rows, first_split, second_split) {
                 bands[index].gutters = neighbor.gutters.clone();
             }
         }
@@ -919,17 +1529,50 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
             let column_count = section.column_count;
             let mut columns: Vec<Vec<CharWithOrigin>> =
                 (0..column_count).map(|_| Vec::new()).collect();
-            for ch in segment_chars {
-                let column_index = section
-                    .gutters
-                    .iter()
-                    .filter(|gutter| ch.x >= **gutter)
-                    .count() as u8;
-                let bucket = column_index as usize;
-                if bucket < columns.len() {
-                    columns[bucket].push(ch);
+            // Keep row boundaries while assigning characters so a narrow
+            // gutter cannot strand the tail of a word in the next column.
+            // This only changes text ownership for the conservative lowercase
+            // prefix pattern handled by `repair_cross_column_word_prefix`.
+            let segment_rows = build_raw_rows(&segment_chars, y_tol);
+            let dominant_right_edge = if column_count == 2 {
+                dominant_right_column_edge(&segment_rows, section.split_x())
+            } else {
+                None
+            };
+            for mut row in segment_rows {
+                if column_count == 2 {
+                    let split_x = section.split_x();
+                    let mut left = row
+                        .iter()
+                        .copied()
+                        .filter(|ch| ch.x < split_x)
+                        .collect::<Vec<_>>();
+                    let mut right = row
+                        .iter()
+                        .copied()
+                        .filter(|ch| ch.x >= split_x)
+                        .collect::<Vec<_>>();
+                    repair_cross_column_word_prefix(&mut left, &mut right, split_x);
+                    if let Some(dominant_edge) = dominant_right_edge {
+                        repair_cross_column_prefix_before_dominant_edge(
+                            &mut left,
+                            &mut right,
+                            split_x,
+                            dominant_edge,
+                        );
+                    }
+                    columns[0].extend(left);
+                    columns[1].extend(right);
                 } else {
-                    columns.last_mut().unwrap().push(ch);
+                    for ch in row.drain(..) {
+                        let column_index = section
+                            .gutters
+                            .iter()
+                            .filter(|gutter| ch.x >= **gutter)
+                            .count() as usize;
+                        let bucket = column_index.min(columns.len() - 1);
+                        columns[bucket].push(ch);
+                    }
                 }
             }
             for (column_index, column_chars) in columns.into_iter().enumerate() {
@@ -1038,7 +1681,10 @@ fn build_lines_within_column_refined(
             words.last_mut().unwrap().push(ch.ch);
             prev_x = Some(ch.x);
         }
-        result.push((words.join(" "), line_bbox(&line, y_tol)));
+        result.push((
+            canonicalize_extracted_line_text(&words.join(" ")),
+            line_bbox(&line, y_tol),
+        ));
     }
     result
 }
@@ -1379,10 +2025,44 @@ mod tests {
         }
     }
 
+    fn push_fixed_glyph_line(
+        chars: &mut Vec<CharWithOrigin>,
+        prefix: &str,
+        fill: char,
+        glyph_count: usize,
+        x_start: f32,
+        y: f32,
+    ) {
+        assert!(prefix.len() <= glyph_count);
+        let text = format!(
+            "{}{}",
+            prefix,
+            std::iter::repeat_n(fill, glyph_count - prefix.len()).collect::<String>()
+        );
+        push_text_line(chars, &text, x_start, y);
+    }
+
     #[test]
     fn pdfium_library_path_does_not_panic() {
         // Resolution must be safe to call even when no library is bundled.
         let _ = pdfium_library_path();
+    }
+
+    #[test]
+    fn extracted_line_text_normalizes_rotation_spacing_without_joining_ranges() {
+        assert_eq!(
+            canonicalize_extracted_line_text("14 High - level workers"),
+            "14 High-level workers"
+        );
+        assert_eq!(
+            canonicalize_extracted_line_text("A taking a break . B resting ."),
+            "A taking a break. B resting."
+        );
+        assert_eq!(
+            canonicalize_extracted_line_text("23 ________ . This absence"),
+            "23 ________. This absence"
+        );
+        assert_eq!(canonicalize_extracted_line_text("A - B"), "A - B");
     }
 
     #[test]
@@ -1835,5 +2515,673 @@ mod tests {
             result,
             "a 5-row centered banner should be detected as a full-width banner band"
         );
+    }
+
+    #[test]
+    fn build_blocks_splits_repeated_same_baseline_columns_with_narrow_gutter() {
+        // Two dense columns share every baseline, like a PDF text layer that
+        // emits the left and right question columns on the same physical row.
+        // The gap between the final left glyph origin (x=282.4) and first
+        // right glyph origin (x=300.4) is only 18pt. The old page-span-based
+        // minimum gutter (>=10%, about 53pt here) merged each pair of rows.
+        let mut chars = Vec::new();
+        for (index, y) in [760.0, 749.0, 738.0, 727.0, 716.0, 705.0]
+            .iter()
+            .enumerate()
+        {
+            push_fixed_glyph_line(
+                &mut chars,
+                &format!("LEFT{:02}", index + 1),
+                'L',
+                54,
+                28.0,
+                *y,
+            );
+            push_fixed_glyph_line(
+                &mut chars,
+                &format!("RIGHT{:02}", index + 1),
+                'R',
+                54,
+                300.4,
+                *y,
+            );
+        }
+
+        let x_min = chars.iter().map(|c| c.x).fold(f32::MAX, f32::min);
+        let x_max = chars.iter().map(|c| c.x).fold(f32::MIN, f32::max);
+        let gutters = detect_column_gutters(&chars, x_min, x_max);
+        assert_eq!(
+            gutters.len(),
+            1,
+            "the repeated 18pt gap should be accepted as one gutter: {:?}",
+            gutters
+        );
+        assert!(
+            gutters[0] > 282.4 && gutters[0] < 300.4,
+            "gutter should lie between the two columns, got {}",
+            gutters[0]
+        );
+
+        let blocks = build_blocks_from_chars(&chars);
+        let left = blocks
+            .iter()
+            .find(|block| block.column_count == 2 && block.column_index == 0)
+            .expect("left narrow-gutter column should be emitted separately");
+        let right = blocks
+            .iter()
+            .find(|block| block.column_count == 2 && block.column_index == 1)
+            .expect("right narrow-gutter column should be emitted separately");
+        assert!(left.text.contains("LEFT01") && !left.text.contains("RIGHT01"));
+        assert!(right.text.contains("RIGHT01") && !right.text.contains("LEFT01"));
+        assert!(
+            blocks
+                .iter()
+                .all(|block| { !(block.text.contains("LEFT") && block.text.contains("RIGHT")) }),
+            "no emitted block may merge text from both columns: {:?}",
+            blocks
+                .iter()
+                .map(|block| (&block.text, block.column_index, block.column_count))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn repair_cross_column_word_prefix_moves_only_lowercase_word_tails() {
+        let mut left = vec![CharWithOrigin {
+            ch: 'a',
+            x: 290.0,
+            y: 700.0,
+        }];
+        let mut right = vec![
+            CharWithOrigin {
+                ch: 'n',
+                x: 301.0,
+                y: 700.0,
+            },
+            CharWithOrigin {
+                ch: 'C',
+                x: 309.0,
+                y: 700.0,
+            },
+        ];
+        repair_cross_column_word_prefix(&mut left, &mut right, 300.0);
+        assert_eq!(left.iter().map(|ch| ch.ch).collect::<String>(), "an");
+        assert_eq!(right.iter().map(|ch| ch.ch).collect::<String>(), "C");
+
+        let mut left = vec![
+            CharWithOrigin {
+                ch: 'N',
+                x: 285.0,
+                y: 680.0,
+            },
+            CharWithOrigin {
+                ch: 'e',
+                x: 290.0,
+                y: 680.0,
+            },
+        ];
+        let mut right = vec![
+            CharWithOrigin {
+                ch: 'i',
+                x: 301.0,
+                y: 680.0,
+            },
+            CharWithOrigin {
+                ch: 'l',
+                x: 306.0,
+                y: 680.0,
+            },
+        ];
+        repair_cross_column_word_prefix(&mut left, &mut right, 300.0);
+        assert_eq!(left.iter().map(|ch| ch.ch).collect::<String>(), "Ne");
+        assert_eq!(right.iter().map(|ch| ch.ch).collect::<String>(), "il");
+
+        let mut left = vec![CharWithOrigin {
+            ch: 't',
+            x: 290.0,
+            y: 660.0,
+        }];
+        let mut right = vec![CharWithOrigin {
+            ch: 'A',
+            x: 301.0,
+            y: 660.0,
+        }];
+        repair_cross_column_word_prefix(&mut left, &mut right, 300.0);
+        assert_eq!(left.iter().map(|ch| ch.ch).collect::<String>(), "t");
+        assert_eq!(right.iter().map(|ch| ch.ch).collect::<String>(), "A");
+    }
+
+    #[test]
+    fn banner_detection_keeps_independent_column_word_tail_in_column_flow() {
+        let mut line = Vec::new();
+        for index in 0..55 {
+            let ch = match index {
+                53 => 'N',
+                54 => 'e',
+                _ => 'x',
+            };
+            line.push(CharWithOrigin {
+                ch,
+                x: 28.0 + index as f32 * 4.8,
+                y: 700.0,
+            });
+        }
+        line.extend([
+            CharWithOrigin {
+                ch: 'i',
+                x: 301.0,
+                y: 700.0,
+            },
+            CharWithOrigin {
+                ch: 'l',
+                x: 306.0,
+                y: 700.0,
+            },
+        ]);
+
+        assert!(
+            !is_full_width_banner_row(&line, 300.0, 28.0, 520.0),
+            "a page-edge left line plus a split-adjacent lowercase tail is a two-column row"
+        );
+    }
+
+    #[test]
+    fn middle_bucket_continuation_distinguishes_false_three_column_band() {
+        let continuation_rows = (0..3)
+            .map(|row_index| {
+                let mut row = Vec::new();
+                for index in 0..8 {
+                    row.push(CharWithOrigin {
+                        ch: 'l',
+                        // The left fragment ends one normal glyph advance
+                        // before the would-be middle bucket. This is a word
+                        // continuation, not an independent column boundary.
+                        x: 126.4 + index as f32 * 4.8,
+                        y: 700.0 - row_index as f32 * 11.0,
+                    });
+                    row.push(CharWithOrigin {
+                        ch: 'm',
+                        x: 164.8 + index as f32 * 4.8,
+                        y: 700.0 - row_index as f32 * 11.0,
+                    });
+                    row.push(CharWithOrigin {
+                        ch: 'r',
+                        x: 306.6 + index as f32 * 4.8,
+                        y: 700.0 - row_index as f32 * 11.0,
+                    });
+                }
+                row.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap());
+                row
+            })
+            .collect::<Vec<_>>();
+        assert!(middle_bucket_is_gutter_continuation(
+            &continuation_rows,
+            164.0,
+            264.0
+        ));
+
+        // A compact genuine middle column can also start immediately after
+        // first_split. What distinguishes it is the stable typographic gutter
+        // before that start, not an arbitrary minimum inset from the split.
+        let compact_real_middle_rows = continuation_rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|ch| CharWithOrigin {
+                        x: if ch.x < 164.0 { ch.x - 12.0 } else { ch.x },
+                        ..*ch
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert!(!middle_bucket_is_gutter_continuation(
+            &compact_real_middle_rows,
+            164.0,
+            264.0
+        ));
+    }
+
+    #[test]
+    fn sparse_internal_band_inherits_matching_two_column_gutter() {
+        let mut chars = Vec::new();
+        for (index, y) in [760.0, 749.0, 738.0, 727.0].iter().enumerate() {
+            push_fixed_glyph_line(&mut chars, &format!("TOPLEFT{index}"), 'L', 34, 60.0, *y);
+            push_fixed_glyph_line(&mut chars, &format!("TOPRIGHT{index}"), 'R', 34, 340.0, *y);
+        }
+        // This one-row continuation occupies only the left column and cannot
+        // prove a gutter by itself. It sits in its own fixed-height band.
+        push_text_line(&mut chars, "SPARSE LEFT CONTINUATION", 60.0, 680.0);
+        for (index, y) in [635.0, 624.0, 613.0, 602.0].iter().enumerate() {
+            push_fixed_glyph_line(&mut chars, &format!("BOTTOMLEFT{index}"), 'L', 34, 60.0, *y);
+            push_fixed_glyph_line(
+                &mut chars,
+                &format!("BOTTOMRIGHT{index}"),
+                'R',
+                34,
+                340.0,
+                *y,
+            );
+        }
+
+        let sections = detect_layout_sections(&chars);
+        assert_eq!(
+            sections.len(),
+            1,
+            "the sparse internal band must not fracture one two-column flow: {sections:?}"
+        );
+        assert_eq!(sections[0].column_count, 2);
+
+        let blocks = build_blocks_from_chars(&chars);
+        let sparse = blocks
+            .iter()
+            .find(|block| block.text.contains("SPARSE LEFT CONTINUATION"))
+            .expect("sparse continuation block");
+        assert_eq!(sparse.column_count, 2);
+        assert_eq!(sparse.column_index, 0);
+    }
+
+    #[test]
+    fn sparse_edge_band_keeps_shifted_two_column_ownership() {
+        let mut chars = Vec::new();
+        // The sparse top band is a genuine inset two-column panel. Both of
+        // its columns sit to the left of the body layout's gutter, so copying
+        // the body gutter would collapse TOPRIGHT into the left column.
+        for (index, y) in [760.0, 749.0, 738.0].iter().enumerate() {
+            push_fixed_glyph_line(&mut chars, &format!("TOPLEFT{index}"), 'L', 16, 60.0, *y);
+            // Offset the two columns vertically, as happens in question cards
+            // whose left and right items wrap to different baselines.
+            push_fixed_glyph_line(
+                &mut chars,
+                &format!("TOPRIGHT{index}"),
+                'R',
+                13,
+                230.0,
+                *y - 4.0,
+            );
+        }
+        for y in [690.0, 679.0, 668.0, 657.0].iter() {
+            push_fixed_glyph_line(&mut chars, "B", 'L', 42, 60.0, *y);
+            push_fixed_glyph_line(&mut chars, "R", 'R', 10, 330.0, *y);
+        }
+
+        let page_x_min = chars.iter().map(|ch| ch.x).fold(f32::MAX, f32::min);
+        let page_x_max = chars.iter().map(|ch| ch.x).fold(f32::MIN, f32::max);
+        let top_chars = chars
+            .iter()
+            .copied()
+            .filter(|ch| ch.y > 704.0)
+            .collect::<Vec<_>>();
+        let top_gutters = detect_column_gutters(&top_chars, page_x_min, page_x_max);
+        assert_eq!(
+            top_gutters.len(),
+            1,
+            "test precondition: sparse inset panel must expose its own gutter: {top_gutters:?}"
+        );
+
+        let sections = detect_layout_sections(&chars);
+        assert_eq!(
+            sections.iter().map(|s| s.column_count).collect::<Vec<_>>(),
+            vec![2, 2],
+            "same column count must not erase a real gutter transition: {sections:?}"
+        );
+        assert!(
+            (sections[0].gutters[0] - sections[1].gutters[0]).abs() > 50.0,
+            "the inset panel and body must retain their distinct gutters: {sections:?}"
+        );
+
+        let blocks = build_blocks_from_chars(&chars);
+        let top_right = blocks
+            .iter()
+            .find(|block| block.text.contains("TOPRIGHT"))
+            .expect("top-right panel column");
+        assert_eq!(top_right.column_count, 2);
+        assert_eq!(
+            top_right.column_index, 1,
+            "TOPRIGHT must remain owned by the inset panel's right column: {blocks:?}"
+        );
+    }
+
+    #[test]
+    fn sparse_edge_inheritance_accepts_only_source_continuous_changed_tail() {
+        let mut adjacent = Vec::new();
+        for (index, y) in [760.0, 749.0, 738.0, 727.0].iter().enumerate() {
+            push_fixed_glyph_line(&mut adjacent, &format!("LEFT{index}"), 'L', 34, 28.0, *y);
+            push_fixed_glyph_line(&mut adjacent, &format!("RIGHT{index}"), 'R', 24, 306.0, *y);
+        }
+
+        let mut sparse = Vec::new();
+        push_text_line(&mut sparse, "sug", 210.0, 700.0);
+        push_text_line(&mut sparse, "gested by Neil", 229.0, 700.0);
+        for (index, y) in [689.0, 678.0, 667.0].iter().enumerate() {
+            push_fixed_glyph_line(&mut sparse, &format!("OPTION{index}"), 'L', 20, 28.0, *y);
+            push_fixed_glyph_line(&mut sparse, &format!("ANSWER{index}"), 'R', 24, 306.0, *y);
+        }
+
+        assert!(sparse_edge_ownership_changes_are_left_continuations(
+            &sparse, 228.0, 280.0, &adjacent
+        ));
+
+        let mut independent = sparse.clone();
+        for ch in independent
+            .iter_mut()
+            .filter(|ch| ch.y == 700.0 && ch.x >= 229.0)
+        {
+            ch.y -= 4.0;
+        }
+        assert!(
+            !sparse_edge_ownership_changes_are_left_continuations(
+                &independent,
+                228.0,
+                280.0,
+                &adjacent,
+            ),
+            "a separate-baseline inset column is not a source-continuous left tail"
+        );
+    }
+
+    #[test]
+    fn genuine_three_to_two_column_transition_is_not_collapsed() {
+        let mut chars = Vec::new();
+        for (index, y) in [760.0, 751.0, 742.0, 733.0, 724.0, 715.0]
+            .iter()
+            .enumerate()
+        {
+            push_fixed_glyph_line(&mut chars, &format!("LEFT3{index}"), 'L', 20, 60.0, *y);
+            push_fixed_glyph_line(&mut chars, &format!("MIDDLE3{index}"), 'M', 20, 220.0, *y);
+            push_fixed_glyph_line(&mut chars, &format!("RIGHT3{index}"), 'R', 20, 380.0, *y);
+        }
+        // The lower layout intentionally merges the old left+middle region
+        // into a wide left column. Its one gutter is close to the upper
+        // section's second gutter, which is exactly the shape that a false
+        // three-column repair must distinguish from a real 3 -> 2 switch.
+        for (index, y) in [704.0, 695.0, 686.0, 677.0, 668.0, 659.0]
+            .iter()
+            .enumerate()
+        {
+            push_fixed_glyph_line(&mut chars, &format!("WIDELEFT2{index}"), 'L', 50, 60.0, *y);
+            push_fixed_glyph_line(&mut chars, &format!("RIGHT2{index}"), 'R', 20, 380.0, *y);
+        }
+
+        let sections = detect_layout_sections(&chars);
+        assert_eq!(
+            sections.iter().map(|s| s.column_count).collect::<Vec<_>>(),
+            vec![3, 2],
+            "a genuine adjacent 3 -> 2 transition must remain intact: {sections:?}"
+        );
+    }
+
+    #[test]
+    fn compact_genuine_three_to_two_column_transition_is_not_collapsed() {
+        let mut chars = Vec::new();
+        for (index, y) in [760.0, 751.0, 742.0, 733.0, 724.0, 715.0]
+            .iter()
+            .enumerate()
+        {
+            // The middle column begins only one narrow typographic gutter
+            // after the left column. Its first glyph therefore sits close to
+            // the recursively detected first split, but the repeated 17.8pt
+            // separation is still an independent-column boundary.
+            push_fixed_glyph_line(&mut chars, &format!("CL{index}"), 'L', 20, 60.0, *y);
+            push_fixed_glyph_line(&mut chars, &format!("CM{index}"), 'M', 20, 169.0, *y);
+            push_fixed_glyph_line(&mut chars, &format!("CR{index}"), 'R', 20, 380.0, *y);
+        }
+        for (index, y) in [704.0, 695.0, 686.0, 677.0, 668.0, 659.0]
+            .iter()
+            .enumerate()
+        {
+            push_fixed_glyph_line(&mut chars, &format!("CWL{index}"), 'L', 50, 60.0, *y);
+            push_fixed_glyph_line(&mut chars, &format!("CWR{index}"), 'R', 20, 380.0, *y);
+        }
+
+        let sections = detect_layout_sections(&chars);
+        assert_eq!(
+            sections.iter().map(|s| s.column_count).collect::<Vec<_>>(),
+            vec![3, 2],
+            "a compact but independently separated middle column must survive an adjacent 3 -> 2 transition: {sections:?}"
+        );
+    }
+
+    #[test]
+    fn checked_in_complex_fixture_keeps_completion_rows_single_column() {
+        let guard = match pdfium_instance() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        let cached = guard.as_ref();
+        let Ok(pdfium) = cached.as_ref() else {
+            return;
+        };
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/complex-reading.pdf");
+        let document = pdfium
+            .load_pdf_from_file(&path, None)
+            .expect("checked-in complex fixture should open");
+        let page = document.pages().get(0).expect("fixture page");
+        let chars = collect_chars_with_origin(&page);
+        let sections = detect_layout_sections(&chars);
+        assert!(
+            sections.iter().all(|section| section.column_count == 1),
+            "continuous completion/table/answer rows are not three columns: {sections:?}"
+        );
+
+        let blocks = build_blocks_from_chars(&chars);
+        let texts = blocks
+            .iter()
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>();
+        assert!(texts.iter().any(|text| {
+            text.contains(
+                "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.",
+            )
+        }), "Q4-5 instruction must remain one source-backed row: {texts:?}");
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.contains("Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 maps 5 diaries")),
+            "answer evidence including q5 diaries must remain intact: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn synthetic_completion_table_rows_do_not_create_recursive_gutters() {
+        // Mirrors the geometry of the checked-in complex fixture without
+        // requiring the native pdfium library. The long instruction/answer
+        // rows and short `item | location` rows are intentionally mixed: a
+        // histogram valley in this shape must remain one reading flow.
+        let mut chars = Vec::new();
+        push_text_line(
+            &mut chars,
+            "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.",
+            72.0,
+            780.0,
+        );
+        push_text_line(&mut chars, "Item | Location", 72.0, 758.0);
+        push_text_line(&mut chars, "maps | room", 72.0, 736.0);
+        push_text_line(&mut chars, "diaries | room", 72.0, 714.0);
+        push_text_line(
+            &mut chars,
+            "Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 maps 5 diaries",
+            72.0,
+            692.0,
+        );
+
+        let sections = detect_layout_sections(&chars);
+        assert!(
+            sections.iter().all(|section| section.column_count == 1),
+            "single-column completion/table rows must not be recursively split: {sections:?}"
+        );
+        let blocks = build_blocks_from_chars(&chars);
+        let texts = blocks
+            .iter()
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            texts.iter().any(|text| text.contains("diaries | room")),
+            "the final table row must remain source-backed: {texts:?}"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.contains("Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 maps 5 diaries")),
+            "answer evidence must remain intact: {texts:?}"
+        );
+    }
+
+    #[test]
+    fn dominant_right_edge_repairs_only_source_continuous_left_spills() {
+        let split_x = 252.0;
+        let mut segment_chars = Vec::new();
+        for (index, y) in [740.0, 729.0, 718.0, 707.0].iter().enumerate() {
+            push_text_line(&mut segment_chars, &format!("LEFT ROW {index}"), 28.0, *y);
+            push_text_line(&mut segment_chars, &format!("RIGHT ROW {index}"), 306.0, *y);
+        }
+        // `from` is source-continuous with NUMBER but lies to the right of
+        // the histogram split. `price` begins at the repeated true edge.
+        push_text_line(&mut segment_chars, "NUMBER from", 220.0, 696.0);
+        push_text_line(&mut segment_chars, "price while claims", 306.0, 696.0);
+
+        let rows = build_raw_rows(&segment_chars, estimate_y_tolerance(&segment_chars));
+        let dominant_edge = dominant_right_column_edge(&rows, split_x)
+            .expect("the repeated x=306 right-column edge should be established");
+        assert!((dominant_edge - 306.0).abs() <= 6.0, "{dominant_edge}");
+
+        let spill_row = rows
+            .iter()
+            .find(|row| row.iter().any(|ch| ch.ch == 'N' && ch.x >= 220.0))
+            .expect("spill row");
+        let mut left = spill_row
+            .iter()
+            .copied()
+            .filter(|ch| ch.x < split_x)
+            .collect::<Vec<_>>();
+        let mut right = spill_row
+            .iter()
+            .copied()
+            .filter(|ch| ch.x >= split_x)
+            .collect::<Vec<_>>();
+        repair_cross_column_prefix_before_dominant_edge(
+            &mut left,
+            &mut right,
+            split_x,
+            dominant_edge,
+        );
+        let left_text = build_lines_within_column_refined(&left, estimate_y_tolerance(&left))
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let right_text = build_lines_within_column_refined(&right, estimate_y_tolerance(&right))
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(left_text.contains("NUMBER from"), "{left_text:?}");
+        assert!(right_text.starts_with("price"), "{right_text:?}");
+
+        // Explicit pdfium whitespace in the stranded span must not stop a
+        // multi-word continuation such as `e time` from returning to `mor`.
+        let mut left = vec![
+            CharWithOrigin {
+                ch: 'm',
+                x: 240.0,
+                y: 680.0,
+            },
+            CharWithOrigin {
+                ch: 'o',
+                x: 244.8,
+                y: 680.0,
+            },
+            CharWithOrigin {
+                ch: 'r',
+                x: 249.6,
+                y: 680.0,
+            },
+        ];
+        let mut right = Vec::new();
+        push_text_line(&mut right, "e time", 254.4, 680.0);
+        push_text_line(&mut right, "therapies", 306.0, 680.0);
+        repair_cross_column_prefix_before_dominant_edge(
+            &mut left,
+            &mut right,
+            split_x,
+            dominant_edge,
+        );
+        let left_text = build_lines_within_column_refined(&left, estimate_y_tolerance(&left))
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let right_text = build_lines_within_column_refined(&right, estimate_y_tolerance(&right))
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(left_text, "more time");
+        assert_eq!(right_text, "therapies");
+
+        let mut left = Vec::new();
+        push_text_line(&mut left, "Ne", 240.0, 660.0);
+        let mut right = Vec::new();
+        push_text_line(&mut right, "il", 253.0, 660.0);
+        repair_cross_column_prefix_before_dominant_edge(
+            &mut left,
+            &mut right,
+            split_x,
+            dominant_edge,
+        );
+        assert_eq!(left.iter().map(|ch| ch.ch).collect::<String>(), "Neil");
+        assert!(right.is_empty());
+    }
+
+    #[test]
+    fn dominant_right_edge_does_not_steal_real_right_column_openings() {
+        let split_x = 252.0;
+        let dominant_edge = 306.0;
+        let make_left = || {
+            vec![
+                CharWithOrigin {
+                    ch: 'l',
+                    x: 238.0,
+                    y: 680.0,
+                },
+                CharWithOrigin {
+                    ch: 'e',
+                    x: 242.8,
+                    y: 680.0,
+                },
+                CharWithOrigin {
+                    ch: 'f',
+                    x: 247.6,
+                    y: 680.0,
+                },
+            ]
+        };
+
+        // A long, continuous right-column sentence may cross the dominant x
+        // coordinate, but it has no second source run separated by a gutter.
+        let mut left = make_left();
+        let mut right = Vec::new();
+        push_text_line(&mut right, "in contrast with earlier results", 253.0, 680.0);
+        let original = right.iter().map(|ch| ch.ch).collect::<String>();
+        repair_cross_column_prefix_before_dominant_edge(
+            &mut left,
+            &mut right,
+            split_x,
+            dominant_edge,
+        );
+        assert_eq!(right.iter().map(|ch| ch.ch).collect::<String>(), original);
+
+        // A short independent label/item beginning at the established right
+        // edge also remains right-owned.
+        let mut left = make_left();
+        let mut right = Vec::new();
+        push_text_line(&mut right, "map", 306.0, 660.0);
+        repair_cross_column_prefix_before_dominant_edge(
+            &mut left,
+            &mut right,
+            split_x,
+            dominant_edge,
+        );
+        assert_eq!(right.iter().map(|ch| ch.ch).collect::<String>(), "map");
     }
 }

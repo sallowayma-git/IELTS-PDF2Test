@@ -95,13 +95,19 @@
             "b032",
             "b033",
             "b034",
+            "b035",
+            "b036",
             "b037",
             "b038",
             "b039",
+            "b040",
+            "b041",
             "b042",
             "b043",
             "b044",
-            "b045"
+            "b045",
+            "b046",
+            "b047"
           ],
           "confidence": 0.68,
           "continuationEdges": [
@@ -133,6 +139,18 @@
               "confidence": 0.72,
               "fromBlockId": "b034",
               "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
               "toBlockId": "b037"
             },
             {
@@ -150,6 +168,18 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
               "reason": "same-section-continuation",
               "toBlockId": "b042"
             },
@@ -170,6 +200,18 @@
               "fromBlockId": "b044",
               "reason": "same-section-continuation",
               "toBlockId": "b045"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
             }
           ],
           "groupId": "group-1",
@@ -195,6 +237,12 @@
               "id": "q27",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "Problems are increasing year on year.",
+                  "B": "There are not enough top graduates to replace them.",
+                  "C": "It leads to a poor relationship with teachers’ unions.",
+                  "D": "Replacement teachers have the same training as the dismissed ones."
+                },
                 "options": [
                   "A",
                   "B",
@@ -211,13 +259,19 @@
                 "b032",
                 "b033",
                 "b034",
+                "b035",
+                "b036",
                 "b037",
                 "b038",
                 "b039",
+                "b040",
+                "b041",
                 "b042",
                 "b043",
                 "b044",
-                "b045"
+                "b045",
+                "b046",
+                "b047"
               ],
               "verified": false
             },
@@ -250,13 +304,19 @@
                 "b032",
                 "b033",
                 "b034",
+                "b035",
+                "b036",
                 "b037",
                 "b038",
                 "b039",
+                "b040",
+                "b041",
                 "b042",
                 "b043",
                 "b044",
-                "b045"
+                "b045",
+                "b046",
+                "b047"
               ],
               "verified": false
             },
@@ -267,6 +327,12 @@
               "id": "q29",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "are well equipped to build on the theory they learned in college.",
+                  "B": "have to engage with the realities of the job.",
+                  "C": "have opportunities to observe and learn from their peers.",
+                  "D": "enjoy a high level of support from the schools that employ them."
+                },
                 "options": [
                   "A",
                   "B",
@@ -283,13 +349,19 @@
                 "b032",
                 "b033",
                 "b034",
+                "b035",
+                "b036",
                 "b037",
                 "b038",
                 "b039",
+                "b040",
+                "b041",
                 "b042",
                 "b043",
                 "b044",
-                "b045"
+                "b045",
+                "b046",
+                "b047"
               ],
               "verified": false
             },
@@ -301,12 +373,16 @@
               "interaction": {
                 "allowOptionReuse": false,
                 "optionTexts": {
-                  "A": "enforcing strict standards of behaviour B setting high goals that students are aware of",
-                  "C": "responding to pupils who raise their hands to answer questions D ensuring that lesson time is properly scheduled and used"
+                  "A": "enforcing strict standards of behaviour",
+                  "B": "setting high goals that students are aware of",
+                  "C": "responding to pupils who raise their hands to answer questions",
+                  "D": "ensuring that lesson time is properly scheduled and used"
                 },
                 "options": [
                   "A",
-                  "C"
+                  "B",
+                  "C",
+                  "D"
                 ],
                 "type": "radio"
               },
@@ -318,13 +394,19 @@
                 "b032",
                 "b033",
                 "b034",
+                "b035",
+                "b036",
                 "b037",
                 "b038",
                 "b039",
+                "b040",
+                "b041",
                 "b042",
                 "b043",
                 "b044",
-                "b045"
+                "b045",
+                "b046",
+                "b047"
               ],
               "verified": false
             },
@@ -335,6 +417,12 @@
               "id": "q31",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "carrying out classroom observations personally.",
+                  "B": "providing critical feedback.",
+                  "C": "welcoming union interaction.",
+                  "D": "working closely with them."
+                },
                 "options": [
                   "A",
                   "B",
@@ -351,13 +439,19 @@
                 "b032",
                 "b033",
                 "b034",
+                "b035",
+                "b036",
                 "b037",
                 "b038",
                 "b039",
+                "b040",
+                "b041",
                 "b042",
                 "b043",
                 "b044",
-                "b045"
+                "b045",
+                "b046",
+                "b047"
               ],
               "verified": false
             }
@@ -405,7 +499,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct letter, A, B, C or D."
             },
@@ -426,7 +520,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter in boxes 27–31 on your answer sheet."
             },
@@ -471,6 +565,48 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "in educational standards?"
+            },
+            {
+              "bbox": [
+                57,
+                630.5999755859375,
+                356.1959533691406,
+                670.2000122070312
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                630.5999755859375,
+                356.1959533691406,
+                670.2000122070312
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A Problems are increasing year on year. B There are not enough top graduates to replace them. C It leads to a poor relat"
+            },
+            {
+              "bbox": [
+                57,
+                615,
+                444.88079833984375,
+                623.4000244140625
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                615,
+                444.88079833984375,
+                623.4000244140625
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "D Replacement teachers have the same training as the dismissed ones."
             },
             {
               "bbox": [
@@ -537,6 +673,48 @@
             },
             {
               "bbox": [
+                57,
+                459,
+                410.9111633300781,
+                467.4000244140625
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                459,
+                410.9111633300781,
+                467.4000244140625
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A are well equipped to build on the theory they learned in college."
+            },
+            {
+              "bbox": [
+                57,
+                412.20001220703125,
+                414.19195556640625,
+                451.800048828125
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                412.20001220703125,
+                414.19195556640625,
+                451.800048828125
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "B have to engage with the realities of the job. C have opportunities to observe and learn from their peers. D enjoy a hi"
+            },
+            {
+              "bbox": [
                 36,
                 381,
                 492.5615234375,
@@ -594,7 +772,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "C responding to pupils who raise their hands to answer questions D ensuring that lesson time is properly scheduled and u"
             },
@@ -618,6 +796,48 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "31 The author suggests that head teachers can assist newly qualified teachers by"
+            },
+            {
+              "bbox": [
+                57,
+                256.20001220703125,
+                328.12322998046875,
+                264.60003662109375
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                256.20001220703125,
+                328.12322998046875,
+                264.60003662109375
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A carrying out classroom observations personally."
+            },
+            {
+              "bbox": [
+                57,
+                209.40003967285156,
+                226.09197998046875,
+                249.00001525878906
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                209.40003967285156,
+                226.09197998046875,
+                249.00001525878906
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "B providing critical feedback. C welcoming union interaction. D working closely with them."
             }
           ],
           "sourceBlockIds": [
@@ -626,13 +846,19 @@
             "b032",
             "b033",
             "b034",
+            "b035",
+            "b036",
             "b037",
             "b038",
             "b039",
+            "b040",
+            "b041",
             "b042",
             "b043",
             "b044",
-            "b045"
+            "b045",
+            "b046",
+            "b047"
           ],
           "verified": false
         },
@@ -895,7 +1121,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 32–36"
             },
             {
@@ -915,7 +1141,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "passage",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Do the following statements agree with the claims of the writer in Reading Passage 3?"
             },
@@ -937,7 +1163,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "In boxes 32–36 on your answer sheet, write"
             },
             {
@@ -957,7 +1183,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "YES if the statement agrees with the claims of the writer NO if the statement contradicts the claims of the writer NOT G"
             },
@@ -1410,7 +1636,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 37–40"
             },
             {
@@ -1430,7 +1656,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Complete each sentence with the correct ending, A–F, below."
             },
@@ -1451,7 +1677,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–F, in boxes 37–40 on your answer sheet."
             },
@@ -1688,7 +1914,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 3</h3>\n<p>below.</p>\n<p>Let’s teach them how to teach</p>\n<p>What matters in schools is teaching. Fortunately, teaching can be taught</p>\n<p>Forget smart uniforms and small classes. The secret to stellar grades and thriving students is teachers. One US study found that in a single year’s teaching the top 10% of teachers impart three times as much learning to their pupils as the worst 10% do. Another US study suggests that if black pupils were taught by the best quarter of teachers, the gap between their achievement and that of white pupils would disappear. But efforts to ensure that every teacher can teach are hindered by the persistent myth that good teachers are born, not made. Government policies, which often start from the same assumption, seek to raise teaching standards by attracting high\u0002 flying graduates to join the profession and prodding bad teachers to leave. Teachers’ unions, meanwhile, insist that if only their members were free from centralised policies, excellence would</p>\n<p>follow.</p>\n<p>The premise that teaching ability is something you either have or don’t is mistaken. A new breed of teacher trainers is founding a rigorous science of pedagogy. The aim is to make ordinary teachers great, just as sports coaches help athletes of all abilities to improve their personal best. Done right,</p>\n<p>this will revolutionise schools and change lives.</p>\n<p>Education has a history of lurching from one ‘miracle’ solution to the next. The best of them even achieve some good. The US initiative Teach for America has brought energetic new graduates into the profession, and dismissing teachers for bad performance has boosted results in Washington, DC. But each approach has its limits. Teaching is a mass profession: it cannot grab all the top graduates, year after year. When poor teachers are fired, new ones are needed – and they will have come through the same educational system that failed to make fine teachers of their</p>\n<p>predecessors.</p>\n<p>By contrast, the idea of improving the average teacher could revolutionise the entire profession. Around the world, few newly qualified teachers are well enough prepared for the classroom. A recent report found 31 countries in which more than a quarter of primary-school teachers had not reached minimal national standards. In rich countries, the problem is subtler. Teachers qualify after completing a long, specialised course, which almost always involves superficial and seemingly useless discussions of theory. Some of these courses, including master’s degrees in</p>\n<p>education, have no effect on how well their graduates’ pupils end up being taught.</p>\n<p>What teachers fail to learn in universities and teacher-training colleges they rarely pick up on the job. They become better teachers in their first few years as they get to grips with real pupils in real classrooms, but after that improvements tail off. This is largely because schools neglect their most important learners: teachers themselves. Across the Organisation for Economic Cooperation and Development (OECD) club of mostly rich countries, two-fifths of teachers say they have never had a chance to learn by sitting in on another teacher’s lessons; nor have they been asked to give</p>\n<p>feedback on their peers.</p>\n<p>calling*” rather than relying on the same eager pupils putting up their hands.</p>\n<p>Like other complex skills, teaching requires a route to mastery that is not based on abstruse theory but on intense, guided practice grounded in subject-matter knowledge and pedagogical methods. Trainees should spend more time in the classroom. The places where pupils do best – for example, Finland, Singapore and Shanghai – put novice teachers through a demanding apprenticeship. In the US, high-performing schools teach trainees in the classroom and bring them</p>\n<p>on with coaching and feedback.</p>\n<p>Teacher-training institutions need to be more rigorous. A century ago, medical schools raised the calibre of doctors by introducing systematic curriculums and providing clinical experience. It is essential that teacher-training colleges start to collect and publish data on how their graduates perform in the classroom. Courses that produce teachers who go on to do little to improve their pupils’ learning should not receive subsidies or see their graduates become teachers. They would</p>\n<p>then have to improve to survive.</p>\n<p>Big changes are needed in schools, too, to ensure that teachers improve throughout their careers. Teachers in the best ones hone their craft through observation and coaching. They accept critical feedback, which their unions should not resist but welcome, as it is only proper for people doing such an important job. The best head teachers hold novices’ hands by helping them prepare high\u0002 quality lessons and arranging for more-experienced teachers to cover for them when they need</p>\n<p>time for further study and practice.</p>\n<p>Money is less important than one might think. Teachers in top-of-the-class Finland, for example, earn about the OECD average. But ensuring the best teachers stay in the classroom will, in most places, mean paying more. People who thrive in front of pupils should not have to become managers to earn a pay rise. And more flexibility on salaries would make it much easier to attract</p>\n<p>the best teachers to the worst schools.</p>\n<p>Improving the quality of the average teacher would raise the profession’s prestige, setting up a virtuous cycle in which more talented graduates clamoured to join. But the biggest gains will come</p>\n<p>from preparing new teachers better, and upgrading the ones already in classrooms.</p>\n<p>______________________________________________________________________________ *cold calling: a simple technique in which the teacher calls on specific pupils to answer a question, regardless of</p>\n<p>whether they have raised their hand</p>\n<p>D  Replacement teachers have the same training as the dismissed ones.</p>\n<p>A  are well equipped to build on the theory they learned in college.</p>\n<p>B  have to engage with the realities of the job. C  have opportunities to observe and learn from their peers. D  enjoy a high level of support from the schools that employ them.</p>\n<p>A  carrying out classroom observations personally.</p>\n<p>B  providing critical feedback. C  welcoming union interaction. D  working closely with them.</p>"
+            "html": "<h3>READING PASSAGE 3</h3>\n<p>below.</p>\n<p>Let’s teach them how to teach</p>\n<p>What matters in schools is teaching. Fortunately, teaching can be taught</p>\n<p>Forget smart uniforms and small classes. The secret to stellar grades and thriving students is teachers. One US study found that in a single year’s teaching the top 10% of teachers impart three times as much learning to their pupils as the worst 10% do. Another US study suggests that if black pupils were taught by the best quarter of teachers, the gap between their achievement and that of white pupils would disappear. But efforts to ensure that every teacher can teach are hindered by the persistent myth that good teachers are born, not made. Government policies, which often start from the same assumption, seek to raise teaching standards by attracting high\u0002 flying graduates to join the profession and prodding bad teachers to leave. Teachers’ unions, meanwhile, insist that if only their members were free from centralised policies, excellence would</p>\n<p>follow.</p>\n<p>The premise that teaching ability is something you either have or don’t is mistaken. A new breed of teacher trainers is founding a rigorous science of pedagogy. The aim is to make ordinary teachers great, just as sports coaches help athletes of all abilities to improve their personal best. Done right,</p>\n<p>this will revolutionise schools and change lives.</p>\n<p>Education has a history of lurching from one ‘miracle’ solution to the next. The best of them even achieve some good. The US initiative Teach for America has brought energetic new graduates into the profession, and dismissing teachers for bad performance has boosted results in Washington, DC. But each approach has its limits. Teaching is a mass profession: it cannot grab all the top graduates, year after year. When poor teachers are fired, new ones are needed – and they will have come through the same educational system that failed to make fine teachers of their</p>\n<p>predecessors.</p>\n<p>By contrast, the idea of improving the average teacher could revolutionise the entire profession. Around the world, few newly qualified teachers are well enough prepared for the classroom. A recent report found 31 countries in which more than a quarter of primary-school teachers had not reached minimal national standards. In rich countries, the problem is subtler. Teachers qualify after completing a long, specialised course, which almost always involves superficial and seemingly useless discussions of theory. Some of these courses, including master’s degrees in</p>\n<p>education, have no effect on how well their graduates’ pupils end up being taught.</p>\n<p>What teachers fail to learn in universities and teacher-training colleges they rarely pick up on the job. They become better teachers in their first few years as they get to grips with real pupils in real classrooms, but after that improvements tail off. This is largely because schools neglect their most important learners: teachers themselves. Across the Organisation for Economic Cooperation and Development (OECD) club of mostly rich countries, two-fifths of teachers say they have never had a chance to learn by sitting in on another teacher’s lessons; nor have they been asked to give</p>\n<p>feedback on their peers.</p>\n<p>If this is to change, teachers need to learn how to impart knowledge and prepare young minds to receive and retain it. Good teachers set clear goals, enforce high standards of behaviour and manage their lesson time wisely. They use tried-and-tested instructional techniques to ensure that all brains are working all the time – for example, asking questions in the classroom with “cold</p>\n<p>calling*” rather than relying on the same eager pupils putting up their hands.</p>\n<p>Like other complex skills, teaching requires a route to mastery that is not based on abstruse theory but on intense, guided practice grounded in subject-matter knowledge and pedagogical methods. Trainees should spend more time in the classroom. The places where pupils do best – for example, Finland, Singapore and Shanghai – put novice teachers through a demanding apprenticeship. In the US, high-performing schools teach trainees in the classroom and bring them</p>\n<p>on with coaching and feedback.</p>\n<p>Teacher-training institutions need to be more rigorous. A century ago, medical schools raised the calibre of doctors by introducing systematic curriculums and providing clinical experience. It is essential that teacher-training colleges start to collect and publish data on how their graduates perform in the classroom. Courses that produce teachers who go on to do little to improve their pupils’ learning should not receive subsidies or see their graduates become teachers. They would</p>\n<p>then have to improve to survive.</p>\n<p>Big changes are needed in schools, too, to ensure that teachers improve throughout their careers. Teachers in the best ones hone their craft through observation and coaching. They accept critical feedback, which their unions should not resist but welcome, as it is only proper for people doing such an important job. The best head teachers hold novices’ hands by helping them prepare high\u0002 quality lessons and arranging for more-experienced teachers to cover for them when they need</p>\n<p>time for further study and practice.</p>\n<p>Money is less important than one might think. Teachers in top-of-the-class Finland, for example, earn about the OECD average. But ensuring the best teachers stay in the classroom will, in most places, mean paying more. People who thrive in front of pupils should not have to become managers to earn a pay rise. And more flexibility on salaries would make it much easier to attract</p>\n<p>the best teachers to the worst schools.</p>\n<p>Improving the quality of the average teacher would raise the profession’s prestige, setting up a virtuous cycle in which more talented graduates clamoured to join. But the biggest gains will come</p>\n<p>from preparing new teachers better, and upgrading the ones already in classrooms.</p>\n<p>______________________________________________________________________________ *cold calling: a simple technique in which the teacher calls on specific pupils to answer a question, regardless of</p>\n<p>whether they have raised their hand</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -1717,6 +1943,7 @@
           "b013",
           "b014",
           "b015",
+          "b016",
           "b017",
           "b018",
           "b019",
@@ -1729,12 +1956,7 @@
           "b026",
           "b027",
           "b028",
-          "b029",
-          "b036",
-          "b040",
-          "b041",
-          "b046",
-          "b047"
+          "b029"
         ],
         "title": "below."
       },
@@ -1781,7 +2003,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 780.8400268554688,
@@ -1795,7 +2017,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -1807,7 +2029,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1826,18 +2048,18 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
+              "roleHint": "passage",
               "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading Passage 3"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 742.6799926757812,
@@ -1851,10 +2073,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1862,7 +2084,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1881,7 +2103,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1889,7 +2111,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1908,7 +2130,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1916,7 +2138,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1935,7 +2157,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1943,7 +2165,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1962,7 +2184,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1970,7 +2192,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1989,7 +2211,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1997,7 +2219,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2016,7 +2238,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2024,7 +2246,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2043,7 +2265,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2051,7 +2273,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2070,7 +2292,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2078,7 +2300,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2097,7 +2319,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2105,7 +2327,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2124,7 +2346,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2132,7 +2354,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2151,7 +2373,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2159,7 +2381,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2178,7 +2400,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2193,8 +2415,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2213,17 +2435,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "roleHint": "question",
               "text": "If this is to change, teachers need to learn how to impart knowledge and prepare young minds to receive and retain it. Good teachers set clear goals, enforce high standards of behaviour and manage their lesson time wisely. They use tried-and-tested instructional techniques to ensure that all brains are working all the time – for example, asking questions in the classroom with “cold"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2242,7 +2463,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2250,8 +2471,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2270,7 +2491,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2278,8 +2499,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2298,7 +2519,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2306,8 +2527,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2326,7 +2547,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2334,8 +2555,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2354,7 +2575,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2362,8 +2583,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2382,7 +2603,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2390,8 +2611,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2410,7 +2631,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2418,8 +2639,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2438,7 +2659,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2446,8 +2667,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2466,7 +2687,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2474,8 +2695,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2494,7 +2715,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2502,8 +2723,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2522,7 +2743,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2530,8 +2751,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2550,7 +2771,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2558,8 +2779,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2578,7 +2799,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2633,7 +2854,7 @@
               "blockId": "b031",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Choose the correct letter, A, B, C  or D.</p>",
+              "html": "<p>Choose the correct letter, A, B, C or D.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2644,7 +2865,8 @@
                 }
               },
               "pageIndex": 3,
-              "text": "Choose the correct letter, A, B, C  or D."
+              "roleHint": "question",
+              "text": "Choose the correct letter, A, B, C or D."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -2671,6 +2893,7 @@
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Write the correct letter in boxes 27–31 on your answer sheet."
             },
             {
@@ -2741,7 +2964,7 @@
               "blockId": "b035",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Problems are increasing year on year. B  There are not enough top graduates to replace them. C  It leads to a poor relationship with teachers’ unions.</p>",
+              "html": "<p>A Problems are increasing year on year. B There are not enough top graduates to replace them. C It leads to a poor relationship with teachers’ unions.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2752,7 +2975,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  Problems are increasing year on year. B  There are not enough top graduates to replace them. C  It leads to a poor relationship with teachers’ unions."
+              "text": "A Problems are increasing year on year. B There are not enough top graduates to replace them. C It leads to a poor relationship with teachers’ unions."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -2768,7 +2991,7 @@
               "blockId": "b036",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  Replacement teachers have the same training as the dismissed ones.</p>",
+              "html": "<p>D Replacement teachers have the same training as the dismissed ones.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2779,7 +3002,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "D  Replacement teachers have the same training as the dismissed ones."
+              "text": "D Replacement teachers have the same training as the dismissed ones."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -2822,7 +3045,7 @@
               "blockId": "b038",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Graduating teachers are not ready for the classroom. B  Improving a teacher of average talent is a very difficult task. C  More theory in teacher-training courses is required. D  Primary teacher training is not taken seriously.</p>",
+              "html": "<p>A Graduating teachers are not ready for the classroom. B Improving a teacher of average talent is a very difficult task. C More theory in teacher-training courses is required. D Primary teacher training is not taken seriously.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2833,7 +3056,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  Graduating teachers are not ready for the classroom. B  Improving a teacher of average talent is a very difficult task. C  More theory in teacher-training courses is required. D  Primary teacher training is not taken seriously."
+              "text": "A Graduating teachers are not ready for the classroom. B Improving a teacher of average talent is a very difficult task. C More theory in teacher-training courses is required. D Primary teacher training is not taken seriously."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -2876,7 +3099,7 @@
               "blockId": "b040",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  are well equipped to build on the theory they learned in college.</p>",
+              "html": "<p>A are well equipped to build on the theory they learned in college.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2887,7 +3110,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  are well equipped to build on the theory they learned in college."
+              "text": "A are well equipped to build on the theory they learned in college."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -2903,7 +3126,7 @@
               "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  have to engage with the realities of the job. C  have opportunities to observe and learn from their peers. D  enjoy a high level of support from the schools that employ them.</p>",
+              "html": "<p>B have to engage with the realities of the job. C have opportunities to observe and learn from their peers. D enjoy a high level of support from the schools that employ them.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2914,7 +3137,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "B  have to engage with the realities of the job. C  have opportunities to observe and learn from their peers. D  enjoy a high level of support from the schools that employ them."
+              "text": "B have to engage with the realities of the job. C have opportunities to observe and learn from their peers. D enjoy a high level of support from the schools that employ them."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -2957,7 +3180,7 @@
               "blockId": "b043",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  enforcing strict standards of behaviour B  setting high goals that students are aware of</p>",
+              "html": "<p>A enforcing strict standards of behaviour B setting high goals that students are aware of</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2968,7 +3191,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  enforcing strict standards of behaviour B  setting high goals that students are aware of"
+              "text": "A enforcing strict standards of behaviour B setting high goals that students are aware of"
             },
             {
               "_epic8ColumnIndex": 0,
@@ -2984,7 +3207,7 @@
               "blockId": "b044",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  responding to pupils who raise their hands to answer questions D  ensuring that lesson time is properly scheduled and used</p>",
+              "html": "<p>C responding to pupils who raise their hands to answer questions D ensuring that lesson time is properly scheduled and used</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2995,8 +3218,7 @@
                 }
               },
               "pageIndex": 3,
-              "roleHint": "question",
-              "text": "C  responding to pupils who raise their hands to answer questions D  ensuring that lesson time is properly scheduled and used"
+              "text": "C responding to pupils who raise their hands to answer questions D ensuring that lesson time is properly scheduled and used"
             },
             {
               "_epic8ColumnIndex": 0,
@@ -3039,7 +3261,7 @@
               "blockId": "b046",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  carrying out classroom observations personally.</p>",
+              "html": "<p>A carrying out classroom observations personally.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -3050,7 +3272,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  carrying out classroom observations personally."
+              "text": "A carrying out classroom observations personally."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -3066,7 +3288,7 @@
               "blockId": "b047",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  providing critical feedback. C  welcoming union interaction. D  working closely with them.</p>",
+              "html": "<p>B providing critical feedback. C welcoming union interaction. D working closely with them.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -3077,7 +3299,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "B  providing critical feedback. C  welcoming union interaction. D  working closely with them."
+              "text": "B providing critical feedback. C welcoming union interaction. D working closely with them."
             }
           ],
           "height": 841.9199829101562,
@@ -3090,7 +3312,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 789.47998046875,
@@ -3104,7 +3326,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -3116,7 +3338,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3135,18 +3357,18 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "roleHint": "passage",
+              "roleHint": "question",
               "text": "Do the following statements agree with the claims of the writer in Reading Passage 3?"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 730.2000122070312,
@@ -3160,10 +3382,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3171,7 +3393,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3183,22 +3405,23 @@
               "blockId": "b051",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>YES  if the statement agrees with the claims of the writer NO  if the statement contradicts the claims of the writer NOT GIVEN  if it is impossible to say what the writer thinks about this</p>",
+              "html": "<p>YES if the statement agrees with the claims of the writer NO if the statement contradicts the claims of the writer NOT GIVEN if it is impossible to say what the writer thinks about this</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "YES  if the statement agrees with the claims of the writer NO  if the statement contradicts the claims of the writer NOT GIVEN  if it is impossible to say what the writer thinks about this"
+              "roleHint": "question",
+              "text": "YES if the statement agrees with the claims of the writer NO if the statement contradicts the claims of the writer NOT GIVEN if it is impossible to say what the writer thinks about this"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3217,7 +3440,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3225,7 +3448,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3244,7 +3467,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3252,7 +3475,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3271,7 +3494,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3279,7 +3502,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3298,7 +3521,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3306,7 +3529,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3325,7 +3548,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3333,7 +3556,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3352,7 +3575,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3360,9 +3583,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 446.760009765625,
@@ -3376,10 +3599,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3388,7 +3611,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3407,15 +3630,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Complete each sentence with the correct ending, A–F, below."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3434,15 +3658,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write the correct letter, A–F, in boxes 37–40 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3461,7 +3686,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3469,7 +3694,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3488,7 +3713,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3496,7 +3721,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3515,7 +3740,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3523,7 +3748,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3542,7 +3767,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3550,7 +3775,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3562,22 +3787,22 @@
               "blockId": "b065",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  practice will always be more important than theory.</p>",
+              "html": "<p>A practice will always be more important than theory.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "A  practice will always be more important than theory."
+              "text": "A practice will always be more important than theory."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3589,22 +3814,22 @@
               "blockId": "b066",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  better trainers are the only answer.</p>",
+              "html": "<p>B better trainers are the only answer.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "B  better trainers are the only answer."
+              "text": "B better trainers are the only answer."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3616,22 +3841,22 @@
               "blockId": "b067",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  more capable graduates could be attracted into the profession.</p>",
+              "html": "<p>C more capable graduates could be attracted into the profession.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "C  more capable graduates could be attracted into the profession."
+              "text": "C more capable graduates could be attracted into the profession."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3643,22 +3868,22 @@
               "blockId": "b068",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  a teacher who is not outstanding can be improved.</p>",
+              "html": "<p>D a teacher who is not outstanding can be improved.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "D  a teacher who is not outstanding can be improved."
+              "text": "D a teacher who is not outstanding can be improved."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3670,22 +3895,22 @@
               "blockId": "b069",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>E  the assistance of teachers’ unions is essential.</p>",
+              "html": "<p>E the assistance of teachers’ unions is essential.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "E  the assistance of teachers’ unions is essential."
+              "text": "E the assistance of teachers’ unions is essential."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 22,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3697,18 +3922,18 @@
               "blockId": "b070",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>F  a better syllabus and more practical involvement will improve results.</p>",
+              "html": "<p>F a better syllabus and more practical involvement will improve results.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "F  a better syllabus and more practical involvement will improve results."
+              "text": "F a better syllabus and more practical involvement will improve results."
             }
           ],
           "height": 841.9199829101562,
@@ -3805,7 +4030,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 3</h3>\n<p>below.</p>\n<p>Let’s teach them how to teach</p>\n<p>What matters in schools is teaching. Fortunately, teaching can be taught</p>\n<p>Forget smart uniforms and small classes. The secret to stellar grades and thriving students is teachers. One US study found that in a single year’s teaching the top 10% of teachers impart three times as much learning to their pupils as the worst 10% do. Another US study suggests that if black pupils were taught by the best quarter of teachers, the gap between their achievement and that of white pupils would disappear. But efforts to ensure that every teacher can teach are hindered by the persistent myth that good teachers are born, not made. Government policies, which often start from the same assumption, seek to raise teaching standards by attracting high\u0002 flying graduates to join the profession and prodding bad teachers to leave. Teachers’ unions, meanwhile, insist that if only their members were free from centralised policies, excellence would</p>\n<p>follow.</p>\n<p>The premise that teaching ability is something you either have or don’t is mistaken. A new breed of teacher trainers is founding a rigorous science of pedagogy. The aim is to make ordinary teachers great, just as sports coaches help athletes of all abilities to improve their personal best. Done right,</p>\n<p>this will revolutionise schools and change lives.</p>\n<p>Education has a history of lurching from one ‘miracle’ solution to the next. The best of them even achieve some good. The US initiative Teach for America has brought energetic new graduates into the profession, and dismissing teachers for bad performance has boosted results in Washington, DC. But each approach has its limits. Teaching is a mass profession: it cannot grab all the top graduates, year after year. When poor teachers are fired, new ones are needed – and they will have come through the same educational system that failed to make fine teachers of their</p>\n<p>predecessors.</p>\n<p>By contrast, the idea of improving the average teacher could revolutionise the entire profession. Around the world, few newly qualified teachers are well enough prepared for the classroom. A recent report found 31 countries in which more than a quarter of primary-school teachers had not reached minimal national standards. In rich countries, the problem is subtler. Teachers qualify after completing a long, specialised course, which almost always involves superficial and seemingly useless discussions of theory. Some of these courses, including master’s degrees in</p>\n<p>education, have no effect on how well their graduates’ pupils end up being taught.</p>\n<p>What teachers fail to learn in universities and teacher-training colleges they rarely pick up on the job. They become better teachers in their first few years as they get to grips with real pupils in real classrooms, but after that improvements tail off. This is largely because schools neglect their most important learners: teachers themselves. Across the Organisation for Economic Cooperation and Development (OECD) club of mostly rich countries, two-fifths of teachers say they have never had a chance to learn by sitting in on another teacher’s lessons; nor have they been asked to give</p>\n<p>feedback on their peers.</p>\n<p>calling*” rather than relying on the same eager pupils putting up their hands.</p>\n<p>Like other complex skills, teaching requires a route to mastery that is not based on abstruse theory but on intense, guided practice grounded in subject-matter knowledge and pedagogical methods. Trainees should spend more time in the classroom. The places where pupils do best – for example, Finland, Singapore and Shanghai – put novice teachers through a demanding apprenticeship. In the US, high-performing schools teach trainees in the classroom and bring them</p>\n<p>on with coaching and feedback.</p>\n<p>Teacher-training institutions need to be more rigorous. A century ago, medical schools raised the calibre of doctors by introducing systematic curriculums and providing clinical experience. It is essential that teacher-training colleges start to collect and publish data on how their graduates perform in the classroom. Courses that produce teachers who go on to do little to improve their pupils’ learning should not receive subsidies or see their graduates become teachers. They would</p>\n<p>then have to improve to survive.</p>\n<p>Big changes are needed in schools, too, to ensure that teachers improve throughout their careers. Teachers in the best ones hone their craft through observation and coaching. They accept critical feedback, which their unions should not resist but welcome, as it is only proper for people doing such an important job. The best head teachers hold novices’ hands by helping them prepare high\u0002 quality lessons and arranging for more-experienced teachers to cover for them when they need</p>\n<p>time for further study and practice.</p>\n<p>Money is less important than one might think. Teachers in top-of-the-class Finland, for example, earn about the OECD average. But ensuring the best teachers stay in the classroom will, in most places, mean paying more. People who thrive in front of pupils should not have to become managers to earn a pay rise. And more flexibility on salaries would make it much easier to attract</p>\n<p>the best teachers to the worst schools.</p>\n<p>Improving the quality of the average teacher would raise the profession’s prestige, setting up a virtuous cycle in which more talented graduates clamoured to join. But the biggest gains will come</p>\n<p>from preparing new teachers better, and upgrading the ones already in classrooms.</p>\n<p>______________________________________________________________________________ *cold calling: a simple technique in which the teacher calls on specific pupils to answer a question, regardless of</p>\n<p>whether they have raised their hand</p>\n<p>D  Replacement teachers have the same training as the dismissed ones.</p>\n<p>A  are well equipped to build on the theory they learned in college.</p>\n<p>B  have to engage with the realities of the job. C  have opportunities to observe and learn from their peers. D  enjoy a high level of support from the schools that employ them.</p>\n<p>A  carrying out classroom observations personally.</p>\n<p>B  providing critical feedback. C  welcoming union interaction. D  working closely with them.</p>",
+            "html": "<h3>READING PASSAGE 3</h3>\n<p>below.</p>\n<p>Let’s teach them how to teach</p>\n<p>What matters in schools is teaching. Fortunately, teaching can be taught</p>\n<p>Forget smart uniforms and small classes. The secret to stellar grades and thriving students is teachers. One US study found that in a single year’s teaching the top 10% of teachers impart three times as much learning to their pupils as the worst 10% do. Another US study suggests that if black pupils were taught by the best quarter of teachers, the gap between their achievement and that of white pupils would disappear. But efforts to ensure that every teacher can teach are hindered by the persistent myth that good teachers are born, not made. Government policies, which often start from the same assumption, seek to raise teaching standards by attracting high\u0002 flying graduates to join the profession and prodding bad teachers to leave. Teachers’ unions, meanwhile, insist that if only their members were free from centralised policies, excellence would</p>\n<p>follow.</p>\n<p>The premise that teaching ability is something you either have or don’t is mistaken. A new breed of teacher trainers is founding a rigorous science of pedagogy. The aim is to make ordinary teachers great, just as sports coaches help athletes of all abilities to improve their personal best. Done right,</p>\n<p>this will revolutionise schools and change lives.</p>\n<p>Education has a history of lurching from one ‘miracle’ solution to the next. The best of them even achieve some good. The US initiative Teach for America has brought energetic new graduates into the profession, and dismissing teachers for bad performance has boosted results in Washington, DC. But each approach has its limits. Teaching is a mass profession: it cannot grab all the top graduates, year after year. When poor teachers are fired, new ones are needed – and they will have come through the same educational system that failed to make fine teachers of their</p>\n<p>predecessors.</p>\n<p>By contrast, the idea of improving the average teacher could revolutionise the entire profession. Around the world, few newly qualified teachers are well enough prepared for the classroom. A recent report found 31 countries in which more than a quarter of primary-school teachers had not reached minimal national standards. In rich countries, the problem is subtler. Teachers qualify after completing a long, specialised course, which almost always involves superficial and seemingly useless discussions of theory. Some of these courses, including master’s degrees in</p>\n<p>education, have no effect on how well their graduates’ pupils end up being taught.</p>\n<p>What teachers fail to learn in universities and teacher-training colleges they rarely pick up on the job. They become better teachers in their first few years as they get to grips with real pupils in real classrooms, but after that improvements tail off. This is largely because schools neglect their most important learners: teachers themselves. Across the Organisation for Economic Cooperation and Development (OECD) club of mostly rich countries, two-fifths of teachers say they have never had a chance to learn by sitting in on another teacher’s lessons; nor have they been asked to give</p>\n<p>feedback on their peers.</p>\n<p>If this is to change, teachers need to learn how to impart knowledge and prepare young minds to receive and retain it. Good teachers set clear goals, enforce high standards of behaviour and manage their lesson time wisely. They use tried-and-tested instructional techniques to ensure that all brains are working all the time – for example, asking questions in the classroom with “cold</p>\n<p>calling*” rather than relying on the same eager pupils putting up their hands.</p>\n<p>Like other complex skills, teaching requires a route to mastery that is not based on abstruse theory but on intense, guided practice grounded in subject-matter knowledge and pedagogical methods. Trainees should spend more time in the classroom. The places where pupils do best – for example, Finland, Singapore and Shanghai – put novice teachers through a demanding apprenticeship. In the US, high-performing schools teach trainees in the classroom and bring them</p>\n<p>on with coaching and feedback.</p>\n<p>Teacher-training institutions need to be more rigorous. A century ago, medical schools raised the calibre of doctors by introducing systematic curriculums and providing clinical experience. It is essential that teacher-training colleges start to collect and publish data on how their graduates perform in the classroom. Courses that produce teachers who go on to do little to improve their pupils’ learning should not receive subsidies or see their graduates become teachers. They would</p>\n<p>then have to improve to survive.</p>\n<p>Big changes are needed in schools, too, to ensure that teachers improve throughout their careers. Teachers in the best ones hone their craft through observation and coaching. They accept critical feedback, which their unions should not resist but welcome, as it is only proper for people doing such an important job. The best head teachers hold novices’ hands by helping them prepare high\u0002 quality lessons and arranging for more-experienced teachers to cover for them when they need</p>\n<p>time for further study and practice.</p>\n<p>Money is less important than one might think. Teachers in top-of-the-class Finland, for example, earn about the OECD average. But ensuring the best teachers stay in the classroom will, in most places, mean paying more. People who thrive in front of pupils should not have to become managers to earn a pay rise. And more flexibility on salaries would make it much easier to attract</p>\n<p>the best teachers to the worst schools.</p>\n<p>Improving the quality of the average teacher would raise the profession’s prestige, setting up a virtuous cycle in which more talented graduates clamoured to join. But the biggest gains will come</p>\n<p>from preparing new teachers better, and upgrading the ones already in classrooms.</p>\n<p>______________________________________________________________________________ *cold calling: a simple technique in which the teacher calls on specific pupils to answer a question, regardless of</p>\n<p>whether they have raised their hand</p>",
             "kind": "html"
           }
         ]
@@ -3829,7 +4054,7 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 27-31</p><p>Questions 27–31 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 27–31 on your answer sheet.</p></div><ol><li><div><strong>27</strong> According to the third paragraph, why is dismissing bad teachers a poor solution to problems in educational standards?</div><div class=\"choice-row\"><label><input name=\"q27\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q27\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q27\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q27\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>28</strong> What does the writer say about teacher-training institutions in the fourth paragraph?</div><div class=\"choice-row\"><label><input name=\"q28\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">Graduating teachers are not ready for the classroom.</span></label><label><input name=\"q28\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">Improving a teacher of average talent is a very difficult task.</span></label><label><input name=\"q28\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">More theory in teacher-training courses is required.</span></label><label><input name=\"q28\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">Primary teacher training is not taken seriously.</span></label></div></li><li><div><strong>29</strong> In their first few years of working, teachers improve in the classroom because they</div><div class=\"choice-row\"><label><input name=\"q29\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q29\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q29\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q29\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>30</strong> Which of the following does the writer suggest is least effective for teachers to use?</div><div class=\"choice-row\"><label><input name=\"q30\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">enforcing strict standards of behaviour B setting high goals that students are aware of</span></label><label><input name=\"q30\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">responding to pupils who raise their hands to answer questions D ensuring that lesson time is properly scheduled and used</span></label></div></li><li><div><strong>31</strong> The author suggests that head teachers can assist newly qualified teachers by</div><div class=\"choice-row\"><label><input name=\"q31\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q31\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q31\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q31\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 27-31</p><p>Questions 27–31 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 27–31 on your answer sheet.</p></div><ol><li><div><strong>27</strong> According to the third paragraph, why is dismissing bad teachers a poor solution to problems in educational standards?</div><div class=\"choice-row\"><label><input name=\"q27\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">Problems are increasing year on year.</span></label><label><input name=\"q27\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">There are not enough top graduates to replace them.</span></label><label><input name=\"q27\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">It leads to a poor relationship with teachers’ unions.</span></label><label><input name=\"q27\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">Replacement teachers have the same training as the dismissed ones.</span></label></div></li><li><div><strong>28</strong> What does the writer say about teacher-training institutions in the fourth paragraph?</div><div class=\"choice-row\"><label><input name=\"q28\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">Graduating teachers are not ready for the classroom.</span></label><label><input name=\"q28\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">Improving a teacher of average talent is a very difficult task.</span></label><label><input name=\"q28\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">More theory in teacher-training courses is required.</span></label><label><input name=\"q28\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">Primary teacher training is not taken seriously.</span></label></div></li><li><div><strong>29</strong> In their first few years of working, teachers improve in the classroom because they</div><div class=\"choice-row\"><label><input name=\"q29\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">are well equipped to build on the theory they learned in college.</span></label><label><input name=\"q29\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">have to engage with the realities of the job.</span></label><label><input name=\"q29\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">have opportunities to observe and learn from their peers.</span></label><label><input name=\"q29\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">enjoy a high level of support from the schools that employ them.</span></label></div></li><li><div><strong>30</strong> Which of the following does the writer suggest is least effective for teachers to use?</div><div class=\"choice-row\"><label><input name=\"q30\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">enforcing strict standards of behaviour</span></label><label><input name=\"q30\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">setting high goals that students are aware of</span></label><label><input name=\"q30\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">responding to pupils who raise their hands to answer questions</span></label><label><input name=\"q30\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">ensuring that lesson time is properly scheduled and used</span></label></div></li><li><div><strong>31</strong> The author suggests that head teachers can assist newly qualified teachers by</div><div class=\"choice-row\"><label><input name=\"q31\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">carrying out classroom observations personally.</span></label><label><input name=\"q31\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">providing critical feedback.</span></label><label><input name=\"q31\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">welcoming union interaction.</span></label><label><input name=\"q31\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">working closely with them.</span></label></div></li></ol></section>",
           "groupId": "group-1",
           "kind": "single_choice",
           "leadHtml": "<p>Questions 27-31</p><p>Questions 27–31 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 27–31 on your answer sheet.</p>",
@@ -3919,6 +4144,7 @@
             "b013",
             "b014",
             "b015",
+            "b016",
             "b017",
             "b018",
             "b019",
@@ -3931,12 +4157,7 @@
             "b026",
             "b027",
             "b028",
-            "b029",
-            "b036",
-            "b040",
-            "b041",
-            "b046",
-            "b047"
+            "b029"
           ],
           "title": "below."
         }
@@ -3949,13 +4170,19 @@
             "b032",
             "b033",
             "b034",
+            "b035",
+            "b036",
             "b037",
             "b038",
             "b039",
+            "b040",
+            "b041",
             "b042",
             "b043",
             "b044",
-            "b045"
+            "b045",
+            "b046",
+            "b047"
           ],
           "classification": {
             "confidence": 0.68,
@@ -3965,13 +4192,19 @@
               "b032",
               "b033",
               "b034",
+              "b035",
+              "b036",
               "b037",
               "b038",
               "b039",
+              "b040",
+              "b041",
               "b042",
               "b043",
               "b044",
-              "b045"
+              "b045",
+              "b046",
+              "b047"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -4018,6 +4251,18 @@
               "confidence": 0.72,
               "fromBlockId": "b034",
               "reason": "same-section-continuation",
+              "toBlockId": "b035"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b035",
+              "reason": "same-section-continuation",
+              "toBlockId": "b036"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
               "toBlockId": "b037"
             },
             {
@@ -4035,6 +4280,18 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b039",
+              "reason": "same-section-continuation",
+              "toBlockId": "b040"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b040",
+              "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
               "reason": "same-section-continuation",
               "toBlockId": "b042"
             },
@@ -4055,6 +4312,18 @@
               "fromBlockId": "b044",
               "reason": "same-section-continuation",
               "toBlockId": "b045"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b046",
+              "reason": "same-section-continuation",
+              "toBlockId": "b047"
             }
           ],
           "groupId": "group-1",
@@ -4105,7 +4374,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct letter, A, B, C or D."
             },
@@ -4126,7 +4395,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter in boxes 27–31 on your answer sheet."
             },
@@ -4171,6 +4440,48 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "in educational standards?"
+            },
+            {
+              "bbox": [
+                57,
+                630.5999755859375,
+                356.1959533691406,
+                670.2000122070312
+              ],
+              "blockId": "b035",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                630.5999755859375,
+                356.1959533691406,
+                670.2000122070312
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A Problems are increasing year on year. B There are not enough top graduates to replace them. C It leads to a poor relat"
+            },
+            {
+              "bbox": [
+                57,
+                615,
+                444.88079833984375,
+                623.4000244140625
+              ],
+              "blockId": "b036",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                615,
+                444.88079833984375,
+                623.4000244140625
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "D Replacement teachers have the same training as the dismissed ones."
             },
             {
               "bbox": [
@@ -4237,6 +4548,48 @@
             },
             {
               "bbox": [
+                57,
+                459,
+                410.9111633300781,
+                467.4000244140625
+              ],
+              "blockId": "b040",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                459,
+                410.9111633300781,
+                467.4000244140625
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A are well equipped to build on the theory they learned in college."
+            },
+            {
+              "bbox": [
+                57,
+                412.20001220703125,
+                414.19195556640625,
+                451.800048828125
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                412.20001220703125,
+                414.19195556640625,
+                451.800048828125
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "B have to engage with the realities of the job. C have opportunities to observe and learn from their peers. D enjoy a hi"
+            },
+            {
+              "bbox": [
                 36,
                 381,
                 492.5615234375,
@@ -4294,7 +4647,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "C responding to pupils who raise their hands to answer questions D ensuring that lesson time is properly scheduled and u"
             },
@@ -4318,6 +4671,48 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "31 The author suggests that head teachers can assist newly qualified teachers by"
+            },
+            {
+              "bbox": [
+                57,
+                256.20001220703125,
+                328.12322998046875,
+                264.60003662109375
+              ],
+              "blockId": "b046",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                256.20001220703125,
+                328.12322998046875,
+                264.60003662109375
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A carrying out classroom observations personally."
+            },
+            {
+              "bbox": [
+                57,
+                209.40003967285156,
+                226.09197998046875,
+                249.00001525878906
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                57,
+                209.40003967285156,
+                226.09197998046875,
+                249.00001525878906
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "B providing critical feedback. C welcoming union interaction. D working closely with them."
             }
           ]
         },
@@ -4445,7 +4840,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 32–36"
             },
             {
@@ -4465,7 +4860,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "passage",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Do the following statements agree with the claims of the writer in Reading Passage 3?"
             },
@@ -4487,7 +4882,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "In boxes 32–36 on your answer sheet, write"
             },
             {
@@ -4507,7 +4902,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "YES if the statement agrees with the claims of the writer NO if the statement contradicts the claims of the writer NOT G"
             },
@@ -4792,7 +5187,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 37–40"
             },
             {
@@ -4812,7 +5207,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Complete each sentence with the correct ending, A–F, below."
             },
@@ -4833,7 +5228,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–F, in boxes 37–40 on your answer sheet."
             },

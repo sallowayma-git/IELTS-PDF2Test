@@ -1,4 +1,6 @@
-use crate::authoring_pipeline::collapse_whitespace;
+use crate::authoring_pipeline::{
+    collapse_whitespace, has_dynamic_ielts_question_instruction_evidence,
+};
 use crate::docx_ingest::{is_rejected_package_error, open_docx, DocxPackageLimits};
 use crate::environment::{
     cloud_pdf_vision_enabled, command_failure, find_sidecar, local_ocr_enabled,
@@ -27,6 +29,28 @@ struct TableIr {
     cols: usize,
 }
 
+fn starts_with_explicit_question_number(text: &str) -> bool {
+    let normalized = text
+        .trim_start()
+        .trim_start_matches('#')
+        .trim_start()
+        .to_ascii_lowercase();
+    let remainder = if let Some(remainder) = normalized.strip_prefix("questions") {
+        remainder
+    } else if let Some(remainder) = normalized.strip_prefix("question") {
+        remainder
+    } else {
+        return false;
+    };
+    let remainder = remainder
+        .trim_start_matches(|ch: char| ch.is_whitespace() || matches!(ch, ':' | '#' | '.' | ')'));
+    remainder
+        .chars()
+        .next()
+        .map(|ch| ch.is_ascii_digit())
+        .unwrap_or(false)
+}
+
 fn role_hint_for_text(text: &str) -> Option<&'static str> {
     let lower = text.to_ascii_lowercase();
     if lower.starts_with("answers")
@@ -36,11 +60,8 @@ fn role_hint_for_text(text: &str) -> Option<&'static str> {
         || looks_like_answer_key_block(text)
     {
         Some("answer")
-    } else if lower.contains("questions ")
-        || lower.starts_with("question ")
-        || lower.contains("true") && lower.contains("false") && lower.contains("not given")
-        || lower.contains("choose one")
-        || lower.contains("complete the")
+    } else if starts_with_explicit_question_number(text)
+        || has_dynamic_ielts_question_instruction_evidence(text)
     {
         Some("question")
     } else if lower.contains("reading passage") || lower.starts_with("passage ") {
@@ -2579,4 +2600,38 @@ pub(crate) fn missing_source_document_ir(job: &ImportJob, mode: &str, reason: &s
             "sourceStoredName": null
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::role_hint_for_text;
+
+    #[test]
+    fn ordinary_article_question_words_do_not_set_question_role() {
+        assert_eq!(
+            role_hint_for_text(
+                "Amid much else, the author questions whether Linnaeus really brought order to taxonomy."
+            ),
+            None
+        );
+        assert_eq!(
+            role_hint_for_text(
+                "The ensuing legal tussle had to settle the simple question of whether whale oil was fish oil."
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_ielts_heading_and_instruction_set_question_role() {
+        assert_eq!(role_hint_for_text("Questions 5-7"), Some("question"));
+        assert_eq!(
+            role_hint_for_text("Choose the correct letter, A, B or C."),
+            Some("question")
+        );
+        assert_eq!(
+            role_hint_for_text("Complete the notes below."),
+            Some("question")
+        );
+    }
 }

@@ -624,7 +624,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct heading for each paragraph from the list of headings below."
             },
@@ -645,7 +645,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct number, i–viii, in boxes 14–19 on your answer sheet."
             },
@@ -666,7 +666,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "List of Headings"
             },
@@ -999,7 +999,12 @@
             "b048",
             "b049",
             "b050",
+            "b051",
+            "b052",
+            "b053",
             "b054",
+            "b055",
+            "b056",
             "b057"
           ],
           "confidence": 0.82,
@@ -1050,11 +1055,41 @@
               "confidence": 0.72,
               "fromBlockId": "b050",
               "reason": "same-section-continuation",
+              "toBlockId": "b051"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b051",
+              "reason": "same-section-continuation",
+              "toBlockId": "b052"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b052",
+              "reason": "same-section-continuation",
+              "toBlockId": "b053"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b053",
+              "reason": "same-section-continuation",
               "toBlockId": "b054"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b054",
+              "reason": "same-section-continuation",
+              "toBlockId": "b055"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b055",
+              "reason": "same-section-continuation",
+              "toBlockId": "b056"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b056",
               "reason": "same-section-continuation",
               "toBlockId": "b057"
             }
@@ -1068,7 +1103,7 @@
           "kind": "summary_completion",
           "layout": {
             "layoutHint": "inline_completion",
-            "notes": "Questions 20–23\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 20–23 on your answer sheet.\nPlant communication research in Israel and Scotland\nPlants may send messages via their 20 ______ according to Ariel Novoplansky of Ben\u0002\nGurion University in Israel. In one study, Novoplansky’s team planted rows of garden peas,\nand created conditions like a 21 ______ around the first plant in each row. The plants\nnetworks of 22 ______ which connect the plants beneath the soil. These structures, which\neating insects called 23 ______ have also produced some interesting results.",
+            "notes": "Questions 20–23\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 20–23 on your answer sheet.\nPlant communication research in Israel and Scotland\nPlants may send messages via their 20 ______ according to Ariel Novoplansky of Ben\u0002\nGurion University in Israel. In one study, Novoplansky’s team planted rows of garden peas,\nand created conditions like a 21 ______ around the first plant in each row. The plants\nresponded by closing the tiny holes on their leaf surfaces, known as pores. They then\nappeared to signal to other plants nearby, causing them to respond in a similar way.\nResearch at the University of Aberdeen in Scotland, meanwhile, has focused on the\nnetworks of 22 ______ which connect the plants beneath the soil. These structures, which\nextract sugars from the plants and supply them with phosphorus and nitrogen, also seem to\nplay a key role in plant communication. Experiments involving broad bean plants and plant\u0002\neating insects called 23 ______ have also produced some interesting results.",
             "template": "summary_text_completion"
           },
           "questionRange": [
@@ -1097,7 +1132,12 @@
                 "b048",
                 "b049",
                 "b050",
+                "b051",
+                "b052",
+                "b053",
                 "b054",
+                "b055",
+                "b056",
                 "b057"
               ],
               "verified": false
@@ -1112,7 +1152,7 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "______ around the first plant in each row. The plants networks of",
+              "prompt": "______ around the first plant in each row. The plants responded by closing the tiny holes on their leaf surfaces, known as pores. They then appeared to signal to other plants nearby, causing them to respond in a similar way. Research at the University of Aberdeen in Scotland, meanwhile, has focused on the networks of",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b043",
@@ -1123,7 +1163,12 @@
                 "b048",
                 "b049",
                 "b050",
+                "b051",
+                "b052",
+                "b053",
                 "b054",
+                "b055",
+                "b056",
                 "b057"
               ],
               "verified": false
@@ -1138,7 +1183,7 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "______ which connect the plants beneath the soil. These structures, which eating insects called",
+              "prompt": "______ which connect the plants beneath the soil. These structures, which extract sugars from the plants and supply them with phosphorus and nitrogen, also seem to play a key role in plant communication. Experiments involving broad bean plants and plant\u0002 eating insects called",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b043",
@@ -1149,7 +1194,12 @@
                 "b048",
                 "b049",
                 "b050",
+                "b051",
+                "b052",
+                "b053",
                 "b054",
+                "b055",
+                "b056",
                 "b057"
               ],
               "verified": false
@@ -1175,7 +1225,12 @@
                 "b048",
                 "b049",
                 "b050",
+                "b051",
+                "b052",
+                "b053",
                 "b054",
+                "b055",
+                "b056",
                 "b057"
               ],
               "verified": false
@@ -1264,7 +1319,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 20–23 on your answer sheet."
             },
@@ -1355,6 +1410,69 @@
             {
               "bbox": [
                 54,
+                536.22998046875,
+                506.7359313964844,
+                544.6300048828125
+              ],
+              "blockId": "b051",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                536.22998046875,
+                506.7359313964844,
+                544.6300048828125
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "responded by closing the tiny holes on their leaf surfaces, known as pores. They then"
+            },
+            {
+              "bbox": [
+                54,
+                515.22998046875,
+                495.33599853515625,
+                523.6300048828125
+              ],
+              "blockId": "b052",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                515.22998046875,
+                495.33599853515625,
+                523.6300048828125
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "appeared to signal to other plants nearby, causing them to respond in a similar way."
+            },
+            {
+              "bbox": [
+                54,
+                480.30999755859375,
+                498.0600891113281,
+                488.71002197265625
+              ],
+              "blockId": "b053",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                480.30999755859375,
+                498.0600891113281,
+                488.71002197265625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Research at the University of Aberdeen in Scotland, meanwhile, has focused on the"
+            },
+            {
+              "bbox": [
+                54,
                 459.30999755859375,
                 531.4279174804688,
                 467.71002197265625
@@ -1372,6 +1490,48 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "networks of 22 ______ which connect the plants beneath the soil. These structures, which"
+            },
+            {
+              "bbox": [
+                54,
+                438.30999755859375,
+                538.66796875,
+                446.71002197265625
+              ],
+              "blockId": "b055",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                438.30999755859375,
+                538.66796875,
+                446.71002197265625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "extract sugars from the plants and supply them with phosphorus and nitrogen, also seem to"
+            },
+            {
+              "bbox": [
+                54,
+                417.30999755859375,
+                533.260009765625,
+                425.71002197265625
+              ],
+              "blockId": "b056",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                417.30999755859375,
+                533.260009765625,
+                425.71002197265625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "play a key role in plant communication. Experiments involving broad bean plants and plant\u0002"
             },
             {
               "bbox": [
@@ -1404,7 +1564,12 @@
             "b048",
             "b049",
             "b050",
+            "b051",
+            "b052",
+            "b053",
             "b054",
+            "b055",
+            "b056",
             "b057"
           ],
           "verified": false
@@ -1717,7 +1882,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the following statements (Questions 23–26) and the list of researchers below."
             },
@@ -1738,7 +1903,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Match each statement with the correct researcher, A-E."
             },
@@ -1759,7 +1924,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A-E, in boxes 23–26 on your answer sheet."
             },
@@ -1844,7 +2009,7 @@
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "help a single plant."
             },
             {
@@ -2041,7 +2206,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 on the following pages.</p>\n<p>How do plants talk to each other?</p>\n<p>Research shows that plants communicate and interact with each other in surprisingly subtle</p>\n<p>A In 1983, plant scientists Jack Schultz and Ian Baldwin reported that the leaves of young</p>\n<p>maple trees increased their defense systems when exposed to maples that had been damaged by plant-eating (herbivorous) insects. The injured trees, they suggested, were alerting neighbors to the presence of a predator by releasing chemical signals into the air. But the plant research community did not accept this. The results were difficult to replicate, critics pointed out. Many also questioned how it could be evolutionarily stable if it benefited neighboring plants but not the plant releasing the signal. By the late 1980s, most ecologists felt that Schultz and Baldwin’s ideas had been discredited.</p>\n<p>B A decade later, however, a number of more carefully designed experiments began to</p>\n<p>yield convincing indications to the contrary. In 2000, evolutionary ecologist Richard Karban showed that wild tobacco plants became resistant to herbivores when grown in close proximity to sagebrush plants whose leaves had been damaged by cutting. This change appeared to be in response to chemicals – known as volatile organic compounds or VOCs – released by the sagebrush plants. Other researchers soon reported similar VOC-induced defense responses in several other plants, including lima bean, broad bean, barley, and corn. And in 2006, Karban showed that VOCs released by damaged sagebrush induce herbivore resistance in plants growing at distances of</p>\n<p>up to 60 cm, well within the range of sagebrush neighbors in nature.</p>\n<p>and sophisticated ways.</p>\n<p>C But the question still remains: ‘Why should a plant waste valuable resources on a</p>\n<p>function which has no obvious advantage for it?’ One hypothesis is that external communication channels are merely an extension of within-plant signaling. In sagebrush, lima bean, and poplar, VOCs released from damaged parts of a plant induce resistance in intact sections of the same plant, suggesting that each individual plant uses the signals to coordinate its own physiological responses to protect itself. Karban agrees, saying: ‘The interplant signaling we see may be a result of plants co\u0002 opting that process.’ Alternatively, VOC-based signaling between plants may have been favored because it enhances the ‘extended fitness’ of the sender by aiding related</p>\n<p>plants of the same species: a strategy known as kin selection.</p>\n<p>D Over the past few years, a team led by Ariel Novoplansky of Ben-Gurion University of</p>\n<p>the Negev in Israel seems to have found proof that distress signals can be passed through the plants’ roots. They planted garden pea plants in rows and subjected the first in each row to conditions similar to those experienced in a drought. They then evaluated the response by measuring the microscopic holes on leaves, known as pores, which react when there is a shortage of water. After fifteen minutes, the stressed plant was seen to be closing its pores, followed by all of its neighbors, one by one. Importantly, in a control setup where root contact between neighboring plants was</p>\n<p>E Monica Gagliano of the University of Western Australia believes that plants may even</p>\n<p>use sounds to alert their neighbors. In one study, she demonstrated that chili plants growing next to fennel plants developed more quickly than seedlings grown with other chili plants. Gagliano and her colleagues suspect the chili plants were compensating for the presence of the fennel, which is known to release chemicals that inhibit the growth of other plants. Remarkably, however, when plant communication pathways – airborne volatiles, root contact, and common fungal networks – were blocked, the results begged for an alternative explanation. ‘We think this other channel of communication might be acoustic,’ says Gagliano. But behavioral ecologist Carel ten Cate of the University of Leiden in the Netherlands points out that taking advantage of such benefits would require sensory mechanisms yet to be described in plants. Despite widespread skepticism, Gagliano has received some encouragement. Richard Karban, for example, is cautiously enthusiastic. ‘Whether or not the explanation she favors is the right one,’ he says, ‘I think that she’s gotten results that, as a field, we need to come</p>\n<p>to grips with.’</p>\n<p>F Researchers believe that knowledge of this phenomenon could eventually be applied to</p>\n<p>agriculture, and lead to the cultivation of hardier crops. But all agree that there is still much work to be done. ‘Applying our limited knowledge [of plant-communication mechanisms] to agriculture is a big jump,’ says Johnson, ‘but it is definitely on the horizon.’ Nevertheless, one message has emerged loud and clear from those studying this new realm of botanical interaction: despite not possessing eyes, ears, or a nervous system, plants are anything but uncommunicative. ‘When I started my PhD (in the late 1980s), all this stuff was considered very weird,’ recalls Ariel Novoplansky. ‘Today, there is no doubt. We now recognise that plants are capable of some very sophisticated exchanges of information with other plants. This idea is not strange anymore.’</p>\n<p>Research at the University of Aberdeen in Scotland, meanwhile, has focused on the</p>\n<p>extract sugars from the plants and supply them with phosphorus and nitrogen, also seem to</p>\n<p>play a key role in plant communication. Experiments involving broad bean plants and plant\u0002</p>\n<p>All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>"
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 on the following pages.</p>\n<p>How do plants talk to each other?</p>\n<p>Research shows that plants communicate and interact with each other in surprisingly subtle</p>\n<p>A In 1983, plant scientists Jack Schultz and Ian Baldwin reported that the leaves of young</p>\n<p>maple trees increased their defense systems when exposed to maples that had been damaged by plant-eating (herbivorous) insects. The injured trees, they suggested, were alerting neighbors to the presence of a predator by releasing chemical signals into the air. But the plant research community did not accept this. The results were difficult to replicate, critics pointed out. Many also questioned how it could be evolutionarily stable if it benefited neighboring plants but not the plant releasing the signal. By the late 1980s, most ecologists felt that Schultz and Baldwin’s ideas had been discredited.</p>\n<p>B A decade later, however, a number of more carefully designed experiments began to</p>\n<p>yield convincing indications to the contrary. In 2000, evolutionary ecologist Richard Karban showed that wild tobacco plants became resistant to herbivores when grown in close proximity to sagebrush plants whose leaves had been damaged by cutting. This change appeared to be in response to chemicals – known as volatile organic compounds or VOCs – released by the sagebrush plants. Other researchers soon reported similar VOC-induced defense responses in several other plants, including lima bean, broad bean, barley, and corn. And in 2006, Karban showed that VOCs released by damaged sagebrush induce herbivore resistance in plants growing at distances of</p>\n<p>up to 60 cm, well within the range of sagebrush neighbors in nature.</p>\n<p>and sophisticated ways.</p>\n<p>C But the question still remains: ‘Why should a plant waste valuable resources on a</p>\n<p>function which has no obvious advantage for it?’ One hypothesis is that external communication channels are merely an extension of within-plant signaling. In sagebrush, lima bean, and poplar, VOCs released from damaged parts of a plant induce resistance in intact sections of the same plant, suggesting that each individual plant uses the signals to coordinate its own physiological responses to protect itself. Karban agrees, saying: ‘The interplant signaling we see may be a result of plants co\u0002 opting that process.’ Alternatively, VOC-based signaling between plants may have been favored because it enhances the ‘extended fitness’ of the sender by aiding related</p>\n<p>plants of the same species: a strategy known as kin selection.</p>\n<p>D Over the past few years, a team led by Ariel Novoplansky of Ben-Gurion University of</p>\n<p>the Negev in Israel seems to have found proof that distress signals can be passed through the plants’ roots. They planted garden pea plants in rows and subjected the first in each row to conditions similar to those experienced in a drought. They then evaluated the response by measuring the microscopic holes on leaves, known as pores, which react when there is a shortage of water. After fifteen minutes, the stressed plant was seen to be closing its pores, followed by all of its neighbors, one by one. Importantly, in a control setup where root contact between neighboring plants was</p>\n<p>E Monica Gagliano of the University of Western Australia believes that plants may even</p>\n<p>use sounds to alert their neighbors. In one study, she demonstrated that chili plants growing next to fennel plants developed more quickly than seedlings grown with other chili plants. Gagliano and her colleagues suspect the chili plants were compensating for the presence of the fennel, which is known to release chemicals that inhibit the growth of other plants. Remarkably, however, when plant communication pathways – airborne volatiles, root contact, and common fungal networks – were blocked, the results begged for an alternative explanation. ‘We think this other channel of communication might be acoustic,’ says Gagliano. But behavioral ecologist Carel ten Cate of the University of Leiden in the Netherlands points out that taking advantage of such benefits would require sensory mechanisms yet to be described in plants. Despite widespread skepticism, Gagliano has received some encouragement. Richard Karban, for example, is cautiously enthusiastic. ‘Whether or not the explanation she favors is the right one,’ he says, ‘I think that she’s gotten results that, as a field, we need to come</p>\n<p>to grips with.’</p>\n<p>F Researchers believe that knowledge of this phenomenon could eventually be applied to</p>\n<p>agriculture, and lead to the cultivation of hardier crops. But all agree that there is still much work to be done. ‘Applying our limited knowledge [of plant-communication mechanisms] to agriculture is a big jump,’ says Johnson, ‘but it is definitely on the horizon.’ Nevertheless, one message has emerged loud and clear from those studying this new realm of botanical interaction: despite not possessing eyes, ears, or a nervous system, plants are anything but uncommunicative. ‘When I started my PhD (in the late 1980s), all this stuff was considered very weird,’ recalls Ariel Novoplansky. ‘Today, there is no doubt. We now recognise that plants are capable of some very sophisticated exchanges of information with other plants. This idea is not strange anymore.’</p>\n<p>All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -2076,9 +2241,6 @@
           "b040",
           "b041",
           "b042",
-          "b053",
-          "b055",
-          "b056",
           "b075"
         ],
         "title": "Passage 2 on the following pages."
@@ -2124,7 +2286,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 745.0599975585938,
@@ -2138,7 +2300,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -2150,7 +2312,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2169,18 +2331,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 14-26, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 706.6599731445312,
@@ -2194,10 +2355,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2206,7 +2367,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2225,7 +2386,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2234,7 +2395,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2253,7 +2414,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2262,7 +2423,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2281,15 +2442,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
+              "roleHint": "question",
               "text": "Choose the correct heading for each paragraph from the list of headings below."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2308,15 +2470,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
+              "roleHint": "question",
               "text": "Write the correct number, i–viii, in boxes 14–19 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2335,15 +2498,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
+              "roleHint": "question",
               "text": "List of Headings"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2355,22 +2519,22 @@
               "blockId": "b009",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>i  Sending messages underground</p>",
+              "html": "<p>i Sending messages underground</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "i  Sending messages underground"
+              "text": "i Sending messages underground"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2382,22 +2546,22 @@
               "blockId": "b010",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>ii   Potential advantages for farmers</p>",
+              "html": "<p>ii Potential advantages for farmers</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "ii   Potential advantages for farmers"
+              "text": "ii Potential advantages for farmers"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2409,22 +2573,22 @@
               "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>iii  The widespread rejection of an idea</p>",
+              "html": "<p>iii The widespread rejection of an idea</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "iii  The widespread rejection of an idea"
+              "text": "iii The widespread rejection of an idea"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2436,22 +2600,22 @@
               "blockId": "b012",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>iv   One species accelerating growth in another</p>",
+              "html": "<p>iv One species accelerating growth in another</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "iv   One species accelerating growth in another"
+              "text": "iv One species accelerating growth in another"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2463,22 +2627,22 @@
               "blockId": "b013",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>v   Some obstacles to plant communication</p>",
+              "html": "<p>v Some obstacles to plant communication</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "v   Some obstacles to plant communication"
+              "text": "v Some obstacles to plant communication"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2490,22 +2654,22 @@
               "blockId": "b014",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>vi  Evidence leading to renewed belief in a theory</p>",
+              "html": "<p>vi Evidence leading to renewed belief in a theory</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "vi  Evidence leading to renewed belief in a theory"
+              "text": "vi Evidence leading to renewed belief in a theory"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2517,22 +2681,22 @@
               "blockId": "b015",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>vii  New technologies which helped researchers</p>",
+              "html": "<p>vii New technologies which helped researchers</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "vii  New technologies which helped researchers"
+              "text": "vii New technologies which helped researchers"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2544,22 +2708,22 @@
               "blockId": "b016",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>viii  A suggested benefit to the sender of plant communication</p>",
+              "html": "<p>viii A suggested benefit to the sender of plant communication</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "viii  A suggested benefit to the sender of plant communication"
+              "text": "viii A suggested benefit to the sender of plant communication"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2578,7 +2742,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2586,7 +2750,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2605,7 +2769,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2613,7 +2777,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2632,7 +2796,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2640,7 +2804,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2659,7 +2823,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2667,7 +2831,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2686,7 +2850,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2694,7 +2858,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2713,7 +2877,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2728,8 +2892,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2748,7 +2912,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2756,8 +2920,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2776,7 +2940,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2784,8 +2948,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2804,7 +2968,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2812,8 +2976,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2832,7 +2996,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2840,8 +3004,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2860,7 +3024,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2868,8 +3032,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2888,7 +3052,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2896,8 +3060,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2916,7 +3080,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2924,8 +3088,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2944,7 +3108,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2952,8 +3116,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2972,7 +3136,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2980,8 +3144,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3000,7 +3164,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3008,8 +3172,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3028,7 +3192,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3036,8 +3200,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3056,7 +3220,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3064,8 +3228,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3084,7 +3248,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3099,8 +3263,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3119,7 +3283,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3127,8 +3291,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3147,7 +3311,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3155,8 +3319,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3175,7 +3339,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3183,8 +3347,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3203,7 +3367,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3211,8 +3375,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3231,7 +3395,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3239,8 +3403,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3259,7 +3423,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3267,8 +3431,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3287,7 +3451,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3409,6 +3573,7 @@
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write your answers in boxes 20–23 on your answer sheet."
             },
             {
@@ -3768,7 +3933,6 @@
                 }
               },
               "pageIndex": 5,
-              "roleHint": "question",
               "text": "Look at the following statements (Questions 23–26) and the list of researchers below."
             },
             {
@@ -3796,6 +3960,7 @@
                 }
               },
               "pageIndex": 5,
+              "roleHint": "question",
               "text": "Match each statement with the correct researcher, A-E."
             },
             {
@@ -3823,6 +3988,7 @@
                 }
               },
               "pageIndex": 5,
+              "roleHint": "question",
               "text": "Write the correct letter, A-E, in boxes 23–26 on your answer sheet."
             },
             {
@@ -3881,7 +4047,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3900,7 +4066,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3908,9 +4074,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75.02400207519531,
                 574.2699584960938,
@@ -3924,10 +4090,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3935,7 +4101,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3954,7 +4120,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3962,7 +4128,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3981,7 +4147,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3989,7 +4155,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4001,22 +4167,22 @@
               "blockId": "b068",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Richard Karban</p>",
+              "html": "<p>A Richard Karban</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
-              "text": "A  Richard Karban"
+              "text": "A Richard Karban"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4028,22 +4194,22 @@
               "blockId": "b069",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  Ariel Novoplansky</p>",
+              "html": "<p>B Ariel Novoplansky</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
-              "text": "B  Ariel Novoplansky"
+              "text": "B Ariel Novoplansky"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4055,22 +4221,22 @@
               "blockId": "b070",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  David Johnson</p>",
+              "html": "<p>C David Johnson</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
-              "text": "C  David Johnson"
+              "text": "C David Johnson"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4082,22 +4248,22 @@
               "blockId": "b071",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  Monica Gagliano</p>",
+              "html": "<p>D Monica Gagliano</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
-              "text": "D  Monica Gagliano"
+              "text": "D Monica Gagliano"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4109,22 +4275,22 @@
               "blockId": "b072",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>E  Carel ten Cate</p>",
+              "html": "<p>E Carel ten Cate</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
-              "text": "E  Carel ten Cate"
+              "text": "E Carel ten Cate"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4143,7 +4309,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -4151,7 +4317,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4170,7 +4336,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -4178,7 +4344,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4197,7 +4363,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -4298,7 +4464,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 on the following pages.</p>\n<p>How do plants talk to each other?</p>\n<p>Research shows that plants communicate and interact with each other in surprisingly subtle</p>\n<p>A In 1983, plant scientists Jack Schultz and Ian Baldwin reported that the leaves of young</p>\n<p>maple trees increased their defense systems when exposed to maples that had been damaged by plant-eating (herbivorous) insects. The injured trees, they suggested, were alerting neighbors to the presence of a predator by releasing chemical signals into the air. But the plant research community did not accept this. The results were difficult to replicate, critics pointed out. Many also questioned how it could be evolutionarily stable if it benefited neighboring plants but not the plant releasing the signal. By the late 1980s, most ecologists felt that Schultz and Baldwin’s ideas had been discredited.</p>\n<p>B A decade later, however, a number of more carefully designed experiments began to</p>\n<p>yield convincing indications to the contrary. In 2000, evolutionary ecologist Richard Karban showed that wild tobacco plants became resistant to herbivores when grown in close proximity to sagebrush plants whose leaves had been damaged by cutting. This change appeared to be in response to chemicals – known as volatile organic compounds or VOCs – released by the sagebrush plants. Other researchers soon reported similar VOC-induced defense responses in several other plants, including lima bean, broad bean, barley, and corn. And in 2006, Karban showed that VOCs released by damaged sagebrush induce herbivore resistance in plants growing at distances of</p>\n<p>up to 60 cm, well within the range of sagebrush neighbors in nature.</p>\n<p>and sophisticated ways.</p>\n<p>C But the question still remains: ‘Why should a plant waste valuable resources on a</p>\n<p>function which has no obvious advantage for it?’ One hypothesis is that external communication channels are merely an extension of within-plant signaling. In sagebrush, lima bean, and poplar, VOCs released from damaged parts of a plant induce resistance in intact sections of the same plant, suggesting that each individual plant uses the signals to coordinate its own physiological responses to protect itself. Karban agrees, saying: ‘The interplant signaling we see may be a result of plants co\u0002 opting that process.’ Alternatively, VOC-based signaling between plants may have been favored because it enhances the ‘extended fitness’ of the sender by aiding related</p>\n<p>plants of the same species: a strategy known as kin selection.</p>\n<p>D Over the past few years, a team led by Ariel Novoplansky of Ben-Gurion University of</p>\n<p>the Negev in Israel seems to have found proof that distress signals can be passed through the plants’ roots. They planted garden pea plants in rows and subjected the first in each row to conditions similar to those experienced in a drought. They then evaluated the response by measuring the microscopic holes on leaves, known as pores, which react when there is a shortage of water. After fifteen minutes, the stressed plant was seen to be closing its pores, followed by all of its neighbors, one by one. Importantly, in a control setup where root contact between neighboring plants was</p>\n<p>E Monica Gagliano of the University of Western Australia believes that plants may even</p>\n<p>use sounds to alert their neighbors. In one study, she demonstrated that chili plants growing next to fennel plants developed more quickly than seedlings grown with other chili plants. Gagliano and her colleagues suspect the chili plants were compensating for the presence of the fennel, which is known to release chemicals that inhibit the growth of other plants. Remarkably, however, when plant communication pathways – airborne volatiles, root contact, and common fungal networks – were blocked, the results begged for an alternative explanation. ‘We think this other channel of communication might be acoustic,’ says Gagliano. But behavioral ecologist Carel ten Cate of the University of Leiden in the Netherlands points out that taking advantage of such benefits would require sensory mechanisms yet to be described in plants. Despite widespread skepticism, Gagliano has received some encouragement. Richard Karban, for example, is cautiously enthusiastic. ‘Whether or not the explanation she favors is the right one,’ he says, ‘I think that she’s gotten results that, as a field, we need to come</p>\n<p>to grips with.’</p>\n<p>F Researchers believe that knowledge of this phenomenon could eventually be applied to</p>\n<p>agriculture, and lead to the cultivation of hardier crops. But all agree that there is still much work to be done. ‘Applying our limited knowledge [of plant-communication mechanisms] to agriculture is a big jump,’ says Johnson, ‘but it is definitely on the horizon.’ Nevertheless, one message has emerged loud and clear from those studying this new realm of botanical interaction: despite not possessing eyes, ears, or a nervous system, plants are anything but uncommunicative. ‘When I started my PhD (in the late 1980s), all this stuff was considered very weird,’ recalls Ariel Novoplansky. ‘Today, there is no doubt. We now recognise that plants are capable of some very sophisticated exchanges of information with other plants. This idea is not strange anymore.’</p>\n<p>Research at the University of Aberdeen in Scotland, meanwhile, has focused on the</p>\n<p>extract sugars from the plants and supply them with phosphorus and nitrogen, also seem to</p>\n<p>play a key role in plant communication. Experiments involving broad bean plants and plant\u0002</p>\n<p>All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 on the following pages.</p>\n<p>How do plants talk to each other?</p>\n<p>Research shows that plants communicate and interact with each other in surprisingly subtle</p>\n<p>A In 1983, plant scientists Jack Schultz and Ian Baldwin reported that the leaves of young</p>\n<p>maple trees increased their defense systems when exposed to maples that had been damaged by plant-eating (herbivorous) insects. The injured trees, they suggested, were alerting neighbors to the presence of a predator by releasing chemical signals into the air. But the plant research community did not accept this. The results were difficult to replicate, critics pointed out. Many also questioned how it could be evolutionarily stable if it benefited neighboring plants but not the plant releasing the signal. By the late 1980s, most ecologists felt that Schultz and Baldwin’s ideas had been discredited.</p>\n<p>B A decade later, however, a number of more carefully designed experiments began to</p>\n<p>yield convincing indications to the contrary. In 2000, evolutionary ecologist Richard Karban showed that wild tobacco plants became resistant to herbivores when grown in close proximity to sagebrush plants whose leaves had been damaged by cutting. This change appeared to be in response to chemicals – known as volatile organic compounds or VOCs – released by the sagebrush plants. Other researchers soon reported similar VOC-induced defense responses in several other plants, including lima bean, broad bean, barley, and corn. And in 2006, Karban showed that VOCs released by damaged sagebrush induce herbivore resistance in plants growing at distances of</p>\n<p>up to 60 cm, well within the range of sagebrush neighbors in nature.</p>\n<p>and sophisticated ways.</p>\n<p>C But the question still remains: ‘Why should a plant waste valuable resources on a</p>\n<p>function which has no obvious advantage for it?’ One hypothesis is that external communication channels are merely an extension of within-plant signaling. In sagebrush, lima bean, and poplar, VOCs released from damaged parts of a plant induce resistance in intact sections of the same plant, suggesting that each individual plant uses the signals to coordinate its own physiological responses to protect itself. Karban agrees, saying: ‘The interplant signaling we see may be a result of plants co\u0002 opting that process.’ Alternatively, VOC-based signaling between plants may have been favored because it enhances the ‘extended fitness’ of the sender by aiding related</p>\n<p>plants of the same species: a strategy known as kin selection.</p>\n<p>D Over the past few years, a team led by Ariel Novoplansky of Ben-Gurion University of</p>\n<p>the Negev in Israel seems to have found proof that distress signals can be passed through the plants’ roots. They planted garden pea plants in rows and subjected the first in each row to conditions similar to those experienced in a drought. They then evaluated the response by measuring the microscopic holes on leaves, known as pores, which react when there is a shortage of water. After fifteen minutes, the stressed plant was seen to be closing its pores, followed by all of its neighbors, one by one. Importantly, in a control setup where root contact between neighboring plants was</p>\n<p>E Monica Gagliano of the University of Western Australia believes that plants may even</p>\n<p>use sounds to alert their neighbors. In one study, she demonstrated that chili plants growing next to fennel plants developed more quickly than seedlings grown with other chili plants. Gagliano and her colleagues suspect the chili plants were compensating for the presence of the fennel, which is known to release chemicals that inhibit the growth of other plants. Remarkably, however, when plant communication pathways – airborne volatiles, root contact, and common fungal networks – were blocked, the results begged for an alternative explanation. ‘We think this other channel of communication might be acoustic,’ says Gagliano. But behavioral ecologist Carel ten Cate of the University of Leiden in the Netherlands points out that taking advantage of such benefits would require sensory mechanisms yet to be described in plants. Despite widespread skepticism, Gagliano has received some encouragement. Richard Karban, for example, is cautiously enthusiastic. ‘Whether or not the explanation she favors is the right one,’ he says, ‘I think that she’s gotten results that, as a field, we need to come</p>\n<p>to grips with.’</p>\n<p>F Researchers believe that knowledge of this phenomenon could eventually be applied to</p>\n<p>agriculture, and lead to the cultivation of hardier crops. But all agree that there is still much work to be done. ‘Applying our limited knowledge [of plant-communication mechanisms] to agriculture is a big jump,’ says Johnson, ‘but it is definitely on the horizon.’ Nevertheless, one message has emerged loud and clear from those studying this new realm of botanical interaction: despite not possessing eyes, ears, or a nervous system, plants are anything but uncommunicative. ‘When I started my PhD (in the late 1980s), all this stuff was considered very weird,’ recalls Ariel Novoplansky. ‘Today, there is no doubt. We now recognise that plants are capable of some very sophisticated exchanges of information with other plants. This idea is not strange anymore.’</p>\n<p>All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies. Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
             "kind": "html"
           }
         ]
@@ -4336,7 +4502,7 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 20-23</p><p>Questions 20–23</p></div><div class=\"notes-completion\">Questions 20–23\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 20–23 on your answer sheet.\nPlant communication research in Israel and Scotland\nPlants may send messages via their <span class=\"inline-completion\" data-question-id=\"q20\"><strong>20</strong> <input type=\"text\" id=\"q20_input\" name=\"q20\" placeholder=\"answer\"></span> according to Ariel Novoplansky of Ben\u0002\nGurion University in Israel. In one study, Novoplansky’s team planted rows of garden peas,\nand created conditions like a <span class=\"inline-completion\" data-question-id=\"q21\"><strong>21</strong> <input type=\"text\" id=\"q21_input\" name=\"q21\" placeholder=\"answer\"></span> around the first plant in each row. The plants\nnetworks of <span class=\"inline-completion\" data-question-id=\"q22\"><strong>22</strong> <input type=\"text\" id=\"q22_input\" name=\"q22\" placeholder=\"answer\"></span> which connect the plants beneath the soil. These structures, which\neating insects called <span class=\"inline-completion\" data-question-id=\"q23\"><strong>23</strong> <input type=\"text\" id=\"q23_input\" name=\"q23\" placeholder=\"answer\"></span> have also produced some interesting results.</div></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 20-23</p><p>Questions 20–23</p></div><div class=\"notes-completion\">Questions 20–23\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 20–23 on your answer sheet.\nPlant communication research in Israel and Scotland\nPlants may send messages via their <span class=\"inline-completion\" data-question-id=\"q20\"><strong>20</strong> <input type=\"text\" id=\"q20_input\" name=\"q20\" placeholder=\"answer\"></span> according to Ariel Novoplansky of Ben\u0002\nGurion University in Israel. In one study, Novoplansky’s team planted rows of garden peas,\nand created conditions like a <span class=\"inline-completion\" data-question-id=\"q21\"><strong>21</strong> <input type=\"text\" id=\"q21_input\" name=\"q21\" placeholder=\"answer\"></span> around the first plant in each row. The plants\nresponded by closing the tiny holes on their leaf surfaces, known as pores. They then\nappeared to signal to other plants nearby, causing them to respond in a similar way.\nResearch at the University of Aberdeen in Scotland, meanwhile, has focused on the\nnetworks of <span class=\"inline-completion\" data-question-id=\"q22\"><strong>22</strong> <input type=\"text\" id=\"q22_input\" name=\"q22\" placeholder=\"answer\"></span> which connect the plants beneath the soil. These structures, which\nextract sugars from the plants and supply them with phosphorus and nitrogen, also seem to\nplay a key role in plant communication. Experiments involving broad bean plants and plant\u0002\neating insects called <span class=\"inline-completion\" data-question-id=\"q23\"><strong>23</strong> <input type=\"text\" id=\"q23_input\" name=\"q23\" placeholder=\"answer\"></span> have also produced some interesting results.</div></section>",
           "groupId": "group-2",
           "kind": "summary_completion",
           "leadHtml": "<p>Questions 20-23</p><p>Questions 20–23</p>",
@@ -4415,9 +4581,6 @@
             "b040",
             "b041",
             "b042",
-            "b053",
-            "b055",
-            "b056",
             "b075"
           ],
           "title": "Passage 2 on the following pages."
@@ -4472,13 +4635,14 @@
             "interaction": {
               "allowOptionReuse": false,
               "options": [
-                "A",
-                "B",
-                "C",
-                "D",
-                "E",
-                "F",
-                "G"
+                "i",
+                "ii",
+                "iii",
+                "iv",
+                "v",
+                "vi",
+                "vii",
+                "viii"
               ],
               "type": "matching"
             },
@@ -4667,7 +4831,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct heading for each paragraph from the list of headings below."
             },
@@ -4688,7 +4852,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct number, i–viii, in boxes 14–19 on your answer sheet."
             },
@@ -4709,7 +4873,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "List of Headings"
             },
@@ -5019,7 +5183,12 @@
             "b048",
             "b049",
             "b050",
+            "b051",
+            "b052",
+            "b053",
             "b054",
+            "b055",
+            "b056",
             "b057"
           ],
           "classification": {
@@ -5033,7 +5202,12 @@
               "b048",
               "b049",
               "b050",
+              "b051",
+              "b052",
+              "b053",
               "b054",
+              "b055",
+              "b056",
               "b057"
             ],
             "interaction": {
@@ -5092,11 +5266,41 @@
               "confidence": 0.72,
               "fromBlockId": "b050",
               "reason": "same-section-continuation",
+              "toBlockId": "b051"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b051",
+              "reason": "same-section-continuation",
+              "toBlockId": "b052"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b052",
+              "reason": "same-section-continuation",
+              "toBlockId": "b053"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b053",
+              "reason": "same-section-continuation",
               "toBlockId": "b054"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b054",
+              "reason": "same-section-continuation",
+              "toBlockId": "b055"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b055",
+              "reason": "same-section-continuation",
+              "toBlockId": "b056"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b056",
               "reason": "same-section-continuation",
               "toBlockId": "b057"
             }
@@ -5191,7 +5395,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 20–23 on your answer sheet."
             },
@@ -5282,6 +5486,69 @@
             {
               "bbox": [
                 54,
+                536.22998046875,
+                506.7359313964844,
+                544.6300048828125
+              ],
+              "blockId": "b051",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                536.22998046875,
+                506.7359313964844,
+                544.6300048828125
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "responded by closing the tiny holes on their leaf surfaces, known as pores. They then"
+            },
+            {
+              "bbox": [
+                54,
+                515.22998046875,
+                495.33599853515625,
+                523.6300048828125
+              ],
+              "blockId": "b052",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                515.22998046875,
+                495.33599853515625,
+                523.6300048828125
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "appeared to signal to other plants nearby, causing them to respond in a similar way."
+            },
+            {
+              "bbox": [
+                54,
+                480.30999755859375,
+                498.0600891113281,
+                488.71002197265625
+              ],
+              "blockId": "b053",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                480.30999755859375,
+                498.0600891113281,
+                488.71002197265625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Research at the University of Aberdeen in Scotland, meanwhile, has focused on the"
+            },
+            {
+              "bbox": [
+                54,
                 459.30999755859375,
                 531.4279174804688,
                 467.71002197265625
@@ -5299,6 +5566,48 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "networks of 22 ______ which connect the plants beneath the soil. These structures, which"
+            },
+            {
+              "bbox": [
+                54,
+                438.30999755859375,
+                538.66796875,
+                446.71002197265625
+              ],
+              "blockId": "b055",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                438.30999755859375,
+                538.66796875,
+                446.71002197265625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "extract sugars from the plants and supply them with phosphorus and nitrogen, also seem to"
+            },
+            {
+              "bbox": [
+                54,
+                417.30999755859375,
+                533.260009765625,
+                425.71002197265625
+              ],
+              "blockId": "b056",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                417.30999755859375,
+                533.260009765625,
+                425.71002197265625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "play a key role in plant communication. Experiments involving broad bean plants and plant\u0002"
             },
             {
               "bbox": [
@@ -5519,7 +5828,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the following statements (Questions 23–26) and the list of researchers below."
             },
@@ -5540,7 +5849,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Match each statement with the correct researcher, A-E."
             },
@@ -5561,7 +5870,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A-E, in boxes 23–26 on your answer sheet."
             },
@@ -5646,7 +5955,7 @@
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "help a single plant."
             },
             {

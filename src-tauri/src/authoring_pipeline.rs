@@ -3,6 +3,15 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+// Real IELTS matching/classification banks in the corpus extend beyond J
+// (A-K/A-L are common, and some shared banks reach N). Keep one canonical
+// terminal so split, prompt recovery, bank closure and review all agree.
+const DYNAMIC_MAX_OPTION_LABEL: char = 'N';
+
+fn is_dynamic_letter_option_label(label: char) -> bool {
+    matches!(label, 'A'..=DYNAMIC_MAX_OPTION_LABEL)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PassageCandidateV1 {
@@ -1301,6 +1310,10 @@ fn has_dynamic_letter_option_span(normalized: &str) -> bool {
         "a-h",
         "a-i",
         "a-j",
+        "a-k",
+        "a-l",
+        "a-m",
+        "a-n",
         "letters a-c",
         "letters a-d",
         "letters a-e",
@@ -1309,6 +1322,10 @@ fn has_dynamic_letter_option_span(normalized: &str) -> bool {
         "letters a-h",
         "letters a-i",
         "letters a-j",
+        "letters a-k",
+        "letters a-l",
+        "letters a-m",
+        "letters a-n",
     ]
     .iter()
     .any(|marker| normalized.contains(marker))
@@ -1338,6 +1355,8 @@ fn is_dynamic_matching_prompt_text(normalized: &str) -> bool {
         || normalized.contains("match each person")
         || normalized.contains("match each opinion")
         || normalized.contains("match each sentence")
+        || normalized.contains("match each method")
+        || normalized.contains("match each technique")
         || normalized.contains("match each with")
         || normalized.contains("look at the following")
         || normalized.contains("list of headings")
@@ -1537,6 +1556,42 @@ fn find_dynamic_numbered_blank_marker(
     None
 }
 
+fn find_dynamic_numbered_blank_marker_in_range(
+    text: &str,
+    range_start: u32,
+    range_end: u32,
+    from: usize,
+) -> Option<(usize, usize)> {
+    if range_start > range_end {
+        return None;
+    }
+    (range_start..=range_end)
+        .filter_map(|number| find_dynamic_numbered_blank_marker(text, number, from))
+        .min_by_key(|(start, _)| *start)
+}
+
+fn find_dynamic_response_blank_start(text: &str, from: usize) -> Option<usize> {
+    let mut cursor = from.min(text.len());
+    let mut run_start = cursor;
+    let mut width = 0usize;
+    while cursor < text.len() {
+        let ch = text[cursor..].chars().next()?;
+        if is_dynamic_blank_marker_char(ch) {
+            if width == 0 {
+                run_start = cursor;
+            }
+            width += dynamic_blank_marker_width(ch);
+            if width >= 3 {
+                return Some(run_start);
+            }
+        } else {
+            width = 0;
+        }
+        cursor += ch.len_utf8();
+    }
+    None
+}
+
 fn has_dynamic_numbered_inline_blanks(text: &str) -> bool {
     let normalized = collapse_whitespace(text);
     let Some((start, end)) = detect_dynamic_question_range(&normalized) else {
@@ -1555,6 +1610,47 @@ fn has_dynamic_numbered_inline_blanks(text: &str) -> bool {
     markers >= 2 || (end > start && markers as u32 >= (end - start + 1).min(3))
 }
 
+fn dynamic_explicit_letter_list_terminal(text: &str) -> Option<char> {
+    let tokens = text
+        .split_whitespace()
+        .map(|token| {
+            token
+                .trim_matches(|ch: char| !ch.is_ascii_alphabetic())
+                .to_ascii_uppercase()
+        })
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    for start in 0..tokens.len() {
+        if tokens[start] != "A" {
+            continue;
+        }
+        let mut expected = 'A';
+        let mut count = 0usize;
+        let mut index = start;
+        while index < tokens.len() {
+            if matches!(tokens[index].as_str(), "OR" | "AND") {
+                index += 1;
+                continue;
+            }
+            let mut chars = tokens[index].chars();
+            let Some(label) = chars.next() else {
+                break;
+            };
+            if chars.next().is_some() || label != expected || !is_dynamic_letter_option_label(label)
+            {
+                break;
+            }
+            count += 1;
+            expected = ((expected as u8).saturating_add(1)) as char;
+            index += 1;
+        }
+        if count >= 3 {
+            return Some(((expected as u8).saturating_sub(1)) as char);
+        }
+    }
+    None
+}
+
 fn dynamic_letter_options_for_text(text: &str) -> Vec<String> {
     let lower = text.to_lowercase();
     let normalized = lower
@@ -1563,7 +1659,15 @@ fn dynamic_letter_options_for_text(text: &str) -> Vec<String> {
             "-",
         )
         .replace('–', "-");
-    if normalized.contains("a-j") {
+    if normalized.contains("a-n") {
+        ('A'..='N').map(|label| label.to_string()).collect()
+    } else if normalized.contains("a-m") {
+        ('A'..='M').map(|label| label.to_string()).collect()
+    } else if normalized.contains("a-l") {
+        ('A'..='L').map(|label| label.to_string()).collect()
+    } else if normalized.contains("a-k") {
+        ('A'..='K').map(|label| label.to_string()).collect()
+    } else if normalized.contains("a-j") {
         ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
             .iter()
             .map(|value| value.to_string())
@@ -1596,12 +1700,71 @@ fn dynamic_letter_options_for_text(text: &str) -> Vec<String> {
             .iter()
             .map(|value| value.to_string())
             .collect()
+    } else if let Some(terminal) = dynamic_explicit_letter_list_terminal(text) {
+        ('A'..=terminal).map(|label| label.to_string()).collect()
     } else {
         ["A", "B", "C", "D"]
             .iter()
             .map(|value| value.to_string())
             .collect()
     }
+}
+
+/// Return the roman-numeral answer bank declared by a matching-headings
+/// instruction (for example `Write the correct number, i-x`).  Headings use
+/// roman labels while the paragraph/section prompts themselves commonly use
+/// A-H; treating the latter as the option bank is a semantic error.
+fn dynamic_declared_roman_bank_labels(text: &str) -> Vec<String> {
+    let normalized = normalized_dynamic_instruction_text(text);
+    // Remove whitespace around the range dash so both `i-x` and `i - x`
+    // survive extraction, including PDFs that emit an en dash.
+    let compact = normalized
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let terminals = [
+        ("xii", 12u8),
+        ("xi", 11),
+        ("x", 10),
+        ("ix", 9),
+        ("viii", 8),
+        ("vii", 7),
+        ("vi", 6),
+        ("v", 5),
+        ("iv", 4),
+        ("iii", 3),
+        ("ii", 2),
+    ];
+    let terminal = terminals
+        .iter()
+        .find_map(|(label, value)| compact.contains(&format!("i-{label}")).then_some(*value));
+    let Some(terminal) = terminal else {
+        return Vec::new();
+    };
+    let labels = [
+        "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii",
+    ];
+    labels[..terminal as usize]
+        .iter()
+        .map(|label| (*label).to_string())
+        .collect()
+}
+
+fn dynamic_heading_options_for_text(text: &str) -> Vec<String> {
+    let declared = dynamic_declared_roman_bank_labels(text);
+    if !declared.is_empty() {
+        return declared;
+    }
+    // If a source omits the range but clearly declares a heading list, use a
+    // conservative roman bank. The concrete option rows are still required
+    // by `dynamic_group_option_bank` before this reaches a publishable IR.
+    if normalized_dynamic_instruction_text(text).contains("list of headings") {
+        return ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
+            .iter()
+            .map(|label| (*label).to_string())
+            .collect();
+    }
+    dynamic_letter_options_for_text(text)
 }
 
 fn dynamic_selection_count(text: &str) -> Option<u32> {
@@ -1686,7 +1849,14 @@ fn classify_dynamic_group(text: &str, block_ids: &[String]) -> GroupClassificati
                 max_selections: Some(count),
             }
         }
-        "heading_matching" | "matching" | "matching_information" | "classification" => {
+        "heading_matching" => GroupInteractionClassificationV1 {
+            r#type: "matching".to_string(),
+            options: dynamic_heading_options_for_text(text),
+            allow_option_reuse,
+            min_selections: None,
+            max_selections: None,
+        },
+        "matching" | "matching_information" | "classification" => {
             GroupInteractionClassificationV1 {
                 r#type: "matching".to_string(),
                 options: dynamic_letter_options_for_text(text),
@@ -1731,7 +1901,81 @@ fn dynamic_question_heading(start: u32, end: u32) -> String {
     }
 }
 
+const QUESTION_RANGE_EXPANDED_FROM_SOURCE_ANCHORS: &str =
+    "QUESTION_RANGE_EXPANDED_FROM_SOURCE_ANCHORS";
+
+/// Reconcile a printed range heading with the concrete numbered stems that
+/// were physically retained in the same bounded question group. Some source
+/// papers contain an off-by-one heading (for example `Questions 24-26`
+/// immediately followed by stems 23, 24, 25 and 26). Dropping the concrete
+/// stem is worse than preserving the typo: expand only when the source anchors
+/// form an unbroken run through the declared range boundary.
+///
+/// Requiring at least two in-range anchors and a contiguous boundary run keeps
+/// ordinary numbered passage prose from expanding a group merely because it
+/// happens to occur in a recovery window.
+fn reconcile_dynamic_group_range_with_source_anchors(
+    candidate: &mut SplitGroupCandidateV1,
+    blocks: &[Value],
+) {
+    let [declared_start, declared_end] = candidate.question_range;
+    if declared_start == 0 || declared_end < declared_start {
+        return;
+    }
+
+    let mut anchors = candidate
+        .block_ids
+        .iter()
+        .filter_map(|id| blocks.iter().find(|block| dynamic_block_id(block) == *id))
+        .filter(|block| dynamic_block_role(block) != "passage")
+        .filter_map(|block| dynamic_leading_question_number(&dynamic_block_text(block)))
+        .collect::<Vec<_>>();
+    anchors.sort_unstable();
+    anchors.dedup();
+
+    let in_range_count = anchors
+        .iter()
+        .filter(|number| **number >= declared_start && **number <= declared_end)
+        .count();
+    if in_range_count < 2 {
+        return;
+    }
+
+    let mut expanded_start = declared_start;
+    if anchors.binary_search(&declared_start).is_ok() {
+        while expanded_start > 1 && anchors.binary_search(&(expanded_start - 1)).is_ok() {
+            expanded_start -= 1;
+        }
+    }
+    let mut expanded_end = declared_end;
+    if anchors.binary_search(&declared_end).is_ok() {
+        while expanded_end < 40 && anchors.binary_search(&(expanded_end + 1)).is_ok() {
+            expanded_end += 1;
+        }
+    }
+    if expanded_start == declared_start && expanded_end == declared_end {
+        return;
+    }
+
+    candidate.question_range = [expanded_start, expanded_end];
+    candidate.heading = dynamic_question_heading(expanded_start, expanded_end);
+    if let Some(classification) = candidate.classification.as_mut() {
+        if !classification
+            .warnings
+            .iter()
+            .any(|warning| warning == QUESTION_RANGE_EXPANDED_FROM_SOURCE_ANCHORS)
+        {
+            classification
+                .warnings
+                .push(QUESTION_RANGE_EXPANDED_FROM_SOURCE_ANCHORS.to_string());
+        }
+    }
+}
+
 fn normalize_dynamic_group_ranges(groups: &mut Vec<SplitGroupCandidateV1>, blocks: &[Value]) {
+    for candidate in groups.iter_mut() {
+        reconcile_dynamic_group_range_with_source_anchors(candidate, blocks);
+    }
     groups.sort_by_key(|candidate| candidate.question_range[0]);
     let candidates = std::mem::take(groups);
     let mut normalized: Vec<SplitGroupCandidateV1> = Vec::with_capacity(candidates.len());
@@ -1788,24 +2032,32 @@ fn normalize_dynamic_group_ranges(groups: &mut Vec<SplitGroupCandidateV1>, block
     *groups = normalized;
 }
 
-/// Choice instructions and their A–J bank are frequently split out of the
-/// question block detector as ordinary paragraphs. Reattach only a contiguous
-/// tail that proves a complete, declared option run; this keeps passage prose
-/// out while allowing flattened A/B/C… lines and a separate shared stem to be
-/// recovered by the authoring layer.
+/// Choice prompts and their declared option run are sometimes omitted from a
+/// split candidate even though they sit between two retained numbered
+/// questions. Reattach only a locally proven, contiguous run and the wrapped
+/// prompt lines between its owning question marker and A. This covers both a
+/// group tail and an interior A-C + trailing-D layout without sweeping in
+/// unrelated passage prose.
 fn extend_dynamic_choice_option_blocks(groups: &mut [SplitGroupCandidateV1], blocks: &[Value]) {
     for group_index in 0..groups.len() {
         let kind = groups[group_index].kind_hint.as_str();
         if !matches!(kind, "single_choice" | "multi_choice") {
             continue;
         }
-        let Some(last_id) = groups[group_index].block_ids.last() else {
-            continue;
-        };
-        let Some(last_index) = blocks
+        let mut group_positions = groups[group_index]
+            .block_ids
             .iter()
-            .position(|block| dynamic_block_id(block) == *last_id)
-        else {
+            .filter_map(|id| {
+                blocks
+                    .iter()
+                    .position(|block| dynamic_block_id(block) == *id)
+            })
+            .collect::<Vec<_>>();
+        group_positions.sort_unstable();
+        let (Some(group_start), Some(group_end)) = (
+            group_positions.first().copied(),
+            group_positions.last().copied(),
+        ) else {
             continue;
         };
         let boundary = groups
@@ -1819,46 +2071,92 @@ fn extend_dynamic_choice_option_blocks(groups: &mut [SplitGroupCandidateV1], blo
             })
             .min()
             .unwrap_or(blocks.len());
-        let tail_end = boundary.min(last_index.saturating_add(10));
-        if last_index + 1 >= tail_end {
-            continue;
+        let scan_end = boundary.min(group_end.saturating_add(18)).min(blocks.len());
+        let [range_start, range_end] = groups[group_index].question_range;
+        let mut recovered_indices = std::collections::BTreeSet::new();
+        for target_index in group_start..scan_end {
+            let Some((option_start, option_end)) =
+                dynamic_choice_option_run_bounds(blocks, target_index)
+            else {
+                continue;
+            };
+            if option_start < group_start || option_end > scan_end {
+                continue;
+            }
+            let question_index =
+                (option_start.saturating_sub(8)..option_start)
+                    .rev()
+                    .find(|index| {
+                        let block_id = dynamic_block_id(&blocks[*index]);
+                        groups[group_index]
+                            .block_ids
+                            .iter()
+                            .any(|id| id == &block_id)
+                            && dynamic_leading_question_number(&dynamic_block_text(&blocks[*index]))
+                                .is_some_and(|number| (range_start..=range_end).contains(&number))
+                    });
+            let Some(question_index) = question_index else {
+                continue;
+            };
+            recovered_indices.extend(question_index + 1..option_end);
         }
-        let Some(option_start) = ((last_index + 1)..tail_end).find(|index| {
-            dynamic_leading_option_label_and_text(&dynamic_block_text(&blocks[*index]))
-                .map(|(label, _)| label == "A")
-                .unwrap_or(false)
-        }) else {
-            continue;
-        };
-        let terminal = groups[group_index]
-            .classification
-            .as_ref()
-            .and_then(|classification| classification.interaction.options.last())
-            .and_then(|label| label.chars().next())
-            .filter(|label| matches!(label, 'C'..='J'));
-        let Some(terminal) = terminal else {
-            continue;
-        };
-        let mut option_end = None;
-        for end in option_start..tail_end {
-            let combined = blocks[option_start..=end]
-                .iter()
-                .map(dynamic_block_text)
-                .collect::<Vec<_>>()
-                .join(" ");
-            if dynamic_inline_choice_parts_from_label_with_minimum(&combined, 'A', 3)
-                .and_then(|(_, options)| options.last().and_then(|(label, _)| label.chars().next()))
-                == Some(terminal)
-            {
-                option_end = Some(end);
-                break;
+        // A declared terminal option may itself wrap after its label block.
+        // The normal run detector proves A..terminal closure and deliberately
+        // stops at the terminal label, so retain only source-contiguous,
+        // same-layout continuation blocks that immediately follow it.
+        let declaration_text = std::iter::once(groups[group_index].instruction_text.clone())
+            .chain(groups[group_index].block_ids.iter().filter_map(|id| {
+                blocks
+                    .iter()
+                    .find(|block| dynamic_block_id(block) == *id)
+                    .map(dynamic_block_text)
+            }))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let declared_terminal = dynamic_letter_options_for_text(&declaration_text)
+            .last()
+            .and_then(|label| label.chars().next());
+        if let Some(terminal) = declared_terminal {
+            let is_owned = |index: usize, recovered: &std::collections::BTreeSet<usize>| {
+                recovered.contains(&index)
+                    || groups[group_index]
+                        .block_ids
+                        .iter()
+                        .any(|id| id == &dynamic_block_id(&blocks[index]))
+            };
+            if let Some(terminal_index) = (group_start..scan_end).rev().find(|index| {
+                is_owned(*index, &recovered_indices)
+                    && dynamic_leading_option_label_and_text(&dynamic_block_text(&blocks[*index]))
+                        .and_then(|(label, _)| label.chars().next())
+                        == Some(terminal)
+            }) {
+                let mut previous_index = terminal_index;
+                let mut continuation_index = terminal_index + 1;
+                while continuation_index < scan_end {
+                    let continuation = &blocks[continuation_index];
+                    let text = dynamic_block_text(continuation);
+                    if dynamic_leading_option_label_and_text(&text).is_some()
+                        || dynamic_leading_question_number(&text).is_some()
+                        || is_dynamic_instruction_signal(&text)
+                        || is_dynamic_prompt_terminal_heading(&text)
+                        || !(is_dynamic_same_row_option_continuation(
+                            &blocks[previous_index],
+                            continuation,
+                        ) || is_dynamic_wrapped_option_continuation(
+                            &blocks[previous_index],
+                            continuation,
+                        ))
+                    {
+                        break;
+                    }
+                    recovered_indices.insert(continuation_index);
+                    previous_index = continuation_index;
+                    continuation_index += 1;
+                }
             }
         }
-        let Some(option_end) = option_end else {
-            continue;
-        };
-        for block in &blocks[last_index + 1..=option_end] {
-            let block_id = dynamic_block_id(block);
+        for index in recovered_indices {
+            let block_id = dynamic_block_id(&blocks[index]);
             if !block_id.is_empty()
                 && !groups[group_index]
                     .block_ids
@@ -1868,6 +2166,474 @@ fn extend_dynamic_choice_option_blocks(groups: &mut [SplitGroupCandidateV1], blo
                 groups[group_index].block_ids.push(block_id);
             }
         }
+        groups[group_index].block_ids.sort_by_key(|id| {
+            blocks
+                .iter()
+                .position(|block| dynamic_block_id(block) == *id)
+                .unwrap_or(usize::MAX)
+        });
+        groups[group_index].block_ids.dedup();
+    }
+}
+
+fn dynamic_inline_option_labels(text: &str, first_label: char) -> Vec<char> {
+    dynamic_inline_choice_parts_from_label_with_minimum(text, first_label, 2)
+        .map(|(_, options)| {
+            options
+                .iter()
+                .filter_map(|(label, _)| label.chars().next())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![first_label])
+}
+
+fn dynamic_bank_candidate_labels_with_prefix_limit(
+    text: &str,
+    terminal: char,
+    prefix_word_limit: usize,
+) -> Vec<char> {
+    let normalized = collapse_whitespace(text);
+    ('A'..=terminal)
+        .filter_map(|label| {
+            let (start, content_start) = find_dynamic_option_marker(&normalized, label, 0)?;
+            let option_text = normalized[content_start..].trim();
+            if option_text.is_empty() {
+                return None;
+            }
+            let prefix = normalized[..start].trim();
+            let prefix_is_fragment = prefix.is_empty()
+                || (prefix.split_whitespace().count() <= prefix_word_limit
+                    && prefix
+                        .split_whitespace()
+                        .all(|word| word.chars().all(|ch| ch.is_ascii_alphabetic()))
+                    && prefix
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_ascii_lowercase()));
+            prefix_is_fragment.then_some(label)
+        })
+        .collect()
+}
+
+fn dynamic_bank_candidate_labels(text: &str, terminal: char) -> Vec<char> {
+    dynamic_bank_candidate_labels_with_prefix_limit(text, terminal, 1)
+}
+
+fn dynamic_completion_bank_candidate_labels(text: &str, terminal: char) -> Vec<char> {
+    dynamic_bank_candidate_labels_with_prefix_limit(text, terminal, 3)
+}
+
+/// Reattach a declared matching bank that geometry places above the next
+/// question heading even when the parser's linear block order interleaves the
+/// heading first. This occurs in two-column layouts such as an A/B row with a
+/// wrapped C option in the right column.
+fn extend_dynamic_matching_option_blocks(groups: &mut [SplitGroupCandidateV1], blocks: &[Value]) {
+    for group_index in 0..groups.len() {
+        let kind = groups[group_index].kind_hint.as_str();
+        if !matches!(
+            kind,
+            "matching"
+                | "matching_information"
+                | "classification"
+                | "summary_completion"
+                | "sentence_completion"
+                | "table_completion"
+                | "diagram_completion"
+        ) {
+            continue;
+        }
+        let group_text = groups[group_index]
+            .block_ids
+            .iter()
+            .filter_map(|id| blocks.iter().find(|block| dynamic_block_id(block) == *id))
+            .map(dynamic_block_text)
+            .chain(std::iter::once(
+                groups[group_index].instruction_text.clone(),
+            ))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let separate_bank_expected = matches!(kind, "matching" | "classification")
+            || (kind == "matching_information"
+                && is_dynamic_prompt_option_bank_heading(&group_text))
+            || (is_dynamic_completion_kind(kind)
+                && has_dynamic_completion_option_bank_cue(&group_text));
+        let terminal = groups[group_index]
+            .classification
+            .as_ref()
+            .and_then(|classification| classification.interaction.options.last())
+            .and_then(|label| label.chars().next())
+            .or_else(|| {
+                dynamic_declared_letter_bank_labels(&group_text)
+                    .last()
+                    .and_then(|label| label.chars().next())
+            })
+            .filter(|label| matches!(label, 'C'..=DYNAMIC_MAX_OPTION_LABEL));
+        let Some(terminal) = terminal else {
+            continue;
+        };
+
+        // A multi-column PDF can place a missing bank row after the next
+        // question heading in parser order. Recover only labels that are
+        // declared by this group and lie in the same visual row neighborhood
+        // as an already attached bank row.
+        if separate_bank_expected && is_dynamic_completion_kind(kind) {
+            let group_values = groups[group_index]
+                .block_ids
+                .iter()
+                .filter_map(|id| blocks.iter().find(|block| dynamic_block_id(block) == *id))
+                .cloned()
+                .collect::<Vec<_>>();
+            let observed = dynamic_group_option_bank(&group_values, "matching")
+                .into_iter()
+                .filter_map(|(label, _)| label.chars().next())
+                .collect::<std::collections::BTreeSet<_>>();
+            let missing = ('A'..=terminal)
+                .filter(|label| !observed.contains(label))
+                .collect::<std::collections::BTreeSet<_>>();
+            if !missing.is_empty() {
+                let page_indices = group_values
+                    .iter()
+                    .map(dynamic_block_page_index)
+                    .collect::<std::collections::BTreeSet<_>>();
+                let anchor_bboxes = group_values
+                    .iter()
+                    .filter(|block| {
+                        !dynamic_completion_bank_candidate_labels(
+                            &dynamic_block_text(block),
+                            terminal,
+                        )
+                        .is_empty()
+                            || !dynamic_table_option_rows(block).is_empty()
+                    })
+                    .filter_map(dynamic_block_normalized_bbox)
+                    .collect::<Vec<_>>();
+                let group_ids = groups[group_index]
+                    .block_ids
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>();
+                let mut recovered = Vec::new();
+                for (index, block) in blocks.iter().enumerate() {
+                    let block_id = dynamic_block_id(block);
+                    if block_id.is_empty()
+                        || group_ids.contains(&block_id)
+                        || !page_indices.contains(&dynamic_block_page_index(block))
+                        || detect_dynamic_question_heading_range(&dynamic_block_text(block))
+                            .is_some()
+                        || dynamic_leading_question_number(&dynamic_block_text(block)).is_some()
+                        || is_dynamic_answer_block(block)
+                        || is_dynamic_prompt_terminal_heading(&dynamic_block_text(block))
+                    {
+                        continue;
+                    }
+                    let labels = dynamic_completion_bank_candidate_labels(
+                        &dynamic_block_text(block),
+                        terminal,
+                    );
+                    if !labels.iter().any(|label| missing.contains(label)) {
+                        continue;
+                    }
+                    let Some(candidate_bbox) = dynamic_block_normalized_bbox(block) else {
+                        continue;
+                    };
+                    let near_anchor = anchor_bboxes.iter().any(|anchor| {
+                        let vertical_distance = if candidate_bbox[3] < anchor[1] {
+                            anchor[1] - candidate_bbox[3]
+                        } else if anchor[3] < candidate_bbox[1] {
+                            candidate_bbox[1] - anchor[3]
+                        } else {
+                            0.0
+                        };
+                        vertical_distance <= 54.0
+                    });
+                    if near_anchor {
+                        recovered.push(index);
+                    }
+                }
+                for index in recovered {
+                    let block_id = dynamic_block_id(&blocks[index]);
+                    if !groups[group_index]
+                        .block_ids
+                        .iter()
+                        .any(|id| id == &block_id)
+                    {
+                        groups[group_index].block_ids.push(block_id);
+                    }
+                }
+                groups[group_index].block_ids.sort_by_key(|id| {
+                    blocks
+                        .iter()
+                        .position(|block| dynamic_block_id(block) == *id)
+                        .unwrap_or(usize::MAX)
+                });
+                groups[group_index].block_ids.dedup();
+            }
+        }
+        let mut last_label = None;
+        let mut anchor_index = None;
+        for block_id in &groups[group_index].block_ids {
+            let Some(index) = blocks
+                .iter()
+                .position(|block| dynamic_block_id(block) == *block_id)
+            else {
+                continue;
+            };
+            let text = dynamic_block_text(&blocks[index]);
+            let Some((label, _)) = dynamic_leading_option_label_and_text(&text) else {
+                continue;
+            };
+            let Some(first_label) = label.chars().next().filter(|_| label.len() == 1) else {
+                continue;
+            };
+            for recovered in dynamic_inline_option_labels(&text, first_label) {
+                if last_label
+                    .map(|current| recovered > current)
+                    .unwrap_or(true)
+                {
+                    last_label = Some(recovered);
+                    anchor_index = Some(index);
+                }
+            }
+        }
+        if (last_label.is_none() || anchor_index.is_none()) && separate_bank_expected {
+            // The common layout is numbered prompts followed by a complete
+            // `List of ...` bank. Split detection intentionally stops at the
+            // last numbered prompt, so graft the following sibling blocks
+            // only when they prove the exact declared A-terminal sequence on
+            // the same page and before the next group.
+            let mut positions = groups[group_index]
+                .block_ids
+                .iter()
+                .filter_map(|id| {
+                    blocks
+                        .iter()
+                        .position(|block| dynamic_block_id(block) == *id)
+                })
+                .collect::<Vec<_>>();
+            positions.sort_unstable();
+            let Some(group_end) = positions.last().copied() else {
+                continue;
+            };
+            let page_index = dynamic_block_page_index(&blocks[group_end]);
+            let next_group_start = groups
+                .iter()
+                .skip(group_index + 1)
+                .flat_map(|candidate| candidate.block_ids.iter())
+                .filter_map(|id| {
+                    blocks
+                        .iter()
+                        .position(|block| dynamic_block_id(block) == *id)
+                })
+                .filter(|index| *index > group_end)
+                .min()
+                .unwrap_or(blocks.len());
+            let search_end = blocks
+                .iter()
+                .enumerate()
+                .skip(group_end + 1)
+                .take_while(|(index, block)| {
+                    *index < next_group_start
+                        && dynamic_block_page_index(block) == page_index
+                        && *index <= group_end.saturating_add(36)
+                })
+                .map(|(index, _)| index + 1)
+                .last()
+                .unwrap_or(group_end + 1);
+            let mut expected = 'A';
+            let mut option_start = None;
+            let mut recovered_indices = Vec::new();
+            let mut completed = false;
+            for index in group_end + 1..search_end {
+                let text = dynamic_block_text(&blocks[index]);
+                if detect_dynamic_question_heading_range(&text).is_some()
+                    || dynamic_leading_question_number(&text).is_some()
+                    || is_dynamic_answer_block(&blocks[index])
+                {
+                    break;
+                }
+                let leading =
+                    dynamic_leading_option_label_and_text(&text).filter(|(label, option_text)| {
+                        label.len() == 1 && !option_text.trim().is_empty()
+                    });
+                if option_start.is_none() {
+                    if leading.as_ref().and_then(|(label, _)| label.chars().next()) != Some('A') {
+                        continue;
+                    }
+                    option_start = Some(index);
+                }
+                if let Some((label, _)) = leading {
+                    let Some(first_label) = label.chars().next() else {
+                        break;
+                    };
+                    if first_label != expected {
+                        break;
+                    }
+                    let labels = dynamic_inline_option_labels(&text, first_label);
+                    let mut next_expected = expected;
+                    let mut valid_sequence = true;
+                    for recovered in labels {
+                        if recovered != next_expected || recovered > terminal {
+                            valid_sequence = false;
+                            break;
+                        }
+                        next_expected = ((recovered as u8).saturating_add(1)) as char;
+                    }
+                    if !valid_sequence {
+                        break;
+                    }
+                    expected = next_expected;
+                    recovered_indices.push(index);
+                    if expected > terminal {
+                        completed = true;
+                        break;
+                    }
+                } else if option_start.is_some()
+                    && !is_dynamic_instruction_signal(&text)
+                    && !is_dynamic_prompt_terminal_heading(&text)
+                {
+                    // A wrapped option row can occupy one or more unlabeled
+                    // blocks before the next exact label.
+                    recovered_indices.push(index);
+                } else {
+                    break;
+                }
+            }
+            if completed {
+                if let Some(start) = option_start {
+                    let header_index = start.checked_sub(1).filter(|index| {
+                        is_dynamic_prompt_option_bank_heading(&dynamic_block_text(&blocks[*index]))
+                    });
+                    if let Some(index) = header_index {
+                        recovered_indices.insert(0, index);
+                    }
+                }
+                for index in recovered_indices {
+                    let block_id = dynamic_block_id(&blocks[index]);
+                    if !block_id.is_empty()
+                        && !groups[group_index]
+                            .block_ids
+                            .iter()
+                            .any(|id| id == &block_id)
+                    {
+                        groups[group_index].block_ids.push(block_id);
+                    }
+                }
+                groups[group_index].block_ids.sort_by_key(|id| {
+                    blocks
+                        .iter()
+                        .position(|block| dynamic_block_id(block) == *id)
+                        .unwrap_or(usize::MAX)
+                });
+                groups[group_index].block_ids.dedup();
+            }
+            continue;
+        }
+        let (Some(last_label), Some(anchor_index)) = (last_label, anchor_index) else {
+            continue;
+        };
+        if last_label >= terminal {
+            continue;
+        }
+        let page_index = dynamic_block_page_index(&blocks[anchor_index]);
+        let next_heading_bbox = groups
+            .iter()
+            .skip(group_index + 1)
+            .filter_map(|candidate| candidate.block_ids.first())
+            .filter_map(|id| blocks.iter().find(|block| dynamic_block_id(block) == *id))
+            .find(|block| dynamic_block_page_index(block) == page_index)
+            .and_then(dynamic_block_normalized_bbox);
+        let mut expected = ((last_label as u8).saturating_add(1)) as char;
+        let mut recovered_indices = Vec::new();
+        let mut previous_index = anchor_index;
+        while expected <= terminal {
+            let Some(anchor_bbox) = dynamic_block_normalized_bbox(&blocks[previous_index]) else {
+                break;
+            };
+            let candidate_index = blocks
+                .iter()
+                .enumerate()
+                .filter(|(index, block)| {
+                    !recovered_indices.contains(index)
+                        && dynamic_block_page_index(block) == page_index
+                        && !groups[group_index]
+                            .block_ids
+                            .iter()
+                            .any(|id| id == &dynamic_block_id(block))
+                })
+                .filter_map(|(index, block)| {
+                    let text = dynamic_block_text(block);
+                    let (label, option_text) = dynamic_leading_option_label_and_text(&text)?;
+                    (label.chars().next() == Some(expected)
+                        && label.len() == 1
+                        && !option_text.trim().is_empty())
+                    .then_some((index, block))
+                })
+                .filter_map(|(index, block)| {
+                    let bbox = dynamic_block_normalized_bbox(block)?;
+                    let below_anchor = bbox[3] <= anchor_bbox[1] + 10.0;
+                    let above_next = next_heading_bbox
+                        .map(|next| bbox[1] >= next[3] - 10.0)
+                        .unwrap_or(true);
+                    // In multi-column extraction the next label can be in a
+                    // different column from the last observed label. Vertical
+                    // proximity and the next-heading boundary are stronger
+                    // evidence than x alignment, so do not reject a valid
+                    // bank row merely because its column changed.
+                    let nearby = anchor_bbox[1] - bbox[3] <= 180.0;
+                    (below_anchor && above_next && nearby)
+                        .then_some((index, anchor_bbox[1] - bbox[3]))
+                })
+                .min_by(|left, right| left.1.total_cmp(&right.1))
+                .map(|(index, _)| index);
+            let Some(candidate_index) = candidate_index else {
+                break;
+            };
+            recovered_indices.push(candidate_index);
+            previous_index = candidate_index;
+            loop {
+                let continuation = blocks
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| !recovered_indices.contains(index))
+                    .filter(|(_, block)| {
+                        is_dynamic_same_row_option_continuation(&blocks[previous_index], block)
+                    })
+                    .min_by(|(_, left), (_, right)| {
+                        dynamic_block_normalized_bbox(left)
+                            .map(|bbox| bbox[0])
+                            .unwrap_or(f64::MAX)
+                            .total_cmp(
+                                &dynamic_block_normalized_bbox(right)
+                                    .map(|bbox| bbox[0])
+                                    .unwrap_or(f64::MAX),
+                            )
+                    })
+                    .map(|(index, _)| index);
+                let Some(index) = continuation else {
+                    break;
+                };
+                recovered_indices.push(index);
+                previous_index = index;
+            }
+            expected = ((expected as u8).saturating_add(1)) as char;
+        }
+        for index in recovered_indices {
+            let block_id = dynamic_block_id(&blocks[index]);
+            if !block_id.is_empty()
+                && !groups[group_index]
+                    .block_ids
+                    .iter()
+                    .any(|id| id == &block_id)
+            {
+                groups[group_index].block_ids.push(block_id);
+            }
+        }
+        groups[group_index].block_ids.sort_by_key(|id| {
+            blocks
+                .iter()
+                .position(|block| dynamic_block_id(block) == *id)
+                .unwrap_or(usize::MAX)
+        });
+        groups[group_index].block_ids.dedup();
     }
 }
 
@@ -1890,6 +2656,10 @@ fn normalized_answer_value(raw: &str) -> Value {
             | "H"
             | "I"
             | "J"
+            | "K"
+            | "L"
+            | "M"
+            | "N"
     ) {
         json!(upper)
     } else {
@@ -2263,7 +3033,7 @@ fn dynamic_standalone_letter_marker_count(text: &str) -> usize {
         .filter(|token| {
             let marker =
                 token.trim_matches(|ch: char| matches!(ch, '.' | ')' | '(' | ':' | ';' | ','));
-            marker.len() == 1 && marker.chars().all(|ch| matches!(ch, 'A'..='J'))
+            marker.len() == 1 && marker.chars().all(is_dynamic_letter_option_label)
         })
         .count()
 }
@@ -2332,10 +3102,16 @@ fn dynamic_choice_option_run_bounds_with_shared_context(
         if dynamic_lettered_paragraph_label(&dynamic_block_text(&blocks[start])) != Some('A') {
             continue;
         }
+        // A wrapped question stem can occupy several physical blocks between
+        // the numbered marker and its A/B/C run (for example, a long prompt
+        // followed by a continuation line and then the first option). Keep a
+        // bounded look-back, but do not require the marker to be in the last
+        // three blocks; that was enough to misclassify the option tail as
+        // passage prose.
         let has_preceding_question = blocks[..start]
             .iter()
             .rev()
-            .take(3)
+            .take(8)
             .any(|block| dynamic_leading_question_number(&dynamic_block_text(block)).is_some());
         let has_shared_choice_instruction = allow_shared_choice_context
             && blocks[..start].iter().rev().take(12).any(|block| {
@@ -2351,12 +3127,24 @@ fn dynamic_choice_option_run_bounds_with_shared_context(
         let mut end = start;
         let mut label_count = 0usize;
         while end < blocks.len() {
-            if dynamic_lettered_paragraph_label(&dynamic_block_text(&blocks[end])) == Some(expected)
-            {
-                label_count += 1;
+            let option_text = dynamic_block_text(&blocks[end]);
+            if dynamic_lettered_paragraph_label(&option_text) == Some(expected) {
+                // pdfium can flatten several labels into one physical line:
+                // `B ... C ... D ...`. Count the whole contiguous sequence,
+                // not just the leading B, so the split layer retains the
+                // block instead of misclassifying it as passage prose.
+                let inline_labels =
+                    dynamic_inline_choice_parts_from_label_with_minimum(&option_text, expected, 2)
+                        .map(|(_, options)| options)
+                        .unwrap_or_else(|| vec![(expected.to_string(), String::new())]);
+                label_count += inline_labels.len();
+                expected = inline_labels
+                    .last()
+                    .and_then(|(label, _)| label.chars().next())
+                    .map(|label| ((label as u8).saturating_add(1)) as char)
+                    .unwrap_or_else(|| ((expected as u8).saturating_add(1)) as char);
                 end += 1;
-                expected = ((expected as u8).saturating_add(1)) as char;
-                if expected > 'J' {
+                if expected > DYNAMIC_MAX_OPTION_LABEL {
                     break;
                 }
                 continue;
@@ -2454,10 +3242,16 @@ fn dynamic_late_passage_question_block_count(blocks: &[Value]) -> usize {
     blocks.len()
 }
 
-fn dynamic_leading_question_number(text: &str) -> Option<u32> {
+fn dynamic_leading_question_marker(text: &str) -> Option<(u32, usize)> {
     let normalized = collapse_whitespace(text);
     let first = normalized.split_whitespace().next()?;
-    let trimmed = first.trim_matches(|ch: char| matches!(ch, '(' | '['));
+    let marker_start = first
+        .chars()
+        .next()
+        .filter(|ch| matches!(ch, '(' | '['))
+        .map(char::len_utf8)
+        .unwrap_or(0);
+    let trimmed = &first[marker_start..];
     let digits_end = trimmed
         .char_indices()
         .find_map(|(index, ch)| (!ch.is_ascii_digit()).then_some(index))
@@ -2466,13 +3260,28 @@ fn dynamic_leading_question_number(text: &str) -> Option<u32> {
         return None;
     }
     let value = trimmed[..digits_end].parse::<u32>().ok()?;
-    let suffix = trimmed[digits_end..]
-        .trim_matches(|ch: char| matches!(ch, '.' | ')' | ':' | ';' | ',' | ']'));
-    if suffix.is_empty() {
-        Some(value)
-    } else {
-        None
+    if value > 40 {
+        return None;
     }
+    let marker_end = marker_start + digits_end;
+    let suffix = &normalized[marker_end..];
+    let valid_boundary = suffix
+        .chars()
+        .next()
+        .map(|ch| {
+            ch.is_whitespace()
+                || matches!(ch, '.' | ')' | ':' | ';' | ',' | ']' | '、')
+                // Some rotated/text-matrix PDFs lose the visual gap between
+                // the question number and an uppercase opening word:
+                // `14 High-level ...` becomes `14High-level ...`.
+                || ch.is_ascii_uppercase()
+        })
+        .unwrap_or(true);
+    valid_boundary.then_some((value, marker_end))
+}
+
+fn dynamic_leading_question_number(text: &str) -> Option<u32> {
+    dynamic_leading_question_marker(text).map(|(number, _)| number)
 }
 
 fn is_dynamic_explicit_question_content_block(block: &Value) -> bool {
@@ -2627,6 +3436,31 @@ fn collect_dynamic_interleaved_passage_runs(blocks: &[Value]) -> Vec<(usize, usi
     runs
 }
 
+/// Completion stimuli are prose-shaped by design. Only treat an apparent
+/// prose run as interleaved passage when it begins in a genuinely different
+/// page/layout section from the preceding question content. Moving from the
+/// left column to the right column inside the same section is normal reading
+/// flow and must not discard wrapped text between numbered gaps.
+fn collect_dynamic_completion_interleaved_passage_runs(blocks: &[Value]) -> Vec<(usize, usize)> {
+    collect_dynamic_interleaved_passage_runs(blocks)
+        .into_iter()
+        .filter(|(run_start, _)| {
+            let Some(previous) = run_start.checked_sub(1).and_then(|index| blocks.get(index))
+            else {
+                return false;
+            };
+            let Some(first) = blocks.get(*run_start) else {
+                return false;
+            };
+            dynamic_block_page_index(previous) != dynamic_block_page_index(first)
+                || dynamic_block_layout_section_index(previous)
+                    != dynamic_block_layout_section_index(first)
+                || dynamic_block_section_column_count_value(previous)
+                    != dynamic_block_section_column_count_value(first)
+        })
+        .collect()
+}
+
 fn find_dynamic_prose_passage_tail_start(blocks: &[Value]) -> Option<usize> {
     for index in 1..blocks.len() {
         if !has_prior_dynamic_question_content(blocks, index) {
@@ -2696,7 +3530,103 @@ fn dynamic_heading_matching_question_block_count(blocks: &[Value]) -> usize {
     blocks.len()
 }
 
+fn dynamic_completion_letter_bank_task_end(kind: &str, blocks: &[Value]) -> Option<usize> {
+    dynamic_declared_completion_bank_span(kind, blocks)
+        .map(|(_, end)| end)
+        .or_else(|| dynamic_partial_completion_bank_task_end(kind, blocks))
+}
+
+fn dynamic_completion_text_has_sentence_end_after(text: &str, from: usize) -> bool {
+    text.get(from.min(text.len())..).is_some_and(|tail| {
+        tail.chars()
+            .any(|ch| matches!(ch, '.' | '!' | '?' | '\u{2022}'))
+    })
+}
+
+fn is_dynamic_local_completion_continuation(previous: &Value, current: &Value) -> bool {
+    if dynamic_block_page_index(previous) != dynamic_block_page_index(current)
+        || dynamic_block_layout_section_index(previous)
+            != dynamic_block_layout_section_index(current)
+        || dynamic_block_section_column_count_value(previous)
+            != dynamic_block_section_column_count_value(current)
+        || dynamic_block_column(previous) != dynamic_block_column(current)
+    {
+        return false;
+    }
+
+    let current_role = dynamic_block_role(current);
+    if matches!(current_role, "passage" | "answer" | "ignore")
+        || is_dynamic_answer_block(current)
+        || is_dynamic_question_heading_text(&dynamic_block_text(current))
+    {
+        return false;
+    }
+
+    let (Some(previous_bbox), Some(current_bbox)) = (
+        dynamic_block_normalized_bbox(previous),
+        dynamic_block_normalized_bbox(current),
+    ) else {
+        return false;
+    };
+    let previous_height = (previous_bbox[3] - previous_bbox[1]).abs().max(1.0);
+    let current_height = (current_bbox[3] - current_bbox[1]).abs().max(1.0);
+    let vertical_gap = previous_bbox[1] - current_bbox[3];
+    vertical_gap >= -2.0 && vertical_gap <= (previous_height.max(current_height) * 2.2).max(20.0)
+}
+
+/// Close a linear completion task at the block containing its declared final
+/// numbered blank. A wrapped sentence may consume nearby blocks, but only
+/// inside the same physical page/layout stream. Page, column, section and role
+/// transitions are ownership boundaries: when the source is ambiguous we keep
+/// the later prose in the passage instead of fabricating a very long final
+/// prompt.
+fn dynamic_completion_final_gap_task_end(kind: &str, blocks: &[Value]) -> Option<usize> {
+    if !is_dynamic_completion_kind(kind) {
+        return None;
+    }
+    let (_, final_number) = blocks
+        .iter()
+        .find_map(|block| detect_dynamic_question_heading_range(&dynamic_block_text(block)))?;
+    let (marker_index, marker_end) = blocks.iter().enumerate().find_map(|(index, block)| {
+        find_dynamic_numbered_blank_marker(&dynamic_block_text(block), final_number, 0)
+            .map(|(_, marker_end)| (index, marker_end))
+    })?;
+
+    let marker_text = dynamic_block_text(&blocks[marker_index]);
+    let mut task_end = marker_index + 1;
+    if dynamic_completion_text_has_sentence_end_after(&marker_text, marker_end) {
+        return Some(task_end);
+    }
+
+    let mut previous_index = marker_index;
+    while let Some(current) = blocks.get(task_end) {
+        if !is_dynamic_local_completion_continuation(&blocks[previous_index], current) {
+            break;
+        }
+        let current_text = dynamic_block_text(current);
+        // A new numbered gap is a new logical item, never continuation prose
+        // for the declared final slot even when malformed source ranges overlap.
+        if (1..=40)
+            .any(|number| find_dynamic_numbered_blank_marker(&current_text, number, 0).is_some())
+        {
+            break;
+        }
+        task_end += 1;
+        previous_index += 1;
+        if dynamic_completion_text_has_sentence_end_after(&current_text, 0) {
+            break;
+        }
+    }
+    Some(task_end)
+}
+
 fn dynamic_question_block_count_for_group(kind: &str, blocks: &[Value]) -> usize {
+    if let Some(task_end) = dynamic_completion_letter_bank_task_end(kind, blocks) {
+        return task_end.max(1);
+    }
+    if let Some(task_end) = dynamic_completion_final_gap_task_end(kind, blocks) {
+        return task_end.max(1);
+    }
     let specific = if kind == "heading_matching" {
         dynamic_heading_matching_question_block_count(blocks)
     } else {
@@ -2735,10 +3665,11 @@ fn dynamic_leading_option_label_and_text(text: &str) -> Option<(String, String)>
     let label = first.trim_matches(|ch: char| {
         matches!(ch, '(' | ')' | '[' | ']' | '.' | ':' | ';' | ',' | '、')
     });
-    let is_letter = label.len() == 1
-        && label
-            .chars()
-            .all(|ch| matches!(ch.to_ascii_uppercase(), 'A'..='J'));
+    // IELTS lettered option labels are uppercase. Treating a lowercase
+    // one-letter word (for example the split `e` in `Catherin` + `e Price`)
+    // as an E option prevents geometric word-fragment recovery and also
+    // promotes ordinary prose articles into option banks.
+    let is_letter = label.len() == 1 && label.chars().all(is_dynamic_letter_option_label);
     let lower = label.to_ascii_lowercase();
     let is_roman = matches!(
         lower.as_str(),
@@ -2891,6 +3822,105 @@ fn is_dynamic_instruction_signal(text: &str) -> bool {
         || lower.contains("list of headings")
         || lower.contains("list of options")
         || lower.contains("answer the questions")
+}
+
+pub(crate) fn has_dynamic_ielts_question_instruction_evidence(text: &str) -> bool {
+    let normalized = normalized_dynamic_instruction_text(text);
+    let lower = normalized.trim_start_matches('#').trim_start();
+    let starts_with = |prefix: &str| lower.starts_with(prefix);
+    let contains_any = |needles: &[&str]| needles.iter().any(|needle| lower.contains(needle));
+
+    (starts_with("choose ")
+        && contains_any(&[
+            "correct",
+            "letter",
+            "answer",
+            "one word",
+            "two words",
+            "three words",
+            "from the passage",
+        ]))
+        || (starts_with("complete ")
+            && contains_any(&[
+                "table",
+                "form",
+                "notes",
+                "summary",
+                "sentence",
+                "flow chart",
+                "flow-chart",
+                "diagram",
+                "map",
+                "plan",
+            ]))
+        || (starts_with("write ")
+            && contains_any(&[
+                "correct letter",
+                "correct number",
+                "no more than",
+                "one word only",
+                "two words only",
+                "three words only",
+                "in boxes",
+                "answer sheet",
+            ]))
+        || ((starts_with("match ") || starts_with("label "))
+            && contains_any(&[
+                "heading",
+                "information",
+                "statement",
+                "feature",
+                "paragraph",
+                "section",
+                "diagram",
+                "map",
+                "plan",
+            ]))
+        || starts_with("do the following statements")
+        || starts_with("answer the questions")
+        || starts_with("which paragraph")
+        || starts_with("which section")
+        || lower.contains("true false not given")
+        || (lower.contains("true") && lower.contains("false") && lower.contains("not given"))
+        || (lower.contains("yes") && lower.contains("no") && lower.contains("not given"))
+        || lower.contains("list of headings")
+}
+
+fn has_dynamic_concrete_question_number_evidence(text: &str) -> bool {
+    let Some(number) = dynamic_leading_question_number(text).filter(|number| *number <= 40) else {
+        return false;
+    };
+    let prompt = strip_dynamic_leading_question_marker(text, number);
+    if prompt.is_empty() {
+        return false;
+    }
+    let lower = prompt.to_lowercase();
+    let first_word = lower
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|ch: char| !ch.is_alphanumeric());
+    prompt.contains('?')
+        || has_dynamic_numbered_inline_blanks(text)
+        || dynamic_inline_choice_parts(&prompt).is_some()
+        || matches!(
+            first_word,
+            "what" | "which" | "who" | "whose" | "when" | "where" | "why" | "how"
+        )
+}
+
+/// A parser role hint is only a routing hint: older DocumentIR artifacts can
+/// contain false `question` roles for ordinary prose using words such as
+/// "the author questions whether ...". Before any heading-free fallback can
+/// create a question group, require evidence that is specific to an IELTS
+/// task independently of that role hint.
+fn has_dynamic_fallback_question_group_evidence(blocks: &[Value]) -> bool {
+    blocks.iter().any(|block| {
+        let text = dynamic_block_text(block);
+        detect_dynamic_question_heading_range(&text).is_some()
+            || has_dynamic_ielts_question_instruction_evidence(&text)
+            || has_dynamic_concrete_question_number_evidence(&text)
+    })
 }
 
 fn dynamic_instruction_window_start(blocks: &[Value], question_index: usize) -> usize {
@@ -3178,6 +4208,8 @@ pub(crate) fn make_dynamic_split_candidates(
         .filter_map(|key| key.parse::<u32>().ok())
         .collect::<Vec<_>>();
     answer_numbers.sort_unstable();
+    let fallback_question_group_evidence =
+        has_dynamic_fallback_question_group_evidence(&question_blocks);
 
     let umbrella_ranges = all_umbrella_blocks
         .iter()
@@ -3217,11 +4249,59 @@ pub(crate) fn make_dynamic_split_candidates(
             .map(|(candidate_index, _)| candidate_index)
             .unwrap_or(question_blocks.len());
         let raw_included = &question_blocks[index..next_heading];
-        let interleaved_passage_runs = collect_dynamic_interleaved_passage_runs(raw_included);
+        let raw_kind = detect_dynamic_group_kind(
+            &raw_included
+                .iter()
+                .map(dynamic_block_text)
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        let declared_completion_bank_task =
+            dynamic_completion_letter_bank_task_end(raw_kind, raw_included).is_some();
+        let interleaved_passage_runs = if declared_completion_bank_task {
+            // Summary/list completion is intentionally prose-shaped. Once an
+            // exact A-terminal bank closes the task on the source page, the
+            // prose between numbered gaps is question stimulus, not passage.
+            Vec::new()
+        } else if is_dynamic_completion_kind(raw_kind) {
+            collect_dynamic_completion_interleaved_passage_runs(raw_included)
+        } else {
+            collect_dynamic_interleaved_passage_runs(raw_included)
+        };
         let mut defer_mask = vec![false; raw_included.len()];
         for (run_start, run_end) in interleaved_passage_runs {
             for raw_index in run_start..run_end.min(raw_included.len()) {
                 defer_mask[raw_index] = true;
+            }
+        }
+        if let Some(umbrella_index) =
+            raw_included
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find_map(|(raw_index, candidate)| {
+                    is_known_dynamic_umbrella_block(candidate, &all_umbrella_blocks)
+                        .then_some(raw_index)
+                })
+        {
+            // In question-first files the next passage starts after the last
+            // concrete question group. Its whole-paper range instruction is a
+            // reliable ownership boundary even when the following prose is too
+            // short to satisfy the generic three-block passage-run heuristic.
+            // Preserve the actual passage content, but keep the umbrella itself
+            // solely as range metadata.
+            let passage_start = umbrella_index
+                .checked_sub(1)
+                .filter(|previous| {
+                    raw_included.get(*previous).is_some_and(|block| {
+                        is_dynamic_reading_passage_heading(&dynamic_block_text(block))
+                    })
+                })
+                .unwrap_or(umbrella_index + 1);
+            for raw_index in passage_start..raw_included.len() {
+                if raw_index != umbrella_index {
+                    defer_mask[raw_index] = true;
+                }
             }
         }
         let preliminary_blocks = raw_included
@@ -3230,6 +4310,23 @@ pub(crate) fn make_dynamic_split_candidates(
             .filter_map(|(raw_index, block)| {
                 if defer_mask.get(raw_index).copied().unwrap_or(false) {
                     deferred_passage_blocks.push(block.clone());
+                    None
+                } else if is_known_dynamic_umbrella_block(block, &all_umbrella_blocks) {
+                    // A question-first document can be followed immediately by
+                    // the next passage's whole-paper instruction (for example
+                    // `You should spend ... Questions 14-26 ...`).  It carries
+                    // useful range provenance, but it is not stimulus for the
+                    // preceding concrete subgroup.  Keep it in
+                    // `umbrellaQuestionRanges` and out of the group's prompt
+                    // source, just as we already do when selecting subgroup
+                    // headings above.
+                    None
+                } else if declared_completion_bank_task
+                    && is_dynamic_prompt_terminal_heading(&dynamic_block_text(block))
+                {
+                    // Column-major extraction can place a footer heading
+                    // between option-bank columns. It is neither question
+                    // content nor a reason to discard the later columns.
                     None
                 } else {
                     Some(block.clone())
@@ -3351,7 +4448,10 @@ pub(crate) fn make_dynamic_split_candidates(
         });
     }
 
-    if group_candidates.is_empty() && !explicitly_zero_question_groups {
+    if group_candidates.is_empty()
+        && !explicitly_zero_question_groups
+        && fallback_question_group_evidence
+    {
         group_candidates = make_dynamic_numbered_group_candidates(&question_blocks);
     }
 
@@ -3386,6 +4486,7 @@ pub(crate) fn make_dynamic_split_candidates(
     } else if group_candidates.is_empty()
         && !question_blocks.is_empty()
         && !explicitly_zero_question_groups
+        && fallback_question_group_evidence
     {
         let start = answer_numbers.first().copied().unwrap_or(1);
         let end = answer_numbers.last().copied().unwrap_or(start);
@@ -3416,7 +4517,25 @@ pub(crate) fn make_dynamic_split_candidates(
             requires_manual_question_import: None,
         });
     }
+    if group_candidates.is_empty()
+        && !explicitly_zero_question_groups
+        && !fallback_question_group_evidence
+    {
+        // Preserve all source prose when a stale or overly broad parser hint
+        // routed an ordinary article block into `question_blocks`. With no
+        // independent IELTS evidence there is no valid question boundary.
+        passage_blocks = blocks
+            .iter()
+            .filter(|block| {
+                !is_dynamic_non_content_placeholder_block(block)
+                    && !is_dynamic_answer_block(block)
+                    && dynamic_block_role(block) != "ignore"
+            })
+            .cloned()
+            .collect();
+    }
     extend_dynamic_choice_option_blocks(&mut group_candidates, &blocks);
+    extend_dynamic_matching_option_blocks(&mut group_candidates, &blocks);
     normalize_dynamic_group_ranges(&mut group_candidates, &blocks);
 
     if !deferred_passage_blocks.is_empty() {
@@ -3524,7 +4643,10 @@ pub(crate) fn dynamic_interaction_for_kind(kind: &str) -> Value {
         "multi_choice" => {
             json!({"type": "checkbox", "options": ["A", "B", "C", "D", "E", "F"], "minSelections": 2, "maxSelections": 2})
         }
-        "heading_matching" | "matching" | "matching_information" | "classification" => {
+        "heading_matching" => {
+            json!({"type": "matching", "options": ["i", "ii", "iii", "iv", "v", "vi", "vii"], "allowOptionReuse": false})
+        }
+        "matching" | "matching_information" | "classification" => {
             json!({"type": "matching", "options": ["A", "B", "C", "D"], "allowOptionReuse": kind == "classification" || kind == "matching_information"})
         }
         _ => json!({"type": "text", "placeholder": "answer"}),
@@ -3776,6 +4898,10 @@ fn find_dynamic_final_prompt_boundary(text: &str, from: usize) -> usize {
 
 fn is_dynamic_prompt_option_bank_heading(text: &str) -> bool {
     let lower = collapse_whitespace(text).to_ascii_lowercase();
+    let compact = lower
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>();
     [
         "list of headings",
         "list of people",
@@ -3790,7 +4916,15 @@ fn is_dynamic_prompt_option_bank_heading(text: &str) -> bool {
         "list of endings",
     ]
     .iter()
-    .any(|marker| lower.starts_with(marker))
+    .any(|marker| {
+        lower.starts_with(marker)
+            || compact.starts_with(
+                &marker
+                    .chars()
+                    .filter(|ch| ch.is_ascii_alphanumeric())
+                    .collect::<String>(),
+            )
+    })
 }
 
 fn has_dynamic_prompt_option_bank_context(group_kind: &str, group_text: &str) -> bool {
@@ -3820,7 +4954,7 @@ fn dynamic_prompt_bank_labels(text: &str) -> Vec<char> {
     {
         return Vec::new();
     }
-    ('A'..='J')
+    ('A'..=DYNAMIC_MAX_OPTION_LABEL)
         .filter(|label| find_dynamic_option_marker(text, *label, 0).is_some())
         .collect()
 }
@@ -3848,7 +4982,7 @@ fn find_dynamic_prompt_option_bank_boundary(text: &str, from: usize) -> Option<u
             let Some(label) = label.chars().next() else {
                 break;
             };
-            if !matches!(label, 'A'..='J') {
+            if !is_dynamic_letter_option_label(label) {
                 break;
             }
             labels.insert(label);
@@ -3893,6 +5027,78 @@ fn find_dynamic_prompt_boundary(
     find_dynamic_prompt_boundary_with_context(text, from, next_number, group_kind, text)
 }
 
+fn find_dynamic_completion_display_question_boundary(
+    text: &str,
+    next_number: u32,
+    from: usize,
+) -> Option<usize> {
+    let mut search = from.min(text.len());
+    while let Some((start, content_start)) = find_dynamic_number_marker(text, next_number, search) {
+        let prefix = text[..start].trim_end();
+        let starts_logical_item = prefix.is_empty()
+            || prefix
+                .chars()
+                .next_back()
+                .is_some_and(|ch| matches!(ch, '\n' | '\r' | '.' | '?' | '!' | '\u{2022}'));
+        if !starts_logical_item {
+            search = content_start.max(start + next_number.to_string().len());
+            continue;
+        }
+        let first_word_char = text[content_start..]
+            .chars()
+            .skip_while(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '(' | '['))
+            .next();
+        if !first_word_char.is_some_and(|ch| ch.is_uppercase()) {
+            // A range-local number followed by lower-case prose is much more
+            // likely to be a quantity ("7 participants") than a displayed
+            // IELTS question number.
+            search = content_start.max(start + next_number.to_string().len());
+            continue;
+        }
+        let local_end = (content_start + 520).min(text.len());
+        let local = &text[content_start..local_end];
+        if let Some(blank_start) = find_dynamic_response_blank_start(local, 0) {
+            let before_blank = &local[..blank_start];
+            if before_blank.chars().any(|ch| ch.is_alphabetic()) {
+                return Some(start);
+            }
+        }
+        search = content_start.max(start + next_number.to_string().len());
+    }
+    None
+}
+
+fn find_dynamic_cross_block_completion_number_boundary(
+    current: &Value,
+    current_text: &str,
+    next: &Value,
+    next_number: u32,
+) -> Option<usize> {
+    if !is_dynamic_local_completion_continuation(current, next) {
+        return None;
+    }
+    let next_text = dynamic_block_text(next);
+    let first_non_space = next_text
+        .char_indices()
+        .find(|(_, ch)| !ch.is_whitespace())
+        .map(|(index, _)| index)?;
+    if find_dynamic_response_blank_start(&next_text, first_non_space) != Some(first_non_space) {
+        return None;
+    }
+
+    let mut search = 0usize;
+    let mut trailing = None;
+    while let Some((start, content_start)) =
+        find_dynamic_number_marker(current_text, next_number, search)
+    {
+        if current_text[content_start..].trim().is_empty() {
+            trailing = Some(start);
+        }
+        search = content_start.max(start + next_number.to_string().len());
+    }
+    trailing
+}
+
 fn find_dynamic_prompt_boundary_with_context(
     text: &str,
     from: usize,
@@ -3901,7 +5107,21 @@ fn find_dynamic_prompt_boundary_with_context(
     group_text: &str,
 ) -> usize {
     let mut boundary = find_dynamic_final_prompt_boundary(text, from);
-    if let Some((next_start, _)) = find_dynamic_number_marker(text, next_number, from) {
+    // A completion slot is stronger evidence than a generic question number.
+    // In notes and timelines a slot is commonly introduced by a bullet/dash
+    // (`- 10 ______`), which the generic detector intentionally rejects to
+    // avoid treating years and numeric prose as question anchors.  Using the
+    // numbered blank here keeps that protection while still closing the
+    // current prompt at the next real response slot.
+    let next_marker = if is_dynamic_completion_kind(group_kind) {
+        find_dynamic_numbered_blank_marker(text, next_number, from).or_else(|| {
+            find_dynamic_completion_display_question_boundary(text, next_number, from)
+                .map(|start| (start, start))
+        })
+    } else {
+        find_dynamic_number_marker(text, next_number, from)
+    };
+    if let Some((next_start, _)) = next_marker {
         boundary = boundary.min(next_start);
     }
     if has_dynamic_prompt_option_bank_context(group_kind, group_text) {
@@ -3950,8 +5170,20 @@ fn dynamic_prompt_for_question(
     group_kind: &str,
 ) -> String {
     let searchable = group_text.trim();
-    if let Some((_, content_start)) = find_dynamic_number_marker(searchable, number, 0) {
-        let boundary = if number < range_end {
+    let marker = if is_dynamic_completion_kind(group_kind) {
+        find_dynamic_numbered_blank_marker(searchable, number, 0)
+            .map(|(start, _)| (start, start + number.to_string().len()))
+            .or_else(|| {
+                let start =
+                    find_dynamic_completion_display_question_boundary(searchable, number, 0)?;
+                let (_, content_start) = find_dynamic_number_marker(searchable, number, start)?;
+                Some((start, content_start))
+            })
+    } else {
+        find_dynamic_number_marker(searchable, number, 0)
+    };
+    if let Some((_, content_start)) = marker {
+        let mut boundary = if number < range_end {
             find_dynamic_prompt_boundary_with_context(
                 searchable,
                 content_start,
@@ -3968,6 +5200,16 @@ fn dynamic_prompt_for_question(
                 group_text,
             )
         };
+        if is_dynamic_completion_kind(group_kind) && number < range_end {
+            if let Some((next_start, _)) = find_dynamic_numbered_blank_marker_in_range(
+                searchable,
+                number + 1,
+                range_end,
+                content_start,
+            ) {
+                boundary = boundary.min(next_start);
+            }
+        }
         let prompt = collapse_whitespace(&searchable[content_start..boundary]);
         let prompt = prompt.trim().trim_end_matches([';', ',']).trim();
         if !prompt.is_empty() {
@@ -3979,11 +5221,13 @@ fn dynamic_prompt_for_question(
 
 fn strip_dynamic_leading_question_marker(text: &str, number: u32) -> String {
     let normalized = collapse_whitespace(text);
-    if dynamic_leading_question_number(&normalized) != Some(number) {
+    let Some((detected, marker_end)) = dynamic_leading_question_marker(&normalized) else {
+        return normalized;
+    };
+    if detected != number {
         return normalized;
     }
-    let first = normalized.split_whitespace().next().unwrap_or_default();
-    normalized[first.len()..]
+    normalized[marker_end..]
         .trim_start_matches(|ch: char| {
             ch.is_whitespace() || matches!(ch, ')' | ']' | '.' | ':' | ';' | ',' | '、')
         })
@@ -4032,7 +5276,7 @@ fn dynamic_inline_choice_parts_from_label_with_minimum(
     first_label: char,
     minimum_marker_count: usize,
 ) -> Option<(String, Vec<(String, String)>)> {
-    if !matches!(first_label, 'A'..='I') {
+    if !matches!(first_label, 'A'..='M') {
         return None;
     }
     let normalized = collapse_whitespace(
@@ -4048,7 +5292,7 @@ fn dynamic_inline_choice_parts_from_label_with_minimum(
     );
     let mut markers = Vec::<(char, usize, usize)>::new();
     let mut from = 0usize;
-    for label in first_label..='J' {
+    for label in first_label..=DYNAMIC_MAX_OPTION_LABEL {
         let Some((start, content_start)) = find_dynamic_option_marker(&normalized, label, from)
         else {
             break;
@@ -4060,6 +5304,34 @@ fn dynamic_inline_choice_parts_from_label_with_minimum(
         || markers.first().map(|item| item.0) != Some(first_label)
     {
         return None;
+    }
+
+    // A numbered stem can legitimately begin with the word "A" (for
+    // example, "A reference is made ...") immediately before the real A
+    // option marker. Since the expected sequence starts at A, the greedy
+    // marker scan otherwise consumes the stem as option A and loses the real
+    // option. If another A marker occurs before B and the prefix is clearly a
+    // substantive stem, move the first marker to that later occurrence.
+    if first_label == 'A' && markers.len() >= 2 {
+        let first_content = markers[0].2;
+        let next_label_start = markers[1].1;
+        let mut search = first_content;
+        let mut duplicate = None;
+        while let Some((start, content_start)) =
+            find_dynamic_option_marker(&normalized, 'A', search)
+        {
+            if start >= next_label_start {
+                break;
+            }
+            duplicate = Some((start, content_start));
+            search = content_start;
+        }
+        if let Some((start, content_start)) = duplicate {
+            let prefix_words = normalized[..start].split_whitespace().count();
+            if prefix_words >= 3 {
+                markers[0] = ('A', start, content_start);
+            }
+        }
     }
 
     // If the same expected label appears twice before the following label,
@@ -4089,9 +5361,6 @@ fn dynamic_inline_choice_parts_from_label_with_minimum(
             .trim_end_matches([';', ','])
             .trim()
             .to_string();
-        if option_text.is_empty() {
-            return None;
-        }
         options.push((label.to_string(), option_text));
     }
     Some((prompt, options))
@@ -4104,6 +5373,81 @@ fn dynamic_inline_choice_parts_from_label(
     // Bare inline capitals are weak evidence. IELTS choice runs normally have
     // at least A/B/C; two letters alone are common in ordinary English prose.
     dynamic_inline_choice_parts_from_label_with_minimum(text, first_label, 3)
+}
+
+/// Parse a physical option row whose columns are emitted in visual order
+/// rather than label order (for example `A ... D ... G ... J ...`). The
+/// contiguous choice parser intentionally rejects this shape because it is
+/// unsafe for ordinary prose; a declared completion bank supplies the extra
+/// semantic constraint needed here. Callers still require the complete
+/// declared A-terminal set before exposing these as runtime options.
+fn dynamic_declared_bank_parts(
+    text: &str,
+    declared_labels: &[String],
+) -> Option<Vec<(String, String)>> {
+    if declared_labels.len() < 2 {
+        return None;
+    }
+    let normalized = collapse_whitespace(
+        &text
+            .chars()
+            .filter(|ch| {
+                !matches!(
+                    ch,
+                    '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'
+                )
+            })
+            .collect::<String>(),
+    );
+    let mut markers = declared_labels
+        .iter()
+        .filter_map(|label| {
+            let letter = label.chars().next()?;
+            let (start, content_start) = find_dynamic_option_marker(&normalized, letter, 0)?;
+            Some((letter, start, content_start))
+        })
+        .collect::<Vec<_>>();
+    markers.sort_by_key(|(_, start, _)| *start);
+    if markers.len() < 2 {
+        return None;
+    }
+    // A physical bank row starts at its first label. The only safe prefix is a
+    // short lower-case word fragment emitted before the next column's label
+    // (`ctions D assumption`). Without this boundary, ordinary stimulus prose
+    // such as `A study compared B cells ...` can be promoted as option rows.
+    let prefix = normalized[..markers[0].1].trim();
+    let prefix_is_cross_column_fragment = !prefix.is_empty()
+        && markers[0].0 > 'A'
+        && prefix.split_whitespace().count() <= 3
+        && prefix
+            .split_whitespace()
+            .all(|word| word.chars().all(|ch| ch.is_ascii_lowercase()));
+    if !prefix.is_empty() && !prefix_is_cross_column_fragment {
+        return None;
+    }
+    // Column-major rows may skip labels (`A D G I`), but their source order is
+    // still monotonic. A backward label is much stronger evidence for prose
+    // capitals than for an IELTS bank, so fail closed.
+    if markers.windows(2).any(|pair| pair[1].0 <= pair[0].0) {
+        return None;
+    }
+    let mut options = Vec::with_capacity(markers.len());
+    for (index, (label, _, content_start)) in markers.iter().enumerate() {
+        let end = markers
+            .get(index + 1)
+            .map(|(_, start, _)| *start)
+            .unwrap_or(normalized.len());
+        let option_text = normalized[*content_start..end]
+            .trim()
+            .trim_end_matches([';', ','])
+            .trim()
+            .to_string();
+        if option_text.is_empty() {
+            return None;
+        }
+        options.push((label.to_string(), option_text));
+    }
+    Some(options)
 }
 
 fn dynamic_inline_choice_parts(text: &str) -> Option<(String, Vec<(String, String)>)> {
@@ -4130,11 +5474,11 @@ fn is_dynamic_prompt_option_bank_start_block(blocks: &[Value], index: usize) -> 
         let Some(label) = label.chars().next() else {
             break;
         };
-        if !matches!(label, 'A'..='J') {
+        if !is_dynamic_letter_option_label(label) {
             break;
         }
         labels.insert(label);
-        for inline in ('A'..='J')
+        for inline in ('A'..=DYNAMIC_MAX_OPTION_LABEL)
             .filter(|candidate| find_dynamic_option_marker(&text, *candidate, 0).is_some())
         {
             labels.insert(inline);
@@ -4224,7 +5568,7 @@ fn dynamic_shared_choice_prompt_and_options(
         if let Some((label, option_text)) =
             dynamic_leading_option_label_and_text(&text).filter(|(label, option_text)| {
                 label.len() == 1
-                    && label.chars().all(|ch| matches!(ch, 'A'..='J'))
+                    && label.chars().all(is_dynamic_letter_option_label)
                     && !option_text.is_empty()
             })
         {
@@ -4256,6 +5600,13 @@ fn dynamic_question_prompt_and_options(
     range_end: u32,
     kind: &str,
 ) -> (String, Vec<(String, String)>) {
+    // Shared matching/classification banks belong to the response model, not
+    // to the final question's prompt.  A range's last numbered stem has no
+    // following question number to stop it, so use the source-backed bank
+    // closure as an additional physical boundary.  This is deliberately not
+    // inferred from a bare leading `A`: the helper requires the complete
+    // declared A-terminal bank and selects its right-most valid A source.
+    let group_option_bank_start = dynamic_group_option_bank_start_index(group_blocks, kind);
     if matches!(kind, "single_choice" | "multi_choice")
         && !group_blocks.iter().any(|block| {
             dynamic_leading_question_number(&dynamic_block_text(block)) == Some(number)
@@ -4275,8 +5626,17 @@ fn dynamic_question_prompt_and_options(
         .or_else(|| {
             group_blocks.iter().enumerate().find_map(|(index, block)| {
                 let text = dynamic_block_text(block);
-                find_dynamic_number_marker(&text, number, 0)
-                    .map(|(marker_start, _)| (index, marker_start))
+                if is_dynamic_completion_kind(kind) {
+                    find_dynamic_numbered_blank_marker(&text, number, 0)
+                        .map(|(marker_start, _)| (marker_start, marker_start))
+                        .or_else(|| {
+                            find_dynamic_completion_display_question_boundary(&text, number, 0)
+                                .map(|marker_start| (marker_start, marker_start))
+                        })
+                } else {
+                    find_dynamic_number_marker(&text, number, 0)
+                }
+                .map(|(marker_start, _)| (index, marker_start))
             })
         })
     else {
@@ -4309,13 +5669,51 @@ fn dynamic_question_prompt_and_options(
         .enumerate()
         .skip(start_index + 1)
         .find_map(|(index, block)| {
-            dynamic_leading_question_number(&dynamic_block_text(block)).map(|_| index)
+            let text = dynamic_block_text(block);
+            if is_dynamic_completion_kind(kind) {
+                let candidate = number + 1;
+                if candidate > range_end
+                    || dynamic_leading_question_number(&text) != Some(candidate)
+                {
+                    return None;
+                }
+                let mut local_parts = Vec::new();
+                for local_block in group_blocks.iter().skip(index) {
+                    let local_text = dynamic_block_text(local_block);
+                    if !local_parts.is_empty()
+                        && dynamic_leading_question_number(&local_text)
+                            .is_some_and(|next| next > candidate && next <= range_end)
+                    {
+                        break;
+                    }
+                    local_parts.push(local_text);
+                    if local_parts.len() >= 3 {
+                        break;
+                    }
+                }
+                let local = local_parts.join(" ");
+                (find_dynamic_completion_display_question_boundary(&local, candidate, 0) == Some(0))
+                    .then_some(index)
+            } else {
+                dynamic_leading_question_number(&text)
+                    .filter(|candidate| *candidate > number && *candidate <= range_end)
+                    .map(|_| index)
+            }
         })
         .unwrap_or(group_blocks.len());
     let mut prompt_parts = Vec::new();
     let mut options = Vec::new();
+    // Keep the physical source block that most recently contributed an
+    // option.  PDF text extraction commonly emits a long option as
+    // `A first line` followed by one or more indented, unlabelled blocks.
+    // Without preserving this source relationship those continuation lines
+    // fall through into the question prompt.
+    let mut last_option_block_index: Option<usize> = None;
     let mut absolute_index = start_index;
     while absolute_index < end_index {
+        if group_option_bank_start.is_some_and(|bank_start| absolute_index >= bank_start) {
+            break;
+        }
         let relative = absolute_index - start_index;
         let block = &group_blocks[absolute_index];
         let raw_text = dynamic_block_text(block);
@@ -4345,7 +5743,7 @@ fn dynamic_question_prompt_and_options(
         } else {
             raw_text
         };
-        let boundary = if number < range_end {
+        let mut boundary = if number < range_end {
             find_dynamic_prompt_boundary_with_context(&text, 0, number + 1, kind, group_text)
         } else {
             find_dynamic_prompt_boundary_with_context(
@@ -4356,6 +5754,25 @@ fn dynamic_question_prompt_and_options(
                 group_text,
             )
         };
+        if is_dynamic_completion_kind(kind) && number < range_end {
+            if let Some(next_block) = group_blocks.get(absolute_index + 1) {
+                if let Some(next_start) = find_dynamic_cross_block_completion_number_boundary(
+                    block,
+                    &text,
+                    next_block,
+                    number + 1,
+                ) {
+                    boundary = boundary.min(next_start);
+                }
+            }
+        }
+        if is_dynamic_completion_kind(kind) && number < range_end {
+            if let Some((next_start, _)) =
+                find_dynamic_numbered_blank_marker_in_range(&text, number + 1, range_end, 0)
+            {
+                boundary = boundary.min(next_start);
+            }
+        }
         let stop_after_block = boundary < text.len();
         let text = collapse_whitespace(&text[..boundary]);
         if stop_after_block && !matches!(kind, "single_choice" | "multi_choice") {
@@ -4379,7 +5796,7 @@ fn dynamic_question_prompt_and_options(
                 .into_iter()
                 .filter(|(label, option_text)| {
                     label.len() == 1
-                        && label.chars().all(|ch| matches!(ch, 'A'..='J'))
+                        && label.chars().all(is_dynamic_letter_option_label)
                         && !option_text.is_empty()
                 })
                 .collect::<Vec<_>>();
@@ -4392,6 +5809,7 @@ fn dynamic_question_prompt_and_options(
                         options.push(option);
                     }
                 }
+                last_option_block_index = Some(absolute_index);
                 if stop_after_block {
                     break;
                 }
@@ -4405,22 +5823,45 @@ fn dynamic_question_prompt_and_options(
                 let expected_label = options
                     .last()
                     .and_then(|(label, _)| label.chars().next())
-                    .and_then(|label| (label < 'J').then_some((label as u8 + 1) as char))?;
+                    .map(|label| ((label as u8).saturating_add(1)) as char)
+                    .unwrap_or('A');
                 let (label, _) = dynamic_leading_option_label_and_text(&text)?;
                 let first_label = label.chars().next()?;
                 if label.len() != 1 || first_label != expected_label {
                     return None;
                 }
                 dynamic_inline_choice_parts_from_label(&text, first_label).or_else(|| {
-                    // The final two labels of a wrapped A-D run often share a
-                    // physical line (for example `C ... D ...`). Accept that
-                    // narrow tail only when it terminates at the declared
-                    // instruction bank; ordinary prose containing a capital D
-                    // remains a single option otherwise.
+                    // A flattened partial tail can be followed by the final
+                    // label in its own block (`B ... C ...` then `D ...`).
+                    // Accept the partial sequence only when the next physical
+                    // block resumes the exact declared order, or when this
+                    // block itself reaches the declared terminal.
                     dynamic_inline_choice_parts_from_label_with_minimum(&text, first_label, 2)
                         .filter(|(_, recovered)| {
-                            recovered.last().and_then(|(label, _)| label.chars().next())
-                                == declared_choice_terminal
+                            let Some(last_label) =
+                                recovered.last().and_then(|(label, _)| label.chars().next())
+                            else {
+                                return false;
+                            };
+                            let Some(terminal) = declared_choice_terminal else {
+                                return false;
+                            };
+                            if last_label == terminal {
+                                return true;
+                            }
+                            if last_label >= terminal {
+                                return false;
+                            }
+                            let expected_next = ((last_label as u8).saturating_add(1)) as char;
+                            group_blocks
+                                .get(absolute_index + 1)
+                                .and_then(|block| {
+                                    dynamic_leading_option_label_and_text(&dynamic_block_text(
+                                        block,
+                                    ))
+                                })
+                                .and_then(|(label, _)| label.chars().next())
+                                == Some(expected_next)
                         })
                 })
             });
@@ -4436,14 +5877,18 @@ fn dynamic_question_prompt_and_options(
                         options.push(option);
                     }
                 }
+                last_option_block_index = Some(absolute_index);
                 if stop_after_block {
                     break;
                 }
                 absolute_index += 1;
                 continue;
             }
-            if let Some((label, mut option_text)) = dynamic_leading_option_label_and_text(&text) {
-                if label.len() == 1 && label.chars().all(|ch| matches!(ch, 'A'..='J')) {
+            if let Some((label, mut option_text)) = (relative > 0)
+                .then(|| dynamic_leading_option_label_and_text(&text))
+                .flatten()
+            {
+                if label.len() == 1 && label.chars().all(is_dynamic_letter_option_label) {
                     // PDF layouts frequently emit the choice letter alone, then
                     // the option prose on the next block:
                     //   "A"
@@ -4475,12 +5920,40 @@ fn dynamic_question_prompt_and_options(
                             .any(|(existing_label, _)| existing_label == &label)
                     {
                         options.push((label, option_text));
+                        last_option_block_index = Some(if consumed_continuation {
+                            absolute_index + 1
+                        } else {
+                            absolute_index
+                        });
                         if stop_after_block {
                             break;
                         }
                         absolute_index += if consumed_continuation { 2 } else { 1 };
                         continue;
                     }
+                }
+            }
+        }
+        if matches!(kind, "single_choice" | "multi_choice")
+            && dynamic_leading_option_label_and_text(&text).is_none()
+            && !is_dynamic_instruction_signal(&text)
+            && !is_dynamic_prompt_terminal_heading(&text)
+            && dynamic_leading_question_number(&text).is_none()
+        {
+            if let (Some(previous_index), Some((_, option_text))) =
+                (last_option_block_index, options.last_mut())
+            {
+                let previous = &group_blocks[previous_index];
+                if is_dynamic_same_row_option_continuation(previous, block)
+                    || is_dynamic_wrapped_option_continuation(previous, block)
+                {
+                    append_dynamic_option_continuation(option_text, &text);
+                    last_option_block_index = Some(absolute_index);
+                    if stop_after_block {
+                        break;
+                    }
+                    absolute_index += 1;
+                    continue;
                 }
             }
         }
@@ -4537,7 +6010,78 @@ fn dynamic_gap_sentence_prompt(text: &str, number: u32) -> String {
         .find(". ")
         .map(|index| marker_end + index + 2)
         .unwrap_or(text.len());
-    collapse_whitespace(text[sentence_start..sentence_end].trim())
+    let number_end = marker_start + number.to_string().len();
+    let prompt = format!(
+        "{}{}",
+        &text[sentence_start..marker_start],
+        &text[number_end..sentence_end]
+    );
+    collapse_whitespace(prompt.trim())
+}
+
+pub(crate) fn dynamic_completion_foreign_slots(
+    prompt: &str,
+    number: u32,
+    range_start: u32,
+    range_end: u32,
+) -> Vec<u32> {
+    (range_start..=range_end)
+        .filter(|candidate| *candidate != number)
+        .filter(|candidate| {
+            find_dynamic_numbered_blank_marker(prompt, *candidate, 0).is_some()
+                || find_dynamic_completion_display_question_boundary(prompt, *candidate, 0)
+                    .is_some()
+        })
+        .collect()
+}
+
+/// Reduce a non-linear table/diagram block to the local source segment owned
+/// by one numbered response slot. This is intentionally source-backed: the
+/// current slot must be physically present, and neighbouring numbered blanks
+/// are hard segment boundaries. It does not guess row order or synthesize
+/// missing labels.
+fn dynamic_local_completion_prompt_for_number(
+    blocks: &[Value],
+    number: u32,
+    range_start: u32,
+    range_end: u32,
+) -> Option<(String, String)> {
+    for block in blocks {
+        let text = dynamic_block_text(block);
+        let Some((marker_start, _)) = find_dynamic_numbered_blank_marker(&text, number, 0) else {
+            continue;
+        };
+        let mut markers = (range_start..=range_end)
+            .filter_map(|candidate| {
+                find_dynamic_numbered_blank_marker(&text, candidate, 0)
+                    .map(|(start, end)| (candidate, start, end))
+            })
+            .collect::<Vec<_>>();
+        markers.sort_by_key(|(_, start, _)| *start);
+        let Some(current_index) = markers
+            .iter()
+            .position(|(candidate, start, _)| *candidate == number && *start == marker_start)
+        else {
+            continue;
+        };
+        let segment_start = current_index
+            .checked_sub(1)
+            .and_then(|index| markers.get(index))
+            .map(|(_, _, end)| *end)
+            .unwrap_or(0);
+        let segment_end = markers
+            .get(current_index + 1)
+            .map(|(_, start, _)| *start)
+            .unwrap_or(text.len());
+        let local = dynamic_gap_sentence_prompt(&text[segment_start..segment_end], number);
+        if local.trim().is_empty()
+            || !dynamic_completion_foreign_slots(&local, number, range_start, range_end).is_empty()
+        {
+            continue;
+        }
+        return Some((local, dynamic_block_id(block)));
+    }
+    None
 }
 
 fn dynamic_gap_sentence_prompt_from_blocks(
@@ -4549,7 +6093,18 @@ fn dynamic_gap_sentence_prompt_from_blocks(
         if find_dynamic_numbered_blank_marker(&marker_text, number, 0).is_none() {
             continue;
         }
-        let start = marker_index.saturating_sub(1);
+        let start = marker_index
+            .checked_sub(1)
+            .filter(|previous_index| {
+                let previous = &blocks[*previous_index];
+                let previous_has_slot = (1..=40).any(|candidate| {
+                    find_dynamic_numbered_blank_marker(&dynamic_block_text(previous), candidate, 0)
+                        .is_some()
+                });
+                !previous_has_slot
+                    && is_dynamic_local_completion_continuation(previous, &blocks[marker_index])
+            })
+            .unwrap_or(marker_index);
         let end = (marker_index + 2).min(blocks.len());
         let prompt = dynamic_gap_sentence_prompt(
             &blocks[start..end]
@@ -4719,7 +6274,11 @@ fn dynamic_table_row_prompt_for_number(
 
 fn dynamic_declared_letter_bank_labels(text: &str) -> Vec<String> {
     let normalized = normalized_dynamic_instruction_text(text);
-    let Some(end) = [
+    let end = [
+        ("a-n", 'N'),
+        ("a-m", 'M'),
+        ("a-l", 'L'),
+        ("a-k", 'K'),
         ("a-j", 'J'),
         ("a-i", 'I'),
         ("a-h", 'H'),
@@ -4730,7 +6289,9 @@ fn dynamic_declared_letter_bank_labels(text: &str) -> Vec<String> {
         ("a-c", 'C'),
     ]
     .into_iter()
-    .find_map(|(marker, end)| normalized.contains(marker).then_some(end)) else {
+    .find_map(|(marker, end)| normalized.contains(marker).then_some(end))
+    .or_else(|| dynamic_explicit_letter_list_terminal(text));
+    let Some(end) = end else {
         return Vec::new();
     };
 
@@ -4791,7 +6352,7 @@ fn validated_dynamic_completion_option_bank(
     let declared_labels = dynamic_declared_letter_bank_labels(&group_text);
     let labels = if declared_labels.is_empty() {
         let mut contiguous = Vec::new();
-        for label in 'A'..='J' {
+        for label in 'A'..=DYNAMIC_MAX_OPTION_LABEL {
             let label = label.to_string();
             if options.iter().any(|(candidate, _)| candidate == &label) {
                 contiguous.push(label);
@@ -4822,7 +6383,93 @@ fn validated_dynamic_completion_option_bank(
     validated
 }
 
-fn dynamic_group_option_bank(blocks: &[Value], kind: &str) -> Vec<(String, String)> {
+fn is_dynamic_same_row_option_continuation(previous: &Value, current: &Value) -> bool {
+    if dynamic_block_page_index(previous) != dynamic_block_page_index(current)
+        || dynamic_leading_option_label_and_text(&dynamic_block_text(current)).is_some()
+        || is_dynamic_instruction_signal(&dynamic_block_text(current))
+        || dynamic_leading_question_number(&dynamic_block_text(current)).is_some()
+    {
+        return false;
+    }
+    let (Some(left), Some(right)) = (
+        dynamic_block_normalized_bbox(previous),
+        dynamic_block_normalized_bbox(current),
+    ) else {
+        return false;
+    };
+    let vertical_overlap = left[3].min(right[3]) - left[1].max(right[1]);
+    let horizontal_gap = right[0] - left[2];
+    vertical_overlap >= -2.0 && (-3.0..=24.0).contains(&horizontal_gap)
+}
+
+fn is_dynamic_wrapped_option_continuation(previous: &Value, current: &Value) -> bool {
+    if dynamic_block_page_index(previous) != dynamic_block_page_index(current)
+        || dynamic_block_section_column_count_value(previous)
+            != dynamic_block_section_column_count_value(current)
+        || dynamic_block_column(previous) != dynamic_block_column(current)
+        || dynamic_leading_option_label_and_text(&dynamic_block_text(current)).is_some()
+        || is_dynamic_instruction_signal(&dynamic_block_text(current))
+        || is_dynamic_prompt_terminal_heading(&dynamic_block_text(current))
+        || dynamic_leading_question_number(&dynamic_block_text(current)).is_some()
+    {
+        return false;
+    }
+    let (Some(previous_bbox), Some(current_bbox)) = (
+        dynamic_block_normalized_bbox(previous),
+        dynamic_block_normalized_bbox(current),
+    ) else {
+        return false;
+    };
+    let vertical_gap = previous_bbox[1] - current_bbox[3];
+    let previous_height = (previous_bbox[3] - previous_bbox[1]).abs().max(1.0);
+    let current_height = (current_bbox[3] - current_bbox[1]).abs().max(1.0);
+    let indented = current_bbox[0] >= previous_bbox[0] - 3.0;
+    vertical_gap >= -2.0
+        && vertical_gap <= (previous_height.max(current_height) * 1.9).max(18.0)
+        && indented
+}
+
+fn append_dynamic_option_continuation(option_text: &mut String, continuation: &str) {
+    let continuation = continuation.trim();
+    if continuation.is_empty() {
+        return;
+    }
+    let trailing_fragment = option_text
+        .split_whitespace()
+        .next_back()
+        .map(|token| token.len() == 1 && token.chars().all(|ch| ch.is_ascii_uppercase()))
+        .unwrap_or(false);
+    let opens_lowercase = continuation
+        .chars()
+        .next()
+        .map(|ch| ch.is_ascii_lowercase())
+        .unwrap_or(false);
+    let mut continuation_parts = continuation.splitn(2, char::is_whitespace);
+    let first_continuation_word = continuation_parts.next().unwrap_or_default();
+    let remaining_continuation = continuation_parts.next().unwrap_or_default().trim();
+    let single_lowercase_fragment = first_continuation_word.len() == 1
+        && first_continuation_word
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase())
+        && option_text
+            .split_whitespace()
+            .next_back()
+            .map(|token| token.len() >= 2 && token.chars().all(|ch| ch.is_ascii_alphabetic()))
+            .unwrap_or(false);
+    if trailing_fragment && opens_lowercase {
+        option_text.push_str(continuation);
+    } else if single_lowercase_fragment {
+        option_text.push_str(first_continuation_word);
+        if !remaining_continuation.is_empty() {
+            option_text.push(' ');
+            option_text.push_str(remaining_continuation);
+        }
+    } else {
+        *option_text = collapse_whitespace(&format!("{} {}", option_text, continuation));
+    }
+}
+
+fn dynamic_group_option_bank_unbounded(blocks: &[Value], kind: &str) -> Vec<(String, String)> {
     let completion_kind = is_dynamic_completion_kind(kind);
     if !completion_kind
         && !matches!(
@@ -4832,17 +6479,33 @@ fn dynamic_group_option_bank(blocks: &[Value], kind: &str) -> Vec<(String, Strin
     {
         return Vec::new();
     }
-    let declared_terminal = dynamic_declared_letter_bank_labels(
-        &blocks
-            .iter()
-            .map(dynamic_block_text)
-            .collect::<Vec<_>>()
-            .join(" "),
-    )
-    .last()
-    .and_then(|label| label.chars().next());
+    let group_text = blocks
+        .iter()
+        .map(dynamic_block_text)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let declared_roman_labels = if kind == "heading_matching" {
+        dynamic_declared_roman_bank_labels(&group_text)
+    } else {
+        Vec::new()
+    };
+    // A heading-matching instruction commonly says both `paragraphs A-H`
+    // and `headings i-x`. A-H describes the question prompts, not the answer
+    // bank, so letter closure must never run for this kind.
+    let declared_terminal = (kind != "heading_matching")
+        .then(|| dynamic_declared_letter_bank_labels(&group_text))
+        .unwrap_or_default()
+        .last()
+        .and_then(|label| label.chars().next());
+    let declared_bank_labels = if completion_kind {
+        dynamic_declared_letter_bank_labels(&group_text)
+    } else {
+        Vec::new()
+    };
     let mut options = Vec::new();
-    for block in blocks {
+    let mut previous_option_block: Option<&Value> = None;
+    for block_index in 0..blocks.len() {
+        let block = &blocks[block_index];
         let mut accepted_table_option = false;
         for (label, option_text) in dynamic_table_option_rows(block) {
             let valid = if kind == "heading_matching" {
@@ -4861,7 +6524,7 @@ fn dynamic_group_option_bank(blocks: &[Value], kind: &str) -> Vec<(String, Strin
                         | "xii"
                 )
             } else {
-                label.len() == 1 && label.chars().all(|ch| matches!(ch, 'A'..='J'))
+                label.len() == 1 && label.chars().all(is_dynamic_letter_option_label)
             };
             if valid
                 && !options
@@ -4873,21 +6536,79 @@ fn dynamic_group_option_bank(blocks: &[Value], kind: &str) -> Vec<(String, Strin
             }
         }
         if accepted_table_option {
+            previous_option_block = Some(block);
             continue;
         }
         let text = dynamic_block_text(block);
-        if dynamic_leading_question_number(&text).is_some() {
+        if is_dynamic_prompt_option_bank_heading(&text) {
+            // A fragmented instruction can look like an option (`B or C.`)
+            // before the explicit bank heading. The heading establishes the
+            // semantic bank boundary, so discard any provisional labels and
+            // rebuild only from the declared rows that follow it.
+            options.clear();
+            previous_option_block = None;
             continue;
+        }
+        if dynamic_leading_question_number(&text).is_some() {
+            previous_option_block = None;
+            continue;
+        }
+        if completion_kind {
+            if let Some(inline_options) = dynamic_declared_bank_parts(&text, &declared_bank_labels)
+            {
+                if let Some((first_label, _)) = inline_options.first() {
+                    if let Some(first_label) = first_label.chars().next() {
+                        if first_label > 'A' {
+                            let normalized = collapse_whitespace(&text);
+                            if let Some((marker_start, _)) =
+                                find_dynamic_option_marker(&normalized, first_label, 0)
+                            {
+                                let prefix = normalized[..marker_start].trim();
+                                let prefix_is_fragment = prefix.split_whitespace().count() <= 3
+                                    && prefix.chars().all(|ch| ch.is_ascii_alphabetic())
+                                    && prefix
+                                        .chars()
+                                        .next()
+                                        .is_some_and(|ch| ch.is_ascii_lowercase());
+                                if prefix_is_fragment {
+                                    let predecessor = (first_label as u8 - 1) as char;
+                                    if let Some((_, predecessor_text)) = options
+                                        .iter_mut()
+                                        .find(|(label, _)| label == &predecessor.to_string())
+                                    {
+                                        append_dynamic_option_continuation(
+                                            predecessor_text,
+                                            prefix,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                for (label, option_text) in inline_options {
+                    if !options
+                        .iter()
+                        .any(|item: &(String, String)| item.0 == label)
+                    {
+                        options.push((label, option_text));
+                    }
+                }
+                previous_option_block = Some(block);
+                continue;
+            }
         }
         if kind != "heading_matching" {
             let expected_label = options
                 .last()
                 .and_then(|(label, _)| label.chars().next())
-                .and_then(|label| (label < 'J').then_some((label as u8 + 1) as char));
+                .and_then(|label| {
+                    (label < DYNAMIC_MAX_OPTION_LABEL).then_some((label as u8 + 1) as char)
+                });
             let inline_options =
                 dynamic_leading_option_label_and_text(&text).and_then(|(label, _)| {
                     let first_label = label.chars().next()?;
-                    if label.len() != 1 || !matches!(first_label, 'A'..='I') {
+                    if label.len() != 1 || !matches!(first_label, 'A'..='M') {
                         return None;
                     }
                     dynamic_inline_choice_parts_from_label(&text, first_label).or_else(|| {
@@ -4896,13 +6617,21 @@ fn dynamic_group_option_bank(blocks: &[Value], kind: &str) -> Vec<(String, Strin
                         // already establish the sequence and this block ends
                         // exactly at the declared terminal.
                         let terminal = declared_terminal?;
-                        if expected_label != Some(first_label) || terminal <= first_label {
+                        if terminal <= first_label {
                             return None;
                         }
                         dynamic_inline_choice_parts_from_label_with_minimum(&text, first_label, 2)
                             .filter(|(_, recovered)| {
-                                recovered.last().and_then(|(label, _)| label.chars().next())
-                                    == Some(terminal)
+                                let labels = recovered
+                                    .iter()
+                                    .filter_map(|(label, _)| label.chars().next())
+                                    .collect::<Vec<_>>();
+                                labels.last().is_some_and(|last| *last <= terminal)
+                                    && labels
+                                        .windows(2)
+                                        .all(|pair| pair[1] as u8 == pair[0] as u8 + 1)
+                                    && (expected_label == Some(first_label)
+                                        || declared_terminal.is_some())
                             })
                     })
                 });
@@ -4916,11 +6645,220 @@ fn dynamic_group_option_bank(blocks: &[Value], kind: &str) -> Vec<(String, Strin
                             options.push((label, option_text));
                         }
                     }
+                    previous_option_block = Some(block);
                     continue;
                 }
             }
         }
         let Some((label, option_text)) = dynamic_leading_option_label_and_text(&text) else {
+            let candidate_terminal = declared_terminal.unwrap_or(DYNAMIC_MAX_OPTION_LABEL);
+            let candidate_label = if completion_kind && declared_terminal.is_some() {
+                dynamic_completion_bank_candidate_labels(&text, candidate_terminal)
+            } else {
+                dynamic_bank_candidate_labels(&text, candidate_terminal)
+            }
+            .into_iter()
+            .find(|label| {
+                !options
+                    .iter()
+                    .any(|(existing, _)| existing == &label.to_string())
+            });
+            if let Some(candidate_label) = candidate_label {
+                if let Some((marker_start, _)) =
+                    find_dynamic_option_marker(&text, candidate_label, 0)
+                {
+                    let prefix = collapse_whitespace(&text[..marker_start]);
+                    if !prefix.is_empty()
+                        && !is_dynamic_instruction_signal(&prefix)
+                        && !is_dynamic_prompt_terminal_heading(&prefix)
+                    {
+                        let predecessor = (candidate_label as u8).checked_sub(1).map(char::from);
+                        if let Some(predecessor) = predecessor {
+                            let predecessor_block =
+                                blocks[..block_index].iter().rev().find(|previous| {
+                                    find_dynamic_option_marker(
+                                        &dynamic_block_text(previous),
+                                        predecessor,
+                                        0,
+                                    )
+                                    .is_some()
+                                });
+                            let same_row = predecessor_block.is_some_and(|previous| {
+                                is_dynamic_same_row_option_continuation(previous, block)
+                            });
+                            let tight_gap = predecessor_block
+                                .and_then(|previous| {
+                                    Some((
+                                        dynamic_block_normalized_bbox(previous)?,
+                                        dynamic_block_normalized_bbox(block)?,
+                                    ))
+                                })
+                                .is_some_and(|(previous_bbox, current_bbox)| {
+                                    let gap = current_bbox[0] - previous_bbox[2];
+                                    (-2.0..=8.0).contains(&gap)
+                                });
+                            if let Some((_, predecessor_text)) = options
+                                .iter_mut()
+                                .find(|(label, _)| label == &predecessor.to_string())
+                            {
+                                let prefix_first =
+                                    prefix.split_whitespace().next().unwrap_or_default();
+                                let trailing_fragment = predecessor_text
+                                    .split_whitespace()
+                                    .next_back()
+                                    .unwrap_or_default();
+                                let joins_word = same_row
+                                    && prefix_first
+                                        .chars()
+                                        .next()
+                                        .is_some_and(|ch| ch.is_ascii_lowercase())
+                                    && prefix_first.chars().all(|ch| ch.is_ascii_alphabetic())
+                                    && (tight_gap
+                                        || ((2..=4).contains(&trailing_fragment.len())
+                                            && trailing_fragment
+                                                .chars()
+                                                .all(|ch| ch.is_ascii_lowercase())));
+                                if joins_word {
+                                    predecessor_text.push_str(&prefix);
+                                } else {
+                                    append_dynamic_option_continuation(predecessor_text, &prefix);
+                                }
+                            }
+                        }
+                    }
+                    let option_tail = collapse_whitespace(&text[marker_start..]);
+                    let recovered = dynamic_inline_choice_parts_from_label_with_minimum(
+                        &option_tail,
+                        candidate_label,
+                        2,
+                    )
+                    .map(|(_, recovered)| recovered)
+                    .or_else(|| {
+                        dynamic_leading_option_label_and_text(&option_tail).and_then(
+                            |(label, option_text)| {
+                                (label == candidate_label.to_string()
+                                    && !option_text.trim().is_empty())
+                                .then_some(vec![(label, option_text)])
+                            },
+                        )
+                    });
+                    if let Some(recovered) = recovered {
+                        let additions = recovered
+                            .into_iter()
+                            .filter(|(label, _)| {
+                                !options.iter().any(|(existing, _)| existing == label)
+                            })
+                            .collect::<Vec<_>>();
+                        options.extend(additions);
+                        previous_option_block = Some(block);
+                        continue;
+                    }
+                }
+            }
+            let expected_label = options
+                .last()
+                .and_then(|(label, _)| label.chars().next())
+                .and_then(|label| {
+                    (label < DYNAMIC_MAX_OPTION_LABEL).then_some((label as u8 + 1) as char)
+                });
+            if completion_kind {
+                let pending_label = options
+                    .iter()
+                    .find(|(_, option_text)| option_text.trim().is_empty())
+                    .and_then(|(label, _)| label.chars().next());
+                if let Some(pending_label) = pending_label {
+                    let has_pending_block = blocks[..block_index].iter().rev().any(|previous| {
+                        find_dynamic_option_marker(&dynamic_block_text(previous), pending_label, 0)
+                            .is_some_and(|(_, content_start)| {
+                                dynamic_block_text(previous)[content_start..]
+                                    .trim()
+                                    .is_empty()
+                            })
+                            && (is_dynamic_same_row_option_continuation(previous, block)
+                                || is_dynamic_wrapped_option_continuation(previous, block))
+                    });
+                    if has_pending_block {
+                        if let Some((_, pending_text)) =
+                            options.iter_mut().find(|(label, option_text)| {
+                                label.chars().next() == Some(pending_label)
+                                    && option_text.trim().is_empty()
+                            })
+                        {
+                            append_dynamic_option_continuation(pending_text, &text);
+                            previous_option_block = Some(block);
+                            continue;
+                        }
+                    }
+                }
+            }
+            if let (Some(previous), Some((_, last_text))) =
+                (previous_option_block, options.last_mut())
+            {
+                if let Some(expected_label) = expected_label {
+                    if let Some((marker_start, _)) =
+                        find_dynamic_option_marker(&text, expected_label, 0)
+                    {
+                        let prefix = collapse_whitespace(&text[..marker_start]);
+                        if !prefix.is_empty()
+                            && !is_dynamic_instruction_signal(&prefix)
+                            && !is_dynamic_prompt_terminal_heading(&prefix)
+                        {
+                            let same_row = is_dynamic_same_row_option_continuation(previous, block);
+                            let split_word_fragment = same_row
+                                && prefix.split_whitespace().count() == 1
+                                && prefix.chars().all(|ch| ch.is_ascii_alphabetic())
+                                && prefix
+                                    .chars()
+                                    .next()
+                                    .is_some_and(|ch| ch.is_ascii_lowercase())
+                                && last_text
+                                    .chars()
+                                    .next_back()
+                                    .is_some_and(|ch| ch.is_ascii_alphabetic());
+                            if split_word_fragment {
+                                last_text.push_str(&prefix);
+                            } else {
+                                append_dynamic_option_continuation(last_text, &prefix);
+                            }
+                        }
+
+                        let option_tail = collapse_whitespace(&text[marker_start..]);
+                        let recovered = dynamic_inline_choice_parts_from_label_with_minimum(
+                            &option_tail,
+                            expected_label,
+                            2,
+                        )
+                        .map(|(_, recovered)| recovered)
+                        .or_else(|| {
+                            dynamic_leading_option_label_and_text(&option_tail).and_then(
+                                |(label, option_text)| {
+                                    (label == expected_label.to_string()
+                                        && !option_text.trim().is_empty())
+                                    .then_some(vec![(label, option_text)])
+                                },
+                            )
+                        });
+                        if let Some(recovered) = recovered {
+                            for (label, option_text) in recovered {
+                                if !options
+                                    .iter()
+                                    .any(|item: &(String, String)| item.0 == label)
+                                {
+                                    options.push((label, option_text));
+                                }
+                            }
+                            previous_option_block = Some(block);
+                            continue;
+                        }
+                    }
+                }
+                if is_dynamic_same_row_option_continuation(previous, block)
+                    || is_dynamic_wrapped_option_continuation(previous, block)
+                {
+                    append_dynamic_option_continuation(last_text, &text);
+                    previous_option_block = Some(block);
+                }
+            }
             continue;
         };
         let valid = if kind == "heading_matching" {
@@ -4929,22 +6867,435 @@ fn dynamic_group_option_bank(blocks: &[Value], kind: &str) -> Vec<(String, Strin
                 "i" | "ii" | "iii" | "iv" | "v" | "vi" | "vii" | "viii" | "ix" | "x" | "xi" | "xii"
             )
         } else {
-            label.len() == 1 && label.chars().all(|ch| matches!(ch, 'A'..='J'))
+            label.len() == 1 && label.chars().all(is_dynamic_letter_option_label)
         };
         if valid
-            && !option_text.is_empty()
             && !options
                 .iter()
                 .any(|item: &(String, String)| item.0 == label)
         {
-            options.push((label, option_text));
+            // A standalone label can be split from its text by a narrow
+            // multi-column layout (`G` on one row, `complex H ...` on the
+            // next). Keep an empty placeholder only for a declared completion
+            // bank; the bounded continuation logic below must fill it before
+            // validation can expose the bank.
+            if !option_text.is_empty() || (completion_kind && declared_terminal.is_some()) {
+                options.push((label, option_text));
+            }
+            previous_option_block = Some(block);
         }
     }
-    if completion_kind {
+    if kind == "heading_matching" && !declared_roman_labels.is_empty() {
+        let mut closed = Vec::with_capacity(declared_roman_labels.len());
+        for label in declared_roman_labels {
+            let Some((_, text)) = options
+                .iter()
+                .find(|(candidate, text)| candidate == &label && !text.trim().is_empty())
+            else {
+                return Vec::new();
+            };
+            closed.push((label, text.clone()));
+        }
+        closed
+    } else if completion_kind {
         validated_dynamic_completion_option_bank(blocks, &options)
+    } else if let Some(terminal) = declared_terminal {
+        let mut closed = Vec::new();
+        for label in 'A'..=terminal {
+            let label = label.to_string();
+            let Some((_, text)) = options
+                .iter()
+                .find(|(candidate, text)| candidate == &label && !text.trim().is_empty())
+            else {
+                return Vec::new();
+            };
+            closed.push((label, text.clone()));
+        }
+        closed
     } else {
         options
     }
+}
+
+fn is_dynamic_completion_bank_hard_boundary(block: &Value) -> bool {
+    let text = dynamic_block_text(block);
+    detect_dynamic_question_heading_range(&text).is_some()
+        || dynamic_leading_question_number(&text).is_some()
+        || is_dynamic_reading_passage_heading(&text)
+        || is_dynamic_answer_block(block)
+}
+
+fn is_dynamic_first_person_i_prose(text: &str) -> bool {
+    let Some((label, content)) = dynamic_leading_option_label_and_text(text) else {
+        return false;
+    };
+    if label != "I" {
+        return false;
+    }
+    let first_word = content
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|ch: char| !ch.is_ascii_alphabetic())
+        .to_ascii_lowercase();
+    matches!(
+        first_word.as_str(),
+        "am" | "was"
+            | "have"
+            | "had"
+            | "do"
+            | "did"
+            | "think"
+            | "believe"
+            | "agree"
+            | "argue"
+            | "consider"
+            | "feel"
+            | "find"
+            | "know"
+            | "see"
+            | "want"
+            | "need"
+            | "expect"
+            | "can"
+            | "could"
+            | "will"
+            | "would"
+            | "should"
+            | "may"
+            | "might"
+    )
+}
+
+fn is_dynamic_declared_completion_terminal_source(
+    block: &Value,
+    declared_labels: &[String],
+    terminal: char,
+    declaration_text: &str,
+) -> bool {
+    if dynamic_table_option_rows(block)
+        .iter()
+        .any(|(label, option_text)| {
+            label == &terminal.to_string() && !option_text.trim().is_empty()
+        })
+    {
+        return true;
+    }
+    let text = dynamic_block_text(block);
+    if dynamic_declared_bank_parts(&text, declared_labels).is_some_and(|parts| {
+        parts.into_iter().any(|(label, option_text)| {
+            label == terminal.to_string() && !option_text.trim().is_empty()
+        })
+    }) {
+        return true;
+    }
+    // A cross-column word tail can precede the terminal marker in the same
+    // physical block (`urprising but satisfying I magical`). The full bank
+    // parser intentionally needs two markers, but the terminal source check
+    // may accept this one marker when its lower-case prefix is a bounded word
+    // fragment rather than ordinary sentence prose.
+    let normalized = collapse_whitespace(&text);
+    if let Some((marker_start, content_start)) =
+        find_dynamic_option_marker(&normalized, terminal, 0)
+    {
+        let prefix = normalized[..marker_start.min(normalized.len())].trim();
+        let prefix_is_fragment = prefix.is_empty()
+            || (terminal > 'A'
+                && prefix.split_whitespace().count() <= 3
+                && prefix
+                    .split_whitespace()
+                    .all(|word| word.chars().all(|ch| ch.is_ascii_lowercase())));
+        if prefix_is_fragment
+            && normalized[content_start.min(normalized.len())..]
+                .trim()
+                .len()
+                > 0
+        {
+            if terminal != 'I' || !is_dynamic_first_person_i_prose(&text) {
+                return true;
+            }
+        }
+    }
+    let terminal_is_leading =
+        dynamic_leading_option_label_and_text(&text).is_some_and(|(label, option_text)| {
+            label == terminal.to_string() && !option_text.trim().is_empty()
+        });
+    if !terminal_is_leading {
+        return false;
+    }
+    // A bare capital I is also the English first-person pronoun. In word and
+    // phrase banks, an `I believe ...` passage continuation is not source
+    // evidence for option I. `list of endings` remains exempt because genuine
+    // ending banks can intentionally contain complete clauses.
+    let declaration = normalized_dynamic_instruction_text(declaration_text);
+    terminal != 'I'
+        || declaration.contains("list of endings")
+        || !is_dynamic_first_person_i_prose(&text)
+}
+
+/// Locate the smallest source-backed span that closes an explicitly declared
+/// completion bank. A and the terminal alone are insufficient: every declared
+/// label must be recovered with non-empty source text before a task boundary.
+/// Candidate A starts are tried from right to left so an earlier stimulus line
+/// beginning `A ... B ...` cannot steal labels from the real bank that follows.
+fn dynamic_declared_completion_bank_span(kind: &str, blocks: &[Value]) -> Option<(usize, usize)> {
+    if !is_dynamic_completion_kind(kind) {
+        return None;
+    }
+    let declaration_text = blocks
+        .iter()
+        .map(dynamic_block_text)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !has_dynamic_completion_option_bank_cue(&declaration_text) {
+        return None;
+    }
+    let declared_labels = dynamic_declared_letter_bank_labels(&declaration_text);
+    let terminal = declared_labels
+        .last()
+        .and_then(|label| label.chars().next())?;
+    if declared_labels.len() < 3 {
+        return None;
+    }
+
+    let starts = blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let text = dynamic_block_text(block);
+            let leading_a = dynamic_leading_option_label_and_text(&text)
+                .is_some_and(|(label, option_text)| label == "A" && !option_text.trim().is_empty());
+            let table_a = dynamic_table_option_rows(block)
+                .iter()
+                .any(|(label, option_text)| label == "A" && !option_text.trim().is_empty());
+            (leading_a || table_a).then_some(index)
+        })
+        .collect::<Vec<_>>();
+
+    for start in starts.into_iter().rev() {
+        let boundary = blocks
+            .iter()
+            .enumerate()
+            .skip(start + 1)
+            .find_map(|(index, block)| {
+                is_dynamic_completion_bank_hard_boundary(block).then_some(index)
+            })
+            .unwrap_or(blocks.len());
+        let mut terminal_seen = false;
+        for end in start + 1..=boundary {
+            let terminal_block = &blocks[end - 1];
+            terminal_seen |= is_dynamic_declared_completion_terminal_source(
+                terminal_block,
+                &declared_labels,
+                terminal,
+                &declaration_text,
+            );
+            if !terminal_seen {
+                continue;
+            }
+            let declaration = json!({
+                "blockId": "synthetic-declared-completion-bank-context",
+                "text": format!("Complete using the list of words, A-{terminal}, below.")
+            });
+            let scoped = std::iter::once(declaration)
+                .chain(blocks[start..end].iter().cloned())
+                .collect::<Vec<_>>();
+            let recovered = dynamic_group_option_bank_unbounded(&scoped, kind);
+            if recovered.len() == declared_labels.len()
+                && recovered
+                    .iter()
+                    .zip(&declared_labels)
+                    .all(|((actual, text), expected)| actual == expected && !text.trim().is_empty())
+            {
+                return Some((start, end));
+            }
+        }
+    }
+    None
+}
+
+/// Geometry may place one or two bank cells after the following question
+/// heading in linear block order; `extend_dynamic_matching_option_blocks`
+/// reattaches those cells later by bbox. For task/passage ownership, accept a
+/// nearly closed prefix only when most of the declared labels and the genuine
+/// terminal are already source-backed. This is deliberately much stronger
+/// than the former A+terminal shortcut and cannot be satisfied by A/B stimulus
+/// prose followed by an ordinary first-person `I ...` sentence.
+fn dynamic_partial_completion_bank_task_end(kind: &str, blocks: &[Value]) -> Option<usize> {
+    if !is_dynamic_completion_kind(kind) {
+        return None;
+    }
+    let declaration_text = blocks
+        .iter()
+        .map(dynamic_block_text)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !has_dynamic_completion_option_bank_cue(&declaration_text) {
+        return None;
+    }
+    let declared_labels = dynamic_declared_letter_bank_labels(&declaration_text);
+    let terminal = declared_labels
+        .last()
+        .and_then(|label| label.chars().next())?;
+    if declared_labels.len() < 5 {
+        return None;
+    }
+    let declared = declared_labels
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut observed = std::collections::BTreeSet::<String>::new();
+    let mut terminal_end = None;
+    for (index, block) in blocks.iter().enumerate() {
+        for (label, option_text) in dynamic_table_option_rows(block) {
+            if declared.contains(&label) && !option_text.trim().is_empty() {
+                observed.insert(label);
+            }
+        }
+        let text = dynamic_block_text(block);
+        if let Some(parts) = dynamic_declared_bank_parts(&text, &declared_labels) {
+            observed.extend(parts.into_iter().filter_map(|(label, option_text)| {
+                (declared.contains(&label) && !option_text.trim().is_empty()).then_some(label)
+            }));
+        } else if let Some((label, option_text)) = dynamic_leading_option_label_and_text(&text) {
+            if declared.contains(&label) && !option_text.trim().is_empty() {
+                observed.insert(label);
+            }
+        }
+        if is_dynamic_declared_completion_terminal_source(
+            block,
+            &declared_labels,
+            terminal,
+            &declaration_text,
+        ) {
+            terminal_end = Some(index + 1);
+        }
+    }
+    let minimum_source_labels = declared_labels.len().saturating_sub(2).max(5);
+    (observed.len() >= minimum_source_labels).then_some(terminal_end?)
+}
+
+fn dynamic_group_option_bank(blocks: &[Value], kind: &str) -> Vec<(String, String)> {
+    if is_dynamic_completion_kind(kind) {
+        let declaration_text = blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let declared_labels = dynamic_declared_letter_bank_labels(&declaration_text);
+        if has_dynamic_completion_option_bank_cue(&declaration_text) && !declared_labels.is_empty()
+        {
+            let Some((start, end)) = dynamic_declared_completion_bank_span(kind, blocks) else {
+                return Vec::new();
+            };
+            let terminal = declared_labels
+                .last()
+                .and_then(|label| label.chars().next())
+                .unwrap_or('A');
+            let declaration = json!({
+                "blockId": "synthetic-declared-completion-bank-context",
+                "text": format!("Complete using the list of words, A-{terminal}, below.")
+            });
+            let scoped = std::iter::once(declaration)
+                .chain(blocks[start..end].iter().cloned())
+                .collect::<Vec<_>>();
+            return dynamic_group_option_bank_unbounded(&scoped, kind);
+        }
+    }
+    if matches!(kind, "matching" | "matching_information" | "classification") {
+        let declaration_text = blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let declared_labels = dynamic_declared_letter_bank_labels(&declaration_text);
+        if declared_labels.len() >= 3 {
+            // A question/stimulus line can legitimately begin with the
+            // article A. Prefer the right-most A source whose suffix closes
+            // the entire declared bank, rather than letting that prose claim
+            // option A and shadow the real bank below it.
+            for start in (0..blocks.len()).rev() {
+                let starts_at_a = dynamic_table_option_rows(&blocks[start])
+                    .iter()
+                    .any(|(label, text)| label == "A" && !text.trim().is_empty())
+                    || dynamic_leading_option_label_and_text(&dynamic_block_text(&blocks[start]))
+                        .is_some_and(|(label, text)| label == "A" && !text.trim().is_empty());
+                if !starts_at_a {
+                    continue;
+                }
+                let recovered = dynamic_group_option_bank_unbounded(&blocks[start..], kind);
+                if recovered.len() == declared_labels.len()
+                    && recovered
+                        .iter()
+                        .zip(&declared_labels)
+                        .all(|((label, text), declared)| {
+                            label == declared && !text.trim().is_empty()
+                        })
+                {
+                    return recovered;
+                }
+            }
+        }
+    }
+    dynamic_group_option_bank_unbounded(blocks, kind)
+}
+
+/// Return the physical start of a separately declared shared option bank.
+///
+/// Looking only for a leading `A` is unsafe because normal question prose can
+/// begin with the article A.  Instead, prove that the suffix beginning at that
+/// block reproduces the complete, explicitly declared A-terminal bank already
+/// recovered for the group.  Trying candidates from right to left ensures an
+/// earlier prose `A ...` cannot shadow the genuine bank.
+fn dynamic_group_option_bank_start_index(blocks: &[Value], kind: &str) -> Option<usize> {
+    if !matches!(
+        kind,
+        "heading_matching" | "matching" | "matching_information" | "classification"
+    ) {
+        return None;
+    }
+    let declaration_text = blocks
+        .iter()
+        .map(dynamic_block_text)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let declared_labels = if kind == "heading_matching" {
+        dynamic_declared_roman_bank_labels(&declaration_text)
+    } else {
+        dynamic_declared_letter_bank_labels(&declaration_text)
+    };
+    if declared_labels.len() < 3 {
+        return None;
+    }
+    let expected = dynamic_group_option_bank(blocks, kind);
+    if expected.len() != declared_labels.len()
+        || expected
+            .iter()
+            .zip(&declared_labels)
+            .any(|((label, text), declared)| label != declared || text.trim().is_empty())
+    {
+        return None;
+    }
+
+    blocks.iter().enumerate().rev().find_map(|(index, block)| {
+        let starts_at_first_label = if kind == "heading_matching" {
+            dynamic_table_option_rows(block)
+                .iter()
+                .any(|(label, text)| label == &declared_labels[0] && !text.trim().is_empty())
+        } else {
+            dynamic_table_option_rows(block)
+                .iter()
+                .any(|(label, text)| label == &declared_labels[0] && !text.trim().is_empty())
+                || dynamic_leading_option_label_and_text(&dynamic_block_text(block)).is_some_and(
+                    |(label, text)| label == declared_labels[0] && !text.trim().is_empty(),
+                )
+        };
+        if !starts_at_first_label {
+            return None;
+        }
+        let recovered = dynamic_group_option_bank_unbounded(&blocks[index..], kind);
+        (recovered == expected).then_some(index)
+    })
 }
 
 fn dynamic_interaction_with_option_texts(
@@ -5282,7 +7633,7 @@ pub(crate) fn make_dynamic_authoring_ir(
                             ));
                     let mut question_source_block_ids = block_ids.clone();
                     let completion_recovery = !manual_import && is_dynamic_completion_kind(kind);
-                    let (mut prompt, question_options) = if manual_import {
+                    let (mut prompt, mut question_options) = if manual_import {
                         (String::new(), Vec::new())
                     } else {
                         dynamic_question_prompt_and_options(
@@ -5294,6 +7645,60 @@ pub(crate) fn make_dynamic_authoring_ir(
                             kind,
                         )
                     };
+                    if !manual_import && matches!(kind, "single_choice" | "multi_choice") {
+                        let declared_labels = dynamic_letter_options_for_text(&group_text);
+                        let primary_complete = !declared_labels.is_empty()
+                            && question_options.len() == declared_labels.len()
+                            && question_options
+                                .iter()
+                                .zip(declared_labels.iter())
+                                .all(|((label, text), declared)| {
+                                    label == declared && !text.trim().is_empty()
+                                });
+                        if !primary_complete && recovery_blocks.len() > group_blocks.len() {
+                            let (recovered_prompt, recovered_options) =
+                                dynamic_question_prompt_and_options(
+                                    &recovery_blocks,
+                                    &group_text,
+                                    number,
+                                    heading,
+                                    end,
+                                    kind,
+                                );
+                            let recovered_complete = recovered_options.len()
+                                == declared_labels.len()
+                                && recovered_options
+                                    .iter()
+                                    .zip(declared_labels.iter())
+                                    .all(|((label, text), declared)| {
+                                        label == declared && !text.trim().is_empty()
+                                    });
+                            if recovered_complete {
+                                question_options = recovered_options;
+                                // Preserve the primary prompt unless the
+                                // expanded physical window supplies a clear
+                                // question ending. This prevents a trailing
+                                // passage line from replacing a good stem.
+                                if (prompt.trim().is_empty()
+                                    || (!prompt.contains('?')
+                                        && recovered_prompt.contains('?')))
+                                    && !recovered_prompt.trim().is_empty()
+                                {
+                                    prompt = recovered_prompt;
+                                }
+                                for block in &recovery_blocks {
+                                    let source_id = dynamic_block_id(block);
+                                    if !source_id.is_empty()
+                                        && !question_source_block_ids
+                                            .iter()
+                                            .any(|id| id == &source_id)
+                                    {
+                                        question_source_block_ids.push(source_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if completion_recovery && prompt.trim().is_empty() {
                         if let Some((recovered, block_id, inferred)) =
                             dynamic_table_row_prompt_for_number(&group_blocks, number, start, end)
@@ -5321,6 +7726,34 @@ pub(crate) fn make_dynamic_authoring_ir(
                                 }
                             }
                         }
+                    }
+                    if completion_recovery
+                        && !dynamic_completion_foreign_slots(&prompt, number, start, end).is_empty()
+                    {
+                        if let Some((localized, source_id)) =
+                            dynamic_local_completion_prompt_for_number(
+                                &recovery_blocks,
+                                number,
+                                start,
+                                end,
+                            )
+                        {
+                            prompt = localized;
+                            if !source_id.is_empty()
+                                && !question_source_block_ids.iter().any(|id| id == &source_id)
+                            {
+                                question_source_block_ids.push(source_id);
+                            }
+                        }
+                    }
+                    if completion_recovery
+                        && !dynamic_completion_foreign_slots(&prompt, number, start, end).is_empty()
+                    {
+                        // A prompt that still contains another response slot
+                        // is not a closed single-question surface. Keep the
+                        // source text for author repair, but never mark it
+                        // publishable as an automatically recovered question.
+                        manual_import = true;
                     }
                     if prompt.trim().is_empty() {
                         // A missing source-backed prompt is a hard authoring
@@ -5677,6 +8110,77 @@ mod tests {
                 .pointer("/optionTexts/iii")
                 .and_then(Value::as_str),
             Some("Changes in production")
+        );
+    }
+
+    #[test]
+    fn heading_matching_uses_roman_bank_not_paragraph_letters() {
+        let mut blocks = vec![json!({
+            "blockId": "instruction",
+            "blockType": "paragraph",
+            "text": "Questions 1-8 Reading Passage 1 has eight paragraphs A-H. Choose the correct heading for each paragraph from the list of headings below. Write the correct number, i-x, in boxes 1-8. List of Headings"
+        })];
+        for (index, (label, text)) in [
+            ("i", "Not enough tea to meet demand"),
+            ("ii", "Religious objections"),
+            ("iii", "In and sometimes out of fashion"),
+            ("iv", "A connection between tea and religion"),
+            ("v", "A luxury item"),
+            ("vi", "News of tea reaches another continent"),
+            ("vii", "Is tea a good or a bad thing?"),
+            ("viii", "A chance discovery"),
+            ("ix", "Tea-making as a ritual"),
+            ("x", "Difficulties in importing tea"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            blocks.push(json!({
+                "blockId": format!("heading-{index}"),
+                "blockType": "paragraph",
+                "text": format!("{label} {text}"),
+            }));
+        }
+
+        let options = dynamic_group_option_bank(&blocks, "heading_matching");
+        assert_eq!(
+            options
+                .iter()
+                .map(|(label, _)| label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
+        );
+        assert!(options.iter().all(|(_, text)| !text.trim().is_empty()));
+
+        let classification = classify_dynamic_group(
+            &blocks
+                .iter()
+                .map(dynamic_block_text)
+                .collect::<Vec<_>>()
+                .join(" "),
+            &[],
+        );
+        assert_eq!(classification.kind, "heading_matching");
+        assert_eq!(
+            classification.interaction.options,
+            vec!["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
+        );
+        let interaction = dynamic_interaction_with_option_texts(
+            &json!({"classification": {"interaction": classification.interaction}}),
+            "heading_matching",
+            &options,
+        );
+        assert_eq!(
+            interaction.get("options"),
+            Some(&json!([
+                "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"
+            ]))
+        );
+        assert_eq!(
+            interaction
+                .pointer("/optionTexts/x")
+                .and_then(Value::as_str),
+            Some("Difficulties in importing tea")
         );
     }
 
@@ -6093,6 +8597,182 @@ mod tests {
     }
 
     #[test]
+    fn split_and_authoring_keep_flattened_b_to_d_option_tail() {
+        let job = test_job();
+        let texts = [
+            ("passage", "READING PASSAGE 1"),
+            ("heading", "Questions 1-2"),
+            ("instruction", "Choose the correct letter, A, B, C or D."),
+            (
+                "write",
+                "Write the correct letter in boxes 1-2 on your answer sheet.",
+            ),
+            ("q1", "1 What is the first answer?"),
+            ("q1-options", "A alpha B beta C gamma D delta"),
+            ("q2", "2 What is the second answer?"),
+            ("q2-a", "A one"),
+            ("q2-bcd", "B two C three D four"),
+        ];
+        let blocks = texts
+            .iter()
+            .enumerate()
+            .map(|(index, (block_id, text))| {
+                json!({
+                    "blockId": block_id,
+                    "blockType": if *block_id == "heading" { "header" } else { "paragraph" },
+                    "text": text,
+                    "pageIndex": 1,
+                    "bbox": [54.0, 720.0 - index as f64 * 30.0, 520.0, 738.0 - index as f64 * 30.0]
+                })
+            })
+            .collect::<Vec<_>>();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "pages": [{"pageIndex": 1, "blocks": blocks}],
+            "assets": []
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert!(split["questionGroupCandidates"][0]["blockIds"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("q2-bcd")));
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let q2 = &authoring["groups"][0]["questions"][1];
+        assert_eq!(q2["prompt"], json!("What is the second answer?"));
+        assert_eq!(q2["interaction"]["options"], json!(["A", "B", "C", "D"]));
+        assert!(q2["sourceBlockIds"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("q2-bcd")));
+    }
+
+    #[test]
+    fn matching_bank_closes_across_interleaved_next_heading_by_geometry() {
+        let job = test_job();
+        let blocks = vec![
+            json!({"blockId":"passage","blockType":"header","text":"READING PASSAGE 2","pageIndex":4,"bbox":[54.0,780.0,220.0,792.0]}),
+            json!({"blockId":"q20-heading","blockType":"header","text":"Questions 20-23","pageIndex":4,"bbox":[54.0,752.0,145.0,761.0]}),
+            json!({"blockId":"q20-instruction","blockType":"paragraph","text":"Match each statement with the correct researcher, A, B or C.","pageIndex":4,"bbox":[54.0,692.0,375.0,701.0]}),
+            json!({"blockId":"q20","blockType":"paragraph","text":"20 first claim","pageIndex":4,"bbox":[54.0,602.0,300.0,611.0]}),
+            json!({"blockId":"q21","blockType":"paragraph","text":"21 second claim","pageIndex":4,"bbox":[54.0,572.0,300.0,581.0]}),
+            json!({"blockId":"q22","blockType":"paragraph","text":"22 third claim","pageIndex":4,"bbox":[54.0,542.0,300.0,551.0]}),
+            json!({"blockId":"q23","blockType":"paragraph","text":"23 fourth claim","pageIndex":4,"bbox":[54.0,512.0,300.0,521.0]}),
+            json!({"blockId":"bank-heading","blockType":"paragraph","text":"List of Researchers","pageIndex":4,"bbox":[244.0,465.0,350.0,474.0]}),
+            json!({"blockId":"bank-ab","blockType":"paragraph","text":"A Simon Peers B Nicholas Godley","pageIndex":4,"bbox":[240.0,425.0,349.0,450.0]}),
+            // Parser order is wrong here: the next heading is emitted before
+            // the visually higher C row.
+            json!({"blockId":"q24-heading","blockType":"header","text":"Questions 24-26","pageIndex":4,"bbox":[54.0,348.0,145.0,357.0]}),
+            json!({"blockId":"bank-c","blockType":"paragraph","text":"C Todd B","pageIndex":4,"bbox":[240.0,410.0,292.0,419.0]}),
+            json!({"blockId":"bank-c-tail","blockType":"paragraph","text":"lackledge","pageIndex":4,"bbox":[299.0,410.0,351.0,419.0]}),
+            json!({"blockId":"q24-instruction","blockType":"paragraph","text":"Complete the summary below. Choose ONE WORD ONLY.","pageIndex":4,"bbox":[54.0,318.0,390.0,327.0]}),
+            json!({"blockId":"q24","blockType":"paragraph","text":"24 ________","pageIndex":4,"bbox":[54.0,288.0,200.0,297.0]}),
+            json!({"blockId":"q25","blockType":"paragraph","text":"25 ________","pageIndex":4,"bbox":[54.0,258.0,200.0,267.0]}),
+            json!({"blockId":"q26","blockType":"paragraph","text":"26 ________","pageIndex":4,"bbox":[54.0,228.0,200.0,237.0]}),
+        ];
+        let doc = json!({"schemaVersion":"DocumentIRV1","pages":[{"pageIndex":4,"blocks":blocks}],"assets":[]});
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let first_ids = split["questionGroupCandidates"][0]["blockIds"]
+            .as_array()
+            .unwrap();
+        assert!(first_ids.contains(&json!("bank-c")));
+        assert!(first_ids.contains(&json!("bank-c-tail")));
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let first = &authoring["groups"][0];
+        for question in first["questions"].as_array().unwrap() {
+            assert_eq!(question["interaction"]["options"], json!(["A", "B", "C"]));
+            assert_eq!(
+                question["interaction"]["optionTexts"]["C"],
+                json!("Todd Blackledge")
+            );
+        }
+    }
+
+    #[test]
+    fn matching_bank_recovers_cross_column_final_label_after_next_heading() {
+        let job = test_job();
+        let blocks = vec![
+            json!({"blockId":"q20-heading","blockType":"header","text":"Questions 20-23","pageIndex":4,"bbox":[36.0,789.0,120.0,798.0]}),
+            json!({"blockId":"q20-instruction","blockType":"paragraph","text":"Match each statement with the correct researcher, A, B, C or D.","pageIndex":4,"bbox":[36.0,730.0,372.0,739.0]}),
+            json!({"blockId":"q20","blockType":"paragraph","text":"20 first statement","pageIndex":4,"bbox":[36.0,642.0,300.0,651.0]}),
+            json!({"blockId":"q21","blockType":"paragraph","text":"21 second statement","pageIndex":4,"bbox":[36.0,612.0,300.0,621.0]}),
+            json!({"blockId":"q22","blockType":"paragraph","text":"22 third statement","pageIndex":4,"bbox":[36.0,582.0,300.0,591.0]}),
+            json!({"blockId":"q23","blockType":"paragraph","text":"23 fourth statement","pageIndex":4,"bbox":[36.0,552.0,300.0,561.0]}),
+            json!({"blockId":"bank-heading","blockType":"paragraph","text":"List of Researchers","pageIndex":4,"bbox":[231.0,495.0,336.0,504.0]}),
+            json!({"blockId":"bank-ab","blockType":"paragraph","text":"A Dieter Hochuli B John Martin","pageIndex":4,"bbox":[214.0,456.0,329.0,480.0]}),
+            // The C row is emitted in the left column, so the final D row is
+            // more than 120pt away in x even though both belong to one bank.
+            json!({"blockId":"bank-c","blockType":"paragraph","text":"C Richard Major","pageIndex":4,"bbox":[36.0,440.0,327.0,449.0]}),
+            json!({"blockId":"q24-heading","blockType":"header","text":"Questions 24-26","pageIndex":4,"bbox":[36.0,358.0,120.0,367.0]}),
+            json!({"blockId":"bank-d","blockType":"paragraph","text":"D Catherin","pageIndex":4,"bbox":[214.0,425.0,295.0,434.0]}),
+            json!({"blockId":"bank-d-tail","blockType":"paragraph","text":"e Price","pageIndex":4,"bbox":[302.0,425.0,333.0,434.0]}),
+            json!({"blockId":"q24-instruction","blockType":"paragraph","text":"Complete the summary below. Choose ONE WORD ONLY.","pageIndex":4,"bbox":[36.0,328.0,390.0,337.0]}),
+            json!({"blockId":"q24","blockType":"paragraph","text":"24 ________","pageIndex":4,"bbox":[36.0,298.0,200.0,307.0]}),
+            json!({"blockId":"q25","blockType":"paragraph","text":"25 ________","pageIndex":4,"bbox":[36.0,268.0,200.0,277.0]}),
+            json!({"blockId":"q26","blockType":"paragraph","text":"26 ________","pageIndex":4,"bbox":[36.0,238.0,200.0,247.0]}),
+        ];
+        let doc = json!({"schemaVersion":"DocumentIRV1","pages":[{"pageIndex":4,"blocks":blocks}],"assets":[]});
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let first_ids = split["questionGroupCandidates"][0]["blockIds"]
+            .as_array()
+            .unwrap();
+        assert!(first_ids.contains(&json!("bank-d")));
+        assert!(first_ids.contains(&json!("bank-d-tail")));
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let first = &authoring["groups"][0];
+        for question in first["questions"].as_array().unwrap() {
+            assert_eq!(
+                question["interaction"]["options"],
+                json!(["A", "B", "C", "D"])
+            );
+            assert_eq!(
+                question["interaction"]["optionTexts"]["D"],
+                json!("Catherine Price")
+            );
+        }
+    }
+
+    #[test]
+    fn wrapped_choice_prompt_keeps_option_run_beyond_three_block_lookback() {
+        let blocks = vec![
+            json!({"blockId":"q34","text":"34 Which aspect of playing an instrument was included"}),
+            json!({"blockId":"q34-wrap-1","text":"in the follow-up study"}),
+            json!({"blockId":"q34-wrap-2","text":"but not in the first study?"}),
+            json!({"blockId":"q34-spacer","text":"Select one answer."}),
+            json!({"blockId":"q34-abc","text":"A duration B starting age C years since playing"}),
+            json!({"blockId":"q34-d","text":"D childhood practice"}),
+        ];
+
+        assert_eq!(dynamic_choice_option_run_bounds(&blocks, 4), Some((4, 6)));
+        assert_eq!(dynamic_choice_option_run_bounds(&blocks, 5), Some((4, 6)));
+    }
+
+    #[test]
+    fn rotated_text_matrix_recovers_number_without_visual_space() {
+        assert_eq!(
+            dynamic_leading_question_number("14High-level workers react positively to stress"),
+            Some(14)
+        );
+        assert_eq!(
+            strip_dynamic_leading_question_marker(
+                "14High-level workers react positively to stress",
+                14
+            ),
+            "High-level workers react positively to stress"
+        );
+        assert_eq!(
+            dynamic_leading_question_number("14th-century working practices"),
+            None
+        );
+        assert_eq!(
+            dynamic_leading_question_number("2020Research findings were published"),
+            None
+        );
+    }
+
+    #[test]
     fn bilingual_style_b_to_d_tail_preserves_all_choice_labels() {
         let blocks = vec![
             json!({
@@ -6246,6 +8926,106 @@ mod tests {
     }
 
     #[test]
+    fn matching_prompt_stops_before_rotation_spaced_bank_heading() {
+        let blocks = [
+            "18 Workers commonly expect their workloads to lessen over time",
+            "List of P eople",
+            "A Neil Plumridge",
+            "B Gal Zauberman",
+            "C Jan Elsner",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(index, text)| json!({"blockId": format!("q{index}"), "text": text}))
+        .collect::<Vec<_>>();
+        let group_text = blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let (prompt, _) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            18,
+            "Questions 14-18",
+            18,
+            "matching",
+        );
+
+        assert_eq!(
+            prompt,
+            "Workers commonly expect their workloads to lessen over time"
+        );
+    }
+
+    #[test]
+    fn explicit_bank_heading_discards_option_like_instruction_fragments() {
+        let blocks = [
+            "Questions 21-26",
+            "Match each statement with the correct person, A,",
+            "B or C.",
+            "21 Too little evidence exists to support the theory.",
+            "List of People",
+            "A John Alroy",
+            "B Ross D. E. MacPhee",
+            "C Russell W. Graham",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(index, text)| json!({"blockId": format!("b{index}"), "text": text}))
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            dynamic_group_option_bank(&blocks, "matching"),
+            vec![
+                ("A".to_string(), "John Alroy".to_string()),
+                ("B".to_string(), "Ross D. E. MacPhee".to_string()),
+                ("C".to_string(), "Russell W. Graham".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn numeric_percentage_inside_choice_prompt_is_not_a_question_boundary() {
+        let blocks = [
+            json!({"blockId":"q30","text":"30 What point is the writer making when he says that"}),
+            json!({"blockId":"q30-percent","text":"16 % of the sample"}),
+            json!({"blockId":"q30-wrap","text":"group did not know where the museum was?"}),
+            json!({"blockId":"q30-options","text":"A first B second C third D fourth"}),
+            json!({"blockId":"q31","text":"31 What happened next?"}),
+        ];
+
+        let group_text = blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (prompt, options) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            30,
+            "Questions 27-31",
+            31,
+            "single_choice",
+        );
+
+        assert_eq!(
+            prompt,
+            "What point is the writer making when he says that 16 % of the sample group did not know where the museum was?"
+        );
+        assert_eq!(
+            options,
+            vec![
+                ("A".to_string(), "first".to_string()),
+                ("B".to_string(), "second".to_string()),
+                ("C".to_string(), "third".to_string()),
+                ("D".to_string(), "fourth".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn list_completion_prompts_stop_at_inline_next_numbers_and_final_letter_bank() {
         let blocks = [
             "Complete the summary using the list of words, A-I, below.",
@@ -6291,6 +9071,306 @@ mod tests {
         assert!(!prompt_38.contains("39"));
         assert_eq!(prompt_40, "______ of cinematography.");
         assert!(!prompt_40.contains("A light"));
+    }
+
+    #[test]
+    fn note_completion_slots_close_on_numbered_blanks_not_timeline_numbers() {
+        let blocks = [
+            "9 ______ and the local way of life made her dissatisfied",
+            "• 1908 – returned to London",
+            "• 1911–1919 – the work improved by 10 percent",
+            "– 10 ______ prevented the writers from staying together",
+            "in Paris – spent time with distinguished",
+            "11 ______",
+            "– from 1916, illness restricted her travel",
+            "13 ______ published after her death",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(index, text)| json!({"blockId": format!("n{index}"), "text": text}))
+        .collect::<Vec<_>>();
+        let group_text = blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let (prompt_9, _) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            9,
+            "Questions 9-13",
+            13,
+            "sentence_completion",
+        );
+        assert!(prompt_9.contains("1908"));
+        assert!(prompt_9.contains("1911–1919"));
+        assert!(prompt_9.contains("10 percent"));
+        assert!(!prompt_9.contains("10 ______"));
+        assert!(!prompt_9.contains("11 ______"));
+
+        let (prompt_10, _) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            10,
+            "Questions 9-13",
+            13,
+            "sentence_completion",
+        );
+        assert_eq!(
+            prompt_10,
+            "______ prevented the writers from staying together in Paris – spent time with distinguished"
+        );
+        assert!(!prompt_10.contains("11 ______"));
+
+        let (prompt_13, _) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            13,
+            "Questions 9-13",
+            13,
+            "sentence_completion",
+        );
+        assert_eq!(prompt_13, "______ published after her death");
+    }
+
+    #[test]
+    fn non_linear_completion_recovery_never_borrows_a_foreign_slot_block() {
+        let group_blocks = [
+            json!({"blockId":"q11","text":"The rock eventually 11 _______. Once extracted, the limestone"}),
+            json!({"blockId":"q13","text":"or, through a 13 _______ process,"}),
+        ];
+        let group_text = group_blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (prompt_11, _) = dynamic_question_prompt_and_options(
+            &group_blocks,
+            &group_text,
+            11,
+            "Questions 8-13",
+            13,
+            "diagram_completion",
+        );
+        assert_eq!(
+            prompt_11,
+            "_______. Once extracted, the limestone or, through a"
+        );
+        assert!(!prompt_11.contains("13 ______"));
+
+        let recovery_blocks = [
+            json!({"blockId":"q13","text":"or, through a 13 _______ process,"}),
+            json!({"blockId":"q12","text":"is made into 12 _______."}),
+            json!({"blockId":"tail","text":"can be used to make quicklime."}),
+        ];
+        let (prompt_12, source_ids) =
+            dynamic_gap_sentence_prompt_from_blocks(&recovery_blocks, 12).expect("q12 prompt");
+        assert_eq!(
+            prompt_12,
+            "is made into _______. can be used to make quicklime."
+        );
+        assert!(!prompt_12.contains("13 ______"));
+        assert_eq!(source_ids, vec!["q12".to_string(), "tail".to_string()]);
+    }
+
+    #[test]
+    fn local_completion_recovery_splits_multiple_slots_in_one_geometry_block() {
+        let blocks = [
+            json!({
+                "blockId":"flow-row",
+                "text":"The 8 ______ drill rows of 9 ______."
+            }),
+            json!({
+                "blockId":"other-row",
+                "text":"10 ______ are used."
+            }),
+        ];
+
+        let (q8, q8_source) =
+            dynamic_local_completion_prompt_for_number(&blocks, 8, 8, 10).expect("q8");
+        let (q9, q9_source) =
+            dynamic_local_completion_prompt_for_number(&blocks, 9, 8, 10).expect("q9");
+        assert_eq!(q8, "The ______ drill rows of");
+        assert_eq!(q9, "drill rows of ______.");
+        assert_eq!(q8_source, "flow-row");
+        assert_eq!(q9_source, "flow-row");
+        assert!(dynamic_completion_foreign_slots(&q8, 8, 8, 10).is_empty());
+        assert!(dynamic_completion_foreign_slots(&q9, 9, 8, 10).is_empty());
+        assert!(dynamic_local_completion_prompt_for_number(&blocks, 11, 8, 11).is_none());
+    }
+
+    #[test]
+    fn sentence_completion_stops_at_next_display_number_before_its_later_gap() {
+        let blocks = [
+            json!({"blockId":"q6-a","text":"6 In France, people changed their opinion because the King put a"}),
+            json!({"blockId":"q6-b","text":"potato ______ in his buttonhole."}),
+            json!({"blockId":"q7-a","text":"7 Frederick recognised the potential, but had to handle the ______ from ordinary"}),
+            json!({"blockId":"q7-b","text":"people."}),
+            json!({"blockId":"q8","text":"8 The King adopted ______ psychology."}),
+        ];
+        let group_text = blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let (q6, _) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            6,
+            "Questions 6-8",
+            8,
+            "sentence_completion",
+        );
+        let (q7, _) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            7,
+            "Questions 6-8",
+            8,
+            "sentence_completion",
+        );
+        assert_eq!(
+            q6,
+            "In France, people changed their opinion because the King put a potato ______ in his buttonhole."
+        );
+        assert_eq!(
+            q7,
+            "Frederick recognised the potential, but had to handle the ______ from ordinary people."
+        );
+        assert!(!q6.contains("7 Frederick"));
+        assert!(!q7.contains("8 The King"));
+    }
+
+    #[test]
+    fn quantities_years_and_percentages_are_not_display_question_boundaries() {
+        assert_eq!(
+            find_dynamic_completion_display_question_boundary(
+                "The trial continued for 7 years and produced a ______ improvement.",
+                7,
+                0,
+            ),
+            None
+        );
+        assert_eq!(
+            find_dynamic_completion_display_question_boundary(
+                "The first phase ended. 7 participants reported a ______ response.",
+                7,
+                0,
+            ),
+            None
+        );
+        assert_eq!(
+            find_dynamic_completion_display_question_boundary(
+                "The result rose by 7 percent before reaching ______.",
+                7,
+                0,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn trailing_next_number_joins_a_blank_in_the_adjacent_geometry_block() {
+        let current = layout_block(
+            "q25",
+            "25 ______ may be less effective than simply reviewing your 26",
+            [306.6, 724.0, 547.4, 728.0],
+            0,
+            2,
+            1,
+        );
+        let next = layout_block("q26", "________.", [306.6, 713.0, 344.4, 717.0], 0, 2, 1);
+        assert_eq!(
+            find_dynamic_cross_block_completion_number_boundary(
+                &current,
+                &dynamic_block_text(&current),
+                &next,
+                26,
+            ),
+            dynamic_block_text(&current).rfind("26")
+        );
+
+        let other_column = layout_block(
+            "other-column",
+            "________.",
+            [54.0, 713.0, 100.0, 717.0],
+            0,
+            2,
+            0,
+        );
+        assert_eq!(
+            find_dynamic_cross_block_completion_number_boundary(
+                &current,
+                &dynamic_block_text(&current),
+                &other_column,
+                26,
+            ),
+            None
+        );
+        let ordinary_next = layout_block(
+            "ordinary",
+            "continues with ordinary prose.",
+            [306.6, 713.0, 480.0, 717.0],
+            0,
+            2,
+            1,
+        );
+        assert_eq!(
+            find_dynamic_cross_block_completion_number_boundary(
+                &current,
+                &dynamic_block_text(&current),
+                &ordinary_next,
+                26,
+            ),
+            None
+        );
+        let neil = layout_block(
+            "q20",
+            "20 Which method was suggested by Neil",
+            [306.6, 724.0, 520.0, 728.0],
+            0,
+            2,
+            1,
+        );
+        assert_eq!(
+            find_dynamic_cross_block_completion_number_boundary(
+                &neil,
+                &dynamic_block_text(&neil),
+                &next,
+                21,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn inline_completion_recovers_display_number_then_later_gap_in_one_block() {
+        let blocks = [json!({
+            "blockId":"q4-5",
+            "text":"Questions 4-5 Complete the notes below. 4 The passage is about tidal _____. 5 The records are called _____."
+        })];
+        let group_text = dynamic_block_text(&blocks[0]);
+        let (q4, _) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            4,
+            "Questions 4-5",
+            5,
+            "sentence_completion",
+        );
+        let (q5, _) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            5,
+            "Questions 4-5",
+            5,
+            "sentence_completion",
+        );
+        assert_eq!(q4, "The passage is about tidal _____.");
+        assert_eq!(q5, "The records are called _____.");
+        assert!(dynamic_completion_foreign_slots(&q4, 4, 4, 5).is_empty());
     }
 
     #[test]
@@ -6737,6 +9817,132 @@ mod tests {
         assert_eq!(
             split.pointer("/passageCandidates/0/range"),
             Some(&json!(["b001", "b002", "b003", "b004"]))
+        );
+    }
+
+    #[test]
+    fn whale_oil_article_question_word_does_not_create_fallback_group() {
+        let job = test_job();
+        let blocks = vec![
+            json!({
+                "blockId": "b001",
+                "blockType": "header",
+                "text": "NATURE | Vol 450 | BOOKS & ARTS",
+                "html": "<h3>NATURE | Vol 450 | BOOKS & ARTS</h3>",
+                "pageIndex": 1,
+                "confidence": 0.99
+            }),
+            json!({
+                "blockId": "b002",
+                "blockType": "paragraph",
+                "text": "It is a question as pertinent today as it was in 1818, with taxonomists assessing different types of data.",
+                "html": "<p>It is a question as pertinent today as it was in 1818.</p>",
+                "pageIndex": 1,
+                "confidence": 0.99
+            }),
+            json!({
+                "blockId": "b003",
+                "blockType": "paragraph",
+                "text": "Appropriately, Burnett takes the debate out of the courtroom. Amid much else, the author questions whether Linnaeus really brought order to the taxonomic chaos.",
+                "html": "<p>Appropriately, Burnett takes the debate out of the courtroom.</p>",
+                "pageIndex": 1,
+                // Reproduce the stale role emitted for the real Whale Oil PDF
+                // before parser question-role detection was tightened.
+                "roleHint": "question",
+                "confidence": 0.99
+            }),
+            json!({
+                "blockId": "b004",
+                "blockType": "paragraph",
+                "text": "The ensuing legal tussle had to settle the superficially simple question of whether whale oil was fish oil.",
+                "html": "<p>The ensuing legal tussle had to settle the issue.</p>",
+                "pageIndex": 1,
+                "confidence": 0.99
+            }),
+        ];
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "pages": [{"pageIndex": 1, "width": 595, "height": 842, "blocks": blocks}],
+            "assets": []
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split
+                .get("questionGroupCandidates")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(
+            split.pointer("/passageCandidates/0/range"),
+            Some(&json!(["b001", "b002", "b003", "b004"]))
+        );
+
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            authoring
+                .get("groups")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn heading_free_fallback_accepts_explicit_ielts_instruction_evidence() {
+        let job = test_job();
+        let blocks = vec![
+            json!({
+                "blockId": "b001",
+                "blockType": "paragraph",
+                "text": "The archive preserves records from the nineteenth century.",
+                "html": "<p>The archive preserves records from the nineteenth century.</p>",
+                "pageIndex": 1,
+                "roleHint": "passage"
+            }),
+            json!({
+                "blockId": "b002",
+                "blockType": "paragraph",
+                "text": "Choose the correct answer for each question.",
+                "html": "<p>Choose the correct answer for each question.</p>",
+                "pageIndex": 1,
+                "roleHint": "question"
+            }),
+            json!({
+                "blockId": "b003",
+                "blockType": "paragraph",
+                "text": "The extracted question area requires source review.",
+                "html": "<p>The extracted question area requires source review.</p>",
+                "pageIndex": 1,
+                "roleHint": "question"
+            }),
+            json!({
+                "blockId": "b004",
+                "blockType": "paragraph",
+                "text": "Answers 1 A 2 B",
+                "html": "<p>Answers 1 A 2 B</p>",
+                "pageIndex": 1,
+                "roleHint": "answer"
+            }),
+        ];
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "pages": [{"pageIndex": 1, "width": 595, "height": 842, "blocks": blocks}],
+            "assets": []
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        assert_eq!(
+            split
+                .get("questionGroupCandidates")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            split.pointer("/questionGroupCandidates/0/questionRange"),
+            Some(&json!([1, 2]))
         );
     }
 
@@ -7212,6 +10418,290 @@ mod tests {
                 .and_then(Value::as_str),
             Some("summary_completion")
         );
+    }
+
+    #[test]
+    fn completion_prose_continuing_into_right_column_stays_in_question_group() {
+        let blocks = vec![
+            layout_block(
+                "q001",
+                "Questions 22-26 Complete the summary below.",
+                [28.0, 790.0, 260.0, 802.0],
+                0,
+                2,
+                0,
+            ),
+            layout_block(
+                "q002",
+                "22 ________ at work. On average, workers who",
+                [28.0, 710.0, 274.0, 722.0],
+                0,
+                2,
+                0,
+            ),
+            layout_block(
+                "q003",
+                "take time off because of",
+                [306.0, 790.0, 430.0, 802.0],
+                0,
+                2,
+                1,
+            ),
+            layout_block(
+                "q004",
+                "stress stay away for 23 ________.",
+                [306.0, 778.0, 520.0, 790.0],
+                0,
+                2,
+                1,
+            ),
+        ];
+
+        assert!(collect_dynamic_completion_interleaved_passage_runs(&blocks).is_empty());
+    }
+
+    #[test]
+    fn final_completion_gap_does_not_absorb_prose_from_the_next_page() {
+        let blocks = vec![
+            layout_block_on_page(
+                "q001",
+                "Questions 22-26 Complete the summary below.",
+                [54.0, 508.0, 530.0, 520.0],
+                2,
+                0,
+                1,
+                0,
+            ),
+            layout_block_on_page(
+                "q002",
+                "25 ________. However, the final aim may be the 26 ________ of space, and",
+                [54.0, 218.0, 536.0, 230.0],
+                2,
+                0,
+                1,
+                0,
+            ),
+            layout_block_on_page(
+                "p001",
+                "many debates. There is no doubt that the vehicle becomes much more complex and costly when people are on board.",
+                [76.0, 584.0, 537.0, 701.0],
+                3,
+                0,
+                1,
+                0,
+            ),
+        ];
+
+        assert_eq!(
+            dynamic_completion_final_gap_task_end("summary_completion", &blocks),
+            Some(2)
+        );
+        assert_eq!(
+            dynamic_question_block_count_for_group("summary_completion", &blocks),
+            2
+        );
+    }
+
+    #[test]
+    fn final_completion_gap_keeps_tight_same_stream_sentence_wrap() {
+        let blocks = vec![
+            layout_block_on_page(
+                "q001",
+                "Questions 22-26 Complete the summary below.",
+                [54.0, 508.0, 530.0, 520.0],
+                2,
+                4,
+                1,
+                0,
+            ),
+            layout_block_on_page(
+                "q002",
+                "The final aim may be the 26 ________ of the",
+                [54.0, 238.0, 536.0, 250.0],
+                2,
+                4,
+                1,
+                0,
+            ),
+            layout_block_on_page(
+                "q003",
+                "nearest planets.",
+                [54.0, 220.0, 180.0, 232.0],
+                2,
+                4,
+                1,
+                0,
+            ),
+            layout_block_on_page(
+                "p001",
+                "Unrelated passage prose begins after a visible vertical separation and must remain outside the task.",
+                [54.0, 120.0, 530.0, 160.0],
+                2,
+                4,
+                1,
+                0,
+            ),
+        ];
+
+        assert_eq!(
+            dynamic_completion_final_gap_task_end("summary_completion", &blocks),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn final_completion_gap_stops_before_another_numbered_gap() {
+        let blocks = vec![
+            layout_block(
+                "q001",
+                "Question 1 Complete the sentence below.",
+                [54.0, 508.0, 530.0, 520.0],
+                0,
+                1,
+                0,
+            ),
+            layout_block(
+                "q002",
+                "The result was 1 ________ and",
+                [54.0, 238.0, 536.0, 250.0],
+                0,
+                1,
+                0,
+            ),
+            layout_block(
+                "q003",
+                "2 ________ in the later exercise.",
+                [54.0, 220.0, 300.0, 232.0],
+                0,
+                1,
+                0,
+            ),
+        ];
+
+        assert_eq!(
+            dynamic_completion_final_gap_task_end("sentence_completion", &blocks),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn whole_paper_umbrella_after_completion_is_not_absorbed_by_last_prompt() {
+        let job = test_job();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "jobId": job.job_id,
+            "pages": [
+                {
+                    "pageIndex": 1,
+                    "width": 595.0,
+                    "height": 842.0,
+                    "blocks": [
+                        layout_block_on_page(
+                            "q001",
+                            "Questions 1-2 Complete the summary below. Choose ONE WORD ONLY from the passage for each answer.",
+                            [54.0, 720.0, 530.0, 746.0],
+                            1,
+                            0,
+                            1,
+                            0,
+                        ),
+                        layout_block_on_page(
+                            "q002",
+                            "The first result was 1 ________.",
+                            [54.0, 650.0, 530.0, 672.0],
+                            1,
+                            0,
+                            1,
+                            0,
+                        ),
+                        layout_block_on_page(
+                            "q003",
+                            "2 ________.",
+                            [54.0, 620.0, 530.0, 642.0],
+                            1,
+                            0,
+                            1,
+                            0,
+                        ),
+                    ]
+                },
+                {
+                    "pageIndex": 2,
+                    "width": 595.0,
+                    "height": 842.0,
+                    "blocks": [
+                        layout_block_on_page(
+                            "p001",
+                            "READING PASSAGE 1",
+                            [54.0, 760.0, 530.0, 786.0],
+                            2,
+                            0,
+                            1,
+                            0,
+                        ),
+                        layout_block_on_page(
+                            "u001",
+                            "You should spend about 20 minutes on Questions 1-2, which are based on Reading Passage 1.",
+                            [54.0, 720.0, 530.0, 742.0],
+                            2,
+                            0,
+                            1,
+                            0,
+                        ),
+                        layout_block_on_page(
+                            "p002",
+                            "The source article begins here and contains enough substantive prose to establish passage ownership.",
+                            [54.0, 660.0, 530.0, 700.0],
+                            2,
+                            0,
+                            1,
+                            0,
+                        ),
+                        layout_block_on_page(
+                            "p003",
+                            "A second paragraph continues the discussion without supplying any additional question stimulus.",
+                            [54.0, 600.0, 530.0, 640.0],
+                            2,
+                            0,
+                            1,
+                            0,
+                        ),
+                    ]
+                }
+            ],
+            "assets": [],
+            "parser": {"provider":"unit-test","version":"0.0.0","mode":"auto","warnings":[]}
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let group_ids = split
+            .pointer("/questionGroupCandidates/0/blockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(group_ids, vec!["q001", "q002", "q003"]);
+        assert_eq!(
+            split
+                .pointer("/umbrellaQuestionRanges/0/blockId")
+                .and_then(Value::as_str),
+            Some("u001")
+        );
+
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        assert_eq!(
+            authoring
+                .pointer("/groups/0/questions/1/prompt")
+                .and_then(Value::as_str),
+            Some("________.")
+        );
+        assert!(!authoring
+            .pointer("/groups/0/questions/1/sourceBlockIds")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|id| id.as_str() == Some("u001")));
     }
 
     #[test]
@@ -7905,5 +11395,755 @@ mod tests {
                 5
             );
         }
+    }
+
+    #[test]
+    fn declared_letter_banks_close_through_n_without_truncation() {
+        let labels = ('A'..='N')
+            .map(|label| label.to_string())
+            .collect::<Vec<_>>();
+        let blocks = std::iter::once(json!({
+            "blockId": "instruction",
+            "blockType": "paragraph",
+            "text": "Complete the summary using the list of phrases, A-N, below."
+        }))
+        .chain(('A'..='N').map(|label| {
+            json!({
+                "blockId": format!("option-{label}"),
+                "blockType": "paragraph",
+                "text": format!("{label} phrase {label}")
+            })
+        }))
+        .collect::<Vec<_>>();
+
+        assert_eq!(dynamic_letter_options_for_text("Choose from A-N."), labels);
+        assert_eq!(
+            dynamic_declared_letter_bank_labels("Use the list A-N below."),
+            labels
+        );
+        let options = dynamic_group_option_bank(&blocks, "summary_completion");
+        assert_eq!(
+            options
+                .iter()
+                .map(|(label, _)| label.as_str())
+                .collect::<Vec<_>>(),
+            ('A'..='N')
+                .map(|label| label.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(options.last().map(|item| item.1.as_str()), Some("phrase N"));
+    }
+
+    #[test]
+    fn complete_post_question_matching_bank_is_grafted_and_preserves_wrapping() {
+        let job = test_job();
+        let mut blocks = vec![
+            json!({"blockId":"passage","blockType":"header","text":"READING PASSAGE 2","pageIndex":2,"bbox":[54.0,790.0,220.0,804.0]}),
+            json!({"blockId":"heading","blockType":"header","text":"Questions 21-26","pageIndex":2,"bbox":[54.0,750.0,145.0,762.0]}),
+            json!({"blockId":"instruction","blockType":"paragraph","text":"Match each method with the correct description, A-H.","pageIndex":2,"bbox":[54.0,720.0,430.0,734.0]}),
+        ];
+        for number in 21..=26 {
+            let offset = (number - 21) as f64 * 24.0;
+            blocks.push(json!({
+                "blockId": format!("q{number}"),
+                "blockType": "paragraph",
+                "text": format!("{number} Method {number}"),
+                "pageIndex": 2,
+                "bbox": [54.0, 675.0 - offset, 260.0, 689.0 - offset]
+            }));
+        }
+        blocks.extend([
+            json!({"blockId":"bank-heading","blockType":"paragraph","text":"List of Descriptions","pageIndex":2,"bbox":[300.0,520.0,430.0,534.0]}),
+            json!({"blockId":"bank-a","blockType":"paragraph","text":"A first description","pageIndex":2,"bbox":[300.0,494.0,430.0,508.0]}),
+            json!({"blockId":"bank-b","blockType":"paragraph","text":"B second description","pageIndex":2,"bbox":[300.0,470.0,430.0,484.0]}),
+            json!({"blockId":"bank-c","blockType":"paragraph","text":"C applies to single-sex or","pageIndex":2,"bbox":[300.0,446.0,430.0,460.0]}),
+            json!({"blockId":"bank-c-wrap","blockType":"paragraph","text":"mixed settings.","pageIndex":2,"bbox":[316.0,429.0,415.0,442.0]}),
+            json!({"blockId":"bank-d","blockType":"paragraph","text":"D fourth description","pageIndex":2,"bbox":[300.0,405.0,430.0,419.0]}),
+            json!({"blockId":"bank-e","blockType":"paragraph","text":"E fifth description","pageIndex":2,"bbox":[300.0,381.0,430.0,395.0]}),
+            json!({"blockId":"bank-f","blockType":"paragraph","text":"F sixth description","pageIndex":2,"bbox":[300.0,357.0,430.0,371.0]}),
+            json!({"blockId":"bank-g","blockType":"paragraph","text":"G seventh description","pageIndex":2,"bbox":[300.0,333.0,430.0,347.0]}),
+            json!({"blockId":"bank-h","blockType":"paragraph","text":"H eighth description","pageIndex":2,"bbox":[300.0,309.0,430.0,323.0]}),
+            json!({"blockId":"next-heading","blockType":"header","text":"Questions 27-30","pageIndex":2,"bbox":[54.0,270.0,145.0,282.0]}),
+            json!({"blockId":"next-instruction","blockType":"paragraph","text":"Complete the notes below. Choose ONE WORD ONLY.","pageIndex":2,"bbox":[54.0,244.0,430.0,258.0]}),
+        ]);
+        let doc = json!({
+            "schemaVersion":"DocumentIRV1",
+            "pages":[{"pageIndex":2,"width":595.0,"height":842.0,"blocks":blocks}],
+            "assets":[]
+        });
+
+        let group_text = "Questions 21-26 Match each method with the correct description, A-H.";
+        let first_classification = classify_dynamic_group(group_text, &[]);
+        assert_eq!(first_classification.kind, "matching");
+        let mut groups = vec![
+            SplitGroupCandidateV1 {
+                group_id: "group-1".to_string(),
+                heading: "Questions 21-26".to_string(),
+                question_range: [21, 26],
+                instruction_text: group_text.to_string(),
+                block_ids: std::iter::once("heading".to_string())
+                    .chain(std::iter::once("instruction".to_string()))
+                    .chain((21..=26).map(|number| format!("q{number}")))
+                    .collect(),
+                kind_hint: "matching".to_string(),
+                layout_hint: Some("list".to_string()),
+                confidence: first_classification.confidence,
+                classification: Some(first_classification),
+                section_evidence: Vec::new(),
+                continuation_edges: Vec::new(),
+                is_umbrella_range: None,
+                requires_manual_question_import: None,
+            },
+            SplitGroupCandidateV1 {
+                group_id: "group-2".to_string(),
+                heading: "Questions 27-30".to_string(),
+                question_range: [27, 30],
+                instruction_text: "Questions 27-30 Complete the notes below. Choose ONE WORD ONLY."
+                    .to_string(),
+                block_ids: vec!["next-heading".to_string(), "next-instruction".to_string()],
+                kind_hint: "sentence_completion".to_string(),
+                layout_hint: Some("inline_completion".to_string()),
+                confidence: 0.8,
+                classification: None,
+                section_evidence: Vec::new(),
+                continuation_edges: Vec::new(),
+                is_umbrella_range: None,
+                requires_manual_question_import: None,
+            },
+        ];
+        extend_dynamic_matching_option_blocks(&mut groups, &blocks);
+        assert!(groups[0].block_ids.contains(&"bank-a".to_string()));
+        assert!(groups[0].block_ids.contains(&"bank-h".to_string()));
+        assert!(!groups[1].block_ids.contains(&"bank-a".to_string()));
+
+        let split = SplitCandidatesV1 {
+            job_id: job.job_id.clone(),
+            passage_candidates: vec![],
+            question_group_candidates: groups,
+            answer_key_candidates: vec![],
+            umbrella_question_ranges: vec![],
+            issues: vec![],
+        }
+        .to_value();
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        for question in authoring["groups"][0]["questions"].as_array().unwrap() {
+            assert_eq!(
+                question["interaction"]["options"],
+                json!(["A", "B", "C", "D", "E", "F", "G", "H"])
+            );
+            assert_eq!(
+                question["interaction"]["optionTexts"]["C"],
+                json!("applies to single-sex or mixed settings.")
+            );
+        }
+    }
+
+    #[test]
+    fn summary_bank_keeps_prose_stimulus_and_recovers_split_word_before_next_label() {
+        let job = test_job();
+        let texts = [
+            ("heading", "Questions 27-32"),
+            (
+                "instruction",
+                "Complete the summary using the list of phrases, A-L, below.",
+            ),
+            (
+                "write",
+                "Write the correct letter, A-L, in boxes 27-32 on your answer sheet.",
+            ),
+            (
+                "context-1",
+                "Multinational companies seek several approaches when language barriers affect daily operations.",
+            ),
+            (
+                "context-2",
+                "Using the native language gives them a realistic base in another country, but problems arise with overseas",
+            ),
+            ("q27", "27 ________. For example, key"),
+            ("q28", "28 ________ differ between countries."),
+            ("q29", "29 ________ can support spoken language."),
+            ("q30", "30 ________ are processed in another language."),
+            ("q31", "31 ________; translators may also need"),
+            ("q32", "32 ________ work."),
+            ("bank-a", "A gestures"),
+            ("bank-bc", "B clients C transa"),
+            ("bank-d", "ctions D assumption"),
+            (
+                "bank-eh",
+                "E accurate F documents G managers H body language",
+            ),
+            ("bank-il", "I long-term J effective K rivals L costly"),
+            ("next-heading", "Questions 33-39"),
+            (
+                "next-instruction",
+                "Answer the questions below. Choose NO MORE THAN THREE WORDS from the passage.",
+            ),
+        ];
+        let blocks = texts
+            .iter()
+            .enumerate()
+            .map(|(index, (block_id, text))| {
+                let (x0, x1, y) = match *block_id {
+                    "bank-bc" => (190.0, 342.0, 420.0),
+                    "bank-d" => (349.0, 476.0, 420.0),
+                    _ => (54.0, 530.0, 780.0 - index as f64 * 24.0),
+                };
+                json!({
+                    "blockId": block_id,
+                    "blockType": if block_id.contains("heading") { "header" } else { "paragraph" },
+                    "text": text,
+                    "pageIndex": 3,
+                    "bbox": [x0, y, x1, y + 13.0]
+                })
+            })
+            .collect::<Vec<_>>();
+        let doc = json!({
+            "schemaVersion":"DocumentIRV1",
+            "pages":[{"pageIndex":3,"width":595.0,"height":842.0,"blocks":blocks}],
+            "assets":[]
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let first_ids = split["questionGroupCandidates"][0]["blockIds"]
+            .as_array()
+            .unwrap();
+        for expected in ["context-1", "context-2", "bank-d", "bank-eh", "bank-il"] {
+            assert!(
+                first_ids.contains(&json!(expected)),
+                "completion task lost source block {expected}: {first_ids:?}"
+            );
+        }
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let interaction = &authoring["groups"][0]["questions"][0]["interaction"];
+        assert_eq!(
+            interaction["options"],
+            json!(["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"])
+        );
+        assert_eq!(interaction["optionTexts"]["C"], json!("transactions"));
+        assert_eq!(interaction["optionTexts"]["D"], json!("assumption"));
+    }
+
+    #[test]
+    fn column_major_summary_bank_ignores_interleaved_disclaimer_and_closes() {
+        let job = test_job();
+        let blocks = vec![
+            json!({"blockId":"heading","blockType":"header","text":"Questions 38-40","pageIndex":5}),
+            json!({"blockId":"instruction","blockType":"paragraph","text":"Complete the summary using the list of words, A-H, below.","pageIndex":5}),
+            json!({"blockId":"write","blockType":"paragraph","text":"Write the correct letter, A-H, in boxes 38-40.","pageIndex":5}),
+            json!({"blockId":"context","blockType":"paragraph","text":"The museum has wide appeal, but its design creates a","pageIndex":5}),
+            json!({"blockId":"q38","blockType":"paragraph","text":"38 ________ effect for visitors, and the architect","pageIndex":5}),
+            json!({"blockId":"q38-wrap-1","blockType":"paragraph","text":"had a different objective when designing the underground gallery:","pageIndex":5}),
+            json!({"blockId":"q38-wrap-2","blockType":"paragraph","text":"the building presented a practical problem before the","pageIndex":5}),
+            json!({"blockId":"q39","blockType":"paragraph","text":"39 ________ could be resolved. Its future","pageIndex":5}),
+            json!({"blockId":"q40","blockType":"paragraph","text":"40 ________ remains uncertain","pageIndex":5}),
+            json!({"blockId":"bank-a","blockType":"paragraph","text":"A challenge","pageIndex":5}),
+            json!({"blockId":"bank-e","blockType":"paragraph","text":"E lasting","pageIndex":5}),
+            json!({"blockId":"disclaimer","blockType":"paragraph","text":"Disclaimer","pageIndex":5}),
+            json!({"blockId":"bank-b","blockType":"paragraph","text":"B pipe","pageIndex":5}),
+            json!({"blockId":"bank-f","blockType":"paragraph","text":"F essential","pageIndex":5}),
+            json!({"blockId":"bank-cd","blockType":"paragraph","text":"C visual D contribution","pageIndex":5}),
+            json!({"blockId":"bank-gh","blockType":"paragraph","text":"G ambition H attraction","pageIndex":5}),
+            json!({"blockId":"footer","blockType":"paragraph","text":"Compiled and formatted for non-commercial educational use only.","pageIndex":5}),
+        ];
+        let doc = json!({
+            "schemaVersion":"DocumentIRV1",
+            "pages":[{"pageIndex":5,"width":595.0,"height":842.0,"blocks":blocks}],
+            "assets":[]
+        });
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let ids = split["questionGroupCandidates"][0]["blockIds"]
+            .as_array()
+            .unwrap();
+        assert!(ids.contains(&json!("q38-wrap-1")));
+        assert!(ids.contains(&json!("q38-wrap-2")));
+        assert!(ids.contains(&json!("bank-gh")));
+        assert!(!ids.contains(&json!("disclaimer")));
+        assert!(!ids.contains(&json!("footer")));
+
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let interaction = &authoring["groups"][0]["questions"][0]["interaction"];
+        assert_eq!(
+            interaction["options"],
+            json!(["A", "B", "C", "D", "E", "F", "G", "H"])
+        );
+        assert_eq!(interaction["optionTexts"]["E"], json!("lasting"));
+    }
+
+    #[test]
+    fn wrapped_choice_runs_close_for_abc_plus_d_and_ab_plus_cd() {
+        let instrument = vec![
+            json!({"blockId":"q34","text":"34 Which aspect of playing an instrument was included"}),
+            json!({"blockId":"q34-wrap-1","text":"in the follow-up study"}),
+            json!({"blockId":"q34-wrap-2","text":"but not in the first study?"}),
+            json!({"blockId":"q34-abc","text":"A duration B starting age C years since playing"}),
+            json!({"blockId":"q34-d","text":"D childhood practice"}),
+        ];
+        let (prompt, options) = dynamic_question_prompt_and_options(
+            &instrument,
+            "Choose the correct letter, A, B, C or D.",
+            34,
+            "Questions 34-34",
+            34,
+            "single_choice",
+        );
+        assert_eq!(
+            prompt,
+            "Which aspect of playing an instrument was included in the follow-up study but not in the first study?"
+        );
+        assert_eq!(
+            options
+                .iter()
+                .map(|item| item.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A", "B", "C", "D"]
+        );
+
+        let ocean = vec![
+            json!({"blockId":"q12","text":"12 When do the signals become easiest to observe?"}),
+            json!({"blockId":"q12-ab","text":"A when scientists track them. B at different times of year."}),
+            json!({"blockId":"q12-cd","text":"C during calm weather. D after storms."}),
+        ];
+        let (_, options) = dynamic_question_prompt_and_options(
+            &ocean,
+            "Choose the correct letter, A, B, C or D.",
+            12,
+            "Questions 12-12",
+            12,
+            "single_choice",
+        );
+        assert_eq!(
+            options,
+            vec![
+                ("A".to_string(), "when scientists track them.".to_string()),
+                ("B".to_string(), "at different times of year.".to_string()),
+                ("C".to_string(), "during calm weather.".to_string()),
+                ("D".to_string(), "after storms.".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn choice_option_absorbs_indented_wrapped_source_lines_until_next_label() {
+        let blocks = vec![
+            json!({"blockId":"q35","text":"35 What is the writer's main conclusion?","pageIndex":4,"_epic8LayoutSection":1,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[57.0,420.0,310.0,430.0]}),
+            json!({"blockId":"a","text":"A Greater emphasis will benefit both patients and","pageIndex":4,"_epic8LayoutSection":1,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[57.0,390.0,507.0,400.0]}),
+            json!({"blockId":"a-wrap-1","text":"practitioners in their daily work","pageIndex":4,"_epic8LayoutSection":1,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[78.0,376.0,260.0,386.0]}),
+            json!({"blockId":"a-wrap-2","text":"and during later training.","pageIndex":4,"_epic8LayoutSection":1,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[78.0,362.0,220.0,372.0]}),
+            json!({"blockId":"b","text":"B A different conclusion.","pageIndex":4,"_epic8LayoutSection":1,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[57.0,340.0,240.0,350.0]}),
+            json!({"blockId":"c","text":"C A third conclusion.","pageIndex":4,"_epic8LayoutSection":1,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[57.0,320.0,230.0,330.0]}),
+            json!({"blockId":"d","text":"D A final conclusion.","pageIndex":4,"_epic8LayoutSection":1,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[57.0,300.0,230.0,310.0]}),
+        ];
+        let (prompt, options) = dynamic_question_prompt_and_options(
+            &blocks,
+            "Choose the correct letter, A, B, C or D.",
+            35,
+            "Questions 35-35",
+            35,
+            "single_choice",
+        );
+
+        assert_eq!(prompt, "What is the writer's main conclusion?");
+        assert_eq!(
+            options[0],
+            (
+                "A".to_string(),
+                "Greater emphasis will benefit both patients and practitioners in their daily work and during later training.".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn choice_option_does_not_absorb_unlabelled_text_from_another_layout_column() {
+        let blocks = vec![
+            json!({"blockId":"q21","text":"21 Which statement is correct?","pageIndex":3,"_epic8LayoutSection":2,"_epic8SectionColumns":2,"_epic8ColumnIndex":0,"bbox":[40.0,500.0,260.0,510.0]}),
+            json!({"blockId":"a","text":"A the source-backed answer","pageIndex":3,"_epic8LayoutSection":2,"_epic8SectionColumns":2,"_epic8ColumnIndex":0,"bbox":[40.0,470.0,250.0,480.0]}),
+            json!({"blockId":"other-column","text":"unrelated passage prose","pageIndex":3,"_epic8LayoutSection":2,"_epic8SectionColumns":2,"_epic8ColumnIndex":1,"bbox":[320.0,456.0,520.0,466.0]}),
+            json!({"blockId":"b","text":"B the second answer","pageIndex":3,"_epic8LayoutSection":2,"_epic8SectionColumns":2,"_epic8ColumnIndex":0,"bbox":[40.0,440.0,230.0,450.0]}),
+            json!({"blockId":"c","text":"C the third answer","pageIndex":3,"_epic8LayoutSection":2,"_epic8SectionColumns":2,"_epic8ColumnIndex":0,"bbox":[40.0,420.0,230.0,430.0]}),
+        ];
+        let (_, options) = dynamic_question_prompt_and_options(
+            &blocks,
+            "Choose the correct letter, A, B or C.",
+            21,
+            "Questions 21-21",
+            21,
+            "single_choice",
+        );
+
+        assert_eq!(options[0].1, "the source-backed answer");
+        assert!(options.iter().all(|(_, text)| !text.contains("unrelated")));
+    }
+
+    #[test]
+    fn shared_choice_terminal_option_retains_its_wrapped_source_continuation() {
+        let blocks = vec![
+            json!({"blockId":"heading","text":"Questions 21 and 22","pageIndex":4,"bbox":[54.0,750.0,160.0,760.0]}),
+            json!({"blockId":"instruction","text":"Choose TWO letters, A-E.","pageIndex":4,"bbox":[54.0,720.0,190.0,730.0]}),
+            json!({"blockId":"stem","text":"Which TWO statements are made in the passage?","pageIndex":4,"bbox":[54.0,680.0,400.0,690.0]}),
+            json!({"blockId":"a","text":"A first answer.","pageIndex":4,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[75.0,650.0,260.0,660.0]}),
+            json!({"blockId":"b","text":"B second answer.","pageIndex":4,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[75.0,630.0,260.0,640.0]}),
+            json!({"blockId":"c","text":"C third answer.","pageIndex":4,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[75.0,610.0,260.0,620.0]}),
+            json!({"blockId":"d","text":"D fourth answer.","pageIndex":4,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[75.0,590.0,260.0,600.0]}),
+            json!({"blockId":"e","text":"E final answer affected by","pageIndex":4,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[75.0,570.0,300.0,580.0]}),
+            json!({"blockId":"e-wrap","text":"the altitude.","pageIndex":4,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[96.0,556.0,180.0,566.0]}),
+            json!({"blockId":"foreign-column","text":"passage prose","pageIndex":4,"_epic8SectionColumns":2,"_epic8ColumnIndex":1,"bbox":[320.0,542.0,500.0,552.0]}),
+        ];
+        let candidate = serde_json::from_value::<SplitGroupCandidateV1>(json!({
+            "groupId":"group-1",
+            "heading":"Questions 21-22",
+            "questionRange":[21,22],
+            "instructionText":"Choose TWO letters, A-E.",
+            "blockIds":["heading","instruction","stem","a","b","c","d","e"],
+            "kindHint":"multi_choice",
+            "layoutHint":"list",
+            "confidence":0.78,
+            "classification":null,
+            "sectionEvidence":[],
+            "continuationEdges":[]
+        }))
+        .unwrap();
+        let mut groups = vec![candidate];
+
+        extend_dynamic_choice_option_blocks(&mut groups, &blocks);
+
+        assert!(groups[0].block_ids.contains(&"e-wrap".to_string()));
+        assert!(!groups[0].block_ids.contains(&"foreign-column".to_string()));
+        let owned = groups[0]
+            .block_ids
+            .iter()
+            .filter_map(|id| {
+                blocks
+                    .iter()
+                    .find(|block| dynamic_block_id(block) == *id)
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
+        let (_, options) = dynamic_shared_choice_prompt_and_options(&owned).unwrap();
+        assert_eq!(
+            options.last(),
+            Some(&(
+                "E".to_string(),
+                "final answer affected by the altitude.".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn question_stem_beginning_with_article_a_keeps_the_real_a_option() {
+        let blocks = vec![json!({
+            "blockId":"q33",
+            "text":"33 A reference is made to earlier research because it A supports the new method. B explains the sample size. C contradicts the results. D supplies a definition."
+        })];
+        let (prompt, options) = dynamic_question_prompt_and_options(
+            &blocks,
+            "Choose the correct letter, A, B, C or D.",
+            33,
+            "Questions 33-33",
+            33,
+            "single_choice",
+        );
+
+        assert_eq!(prompt, "A reference is made to earlier research because it");
+        assert_eq!(
+            options[0],
+            ("A".to_string(), "supports the new method.".to_string())
+        );
+        assert_eq!(
+            options
+                .iter()
+                .map(|item| item.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A", "B", "C", "D"]
+        );
+    }
+
+    #[test]
+    fn separate_choice_stem_beginning_with_article_a_does_not_absorb_its_bank() {
+        let blocks = vec![
+            json!({"blockId":"q33","text":"33 A reference is made to anger and sadness in order to show that"}),
+            json!({"blockId":"q33-options","text":"A personal feelings can alter our physical condition. B some human behaviour has no clear explanation. C placebos, like emotions, are experienced by everyone. D people find some physical reactions hard to control."}),
+        ];
+        let (prompt, options) = dynamic_question_prompt_and_options(
+            &blocks,
+            "Choose the correct letter, A, B, C or D.",
+            33,
+            "Questions 33-33",
+            33,
+            "single_choice",
+        );
+
+        assert_eq!(
+            prompt,
+            "A reference is made to anger and sadness in order to show that"
+        );
+        assert_eq!(options.len(), 4);
+        assert_eq!(
+            options[0],
+            (
+                "A".to_string(),
+                "personal feelings can alter our physical condition.".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn final_matching_stem_stops_before_closed_shared_bank() {
+        let blocks = vec![
+            json!({"blockId":"instruction","text":"Match each person with the correct idea, A-G."}),
+            json!({"blockId":"q19","text":"19 Muhammad Peter Davis"}),
+            json!({"blockId":"q20","text":"20 Arthur Rosenfeld"}),
+            json!({"blockId":"q21","text":"21 R van der Ley"}),
+            json!({"blockId":"q22","text":"22 Amory Lovins"}),
+            json!({"blockId":"bank-a","text":"A The choice of a certain construction material can have a socio-economic impact."}),
+            json!({"blockId":"bank-b","text":"B Throughout the world, people are rejecting traditional housing design."}),
+            json!({"blockId":"bank-c","text":"C Houses should meet physical and social needs."}),
+            json!({"blockId":"bank-d","text":"D Traditional knowledge can be superior to modern knowledge."}),
+            json!({"blockId":"bank-e","text":"E An innovation can save heating and cooling costs."}),
+            json!({"blockId":"bank-f","text":"F Solar energy can meet village energy needs."}),
+            json!({"blockId":"bank-g","text":"G A simple solution can save air-conditioning costs."}),
+        ];
+        let group_text = blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (prompt, question_options) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            22,
+            "Questions 19-22",
+            22,
+            "matching",
+        );
+
+        assert_eq!(prompt, "Amory Lovins");
+        assert!(question_options.is_empty());
+        let bank = dynamic_group_option_bank(&blocks, "matching");
+        assert_eq!(bank.len(), 7);
+        assert_eq!(
+            dynamic_group_option_bank_start_index(&blocks, "matching"),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn article_a_and_prose_letters_do_not_create_or_shadow_a_shared_bank_boundary() {
+        let no_bank = vec![
+            json!({"blockId":"instruction","text":"Match the statements with the researchers."}),
+            json!({"blockId":"q1","text":"1 A house in Section B was compared with Building C."}),
+        ];
+        let no_bank_text = no_bank
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (prompt, _) = dynamic_question_prompt_and_options(
+            &no_bank,
+            &no_bank_text,
+            1,
+            "Questions 1-1",
+            1,
+            "matching",
+        );
+        assert_eq!(prompt, "A house in Section B was compared with Building C.");
+        assert_eq!(
+            dynamic_group_option_bank_start_index(&no_bank, "matching"),
+            None
+        );
+
+        let with_bank = vec![
+            json!({"blockId":"instruction","text":"Match each statement with the correct ending, A-D."}),
+            json!({"blockId":"q1","text":"1 The writer refers to"}),
+            json!({"blockId":"prose-a","text":"A house in Section B was compared with Building C."}),
+            json!({"blockId":"bank-a","text":"A the first ending"}),
+            json!({"blockId":"bank-b","text":"B the second ending"}),
+            json!({"blockId":"bank-c","text":"C the third ending"}),
+            json!({"blockId":"bank-d","text":"D the fourth ending"}),
+        ];
+        assert_eq!(
+            dynamic_group_option_bank_start_index(&with_bank, "matching"),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn declared_completion_bank_recovers_column_major_rows_and_split_word_tail() {
+        let declared = dynamic_declared_letter_bank_labels(
+            "Complete the summary using the list of words, A-I, below.",
+        );
+        assert_eq!(
+            dynamic_declared_bank_parts("A more B counterintuitive C simple", &declared),
+            Some(vec![
+                ("A".to_string(), "more".to_string()),
+                ("B".to_string(), "counterintuitive".to_string()),
+                ("C".to_string(), "simple".to_string()),
+            ])
+        );
+        assert_eq!(
+            dynamic_declared_bank_parts(
+                "A results D qualities G surroundings I movement",
+                &declared
+            ),
+            Some(vec![
+                ("A".to_string(), "results".to_string()),
+                ("D".to_string(), "qualities".to_string()),
+                ("G".to_string(), "surroundings".to_string()),
+                ("I".to_string(), "movement".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn completion_bank_rejoins_cross_column_split_words() {
+        let blocks = vec![
+            json!({"blockId":"instruction","text":"Complete the summary using the list of words and phrases A-I."}),
+            json!({"blockId":"a-b-c","text":"A disruptive and unpredictable  B everyday  C loveable"}),
+            json!({"blockId":"d","text":"D controversial"}),
+            json!({"blockId":"g","text":"G unconfident"}),
+            json!({"blockId":"e","text":"E exo","pageIndex":3,"bbox":[262.8,174.6,296.4,183.0]}),
+            json!({"blockId":"h","text":"H uns","pageIndex":3,"bbox":[262.8,156.6,297.1,165.0]}),
+            json!({"blockId":"e-tail-f","text":"tic and ordinary  F isolated","pageIndex":3,"bbox":[303.1,174.6,507.4,183.0]}),
+            json!({"blockId":"h-tail-i","text":"urprising but satisfying  I magical","pageIndex":3,"bbox":[303.1,156.6,511.4,165.0]}),
+        ];
+        assert_eq!(
+            dynamic_group_option_bank(&blocks, "summary_completion"),
+            vec![
+                ("A".to_string(), "disruptive and unpredictable".to_string()),
+                ("B".to_string(), "everyday".to_string()),
+                ("C".to_string(), "loveable".to_string()),
+                ("D".to_string(), "controversial".to_string()),
+                ("E".to_string(), "exotic and ordinary".to_string()),
+                ("F".to_string(), "isolated".to_string()),
+                ("G".to_string(), "unconfident".to_string()),
+                ("H".to_string(), "unsurprising but satisfying".to_string()),
+                ("I".to_string(), "magical".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn declared_completion_bank_requires_full_source_closure_not_a_b_and_prose_i() {
+        let blocks = vec![
+            json!({"blockId":"instruction","text":"Complete the summary using the list of words, A-I, below."}),
+            json!({"blockId":"q1","text":"1 ________ describes the result."}),
+            json!({"blockId":"stimulus","text":"A study compared B cells in the sample."}),
+            json!({"blockId":"passage-i","text":"I believe the later paragraph explains the remaining evidence."}),
+        ];
+
+        assert_eq!(
+            dynamic_completion_letter_bank_task_end("summary_completion", &blocks),
+            None
+        );
+        assert!(dynamic_group_option_bank(&blocks, "summary_completion").is_empty());
+        let declared = dynamic_declared_letter_bank_labels(&dynamic_block_text(&blocks[0]));
+        assert!(dynamic_declared_bank_parts(
+            "The stimulus says A study compared B cells.",
+            &declared
+        )
+        .is_none());
+        assert!(dynamic_declared_bank_parts("D fourth B second", &declared).is_none());
+    }
+
+    #[test]
+    fn declared_completion_bank_uses_late_real_a_boundary_and_stops_before_prose_i() {
+        let blocks = vec![
+            json!({"blockId":"instruction","text":"Complete the summary using the list of words, A-I, below."}),
+            json!({"blockId":"q1","text":"1 ________ describes the result."}),
+            json!({"blockId":"stimulus","text":"A study compared B cells in the sample."}),
+            json!({"blockId":"bank-a-c","text":"A actual alpha B actual beta C actual gamma"}),
+            json!({"blockId":"bank-d-f","text":"D actual delta E actual epsilon F actual zeta"}),
+            json!({"blockId":"bank-g-i","text":"G actual eta H actual theta I actual iota"}),
+            json!({"blockId":"passage-i","text":"I believe this sentence belongs to the following passage."}),
+        ];
+
+        assert_eq!(
+            dynamic_completion_letter_bank_task_end("summary_completion", &blocks),
+            Some(6)
+        );
+        let options = dynamic_group_option_bank(&blocks, "summary_completion");
+        assert_eq!(options.len(), 9);
+        assert_eq!(options[0], ("A".to_string(), "actual alpha".to_string()));
+        assert_eq!(options[8], ("I".to_string(), "actual iota".to_string()));
+    }
+
+    #[test]
+    fn source_backed_contiguous_stems_expand_an_off_by_one_heading_range() {
+        let job = test_job();
+        let blocks = vec![
+            json!({"blockId":"heading","blockType":"header","role":"question","text":"Questions 24-26","pageIndex":6,"bbox":[54.0,753.0,138.0,762.0]}),
+            json!({"blockId":"instruction","blockType":"paragraph","role":"question","text":"Do the following statements agree with the information given in Reading Passage 2? Write TRUE, FALSE or NOT GIVEN.","pageIndex":6,"bbox":[54.0,694.0,496.0,733.0]}),
+            json!({"blockId":"q23","blockType":"paragraph","text":"23 The air temperature in modern Malaysian houses is lower than the air temperature outside.","pageIndex":6,"bbox":[54.0,588.0,512.0,612.0]}),
+            json!({"blockId":"q24","blockType":"paragraph","text":"24 The construction industry produces substantial emissions.","pageIndex":6,"bbox":[54.0,558.0,480.0,567.0]}),
+            json!({"blockId":"q25","blockType":"paragraph","text":"25 Wind towers are widespread today.","pageIndex":6,"bbox":[54.0,529.0,465.0,538.0]}),
+            json!({"blockId":"q26","blockType":"paragraph","text":"26 Super-windows can be installed cheaply.","pageIndex":6,"bbox":[54.0,499.0,477.0,508.0]}),
+        ];
+        let doc = json!({"schemaVersion":"DocumentIRV1","pages":[{"pageIndex":6,"blocks":blocks}],"assets":[]});
+
+        let split = make_dynamic_split_candidates(&job.job_id, &job, Some(&doc));
+        let group = &split["questionGroupCandidates"][0];
+        assert_eq!(group["questionRange"], json!([23, 26]));
+        assert_eq!(group["heading"], json!("Questions 23-26"));
+        assert!(group["classification"]["warnings"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(QUESTION_RANGE_EXPANDED_FROM_SOURCE_ANCHORS)));
+
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let group = &authoring["groups"][0];
+        assert_eq!(group["questionRange"], json!([23, 26]));
+        assert_eq!(group["questions"].as_array().unwrap().len(), 4);
+        assert_eq!(group["questions"][0]["displayNumber"], json!("23"));
+        assert_eq!(
+            group["questions"][0]["prompt"],
+            json!("The air temperature in modern Malaysian houses is lower than the air temperature outside.")
+        );
+        assert!(group["reviewWarnings"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(QUESTION_RANGE_EXPANDED_FROM_SOURCE_ANCHORS)));
+    }
+
+    #[test]
+    fn passage_number_next_to_a_group_does_not_expand_its_heading_range() {
+        let blocks = vec![
+            json!({"blockId":"passage-23","roleHint":"passage","text":"23 houses were included in the historical survey."}),
+            json!({"blockId":"q24","text":"24 The first real statement."}),
+            json!({"blockId":"q25","text":"25 The second real statement."}),
+            json!({"blockId":"q26","text":"26 The third real statement."}),
+        ];
+        let candidate = serde_json::from_value::<SplitGroupCandidateV1>(json!({
+            "groupId":"group-1",
+            "heading":"Questions 24-26",
+            "questionRange":[24,26],
+            "instructionText":"Questions 24-26",
+            "blockIds":["passage-23","q24","q25","q26"],
+            "kindHint":"true_false_not_given",
+            "layoutHint":"list",
+            "confidence":0.82,
+            "classification":{
+                "kind":"true_false_not_given",
+                "interaction":{"type":"radio","options":["TRUE","FALSE","NOT GIVEN"],"allowOptionReuse":false},
+                "confidence":0.82,
+                "warnings":[],
+                "evidence":["q24","q25","q26"]
+            },
+            "sectionEvidence":[],
+            "continuationEdges":[]
+        }))
+        .unwrap();
+        let mut groups = vec![candidate];
+
+        normalize_dynamic_group_ranges(&mut groups, &blocks);
+
+        assert_eq!(groups[0].question_range, [24, 26]);
+        assert_eq!(groups[0].heading, "Questions 24-26");
+        assert!(!groups[0]
+            .classification
+            .as_ref()
+            .unwrap()
+            .warnings
+            .iter()
+            .any(|warning| warning == QUESTION_RANGE_EXPANDED_FROM_SOURCE_ANCHORS));
     }
 }

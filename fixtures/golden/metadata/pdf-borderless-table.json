@@ -65,20 +65,13 @@
     "observed": {
       "pageCount": 1,
       "blockCount": 6,
-      "groupCount": 1,
-      "slotCount": 4,
+      "groupCount": 0,
+      "slotCount": 0,
       "assetCount": 0,
-      "answerCount": 4,
+      "answerCount": 0,
       "warningCount": 0,
-      "groupKinds": [
-        "short_answer"
-      ],
-      "questionIds": [
-        "q1",
-        "q2",
-        "q3",
-        "q4"
-      ],
+      "groupKinds": [],
+      "questionIds": [],
       "roles": []
     }
   }

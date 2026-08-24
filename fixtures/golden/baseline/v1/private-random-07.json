@@ -522,7 +522,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which section contains the following information?"
             },
@@ -543,7 +543,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A-H, in boxes 14-20 on your answer sheet."
             },
@@ -712,7 +712,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "19 a description of a method used to kill dingoes"
             },
             {
@@ -986,7 +986,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the following statements (Questions 21-23) and the list of people below."
             },
@@ -1007,7 +1007,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Match each statement with the correct person, A, B, C or D."
             },
@@ -1028,7 +1028,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B, C or D, in boxes 21-23 on your answer sheet."
             },
@@ -1161,7 +1161,9 @@
             "b066",
             "b067",
             "b068",
-            "b069"
+            "b069",
+            "b070",
+            "b071"
           ],
           "confidence": 0.82,
           "continuationEdges": [
@@ -1204,8 +1206,20 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b068",
-              "reason": "cross-column-continuation",
+              "reason": "same-section-continuation",
               "toBlockId": "b069"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b069",
+              "reason": "same-section-continuation",
+              "toBlockId": "b070"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b070",
+              "reason": "same-section-continuation",
+              "toBlockId": "b071"
             }
           ],
           "groupId": "group-3",
@@ -1217,7 +1231,7 @@
           "kind": "sentence_completion",
           "layout": {
             "layoutHint": "inline_completion",
-            "notes": "Questions 24-26\nComplete the sentences below.\nChoose NO MORE THAN TWO WORDS from the passage for each answer.\nWrite your answers in boxes 24-26 on your answer sheet.\n24 The dingo replaced the ……… as the main predatory animal in Australia.\n25 Foxes and cats are more likely to hunt native animals when there are fewer………\n26 Australian animals reproduce at a slow rate as a natural way of avoiding ………\nKEY",
+            "notes": "Questions 24-26\nComplete the sentences below.\nChoose NO MORE THAN TWO WORDS from the passage for each answer.\nWrite your answers in boxes 24-26 on your answer sheet.\n24 The dingo replaced the ……… as the main predatory animal in Australia.\n25 Foxes and cats are more likely to hunt native animals when there are fewer………\n26 Australian animals reproduce at a slow rate as a natural way of avoiding ………\nKEY\nKey: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26.\nOverpopulation",
             "template": "inline_text_completion"
           },
           "questionRange": [
@@ -1245,7 +1259,9 @@
                 "b066",
                 "b067",
                 "b068",
-                "b069"
+                "b069",
+                "b070",
+                "b071"
               ],
               "verified": false
             },
@@ -1269,7 +1285,9 @@
                 "b066",
                 "b067",
                 "b068",
-                "b069"
+                "b069",
+                "b070",
+                "b071"
               ],
               "verified": false
             },
@@ -1293,7 +1311,9 @@
                 "b066",
                 "b067",
                 "b068",
-                "b069"
+                "b069",
+                "b070",
+                "b071"
               ],
               "verified": false
             }
@@ -1360,7 +1380,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose NO MORE THAN TWO WORDS from the passage for each answer."
             },
@@ -1381,7 +1401,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 24-26 on your answer sheet."
             },
@@ -1456,7 +1476,7 @@
                 586.2000122070312
               ],
               "blockId": "b069",
-              "column": 2,
+              "column": 0,
               "normalizedBbox": [
                 288.5932922363281,
                 577.7999877929688,
@@ -1466,8 +1486,50 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "KEY"
+            },
+            {
+              "bbox": [
+                63.414791107177734,
+                562.2000122070312,
+                531.7506713867188,
+                570.6000366210938
+              ],
+              "blockId": "b070",
+              "column": 0,
+              "normalizedBbox": [
+                63.414791107177734,
+                562.2000122070312,
+                531.7506713867188,
+                570.6000366210938
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Key: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26."
+            },
+            {
+              "bbox": [
+                262.3946533203125,
+                546.6000366210938,
+                327.0482482910156,
+                555.0000610351562
+              ],
+              "blockId": "b071",
+              "column": 0,
+              "normalizedBbox": [
+                262.3946533203125,
+                546.6000366210938,
+                327.0482482910156,
+                555.0000610351562
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Overpopulation"
             }
           ],
           "sourceBlockIds": [
@@ -1478,7 +1540,9 @@
             "b066",
             "b067",
             "b068",
-            "b069"
+            "b069",
+            "b070",
+            "b071"
           ],
           "verified": false
         }
@@ -1487,7 +1551,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 below.</p>\n<p>The dingo debate</p>\n<p>Graziers see them as pests, and poisoning is common, but some biologists think Australia’s</p>\n<p>dingoes are the best weapon in a war against imported cats and foxes.</p>\n<p>A  A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the</p>\n<p>Kimberley region in northwest Australia. As the plane circles, those aboard drop 1,000 small pieces of meat, one by one, onto the scrubland below, each piece laced with poison; this</p>\n<p>practice is known as baiting.</p>\n<p>Besides 50,000 head of cattle, Carlton Hill is home to the dingo, Australia’s largest mammalian predator and the bane of a grazier’s (cattle farmer’s) life. Stuart McKechnie, manager of Carlton Hill, complains that graziers’ livelihoods are threatened when dingoes prey on cattle. But one man wants the baiting to end, and for dingoes to once again roam Australia’s wide-open spaces. According to Chris Johnson of James Cook University,</p>\n<p>“Australia needs more dingoes to protect our biodiversity.”</p>\n<p>B  About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing</p>\n<p>millennia, these descendants of the wolf spread across the continent and, as the Tasmanian tiger disappeared completely from Australia, dingoes became Australia’s top predators. As agricultural development took place, the European settlers found that they could not safely keep their livestock where dingoes roamed. So began one of the most sustained efforts at pest control in Australia’s history. Over the last 150 years, dingoes have been shot and poisoned, and fences have been used in an attempt to keep them away from livestock. But at the same time, as the European settlers tried to eliminate one native pest from Australia, they</p>\n<p>introduced more of their own.</p>\n<p>C  In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits</p>\n<p>had covered most of the mainland. Rabbits provide huge prey base for two other introduced</p>\n<p>species: the feral (wild) cat and the red fox.</p>\n<p>The interaction between foxes, cats and rabbits is a huge problem for native mammals. In good years, rabbit numbers increase dramatically, and fox and cat populations grow quickly in response to the abundance of this prey. When bad seasons follow, rabbit numbers are significantly reduced – and the dwindling but still large fox and cat populations are left with</p>\n<p>little to eat besides native mammals.</p>\n<p>D  Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an</p>\n<p>adaption to prevent overpopulation in the arid environment, where food can be scarce and unreliable – and populations decline because they can’t grow fast enough to replace animals killed by the predators. Johnson says dingoes are the solution to this problem because they keep cat and fox populations under control. Besides regularly eating the smaller predators,</p>\n<p>dingoes will kill them simply to lessen competition.</p>\n<p>Dingo packs live in large, stable territories and generally have only one fertile female, which limits their rate of increase. In the 4,000 years that dingoes have been Australia, they have</p>\n<p>contributed to few, if any, extinctions, Johnson says.</p>\n<p>E  Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is</p>\n<p>the world’s longest fence, two meters high and stretching from the coast in Queensland to the Great Australian Bight in South Australia; it is there to keep dingoes out of southeast, the fence separates the main types of livestock found in Australia. To the northwest of the fence, cattle predominate; to the southwest, sheep fill the landscape. In fact, Australia is a land dominated by these animals – 25 million cattle, 100 million sheep and just over 20 million</p>\n<p>people.</p>\n<p>F  While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt</p>\n<p>cattle once the calves are much past two or three weeks old, according to McKechnie. And a study in Queensland suggests that dingoes don’t even prey heavily on the newborn calves unless their staple prey disappears due to deteriorating conditions like drought.</p>\n<p>This study, co-authored by Lee Allen of the Robert Wicks Research Centre in Queensland, suggests that the aggressive baiting programs used against dingoes may actually be counter\u0002 productive for graziers. When dingoes are removed from an area by baiting, the area is recolonized by younger, more solitary dingoes. These animals aren’t capable of going after large prey like kangaroos, so they turn to calves. In their study, some of the highest rates of</p>\n<p>calf predation occurred in areas that had been baited.</p>\n<p>G  Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not</p>\n<p>convinced by Allen’s assertion. Clifford says, “It’s obvious if we drop or loosen control on dingoes, we are going to lose more calves.” He doesn’t believe that dingoes will go after kangaroos when calves are around. Nor is he persuaded of dingoes’ supposed ecological benefits, saying he is not convinced that they manage to catch cats that often, believing they</p>\n<p>are more likely to catch small native animals instead.</p>\n<p>H  McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his</p>\n<p>cattle for food, but points out that in parts of Western Australia, there are no foxes, and not very many cats. He doesn’t see how relaxing controls on dingoes in his area will improve the</p>\n<p>ecological balance.</p>\n<p>Johnson sees a need for a change in philosophy on the part of graziers. “There might be a number of different ways of thinking through dingo management in cattle country,” he says. “At the moment, though, that hasn’t got through to graziers. There’s still just one prescription, and</p>\n<p>that is to bait as widely as possible.”</p>\n<p>Overpopulation</p>"
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 below.</p>\n<p>The dingo debate</p>\n<p>Graziers see them as pests, and poisoning is common, but some biologists think Australia’s</p>\n<p>dingoes are the best weapon in a war against imported cats and foxes.</p>\n<p>A A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the</p>\n<p>Kimberley region in northwest Australia. As the plane circles, those aboard drop 1,000 small pieces of meat, one by one, onto the scrubland below, each piece laced with poison; this</p>\n<p>practice is known as baiting.</p>\n<p>Besides 50,000 head of cattle, Carlton Hill is home to the dingo, Australia’s largest mammalian predator and the bane of a grazier’s (cattle farmer’s) life. Stuart McKechnie, manager of Carlton Hill, complains that graziers’ livelihoods are threatened when dingoes prey on cattle. But one man wants the baiting to end, and for dingoes to once again roam Australia’s wide-open spaces. According to Chris Johnson of James Cook University,</p>\n<p>“Australia needs more dingoes to protect our biodiversity.”</p>\n<p>B About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing</p>\n<p>millennia, these descendants of the wolf spread across the continent and, as the Tasmanian tiger disappeared completely from Australia, dingoes became Australia’s top predators. As agricultural development took place, the European settlers found that they could not safely keep their livestock where dingoes roamed. So began one of the most sustained efforts at pest control in Australia’s history. Over the last 150 years, dingoes have been shot and poisoned, and fences have been used in an attempt to keep them away from livestock. But at the same time, as the European settlers tried to eliminate one native pest from Australia, they</p>\n<p>introduced more of their own.</p>\n<p>C In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits</p>\n<p>had covered most of the mainland. Rabbits provide huge prey base for two other introduced</p>\n<p>species: the feral (wild) cat and the red fox.</p>\n<p>The interaction between foxes, cats and rabbits is a huge problem for native mammals. In good years, rabbit numbers increase dramatically, and fox and cat populations grow quickly in response to the abundance of this prey. When bad seasons follow, rabbit numbers are significantly reduced – and the dwindling but still large fox and cat populations are left with</p>\n<p>little to eat besides native mammals.</p>\n<p>D Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an</p>\n<p>adaption to prevent overpopulation in the arid environment, where food can be scarce and unreliable – and populations decline because they can’t grow fast enough to replace animals killed by the predators. Johnson says dingoes are the solution to this problem because they keep cat and fox populations under control. Besides regularly eating the smaller predators,</p>\n<p>dingoes will kill them simply to lessen competition.</p>\n<p>Dingo packs live in large, stable territories and generally have only one fertile female, which limits their rate of increase. In the 4,000 years that dingoes have been Australia, they have</p>\n<p>contributed to few, if any, extinctions, Johnson says.</p>\n<p>E Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is</p>\n<p>the world’s longest fence, two meters high and stretching from the coast in Queensland to the Great Australian Bight in South Australia; it is there to keep dingoes out of southeast, the fence separates the main types of livestock found in Australia. To the northwest of the fence, cattle predominate; to the southwest, sheep fill the landscape. In fact, Australia is a land dominated by these animals – 25 million cattle, 100 million sheep and just over 20 million</p>\n<p>people.</p>\n<p>F While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt</p>\n<p>cattle once the calves are much past two or three weeks old, according to McKechnie. And a study in Queensland suggests that dingoes don’t even prey heavily on the newborn calves unless their staple prey disappears due to deteriorating conditions like drought.</p>\n<p>This study, co-authored by Lee Allen of the Robert Wicks Research Centre in Queensland, suggests that the aggressive baiting programs used against dingoes may actually be counter\u0002 productive for graziers. When dingoes are removed from an area by baiting, the area is recolonized by younger, more solitary dingoes. These animals aren’t capable of going after large prey like kangaroos, so they turn to calves. In their study, some of the highest rates of</p>\n<p>calf predation occurred in areas that had been baited.</p>\n<p>G Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not</p>\n<p>convinced by Allen’s assertion. Clifford says, “It’s obvious if we drop or loosen control on dingoes, we are going to lose more calves.” He doesn’t believe that dingoes will go after kangaroos when calves are around. Nor is he persuaded of dingoes’ supposed ecological benefits, saying he is not convinced that they manage to catch cats that often, believing they</p>\n<p>are more likely to catch small native animals instead.</p>\n<p>H McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his</p>\n<p>cattle for food, but points out that in parts of Western Australia, there are no foxes, and not very many cats. He doesn’t see how relaxing controls on dingoes in his area will improve the</p>\n<p>ecological balance.</p>\n<p>Johnson sees a need for a change in philosophy on the part of graziers. “There might be a number of different ways of thinking through dingo management in cattle country,” he says. “At the moment, though, that hasn’t got through to graziers. There’s still just one prescription, and</p>\n<p>that is to bait as widely as possible.”</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -1539,8 +1603,7 @@
           "b036",
           "b037",
           "b038",
-          "b039",
-          "b071"
+          "b039"
         ],
         "title": "Passage 2 below."
       },
@@ -1585,7 +1648,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 780.8400268554688,
@@ -1599,7 +1662,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -1611,7 +1674,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1630,18 +1693,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 742.6799926757812,
@@ -1655,10 +1717,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1667,7 +1729,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1686,7 +1748,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1694,7 +1756,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1713,7 +1775,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1721,7 +1783,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1740,7 +1802,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1748,7 +1810,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1760,22 +1822,22 @@
               "blockId": "b007",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the</p>",
+              "html": "<p>A A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "A  A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the"
+              "text": "A A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1794,7 +1856,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1802,7 +1864,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1821,7 +1883,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1829,7 +1891,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1848,7 +1910,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1856,7 +1918,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1875,7 +1937,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1883,7 +1945,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1895,22 +1957,22 @@
               "blockId": "b012",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing</p>",
+              "html": "<p>B About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "B  About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing"
+              "text": "B About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1929,7 +1991,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1937,7 +1999,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1956,7 +2018,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1964,7 +2026,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1976,22 +2038,22 @@
               "blockId": "b015",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits</p>",
+              "html": "<p>C In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "C  In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits"
+              "text": "C In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2010,7 +2072,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2018,7 +2080,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2037,7 +2099,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2045,7 +2107,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2064,7 +2126,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2072,7 +2134,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2091,7 +2153,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2106,8 +2168,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2119,23 +2181,23 @@
               "blockId": "b020",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an</p>",
+              "html": "<p>D Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "D  Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an"
+              "text": "D Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2154,7 +2216,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2162,10 +2224,10 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 58.00000762939453,
                 711.47998046875,
@@ -2179,10 +2241,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 2,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2190,8 +2252,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2210,7 +2272,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2218,10 +2280,10 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 58.00000762939453,
                 649.0800170898438,
@@ -2235,10 +2297,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 2,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2246,8 +2308,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2259,23 +2321,23 @@
               "blockId": "b025",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>E  Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is</p>",
+              "html": "<p>E Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "E  Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is"
+              "text": "E Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2294,7 +2356,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2302,8 +2364,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2322,7 +2384,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2330,8 +2392,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2343,23 +2405,23 @@
               "blockId": "b028",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>F  While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt</p>",
+              "html": "<p>F While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "F  While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt"
+              "text": "F While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2378,7 +2440,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2386,8 +2448,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2406,7 +2468,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2414,8 +2476,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2434,7 +2496,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2442,8 +2504,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2455,23 +2517,23 @@
               "blockId": "b032",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>G  Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not</p>",
+              "html": "<p>G Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "G  Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not"
+              "text": "G Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2490,7 +2552,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2498,8 +2560,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2518,7 +2580,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2526,8 +2588,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2539,23 +2601,23 @@
               "blockId": "b035",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>H  McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his</p>",
+              "html": "<p>H McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "H  McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his"
+              "text": "H McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2574,7 +2636,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2582,8 +2644,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2602,7 +2664,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2610,8 +2672,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2630,7 +2692,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2638,8 +2700,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2658,7 +2720,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2752,6 +2814,7 @@
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Which section contains the following information?"
             },
             {
@@ -2779,6 +2842,7 @@
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Write the correct letter, A-H, in boxes 14-20 on your answer sheet."
             },
             {
@@ -2972,9 +3036,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 477.96002197265625,
@@ -2988,10 +3052,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2999,7 +3063,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3018,7 +3082,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3026,7 +3090,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3045,7 +3109,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3054,7 +3118,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3073,16 +3137,15 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "roleHint": "question",
               "text": "Look at the following statements (Questions 21-23) and the list of people below."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3101,15 +3164,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Match each statement with the correct person, A, B, C or D."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3128,15 +3192,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Write the correct letter, A, B, C or D, in boxes 21-23 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3155,7 +3220,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3163,7 +3228,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3182,7 +3247,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3190,7 +3255,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3209,7 +3274,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3217,7 +3282,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3236,7 +3301,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3244,7 +3309,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3256,18 +3321,18 @@
               "blockId": "b061",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Stuart McKechnie B  Chris Johnson C  Lee Allen D  M ark Clifford</p>",
+              "html": "<p>A Stuart McKechnie B Chris Johnson C Lee Allen D M ark Clifford</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "A  Stuart McKechnie B  Chris Johnson C  Lee Allen D  M ark Clifford"
+              "text": "A Stuart McKechnie B Chris Johnson C Lee Allen D M ark Clifford"
             }
           ],
           "height": 841.9199829101562,
@@ -3357,6 +3422,7 @@
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Choose NO MORE THAN TWO WORDS from the passage for each answer."
             },
             {
@@ -3384,6 +3450,7 @@
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write your answers in boxes 24-26 on your answer sheet."
             },
             {
@@ -3442,7 +3509,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3461,17 +3528,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 4,
               "text": "26 Australian animals reproduce at a slow rate as a natural way of avoiding ………"
             },
             {
-              "_epic8ColumnIndex": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 288.5932922363281,
                 577.7999877929688,
@@ -3485,10 +3552,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
-                    "current": 2
+                    "count": 1,
+                    "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3496,7 +3563,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3515,7 +3582,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3523,7 +3590,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3542,7 +3609,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3620,7 +3687,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 below.</p>\n<p>The dingo debate</p>\n<p>Graziers see them as pests, and poisoning is common, but some biologists think Australia’s</p>\n<p>dingoes are the best weapon in a war against imported cats and foxes.</p>\n<p>A  A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the</p>\n<p>Kimberley region in northwest Australia. As the plane circles, those aboard drop 1,000 small pieces of meat, one by one, onto the scrubland below, each piece laced with poison; this</p>\n<p>practice is known as baiting.</p>\n<p>Besides 50,000 head of cattle, Carlton Hill is home to the dingo, Australia’s largest mammalian predator and the bane of a grazier’s (cattle farmer’s) life. Stuart McKechnie, manager of Carlton Hill, complains that graziers’ livelihoods are threatened when dingoes prey on cattle. But one man wants the baiting to end, and for dingoes to once again roam Australia’s wide-open spaces. According to Chris Johnson of James Cook University,</p>\n<p>“Australia needs more dingoes to protect our biodiversity.”</p>\n<p>B  About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing</p>\n<p>millennia, these descendants of the wolf spread across the continent and, as the Tasmanian tiger disappeared completely from Australia, dingoes became Australia’s top predators. As agricultural development took place, the European settlers found that they could not safely keep their livestock where dingoes roamed. So began one of the most sustained efforts at pest control in Australia’s history. Over the last 150 years, dingoes have been shot and poisoned, and fences have been used in an attempt to keep them away from livestock. But at the same time, as the European settlers tried to eliminate one native pest from Australia, they</p>\n<p>introduced more of their own.</p>\n<p>C  In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits</p>\n<p>had covered most of the mainland. Rabbits provide huge prey base for two other introduced</p>\n<p>species: the feral (wild) cat and the red fox.</p>\n<p>The interaction between foxes, cats and rabbits is a huge problem for native mammals. In good years, rabbit numbers increase dramatically, and fox and cat populations grow quickly in response to the abundance of this prey. When bad seasons follow, rabbit numbers are significantly reduced – and the dwindling but still large fox and cat populations are left with</p>\n<p>little to eat besides native mammals.</p>\n<p>D  Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an</p>\n<p>adaption to prevent overpopulation in the arid environment, where food can be scarce and unreliable – and populations decline because they can’t grow fast enough to replace animals killed by the predators. Johnson says dingoes are the solution to this problem because they keep cat and fox populations under control. Besides regularly eating the smaller predators,</p>\n<p>dingoes will kill them simply to lessen competition.</p>\n<p>Dingo packs live in large, stable territories and generally have only one fertile female, which limits their rate of increase. In the 4,000 years that dingoes have been Australia, they have</p>\n<p>contributed to few, if any, extinctions, Johnson says.</p>\n<p>E  Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is</p>\n<p>the world’s longest fence, two meters high and stretching from the coast in Queensland to the Great Australian Bight in South Australia; it is there to keep dingoes out of southeast, the fence separates the main types of livestock found in Australia. To the northwest of the fence, cattle predominate; to the southwest, sheep fill the landscape. In fact, Australia is a land dominated by these animals – 25 million cattle, 100 million sheep and just over 20 million</p>\n<p>people.</p>\n<p>F  While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt</p>\n<p>cattle once the calves are much past two or three weeks old, according to McKechnie. And a study in Queensland suggests that dingoes don’t even prey heavily on the newborn calves unless their staple prey disappears due to deteriorating conditions like drought.</p>\n<p>This study, co-authored by Lee Allen of the Robert Wicks Research Centre in Queensland, suggests that the aggressive baiting programs used against dingoes may actually be counter\u0002 productive for graziers. When dingoes are removed from an area by baiting, the area is recolonized by younger, more solitary dingoes. These animals aren’t capable of going after large prey like kangaroos, so they turn to calves. In their study, some of the highest rates of</p>\n<p>calf predation occurred in areas that had been baited.</p>\n<p>G  Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not</p>\n<p>convinced by Allen’s assertion. Clifford says, “It’s obvious if we drop or loosen control on dingoes, we are going to lose more calves.” He doesn’t believe that dingoes will go after kangaroos when calves are around. Nor is he persuaded of dingoes’ supposed ecological benefits, saying he is not convinced that they manage to catch cats that often, believing they</p>\n<p>are more likely to catch small native animals instead.</p>\n<p>H  McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his</p>\n<p>cattle for food, but points out that in parts of Western Australia, there are no foxes, and not very many cats. He doesn’t see how relaxing controls on dingoes in his area will improve the</p>\n<p>ecological balance.</p>\n<p>Johnson sees a need for a change in philosophy on the part of graziers. “There might be a number of different ways of thinking through dingo management in cattle country,” he says. “At the moment, though, that hasn’t got through to graziers. There’s still just one prescription, and</p>\n<p>that is to bait as widely as possible.”</p>\n<p>Overpopulation</p>",
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 below.</p>\n<p>The dingo debate</p>\n<p>Graziers see them as pests, and poisoning is common, but some biologists think Australia’s</p>\n<p>dingoes are the best weapon in a war against imported cats and foxes.</p>\n<p>A A plane flies a slow pattern over Carlton Hill station, a 3,600 square kilometre ranch in the</p>\n<p>Kimberley region in northwest Australia. As the plane circles, those aboard drop 1,000 small pieces of meat, one by one, onto the scrubland below, each piece laced with poison; this</p>\n<p>practice is known as baiting.</p>\n<p>Besides 50,000 head of cattle, Carlton Hill is home to the dingo, Australia’s largest mammalian predator and the bane of a grazier’s (cattle farmer’s) life. Stuart McKechnie, manager of Carlton Hill, complains that graziers’ livelihoods are threatened when dingoes prey on cattle. But one man wants the baiting to end, and for dingoes to once again roam Australia’s wide-open spaces. According to Chris Johnson of James Cook University,</p>\n<p>“Australia needs more dingoes to protect our biodiversity.”</p>\n<p>B About 4,000 years ago, Asian sailors introduced dingoes to Australia. Throughout the ensuing</p>\n<p>millennia, these descendants of the wolf spread across the continent and, as the Tasmanian tiger disappeared completely from Australia, dingoes became Australia’s top predators. As agricultural development took place, the European settlers found that they could not safely keep their livestock where dingoes roamed. So began one of the most sustained efforts at pest control in Australia’s history. Over the last 150 years, dingoes have been shot and poisoned, and fences have been used in an attempt to keep them away from livestock. But at the same time, as the European settlers tried to eliminate one native pest from Australia, they</p>\n<p>introduced more of their own.</p>\n<p>C In 1860, the rabbit was unleashed on Australia by a wealthy landowner and by 1980 rabbits</p>\n<p>had covered most of the mainland. Rabbits provide huge prey base for two other introduced</p>\n<p>species: the feral (wild) cat and the red fox.</p>\n<p>The interaction between foxes, cats and rabbits is a huge problem for native mammals. In good years, rabbit numbers increase dramatically, and fox and cat populations grow quickly in response to the abundance of this prey. When bad seasons follow, rabbit numbers are significantly reduced – and the dwindling but still large fox and cat populations are left with</p>\n<p>little to eat besides native mammals.</p>\n<p>D Australian mammals generally reproduce much more slowly than rabbits, cats and foxes – an</p>\n<p>adaption to prevent overpopulation in the arid environment, where food can be scarce and unreliable – and populations decline because they can’t grow fast enough to replace animals killed by the predators. Johnson says dingoes are the solution to this problem because they keep cat and fox populations under control. Besides regularly eating the smaller predators,</p>\n<p>dingoes will kill them simply to lessen competition.</p>\n<p>Dingo packs live in large, stable territories and generally have only one fertile female, which limits their rate of increase. In the 4,000 years that dingoes have been Australia, they have</p>\n<p>contributed to few, if any, extinctions, Johnson says.</p>\n<p>E Reaching out from a desolate spot where three states meet, for 2,500 km in either direction, is</p>\n<p>the world’s longest fence, two meters high and stretching from the coast in Queensland to the Great Australian Bight in South Australia; it is there to keep dingoes out of southeast, the fence separates the main types of livestock found in Australia. To the northwest of the fence, cattle predominate; to the southwest, sheep fill the landscape. In fact, Australia is a land dominated by these animals – 25 million cattle, 100 million sheep and just over 20 million</p>\n<p>people.</p>\n<p>F While there is no argument that dingoes will prey on sheep if given the chance, they don’t hunt</p>\n<p>cattle once the calves are much past two or three weeks old, according to McKechnie. And a study in Queensland suggests that dingoes don’t even prey heavily on the newborn calves unless their staple prey disappears due to deteriorating conditions like drought.</p>\n<p>This study, co-authored by Lee Allen of the Robert Wicks Research Centre in Queensland, suggests that the aggressive baiting programs used against dingoes may actually be counter\u0002 productive for graziers. When dingoes are removed from an area by baiting, the area is recolonized by younger, more solitary dingoes. These animals aren’t capable of going after large prey like kangaroos, so they turn to calves. In their study, some of the highest rates of</p>\n<p>calf predation occurred in areas that had been baited.</p>\n<p>G Mark Clifford, general manager of a firm that manages over 200,000 head of cattle, is not</p>\n<p>convinced by Allen’s assertion. Clifford says, “It’s obvious if we drop or loosen control on dingoes, we are going to lose more calves.” He doesn’t believe that dingoes will go after kangaroos when calves are around. Nor is he persuaded of dingoes’ supposed ecological benefits, saying he is not convinced that they manage to catch cats that often, believing they</p>\n<p>are more likely to catch small native animals instead.</p>\n<p>H McKechnie agrees that dingoes kill the wallabies (small native animals) that compete with his</p>\n<p>cattle for food, but points out that in parts of Western Australia, there are no foxes, and not very many cats. He doesn’t see how relaxing controls on dingoes in his area will improve the</p>\n<p>ecological balance.</p>\n<p>Johnson sees a need for a change in philosophy on the part of graziers. “There might be a number of different ways of thinking through dingo management in cattle country,” he says. “At the moment, though, that hasn’t got through to graziers. There’s still just one prescription, and</p>\n<p>that is to bait as widely as possible.”</p>",
             "kind": "html"
           }
         ]
@@ -3754,8 +3821,7 @@
             "b036",
             "b037",
             "b038",
-            "b039",
-            "b071"
+            "b039"
           ],
           "title": "Passage 2 below."
         }
@@ -3955,7 +4021,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which section contains the following information?"
             },
@@ -3976,7 +4042,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A-H, in boxes 14-20 on your answer sheet."
             },
@@ -4145,7 +4211,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "19 a description of a method used to kill dingoes"
             },
             {
@@ -4310,7 +4376,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the following statements (Questions 21-23) and the list of people below."
             },
@@ -4331,7 +4397,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Match each statement with the correct person, A, B, C or D."
             },
@@ -4352,7 +4418,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B, C or D, in boxes 21-23 on your answer sheet."
             },
@@ -4472,7 +4538,9 @@
             "b066",
             "b067",
             "b068",
-            "b069"
+            "b069",
+            "b070",
+            "b071"
           ],
           "classification": {
             "confidence": 0.82,
@@ -4484,7 +4552,9 @@
               "b066",
               "b067",
               "b068",
-              "b069"
+              "b069",
+              "b070",
+              "b071"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -4535,8 +4605,20 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b068",
-              "reason": "cross-column-continuation",
+              "reason": "same-section-continuation",
               "toBlockId": "b069"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b069",
+              "reason": "same-section-continuation",
+              "toBlockId": "b070"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b070",
+              "reason": "same-section-continuation",
+              "toBlockId": "b071"
             }
           ],
           "groupId": "group-3",
@@ -4608,7 +4690,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose NO MORE THAN TWO WORDS from the passage for each answer."
             },
@@ -4629,7 +4711,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 24-26 on your answer sheet."
             },
@@ -4704,7 +4786,7 @@
                 586.2000122070312
               ],
               "blockId": "b069",
-              "column": 2,
+              "column": 0,
               "normalizedBbox": [
                 288.5932922363281,
                 577.7999877929688,
@@ -4714,8 +4796,50 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "KEY"
+            },
+            {
+              "bbox": [
+                63.414791107177734,
+                562.2000122070312,
+                531.7506713867188,
+                570.6000366210938
+              ],
+              "blockId": "b070",
+              "column": 0,
+              "normalizedBbox": [
+                63.414791107177734,
+                562.2000122070312,
+                531.7506713867188,
+                570.6000366210938
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Key: 14. E 15. D 16. C 17. B 18. F 19. A 20. D 21. D 22. A 23. B 24. Tasmanian Tiger 25. Rabbits 26."
+            },
+            {
+              "bbox": [
+                262.3946533203125,
+                546.6000366210938,
+                327.0482482910156,
+                555.0000610351562
+              ],
+              "blockId": "b071",
+              "column": 0,
+              "normalizedBbox": [
+                262.3946533203125,
+                546.6000366210938,
+                327.0482482910156,
+                555.0000610351562
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Overpopulation"
             }
           ]
         }

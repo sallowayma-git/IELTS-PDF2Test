@@ -94,15 +94,15 @@
                 ],
                 "type": "radio"
               },
-              "prompt": "Questions 1 item 1",
-              "requiresManualQuestionImport": false,
+              "prompt": "",
+              "requiresManualQuestionImport": true,
               "sourceBlockIds": [
                 "b001"
               ],
               "verified": false
             }
           ],
-          "requiresManualQuestionImport": false,
+          "requiresManualQuestionImport": true,
           "reviewWarnings": [],
           "sectionEvidence": [
             {
@@ -234,7 +234,7 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1</p><p>Hidden OCR layer: Questions 1-3 TRUE FALSE NOT GIVEN</p></div><ol><li><div><strong>1</strong> Questions 1 item 1</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1</p><p>Hidden OCR layer: Questions 1-3 TRUE FALSE NOT GIVEN</p></div><ol><li><div><strong>1</strong> </div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
           "groupId": "group-1",
           "kind": "true_false_not_given",
           "leadHtml": "<p>Questions 1</p><p>Hidden OCR layer: Questions 1-3 TRUE FALSE NOT GIVEN</p>",

@@ -510,7 +510,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which section contains the following information?"
             },
@@ -531,7 +531,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–H, in boxes 27–33 on your answer sheet."
             },
@@ -793,6 +793,12 @@
               "id": "q34",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "can help farmers choose the best location for plants.",
+                  "B": "can show the composition of the top layer of the ground.",
+                  "C": "can detect how far below ground the salt is.",
+                  "D": "can determine how old the salt is in a particular area."
+                },
                 "options": [
                   "A",
                   "B",
@@ -810,7 +816,11 @@
                 "b088",
                 "b089",
                 "b090",
-                "b091"
+                "b091",
+                "b093",
+                "b094",
+                "b095",
+                "b096"
               ],
               "verified": false
             },
@@ -821,6 +831,12 @@
               "id": "q35",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "can help farmers choose the best location for plants.",
+                  "B": "can show the composition of the top layer of the ground.",
+                  "C": "can detect how far below ground the salt is.",
+                  "D": "can determine how old the salt is in a particular area."
+                },
                 "options": [
                   "A",
                   "B",
@@ -838,7 +854,11 @@
                 "b088",
                 "b089",
                 "b090",
-                "b091"
+                "b091",
+                "b093",
+                "b094",
+                "b095",
+                "b096"
               ],
               "verified": false
             },
@@ -849,6 +869,12 @@
               "id": "q36",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "can help farmers choose the best location for plants.",
+                  "B": "can show the composition of the top layer of the ground.",
+                  "C": "can detect how far below ground the salt is.",
+                  "D": "can determine how old the salt is in a particular area."
+                },
                 "options": [
                   "A",
                   "B",
@@ -866,7 +892,11 @@
                 "b088",
                 "b089",
                 "b090",
-                "b091"
+                "b091",
+                "b093",
+                "b094",
+                "b095",
+                "b096"
               ],
               "verified": false
             }
@@ -894,7 +924,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 34–36"
             },
             {
@@ -914,7 +944,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the list of techniques (Questions 34–36) and the list of uses which follows it."
             },
@@ -956,7 +986,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet."
             },
@@ -1031,7 +1061,11 @@
             "b088",
             "b089",
             "b090",
-            "b091"
+            "b091",
+            "b093",
+            "b094",
+            "b095",
+            "b096"
           ],
           "verified": false
         },
@@ -1056,7 +1090,12 @@
             "b112",
             "b113",
             "b114",
-            "b115"
+            "b115",
+            "b116",
+            "b117",
+            "b118",
+            "b119",
+            "b120"
           ],
           "confidence": 0.68,
           "continuationEdges": [
@@ -1167,6 +1206,36 @@
               "fromBlockId": "b114",
               "reason": "same-section-continuation",
               "toBlockId": "b115"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b115",
+              "reason": "same-section-continuation",
+              "toBlockId": "b116"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b116",
+              "reason": "same-section-continuation",
+              "toBlockId": "b117"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b117",
+              "reason": "same-section-continuation",
+              "toBlockId": "b118"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b118",
+              "reason": "same-section-continuation",
+              "toBlockId": "b119"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b119",
+              "reason": "same-section-continuation",
+              "toBlockId": "b120"
             }
           ],
           "groupId": "group-3",
@@ -1227,7 +1296,12 @@
                 "b112",
                 "b113",
                 "b114",
-                "b115"
+                "b115",
+                "b116",
+                "b117",
+                "b118",
+                "b119",
+                "b120"
               ],
               "verified": false
             },
@@ -1273,7 +1347,12 @@
                 "b112",
                 "b113",
                 "b114",
-                "b115"
+                "b115",
+                "b116",
+                "b117",
+                "b118",
+                "b119",
+                "b120"
               ],
               "verified": false
             },
@@ -1319,7 +1398,12 @@
                 "b112",
                 "b113",
                 "b114",
-                "b115"
+                "b115",
+                "b116",
+                "b117",
+                "b118",
+                "b119",
+                "b120"
               ],
               "verified": false
             },
@@ -1330,6 +1414,12 @@
               "id": "q40",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "Farmers are fighting an enemy that moves secretly and hides well.",
+                  "B": "Farmers have been able to contain this enemy in a small area.",
+                  "C": "Farmers have already had significant success in fighting this problem.",
+                  "D": "Farmers need to form more organised groups to solve this problem."
+                },
                 "options": [
                   "A",
                   "B",
@@ -1338,7 +1428,7 @@
                 ],
                 "type": "radio"
               },
-              "prompt": "Which of the following best describes the writer’s view of the salinity problem in",
+              "prompt": "Which of the following best describes the writer’s view of the salinity problem in Australia?",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b097",
@@ -1359,7 +1449,12 @@
                 "b112",
                 "b113",
                 "b114",
-                "b115"
+                "b115",
+                "b116",
+                "b117",
+                "b118",
+                "b119",
+                "b120"
               ],
               "verified": false
             }
@@ -1407,7 +1502,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct letter, A, B, C or D."
             },
@@ -1428,7 +1523,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter in boxes 36–40 on your answer sheet."
             },
@@ -1767,6 +1862,111 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "40 Which of the following best describes the writer’s view of the salinity problem in"
+            },
+            {
+              "bbox": [
+                75,
+                328.20001220703125,
+                121.68960571289062,
+                336.60003662109375
+              ],
+              "blockId": "b116",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                328.20001220703125,
+                121.68960571289062,
+                336.60003662109375
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Australia?"
+            },
+            {
+              "bbox": [
+                75,
+                303.7200012207031,
+                445.5047912597656,
+                312.1200256347656
+              ],
+              "blockId": "b117",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                303.7200012207031,
+                445.5047912597656,
+                312.1200256347656
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A Farmers are fighting an enemy that moves secretly and hides well."
+            },
+            {
+              "bbox": [
+                75,
+                287.4000244140625,
+                424.18316650390625,
+                295.800048828125
+              ],
+              "blockId": "b118",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                287.4000244140625,
+                424.18316650390625,
+                295.800048828125
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "B Farmers have been able to contain this enemy in a small area."
+            },
+            {
+              "bbox": [
+                75,
+                271.08001708984375,
+                462.8568115234375,
+                279.48004150390625
+              ],
+              "blockId": "b119",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                271.08001708984375,
+                462.8568115234375,
+                279.48004150390625
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "C Farmers have already had significant success in fighting this problem."
+            },
+            {
+              "bbox": [
+                75,
+                254.76002502441406,
+                451.50482177734375,
+                263.1600341796875
+              ],
+              "blockId": "b120",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                254.76002502441406,
+                451.50482177734375,
+                263.1600341796875
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "D Farmers need to form more organised groups to solve this problem."
             }
           ],
           "sourceBlockIds": [
@@ -1788,7 +1988,12 @@
             "b112",
             "b113",
             "b114",
-            "b115"
+            "b115",
+            "b116",
+            "b117",
+            "b118",
+            "b119",
+            "b120"
           ],
           "verified": false
         }
@@ -1797,7 +2002,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Sea Change for Salinity</p>\n<p>One of the most serious problems facing Australian farmers is an increase in the salt</p>\n<p>content in the soil. However, there are new weapons emerging in the fight against salinity.</p>\n<p>A  Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and</p>\n<p>gorges – ancient traps and channels for the deadly salt that is stealthily killing so much</p>\n<p>of the Australian landscape. The war on salt is calling forth new weapons. A suite of</p>\n<p>high technologies used by geologists to see underground and prospect for gold and</p>\n<p>minerals is now being used to pinpoint the presence of salt beneath the landscape, and</p>\n<p>to predict where it might move.</p>\n<p>B  Unless this process is clearly understood, warns Chief of Exploration and Mining Dr</p>\n<p>Neil Phillips, the hard work now underway of planning and tree-planting on the surface</p>\n<p>may be rendered ineffective: salt can still sneak past and erupt, following one of the</p>\n<p>ancient river channels formed millions of years ago. The use of airborne</p>\n<p>electromagnetics to detect salt hidden beneath the landscape has been around for a</p>\n<p>decade, but the past two years have seen a major development in its precision and</p>\n<p>powers of detection. Like the use of radar in battles, it has the potential to turn the tide</p>\n<p>of the struggle in favour of the defence by helping to pinpoint, plot and predict the</p>\n<p>movements of the foe.</p>\n<p>C  Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first</p>\n<p>outbreak of salt in 1948. Over the ensuing decades the patches spread and multiplied</p>\n<p>until they consumed almost 100 hectares. By the late 1970s, Howell and his fellow</p>\n<p>farmers had decided it was time for action and established a government-funded</p>\n<p>“Landcare” group in a bid to save Australia’s farmland. But despite a mounting effort by</p>\n<p>scientists, farmers and governments, the “white death” continued to encroach. Small</p>\n<p>successes were eclipsed by larger defeats and fresh outbreaks.</p>\n<p>D  “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are</p>\n<p>the social and economic solutions. How do you introduce the land-use changes that are</p>\n<p>needed when people still need to make a living?” Howell asks. There is no satisfactory</p>\n<p>solution yet. Part of the problem has lain in salt’s ability to mount ambushes, emerging</p>\n<p>somewhere new, sometimes unexpected and unexplained, beating plans to intercept it.</p>\n<p>Only now are scientists starting to really disclose its secret subterranean stores and</p>\n<p>passages.</p>\n<p>E  The need for such knowledge is pressing. Salt has already afflicted six million hectares</p>\n<p>of once-productive country. At present rates, it is predicted that, by 2050, it will have</p>\n<p>sterilised a total of 17 m illion hectares and the waters of Australia’s M urray River will</p>\n<p>regularly exceed the World Health Organisation’s salt limits for drinking water.</p>\n<p>Defeating this assault may take centuries, not decades.</p>\n<p>F  Electromagnetic surveys measure the electrical conductivity of soil to reveal the</p>\n<p>distribution of salt and the nature and variability of the regolith – the weathered rock</p>\n<p>and sediment that may lie above the bedrock. Magnetic surveys measure small</p>\n<p>differences in the Earth’s magnetic field, enabling scientists to probe the deep past and</p>\n<p>reconstruct ancient landscapes – rivers, basins and faults now buried under tens of</p>\n<p>metres of sediment. These features help to reveal where groundwater is stored, dictate</p>\n<p>the direction of groundwater movement, and are critical to predicting or ruling out</p>\n<p>salinity hot-spots.</p>\n<p>G  Radiometric analysis is based on the detection of radiation emitted by elements</p>\n<p>contained in rocks and soils, allowing scientists to delineate landforms. These factors</p>\n<p>influence the mobility of salt through the soil profile and help determine where to plant</p>\n<p>particular crop species to tackle the problem.</p>\n<p>Using data from the Murray River region, scientists have revealed a network of ancient</p>\n<p>drainage systems that channelled water beneath the current land-surface. These buried</p>\n<p>channels may carry salt and sometimes run at right angles to channels on the surface.</p>\n<p>This implies that the salt could move underground in quite a different direction to what</p>\n<p>one would expect by looking at surface slope and drainage.</p>\n<p>H  One of the biggest advances in detection, says Professor Neil Phillips, has come with</p>\n<p>the integration of different techniques such as magnetics, electromagnetics and</p>\n<p>radiometrics, and ground mapping. Individually, these technologies only gave clues to</p>\n<p>what was going on underground. Together they provide a far more revealing picture of</p>\n<p>the subsurface landscape, several hundred metres deep. Advanced airborne</p>\n<p>electromagnetics, in particular, enables scientists to take “slices” of the landscape at</p>\n<p>depths of five metres, ten metres, fifteen metres and so on, to determine where salt</p>\n<p>may be stored at depth. This is building up a four-dimensional picture of the subsurface</p>\n<p>landscape, enabling researchers to understand movements of salt in length, breadth,</p>\n<p>depth and time.</p>\n<p>From such technologies it will be possible to locate salt stores, identify how saline they</p>\n<p>are, look at man-made and natural changes to the landscape that may cause it to</p>\n<p>mobilise, and then predict where it will head to and over what time span. This in turn</p>\n<p>will give the salt warriors time to model various ways of containing or curbing the</p>\n<p>menace, see what works best and then try it out on the ground.</p>\n<p>List of uses</p>\n<p>A  can help farmers choose the best location for plants.</p>\n<p>B  can show the composition of the top layer of the ground.</p>\n<p>C  can detect how far below ground the salt is.</p>\n<p>D  can determine how old the salt is in a particular area.</p>\n<p>Australia?</p>\n<p>A  Farmers are fighting an enemy that moves secretly and hides well.</p>\n<p>B  Farmers have been able to contain this enemy in a small area.</p>\n<p>C  Farmers have already had significant success in fighting this problem.</p>\n<p>D  Farmers need to form more organised groups to solve this problem.</p>\n<p>Disclaimer</p>\n<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks.</p>\n<p>All copyright in the underlying works remains with the original authors and publishers.</p>\n<p>No affiliation with or endorsement by any rights holder (including IELTS® owners).</p>\n<p>For non-commercial educational use only. This notice must remain intact in all copies.</p>\n<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>"
+            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Sea Change for Salinity</p>\n<p>One of the most serious problems facing Australian farmers is an increase in the salt</p>\n<p>content in the soil. However, there are new weapons emerging in the fight against salinity.</p>\n<p>A Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and</p>\n<p>gorges – ancient traps and channels for the deadly salt that is stealthily killing so much</p>\n<p>of the Australian landscape. The war on salt is calling forth new weapons. A suite of</p>\n<p>high technologies used by geologists to see underground and prospect for gold and</p>\n<p>minerals is now being used to pinpoint the presence of salt beneath the landscape, and</p>\n<p>to predict where it might move.</p>\n<p>B Unless this process is clearly understood, warns Chief of Exploration and Mining Dr</p>\n<p>Neil Phillips, the hard work now underway of planning and tree-planting on the surface</p>\n<p>may be rendered ineffective: salt can still sneak past and erupt, following one of the</p>\n<p>ancient river channels formed millions of years ago. The use of airborne</p>\n<p>electromagnetics to detect salt hidden beneath the landscape has been around for a</p>\n<p>decade, but the past two years have seen a major development in its precision and</p>\n<p>powers of detection. Like the use of radar in battles, it has the potential to turn the tide</p>\n<p>of the struggle in favour of the defence by helping to pinpoint, plot and predict the</p>\n<p>movements of the foe.</p>\n<p>C Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first</p>\n<p>outbreak of salt in 1948. Over the ensuing decades the patches spread and multiplied</p>\n<p>until they consumed almost 100 hectares. By the late 1970s, Howell and his fellow</p>\n<p>farmers had decided it was time for action and established a government-funded</p>\n<p>“Landcare” group in a bid to save Australia’s farmland. But despite a mounting effort by</p>\n<p>scientists, farmers and governments, the “white death” continued to encroach. Small</p>\n<p>successes were eclipsed by larger defeats and fresh outbreaks.</p>\n<p>D “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are</p>\n<p>the social and economic solutions. How do you introduce the land-use changes that are</p>\n<p>needed when people still need to make a living?” Howell asks. There is no satisfactory</p>\n<p>solution yet. Part of the problem has lain in salt’s ability to mount ambushes, emerging</p>\n<p>somewhere new, sometimes unexpected and unexplained, beating plans to intercept it.</p>\n<p>Only now are scientists starting to really disclose its secret subterranean stores and</p>\n<p>passages.</p>\n<p>E The need for such knowledge is pressing. Salt has already afflicted six million hectares</p>\n<p>of once-productive country. At present rates, it is predicted that, by 2050, it will have</p>\n<p>sterilised a total of 17 m illion hectares and the waters of Australia’s M urray River will</p>\n<p>regularly exceed the World Health Organisation’s salt limits for drinking water.</p>\n<p>Defeating this assault may take centuries, not decades.</p>\n<p>F Electromagnetic surveys measure the electrical conductivity of soil to reveal the</p>\n<p>distribution of salt and the nature and variability of the regolith – the weathered rock</p>\n<p>and sediment that may lie above the bedrock. Magnetic surveys measure small</p>\n<p>differences in the Earth’s magnetic field, enabling scientists to probe the deep past and</p>\n<p>reconstruct ancient landscapes – rivers, basins and faults now buried under tens of</p>\n<p>metres of sediment. These features help to reveal where groundwater is stored, dictate</p>\n<p>the direction of groundwater movement, and are critical to predicting or ruling out</p>\n<p>salinity hot-spots.</p>\n<p>G Radiometric analysis is based on the detection of radiation emitted by elements</p>\n<p>contained in rocks and soils, allowing scientists to delineate landforms. These factors</p>\n<p>influence the mobility of salt through the soil profile and help determine where to plant</p>\n<p>particular crop species to tackle the problem.</p>\n<p>Using data from the Murray River region, scientists have revealed a network of ancient</p>\n<p>drainage systems that channelled water beneath the current land-surface. These buried</p>\n<p>channels may carry salt and sometimes run at right angles to channels on the surface.</p>\n<p>This implies that the salt could move underground in quite a different direction to what</p>\n<p>one would expect by looking at surface slope and drainage.</p>\n<p>H One of the biggest advances in detection, says Professor Neil Phillips, has come with</p>\n<p>the integration of different techniques such as magnetics, electromagnetics and</p>\n<p>radiometrics, and ground mapping. Individually, these technologies only gave clues to</p>\n<p>what was going on underground. Together they provide a far more revealing picture of</p>\n<p>the subsurface landscape, several hundred metres deep. Advanced airborne</p>\n<p>electromagnetics, in particular, enables scientists to take “slices” of the landscape at</p>\n<p>depths of five metres, ten metres, fifteen metres and so on, to determine where salt</p>\n<p>may be stored at depth. This is building up a four-dimensional picture of the subsurface</p>\n<p>landscape, enabling researchers to understand movements of salt in length, breadth,</p>\n<p>depth and time.</p>\n<p>From such technologies it will be possible to locate salt stores, identify how saline they</p>\n<p>are, look at man-made and natural changes to the landscape that may cause it to</p>\n<p>mobilise, and then predict where it will head to and over what time span. This in turn</p>\n<p>will give the salt warriors time to model various ways of containing or curbing the</p>\n<p>menace, see what works best and then try it out on the ground.</p>\n<p>List of uses</p>\n<p>A can help farmers choose the best location for plants.</p>\n<p>B can show the composition of the top layer of the ground.</p>\n<p>C can detect how far below ground the salt is.</p>\n<p>D can determine how old the salt is in a particular area.</p>\n<p>Disclaimer</p>\n<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks.</p>\n<p>All copyright in the underlying works remains with the original authors and publishers.</p>\n<p>No affiliation with or endorsement by any rights holder (including IELTS® owners).</p>\n<p>For non-commercial educational use only. This notice must remain intact in all copies.</p>\n<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -1888,11 +2093,6 @@
           "b094",
           "b095",
           "b096",
-          "b116",
-          "b117",
-          "b118",
-          "b119",
-          "b120",
           "b121",
           "b122",
           "b123",
@@ -1945,7 +2145,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 752.2799682617188,
@@ -1959,7 +2159,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -1971,7 +2171,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1990,18 +2190,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 720.6000366210938,
@@ -2015,10 +2214,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2027,7 +2226,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2046,7 +2245,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2054,7 +2253,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2073,7 +2272,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2081,7 +2280,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2100,7 +2299,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2108,7 +2307,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2120,22 +2319,22 @@
               "blockId": "b007",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and</p>",
+              "html": "<p>A Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "A  Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and"
+              "text": "A Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2154,7 +2353,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2162,7 +2361,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2181,7 +2380,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2189,7 +2388,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2208,7 +2407,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2216,7 +2415,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2235,7 +2434,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2243,7 +2442,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2262,7 +2461,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2270,7 +2469,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2282,22 +2481,22 @@
               "blockId": "b013",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  Unless this process is clearly understood, warns Chief of Exploration and Mining Dr</p>",
+              "html": "<p>B Unless this process is clearly understood, warns Chief of Exploration and Mining Dr</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "B  Unless this process is clearly understood, warns Chief of Exploration and Mining Dr"
+              "text": "B Unless this process is clearly understood, warns Chief of Exploration and Mining Dr"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2316,7 +2515,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2324,7 +2523,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2343,7 +2542,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2351,7 +2550,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2370,7 +2569,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2378,7 +2577,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2397,7 +2596,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2405,7 +2604,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2424,7 +2623,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2432,7 +2631,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2451,7 +2650,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2459,7 +2658,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2478,7 +2677,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2486,7 +2685,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2505,7 +2704,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2513,7 +2712,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2525,22 +2724,22 @@
               "blockId": "b022",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first</p>",
+              "html": "<p>C Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "C  Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first"
+              "text": "C Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 22,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2559,7 +2758,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2567,7 +2766,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 23,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2586,7 +2785,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2594,7 +2793,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 24,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2613,7 +2812,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2621,7 +2820,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 25,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2640,7 +2839,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2648,7 +2847,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 26,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2667,7 +2866,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2675,7 +2874,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 27,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2694,7 +2893,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2702,7 +2901,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 28,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2714,22 +2913,22 @@
               "blockId": "b029",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are</p>",
+              "html": "<p>D “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "D  “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are"
+              "text": "D “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 29,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2748,7 +2947,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2756,7 +2955,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 30,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2775,7 +2974,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2783,7 +2982,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 31,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2802,7 +3001,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2810,7 +3009,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 32,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2829,7 +3028,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2837,7 +3036,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 33,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2856,7 +3055,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2864,7 +3063,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 34,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2883,7 +3082,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2898,8 +3097,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2911,23 +3110,23 @@
               "blockId": "b036",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>E  The need for such knowledge is pressing. Salt has already afflicted six million hectares</p>",
+              "html": "<p>E The need for such knowledge is pressing. Salt has already afflicted six million hectares</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "E  The need for such knowledge is pressing. Salt has already afflicted six million hectares"
+              "text": "E The need for such knowledge is pressing. Salt has already afflicted six million hectares"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2946,7 +3145,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2954,8 +3153,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2974,7 +3173,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2982,8 +3181,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3002,7 +3201,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3010,8 +3209,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3030,7 +3229,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3038,8 +3237,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3051,23 +3250,23 @@
               "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>F  Electromagnetic surveys measure the electrical conductivity of soil to reveal the</p>",
+              "html": "<p>F Electromagnetic surveys measure the electrical conductivity of soil to reveal the</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "F  Electromagnetic surveys measure the electrical conductivity of soil to reveal the"
+              "text": "F Electromagnetic surveys measure the electrical conductivity of soil to reveal the"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3086,7 +3285,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3094,8 +3293,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3114,7 +3313,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3122,8 +3321,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3142,7 +3341,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3150,8 +3349,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3170,7 +3369,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3178,8 +3377,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3198,7 +3397,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3206,8 +3405,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3226,7 +3425,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3234,8 +3433,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3254,7 +3453,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3262,8 +3461,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3275,23 +3474,23 @@
               "blockId": "b049",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>G  Radiometric analysis is based on the detection of radiation emitted by elements</p>",
+              "html": "<p>G Radiometric analysis is based on the detection of radiation emitted by elements</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "G  Radiometric analysis is based on the detection of radiation emitted by elements"
+              "text": "G Radiometric analysis is based on the detection of radiation emitted by elements"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3310,7 +3509,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3318,8 +3517,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3338,7 +3537,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3346,8 +3545,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3366,7 +3565,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3374,8 +3573,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3394,7 +3593,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3402,8 +3601,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3422,7 +3621,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3430,8 +3629,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3450,7 +3649,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3458,8 +3657,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3478,7 +3677,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3486,8 +3685,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3506,7 +3705,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3514,8 +3713,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 22,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3527,23 +3726,23 @@
               "blockId": "b058",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>H  One of the biggest advances in detection, says Professor Neil Phillips, has come with</p>",
+              "html": "<p>H One of the biggest advances in detection, says Professor Neil Phillips, has come with</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "H  One of the biggest advances in detection, says Professor Neil Phillips, has come with"
+              "text": "H One of the biggest advances in detection, says Professor Neil Phillips, has come with"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 23,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3562,7 +3761,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3570,8 +3769,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 24,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3590,7 +3789,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3598,8 +3797,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 25,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3618,7 +3817,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3626,8 +3825,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 26,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3646,7 +3845,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3654,8 +3853,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 27,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3674,7 +3873,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3682,8 +3881,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 28,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3702,7 +3901,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3710,8 +3909,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 29,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3730,7 +3929,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3738,8 +3937,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 30,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3758,7 +3957,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3766,8 +3965,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 31,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3786,7 +3985,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3794,8 +3993,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 32,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3814,7 +4013,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3822,8 +4021,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 33,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3842,7 +4041,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3850,8 +4049,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 34,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3870,7 +4069,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3878,8 +4077,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 35,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3898,7 +4097,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3906,8 +4105,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 36,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3926,7 +4125,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4020,6 +4219,7 @@
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Which section contains the following information?"
             },
             {
@@ -4047,6 +4247,7 @@
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Write the correct letter, A–H, in boxes 27–33 on your answer sheet."
             },
             {
@@ -4276,7 +4477,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 753.239990234375,
@@ -4290,7 +4491,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -4302,7 +4503,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4321,16 +4522,15 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "roleHint": "question",
               "text": "Look at the list of techniques (Questions 34–36) and the list of uses which follows it."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4349,7 +4549,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4357,7 +4557,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4376,15 +4576,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4403,7 +4604,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4411,7 +4612,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4430,7 +4631,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4438,7 +4639,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4457,17 +4658,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
               "text": "36 Airborne electromagnetics"
             },
             {
-              "_epic8ColumnIndex": 1,
-              "_epic8LayoutSection": 3,
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 263.5802307128906,
                 514.4400024414062,
@@ -4481,10 +4682,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
-                    "current": 1
+                    "count": 1,
+                    "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4492,7 +4693,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4504,22 +4705,22 @@
               "blockId": "b093",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  can help farmers choose the best location for plants.</p>",
+              "html": "<p>A can help farmers choose the best location for plants.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "A  can help farmers choose the best location for plants."
+              "text": "A can help farmers choose the best location for plants."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4531,22 +4732,22 @@
               "blockId": "b094",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  can show the composition of the top layer of the ground.</p>",
+              "html": "<p>B can show the composition of the top layer of the ground.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "B  can show the composition of the top layer of the ground."
+              "text": "B can show the composition of the top layer of the ground."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4558,22 +4759,22 @@
               "blockId": "b095",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  can detect how far below ground the salt is.</p>",
+              "html": "<p>C can detect how far below ground the salt is.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "C  can detect how far below ground the salt is."
+              "text": "C can detect how far below ground the salt is."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4585,18 +4786,18 @@
               "blockId": "b096",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  can determine how old the salt is in a particular area.</p>",
+              "html": "<p>D can determine how old the salt is in a particular area.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "D  can determine how old the salt is in a particular area."
+              "text": "D can determine how old the salt is in a particular area."
             }
           ],
           "height": 841.9199829101562,
@@ -4647,7 +4848,7 @@
               "blockId": "b098",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Choose the correct letter, A, B, C  or D.</p>",
+              "html": "<p>Choose the correct letter, A, B, C or D.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4658,7 +4859,8 @@
                 }
               },
               "pageIndex": 5,
-              "text": "Choose the correct letter, A, B, C  or D."
+              "roleHint": "question",
+              "text": "Choose the correct letter, A, B, C or D."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4685,6 +4887,7 @@
                 }
               },
               "pageIndex": 5,
+              "roleHint": "question",
               "text": "Write the correct letter in boxes 36–40 on your answer sheet."
             },
             {
@@ -4728,7 +4931,7 @@
               "blockId": "b101",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  They can both be found in the same locations.</p>",
+              "html": "<p>A They can both be found in the same locations.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4739,7 +4942,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "A  They can both be found in the same locations."
+              "text": "A They can both be found in the same locations."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4755,7 +4958,7 @@
               "blockId": "b102",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  Both have been found to have an impact on the landscape.</p>",
+              "html": "<p>B Both have been found to have an impact on the landscape.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4766,7 +4969,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "B  Both have been found to have an impact on the landscape."
+              "text": "B Both have been found to have an impact on the landscape."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4782,7 +4985,7 @@
               "blockId": "b103",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  The same techniques can be used to find both.</p>",
+              "html": "<p>C The same techniques can be used to find both.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4793,7 +4996,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "C  The same techniques can be used to find both."
+              "text": "C The same techniques can be used to find both."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4809,7 +5012,7 @@
               "blockId": "b104",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  Neither is present in mountainous areas.</p>",
+              "html": "<p>D Neither is present in mountainous areas.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4820,7 +5023,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "D  Neither is present in mountainous areas."
+              "text": "D Neither is present in mountainous areas."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4863,7 +5066,7 @@
               "blockId": "b106",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  the killing of vegetation by salt</p>",
+              "html": "<p>A the killing of vegetation by salt</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4874,7 +5077,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "A  the killing of vegetation by salt"
+              "text": "A the killing of vegetation by salt"
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4890,7 +5093,7 @@
               "blockId": "b107",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  salt’s ability to travel below ground</p>",
+              "html": "<p>B salt’s ability to travel below ground</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4901,7 +5104,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "B  salt’s ability to travel below ground"
+              "text": "B salt’s ability to travel below ground"
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4917,7 +5120,7 @@
               "blockId": "b108",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  the ability of trees to decrease salt levels</p>",
+              "html": "<p>C the ability of trees to decrease salt levels</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4928,7 +5131,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "C  the ability of trees to decrease salt levels"
+              "text": "C the ability of trees to decrease salt levels"
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4944,7 +5147,7 @@
               "blockId": "b109",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  the detection of salt by tracing other minerals</p>",
+              "html": "<p>D the detection of salt by tracing other minerals</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4955,7 +5158,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "D  the detection of salt by tracing other minerals"
+              "text": "D the detection of salt by tracing other minerals"
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4998,7 +5201,7 @@
               "blockId": "b111",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  not enough farmers are concerned about the fight.</p>",
+              "html": "<p>A not enough farmers are concerned about the fight.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5009,7 +5212,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "A  not enough farmers are concerned about the fight."
+              "text": "A not enough farmers are concerned about the fight."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5025,7 +5228,7 @@
               "blockId": "b112",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  farmers’ requests for help have been ignored.</p>",
+              "html": "<p>B farmers’ requests for help have been ignored.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5036,7 +5239,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "B  farmers’ requests for help have been ignored."
+              "text": "B farmers’ requests for help have been ignored."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5052,7 +5255,7 @@
               "blockId": "b113",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  some possible measures may cause farmers to lose income.</p>",
+              "html": "<p>C some possible measures may cause farmers to lose income.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5063,7 +5266,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "C  some possible measures may cause farmers to lose income."
+              "text": "C some possible measures may cause farmers to lose income."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5079,7 +5282,7 @@
               "blockId": "b114",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  the government has not provided farmers with sufficient financial support.</p>",
+              "html": "<p>D the government has not provided farmers with sufficient financial support.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5090,7 +5293,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "D  the government has not provided farmers with sufficient financial support."
+              "text": "D the government has not provided farmers with sufficient financial support."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5160,7 +5363,7 @@
               "blockId": "b117",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Farmers are fighting an enemy that moves secretly and hides well.</p>",
+              "html": "<p>A Farmers are fighting an enemy that moves secretly and hides well.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5171,7 +5374,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "A  Farmers are fighting an enemy that moves secretly and hides well."
+              "text": "A Farmers are fighting an enemy that moves secretly and hides well."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5187,7 +5390,7 @@
               "blockId": "b118",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  Farmers have been able to contain this enemy in a small area.</p>",
+              "html": "<p>B Farmers have been able to contain this enemy in a small area.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5198,7 +5401,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "B  Farmers have been able to contain this enemy in a small area."
+              "text": "B Farmers have been able to contain this enemy in a small area."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5214,7 +5417,7 @@
               "blockId": "b119",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  Farmers have already had significant success in fighting this problem.</p>",
+              "html": "<p>C Farmers have already had significant success in fighting this problem.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5225,7 +5428,7 @@
                 }
               },
               "pageIndex": 5,
-              "text": "C  Farmers have already had significant success in fighting this problem."
+              "text": "C Farmers have already had significant success in fighting this problem."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5241,7 +5444,7 @@
               "blockId": "b120",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  Farmers need to form more organised groups to solve this problem.</p>",
+              "html": "<p>D Farmers need to form more organised groups to solve this problem.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5252,13 +5455,13 @@
                 }
               },
               "pageIndex": 5,
-              "text": "D  Farmers need to form more organised groups to solve this problem."
+              "text": "D Farmers need to form more organised groups to solve this problem."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 24,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 61.67992401123047,
                 177.00001525878906,
@@ -5272,10 +5475,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -5283,7 +5486,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 25,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5302,7 +5505,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -5310,7 +5513,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 26,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5329,7 +5532,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -5337,7 +5540,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 27,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5356,7 +5559,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -5364,7 +5567,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 28,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5383,7 +5586,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -5391,7 +5594,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 29,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5410,7 +5613,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -5511,7 +5714,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Sea Change for Salinity</p>\n<p>One of the most serious problems facing Australian farmers is an increase in the salt</p>\n<p>content in the soil. However, there are new weapons emerging in the fight against salinity.</p>\n<p>A  Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and</p>\n<p>gorges – ancient traps and channels for the deadly salt that is stealthily killing so much</p>\n<p>of the Australian landscape. The war on salt is calling forth new weapons. A suite of</p>\n<p>high technologies used by geologists to see underground and prospect for gold and</p>\n<p>minerals is now being used to pinpoint the presence of salt beneath the landscape, and</p>\n<p>to predict where it might move.</p>\n<p>B  Unless this process is clearly understood, warns Chief of Exploration and Mining Dr</p>\n<p>Neil Phillips, the hard work now underway of planning and tree-planting on the surface</p>\n<p>may be rendered ineffective: salt can still sneak past and erupt, following one of the</p>\n<p>ancient river channels formed millions of years ago. The use of airborne</p>\n<p>electromagnetics to detect salt hidden beneath the landscape has been around for a</p>\n<p>decade, but the past two years have seen a major development in its precision and</p>\n<p>powers of detection. Like the use of radar in battles, it has the potential to turn the tide</p>\n<p>of the struggle in favour of the defence by helping to pinpoint, plot and predict the</p>\n<p>movements of the foe.</p>\n<p>C  Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first</p>\n<p>outbreak of salt in 1948. Over the ensuing decades the patches spread and multiplied</p>\n<p>until they consumed almost 100 hectares. By the late 1970s, Howell and his fellow</p>\n<p>farmers had decided it was time for action and established a government-funded</p>\n<p>“Landcare” group in a bid to save Australia’s farmland. But despite a mounting effort by</p>\n<p>scientists, farmers and governments, the “white death” continued to encroach. Small</p>\n<p>successes were eclipsed by larger defeats and fresh outbreaks.</p>\n<p>D  “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are</p>\n<p>the social and economic solutions. How do you introduce the land-use changes that are</p>\n<p>needed when people still need to make a living?” Howell asks. There is no satisfactory</p>\n<p>solution yet. Part of the problem has lain in salt’s ability to mount ambushes, emerging</p>\n<p>somewhere new, sometimes unexpected and unexplained, beating plans to intercept it.</p>\n<p>Only now are scientists starting to really disclose its secret subterranean stores and</p>\n<p>passages.</p>\n<p>E  The need for such knowledge is pressing. Salt has already afflicted six million hectares</p>\n<p>of once-productive country. At present rates, it is predicted that, by 2050, it will have</p>\n<p>sterilised a total of 17 m illion hectares and the waters of Australia’s M urray River will</p>\n<p>regularly exceed the World Health Organisation’s salt limits for drinking water.</p>\n<p>Defeating this assault may take centuries, not decades.</p>\n<p>F  Electromagnetic surveys measure the electrical conductivity of soil to reveal the</p>\n<p>distribution of salt and the nature and variability of the regolith – the weathered rock</p>\n<p>and sediment that may lie above the bedrock. Magnetic surveys measure small</p>\n<p>differences in the Earth’s magnetic field, enabling scientists to probe the deep past and</p>\n<p>reconstruct ancient landscapes – rivers, basins and faults now buried under tens of</p>\n<p>metres of sediment. These features help to reveal where groundwater is stored, dictate</p>\n<p>the direction of groundwater movement, and are critical to predicting or ruling out</p>\n<p>salinity hot-spots.</p>\n<p>G  Radiometric analysis is based on the detection of radiation emitted by elements</p>\n<p>contained in rocks and soils, allowing scientists to delineate landforms. These factors</p>\n<p>influence the mobility of salt through the soil profile and help determine where to plant</p>\n<p>particular crop species to tackle the problem.</p>\n<p>Using data from the Murray River region, scientists have revealed a network of ancient</p>\n<p>drainage systems that channelled water beneath the current land-surface. These buried</p>\n<p>channels may carry salt and sometimes run at right angles to channels on the surface.</p>\n<p>This implies that the salt could move underground in quite a different direction to what</p>\n<p>one would expect by looking at surface slope and drainage.</p>\n<p>H  One of the biggest advances in detection, says Professor Neil Phillips, has come with</p>\n<p>the integration of different techniques such as magnetics, electromagnetics and</p>\n<p>radiometrics, and ground mapping. Individually, these technologies only gave clues to</p>\n<p>what was going on underground. Together they provide a far more revealing picture of</p>\n<p>the subsurface landscape, several hundred metres deep. Advanced airborne</p>\n<p>electromagnetics, in particular, enables scientists to take “slices” of the landscape at</p>\n<p>depths of five metres, ten metres, fifteen metres and so on, to determine where salt</p>\n<p>may be stored at depth. This is building up a four-dimensional picture of the subsurface</p>\n<p>landscape, enabling researchers to understand movements of salt in length, breadth,</p>\n<p>depth and time.</p>\n<p>From such technologies it will be possible to locate salt stores, identify how saline they</p>\n<p>are, look at man-made and natural changes to the landscape that may cause it to</p>\n<p>mobilise, and then predict where it will head to and over what time span. This in turn</p>\n<p>will give the salt warriors time to model various ways of containing or curbing the</p>\n<p>menace, see what works best and then try it out on the ground.</p>\n<p>List of uses</p>\n<p>A  can help farmers choose the best location for plants.</p>\n<p>B  can show the composition of the top layer of the ground.</p>\n<p>C  can detect how far below ground the salt is.</p>\n<p>D  can determine how old the salt is in a particular area.</p>\n<p>Australia?</p>\n<p>A  Farmers are fighting an enemy that moves secretly and hides well.</p>\n<p>B  Farmers have been able to contain this enemy in a small area.</p>\n<p>C  Farmers have already had significant success in fighting this problem.</p>\n<p>D  Farmers need to form more organised groups to solve this problem.</p>\n<p>Disclaimer</p>\n<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks.</p>\n<p>All copyright in the underlying works remains with the original authors and publishers.</p>\n<p>No affiliation with or endorsement by any rights holder (including IELTS® owners).</p>\n<p>For non-commercial educational use only. This notice must remain intact in all copies.</p>\n<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
+            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Sea Change for Salinity</p>\n<p>One of the most serious problems facing Australian farmers is an increase in the salt</p>\n<p>content in the soil. However, there are new weapons emerging in the fight against salinity.</p>\n<p>A Beneath the flat, impassive surface of Australia lie hidden mountains, valleys and</p>\n<p>gorges – ancient traps and channels for the deadly salt that is stealthily killing so much</p>\n<p>of the Australian landscape. The war on salt is calling forth new weapons. A suite of</p>\n<p>high technologies used by geologists to see underground and prospect for gold and</p>\n<p>minerals is now being used to pinpoint the presence of salt beneath the landscape, and</p>\n<p>to predict where it might move.</p>\n<p>B Unless this process is clearly understood, warns Chief of Exploration and Mining Dr</p>\n<p>Neil Phillips, the hard work now underway of planning and tree-planting on the surface</p>\n<p>may be rendered ineffective: salt can still sneak past and erupt, following one of the</p>\n<p>ancient river channels formed millions of years ago. The use of airborne</p>\n<p>electromagnetics to detect salt hidden beneath the landscape has been around for a</p>\n<p>decade, but the past two years have seen a major development in its precision and</p>\n<p>powers of detection. Like the use of radar in battles, it has the potential to turn the tide</p>\n<p>of the struggle in favour of the defence by helping to pinpoint, plot and predict the</p>\n<p>movements of the foe.</p>\n<p>C Angus Howell, who farms near Warrenbayne, in Southeast Australia, saw his first</p>\n<p>outbreak of salt in 1948. Over the ensuing decades the patches spread and multiplied</p>\n<p>until they consumed almost 100 hectares. By the late 1970s, Howell and his fellow</p>\n<p>farmers had decided it was time for action and established a government-funded</p>\n<p>“Landcare” group in a bid to save Australia’s farmland. But despite a mounting effort by</p>\n<p>scientists, farmers and governments, the “white death” continued to encroach. Small</p>\n<p>successes were eclipsed by larger defeats and fresh outbreaks.</p>\n<p>D “The technical solutions just aren’t there yet for dealing with broadacre salinity, nor are</p>\n<p>the social and economic solutions. How do you introduce the land-use changes that are</p>\n<p>needed when people still need to make a living?” Howell asks. There is no satisfactory</p>\n<p>solution yet. Part of the problem has lain in salt’s ability to mount ambushes, emerging</p>\n<p>somewhere new, sometimes unexpected and unexplained, beating plans to intercept it.</p>\n<p>Only now are scientists starting to really disclose its secret subterranean stores and</p>\n<p>passages.</p>\n<p>E The need for such knowledge is pressing. Salt has already afflicted six million hectares</p>\n<p>of once-productive country. At present rates, it is predicted that, by 2050, it will have</p>\n<p>sterilised a total of 17 m illion hectares and the waters of Australia’s M urray River will</p>\n<p>regularly exceed the World Health Organisation’s salt limits for drinking water.</p>\n<p>Defeating this assault may take centuries, not decades.</p>\n<p>F Electromagnetic surveys measure the electrical conductivity of soil to reveal the</p>\n<p>distribution of salt and the nature and variability of the regolith – the weathered rock</p>\n<p>and sediment that may lie above the bedrock. Magnetic surveys measure small</p>\n<p>differences in the Earth’s magnetic field, enabling scientists to probe the deep past and</p>\n<p>reconstruct ancient landscapes – rivers, basins and faults now buried under tens of</p>\n<p>metres of sediment. These features help to reveal where groundwater is stored, dictate</p>\n<p>the direction of groundwater movement, and are critical to predicting or ruling out</p>\n<p>salinity hot-spots.</p>\n<p>G Radiometric analysis is based on the detection of radiation emitted by elements</p>\n<p>contained in rocks and soils, allowing scientists to delineate landforms. These factors</p>\n<p>influence the mobility of salt through the soil profile and help determine where to plant</p>\n<p>particular crop species to tackle the problem.</p>\n<p>Using data from the Murray River region, scientists have revealed a network of ancient</p>\n<p>drainage systems that channelled water beneath the current land-surface. These buried</p>\n<p>channels may carry salt and sometimes run at right angles to channels on the surface.</p>\n<p>This implies that the salt could move underground in quite a different direction to what</p>\n<p>one would expect by looking at surface slope and drainage.</p>\n<p>H One of the biggest advances in detection, says Professor Neil Phillips, has come with</p>\n<p>the integration of different techniques such as magnetics, electromagnetics and</p>\n<p>radiometrics, and ground mapping. Individually, these technologies only gave clues to</p>\n<p>what was going on underground. Together they provide a far more revealing picture of</p>\n<p>the subsurface landscape, several hundred metres deep. Advanced airborne</p>\n<p>electromagnetics, in particular, enables scientists to take “slices” of the landscape at</p>\n<p>depths of five metres, ten metres, fifteen metres and so on, to determine where salt</p>\n<p>may be stored at depth. This is building up a four-dimensional picture of the subsurface</p>\n<p>landscape, enabling researchers to understand movements of salt in length, breadth,</p>\n<p>depth and time.</p>\n<p>From such technologies it will be possible to locate salt stores, identify how saline they</p>\n<p>are, look at man-made and natural changes to the landscape that may cause it to</p>\n<p>mobilise, and then predict where it will head to and over what time span. This in turn</p>\n<p>will give the salt warriors time to model various ways of containing or curbing the</p>\n<p>menace, see what works best and then try it out on the ground.</p>\n<p>List of uses</p>\n<p>A can help farmers choose the best location for plants.</p>\n<p>B can show the composition of the top layer of the ground.</p>\n<p>C can detect how far below ground the salt is.</p>\n<p>D can determine how old the salt is in a particular area.</p>\n<p>Disclaimer</p>\n<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks.</p>\n<p>All copyright in the underlying works remains with the original authors and publishers.</p>\n<p>No affiliation with or endorsement by any rights holder (including IELTS® owners).</p>\n<p>For non-commercial educational use only. This notice must remain intact in all copies.</p>\n<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
             "kind": "html"
           }
         ]
@@ -5551,7 +5754,7 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 34-36</p><p>Questions 34–36 Look at the list of techniques (Questions 34–36) and the list of uses which follows it. Match each technique with the correct use, A, B, C or D. Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet.</p></div><ol><li><div><strong>34</strong> Electromagnetic surveys</div><div class=\"choice-row\"><label><input name=\"q34\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q34\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q34\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q34\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>35</strong> Radiometric analysis</div><div class=\"choice-row\"><label><input name=\"q35\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q35\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q35\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q35\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>36</strong> Airborne electromagnetics</div><div class=\"choice-row\"><label><input name=\"q36\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q36\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q36\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q36\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 34-36</p><p>Questions 34–36 Look at the list of techniques (Questions 34–36) and the list of uses which follows it. Match each technique with the correct use, A, B, C or D. Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet.</p></div><ol><li><div><strong>34</strong> Electromagnetic surveys</div><div class=\"choice-row\"><label><input name=\"q34\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">can help farmers choose the best location for plants.</span></label><label><input name=\"q34\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">can show the composition of the top layer of the ground.</span></label><label><input name=\"q34\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">can detect how far below ground the salt is.</span></label><label><input name=\"q34\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">can determine how old the salt is in a particular area.</span></label></div></li><li><div><strong>35</strong> Radiometric analysis</div><div class=\"choice-row\"><label><input name=\"q35\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">can help farmers choose the best location for plants.</span></label><label><input name=\"q35\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">can show the composition of the top layer of the ground.</span></label><label><input name=\"q35\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">can detect how far below ground the salt is.</span></label><label><input name=\"q35\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">can determine how old the salt is in a particular area.</span></label></div></li><li><div><strong>36</strong> Airborne electromagnetics</div><div class=\"choice-row\"><label><input name=\"q36\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">can help farmers choose the best location for plants.</span></label><label><input name=\"q36\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">can show the composition of the top layer of the ground.</span></label><label><input name=\"q36\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">can detect how far below ground the salt is.</span></label><label><input name=\"q36\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">can determine how old the salt is in a particular area.</span></label></div></li></ol></section>",
           "groupId": "group-2",
           "kind": "matching",
           "leadHtml": "<p>Questions 34-36</p><p>Questions 34–36 Look at the list of techniques (Questions 34–36) and the list of uses which follows it. Match each technique with the correct use, A, B, C or D. Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet.</p>",
@@ -5563,7 +5766,7 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 37-40</p><p>Questions 36–40 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 36–40 on your answer sheet.</p></div><ol><li><div><strong>37</strong> What link does the writer make between salt and gold?</div><div class=\"choice-row\"><label><input name=\"q37\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">They can both be found in the same locations.</span></label><label><input name=\"q37\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">Both have been found to have an impact on the landscape.</span></label><label><input name=\"q37\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">The same techniques can be used to find both.</span></label><label><input name=\"q37\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">Neither is present in mountainous areas.</span></label></div></li><li><div><strong>38</strong> What is the ‘process’ referred to in Section B?</div><div class=\"choice-row\"><label><input name=\"q38\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">the killing of vegetation by salt</span></label><label><input name=\"q38\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">salt’s ability to travel below ground</span></label><label><input name=\"q38\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">the ability of trees to decrease salt levels</span></label><label><input name=\"q38\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">the detection of salt by tracing other minerals</span></label></div></li><li><div><strong>39</strong> According to Angus Howell, one problem in the fight against salinity is that</div><div class=\"choice-row\"><label><input name=\"q39\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">not enough farmers are concerned about the fight.</span></label><label><input name=\"q39\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">farmers’ requests for help have been ignored.</span></label><label><input name=\"q39\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">some possible measures may cause farmers to lose income.</span></label><label><input name=\"q39\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">the government has not provided farmers with sufficient financial support.</span></label></div></li><li><div><strong>40</strong> Which of the following best describes the writer’s view of the salinity problem in</div><div class=\"choice-row\"><label><input name=\"q40\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q40\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q40\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q40\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 37-40</p><p>Questions 36–40 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 36–40 on your answer sheet.</p></div><ol><li><div><strong>37</strong> What link does the writer make between salt and gold?</div><div class=\"choice-row\"><label><input name=\"q37\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">They can both be found in the same locations.</span></label><label><input name=\"q37\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">Both have been found to have an impact on the landscape.</span></label><label><input name=\"q37\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">The same techniques can be used to find both.</span></label><label><input name=\"q37\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">Neither is present in mountainous areas.</span></label></div></li><li><div><strong>38</strong> What is the ‘process’ referred to in Section B?</div><div class=\"choice-row\"><label><input name=\"q38\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">the killing of vegetation by salt</span></label><label><input name=\"q38\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">salt’s ability to travel below ground</span></label><label><input name=\"q38\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">the ability of trees to decrease salt levels</span></label><label><input name=\"q38\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">the detection of salt by tracing other minerals</span></label></div></li><li><div><strong>39</strong> According to Angus Howell, one problem in the fight against salinity is that</div><div class=\"choice-row\"><label><input name=\"q39\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">not enough farmers are concerned about the fight.</span></label><label><input name=\"q39\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">farmers’ requests for help have been ignored.</span></label><label><input name=\"q39\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">some possible measures may cause farmers to lose income.</span></label><label><input name=\"q39\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">the government has not provided farmers with sufficient financial support.</span></label></div></li><li><div><strong>40</strong> Which of the following best describes the writer’s view of the salinity problem in Australia?</div><div class=\"choice-row\"><label><input name=\"q40\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">Farmers are fighting an enemy that moves secretly and hides well.</span></label><label><input name=\"q40\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">Farmers have been able to contain this enemy in a small area.</span></label><label><input name=\"q40\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">Farmers have already had significant success in fighting this problem.</span></label><label><input name=\"q40\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">Farmers need to form more organised groups to solve this problem.</span></label></div></li></ol></section>",
           "groupId": "group-3",
           "kind": "single_choice",
           "leadHtml": "<p>Questions 37-40</p><p>Questions 36–40 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 36–40 on your answer sheet.</p>",
@@ -5687,11 +5890,6 @@
             "b094",
             "b095",
             "b096",
-            "b116",
-            "b117",
-            "b118",
-            "b119",
-            "b120",
             "b121",
             "b122",
             "b123",
@@ -5889,7 +6087,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which section contains the following information?"
             },
@@ -5910,7 +6108,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–H, in boxes 27–33 on your answer sheet."
             },
@@ -6092,7 +6290,11 @@
             "b088",
             "b089",
             "b090",
-            "b091"
+            "b091",
+            "b093",
+            "b094",
+            "b095",
+            "b096"
           ],
           "classification": {
             "confidence": 0.68,
@@ -6187,7 +6389,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 34–36"
             },
             {
@@ -6207,7 +6409,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the list of techniques (Questions 34–36) and the list of uses which follows it."
             },
@@ -6249,7 +6451,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B, C or D, in boxes 34–36 on your answer sheet."
             },
@@ -6338,7 +6540,12 @@
             "b112",
             "b113",
             "b114",
-            "b115"
+            "b115",
+            "b116",
+            "b117",
+            "b118",
+            "b119",
+            "b120"
           ],
           "classification": {
             "confidence": 0.68,
@@ -6361,7 +6568,12 @@
               "b112",
               "b113",
               "b114",
-              "b115"
+              "b115",
+              "b116",
+              "b117",
+              "b118",
+              "b119",
+              "b120"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -6487,6 +6699,36 @@
               "fromBlockId": "b114",
               "reason": "same-section-continuation",
               "toBlockId": "b115"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b115",
+              "reason": "same-section-continuation",
+              "toBlockId": "b116"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b116",
+              "reason": "same-section-continuation",
+              "toBlockId": "b117"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b117",
+              "reason": "same-section-continuation",
+              "toBlockId": "b118"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b118",
+              "reason": "same-section-continuation",
+              "toBlockId": "b119"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b119",
+              "reason": "same-section-continuation",
+              "toBlockId": "b120"
             }
           ],
           "groupId": "group-3",
@@ -6537,7 +6779,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct letter, A, B, C or D."
             },
@@ -6558,7 +6800,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter in boxes 36–40 on your answer sheet."
             },
@@ -6897,6 +7139,111 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "40 Which of the following best describes the writer’s view of the salinity problem in"
+            },
+            {
+              "bbox": [
+                75,
+                328.20001220703125,
+                121.68960571289062,
+                336.60003662109375
+              ],
+              "blockId": "b116",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                328.20001220703125,
+                121.68960571289062,
+                336.60003662109375
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Australia?"
+            },
+            {
+              "bbox": [
+                75,
+                303.7200012207031,
+                445.5047912597656,
+                312.1200256347656
+              ],
+              "blockId": "b117",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                303.7200012207031,
+                445.5047912597656,
+                312.1200256347656
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A Farmers are fighting an enemy that moves secretly and hides well."
+            },
+            {
+              "bbox": [
+                75,
+                287.4000244140625,
+                424.18316650390625,
+                295.800048828125
+              ],
+              "blockId": "b118",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                287.4000244140625,
+                424.18316650390625,
+                295.800048828125
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "B Farmers have been able to contain this enemy in a small area."
+            },
+            {
+              "bbox": [
+                75,
+                271.08001708984375,
+                462.8568115234375,
+                279.48004150390625
+              ],
+              "blockId": "b119",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                271.08001708984375,
+                462.8568115234375,
+                279.48004150390625
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "C Farmers have already had significant success in fighting this problem."
+            },
+            {
+              "bbox": [
+                75,
+                254.76002502441406,
+                451.50482177734375,
+                263.1600341796875
+              ],
+              "blockId": "b120",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                254.76002502441406,
+                451.50482177734375,
+                263.1600341796875
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "D Farmers need to form more organised groups to solve this problem."
             }
           ]
         }

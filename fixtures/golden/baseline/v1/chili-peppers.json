@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 5,
-    "blockCount": 58,
+    "blockCount": 56,
     "groupCount": 2,
     "slotCount": 13,
     "assetCount": 0,
@@ -87,6 +87,7 @@
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
+            "b021",
             "b022",
             "b023",
             "b024",
@@ -100,12 +101,16 @@
             "b032",
             "b033",
             "b034",
-            "b035",
-            "b036",
-            "b037"
+            "b035"
           ],
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b022",
@@ -183,18 +188,6 @@
               "fromBlockId": "b034",
               "reason": "same-section-continuation",
               "toBlockId": "b035"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b035",
-              "reason": "same-section-continuation",
-              "toBlockId": "b036"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b036",
-              "reason": "same-section-continuation",
-              "toBlockId": "b037"
             }
           ],
           "groupId": "group-1",
@@ -230,6 +223,7 @@
               "prompt": "Archaeological evidence from pots has helped determine when people first began to grow chilies for food.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b021",
                 "b022",
                 "b023",
                 "b024",
@@ -243,9 +237,7 @@
                 "b032",
                 "b033",
                 "b034",
-                "b035",
-                "b036",
-                "b037"
+                "b035"
               ],
               "verified": false
             },
@@ -266,6 +258,7 @@
               "prompt": "Linda Perry thinks mankind began using chilies in cooking largely because they kept food from spoiling.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b021",
                 "b022",
                 "b023",
                 "b024",
@@ -279,9 +272,7 @@
                 "b032",
                 "b033",
                 "b034",
-                "b035",
-                "b036",
-                "b037"
+                "b035"
               ],
               "verified": false
             },
@@ -302,6 +293,7 @@
               "prompt": "Christopher Columbus is said to have enjoyed the new experience of eating food spiced with chilies.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b021",
                 "b022",
                 "b023",
                 "b024",
@@ -315,9 +307,7 @@
                 "b032",
                 "b033",
                 "b034",
-                "b035",
-                "b036",
-                "b037"
+                "b035"
               ],
               "verified": false
             },
@@ -338,6 +328,7 @@
               "prompt": "Explorers from Portugal were introduced to chilies in Africa.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b021",
                 "b022",
                 "b023",
                 "b024",
@@ -351,9 +342,7 @@
                 "b032",
                 "b033",
                 "b034",
-                "b035",
-                "b036",
-                "b037"
+                "b035"
               ],
               "verified": false
             },
@@ -374,6 +363,7 @@
               "prompt": "The feeling of heat while eating chilies is a purely psychological effect rather than a physical one.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b021",
                 "b022",
                 "b023",
                 "b024",
@@ -387,9 +377,7 @@
                 "b032",
                 "b033",
                 "b034",
-                "b035",
-                "b036",
-                "b037"
+                "b035"
               ],
               "verified": false
             },
@@ -410,6 +398,7 @@
               "prompt": "A chemist called Scoville created a heat scale based on the collective judgement of a group of individuals.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b021",
                 "b022",
                 "b023",
                 "b024",
@@ -423,9 +412,7 @@
                 "b032",
                 "b033",
                 "b034",
-                "b035",
-                "b036",
-                "b037"
+                "b035"
               ],
               "verified": false
             }
@@ -440,7 +427,7 @@
                 131.37890625,
                 761.8800048828125
               ],
-              "blockId": "b022",
+              "blockId": "b021",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -451,7 +438,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1 – 6"
             },
             {
@@ -461,7 +448,7 @@
                 495.6094970703125,
                 732.3600463867188
               ],
-              "blockId": "b023",
+              "blockId": "b022",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -471,7 +458,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "passage",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
             },
@@ -482,7 +469,7 @@
                 266.11932373046875,
                 702.6000366210938
               ],
-              "blockId": "b024",
+              "blockId": "b023",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -499,44 +486,23 @@
             {
               "bbox": [
                 75,
-                649.0800170898438,
+                633.47998046875,
                 381.7848205566406,
                 673.0800170898438
               ],
-              "blockId": "b025",
+              "blockId": "b024",
               "column": 0,
               "normalizedBbox": [
                 75,
-                649.0800170898438,
+                633.47998046875,
                 381.7848205566406,
                 673.0800170898438
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
-              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information"
-            },
-            {
-              "bbox": [
-                75,
-                633.47998046875,
-                319.75677490234375,
-                641.8800048828125
-              ],
-              "blockId": "b026",
-              "column": 0,
-              "normalizedBbox": [
-                75,
-                633.47998046875,
-                319.75677490234375,
-                641.8800048828125
-              ],
-              "pageIndex": 3,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 3,
-              "textPreview": "NOT GIVEN if there is no information on this"
+              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there "
             },
             {
               "bbox": [
@@ -545,7 +511,7 @@
                 521.2991333007812,
                 612.3600463867188
               ],
-              "blockId": "b027",
+              "blockId": "b025",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -566,7 +532,7 @@
                 181.72079467773438,
                 596.760009765625
               ],
-              "blockId": "b028",
+              "blockId": "b026",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -577,7 +543,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "grow chilies for food."
             },
             {
@@ -587,7 +553,7 @@
                 521.9495849609375,
                 567.0000610351562
               ],
-              "blockId": "b029",
+              "blockId": "b027",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -608,7 +574,7 @@
                 169.72079467773438,
                 551.4000244140625
               ],
-              "blockId": "b030",
+              "blockId": "b028",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -619,7 +585,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "food from spoiling."
             },
             {
@@ -629,7 +595,7 @@
                 541.3030395507812,
                 521.8800659179688
               ],
-              "blockId": "b031",
+              "blockId": "b029",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -650,7 +616,7 @@
                 133.02239990234375,
                 506.280029296875
               ],
-              "blockId": "b032",
+              "blockId": "b030",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -661,7 +627,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "with chilies."
             },
             {
@@ -671,7 +637,7 @@
                 386.476806640625,
                 476.7600402832031
               ],
-              "blockId": "b033",
+              "blockId": "b031",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -692,7 +658,7 @@
                 515.2727661132812,
                 447.0000305175781
               ],
-              "blockId": "b034",
+              "blockId": "b032",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -713,7 +679,7 @@
                 141.71279907226562,
                 431.4000244140625
               ],
-              "blockId": "b035",
+              "blockId": "b033",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -734,7 +700,7 @@
                 526.6103515625,
                 401.8800354003906
               ],
-              "blockId": "b036",
+              "blockId": "b034",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -755,7 +721,7 @@
                 178.40640258789062,
                 386.280029296875
               ],
-              "blockId": "b037",
+              "blockId": "b035",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -766,11 +732,12 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "group of individuals."
             }
           ],
           "sourceBlockIds": [
+            "b021",
             "b022",
             "b023",
             "b024",
@@ -784,31 +751,48 @@
             "b032",
             "b033",
             "b034",
-            "b035",
-            "b036",
-            "b037"
+            "b035"
           ],
           "verified": false
         },
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
+            "b036",
+            "b037",
             "b038",
             "b039",
             "b040",
             "b041",
             "b042",
+            "b043",
+            "b044",
             "b045",
             "b046",
             "b047",
             "b048",
+            "b049",
+            "b050",
             "b051",
+            "b052",
+            "b053",
             "b054",
-            "b055",
-            "b057"
+            "b055"
           ],
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b038",
@@ -837,6 +821,18 @@
               "confidence": 0.72,
               "fromBlockId": "b042",
               "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
               "toBlockId": "b045"
             },
             {
@@ -861,11 +857,35 @@
               "confidence": 0.72,
               "fromBlockId": "b048",
               "reason": "same-section-continuation",
+              "toBlockId": "b049"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b049",
+              "reason": "same-section-continuation",
+              "toBlockId": "b050"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b050",
+              "reason": "same-section-continuation",
               "toBlockId": "b051"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b051",
+              "reason": "same-section-continuation",
+              "toBlockId": "b052"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b052",
+              "reason": "same-section-continuation",
+              "toBlockId": "b053"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b053",
               "reason": "same-section-continuation",
               "toBlockId": "b054"
             },
@@ -874,24 +894,18 @@
               "fromBlockId": "b054",
               "reason": "same-section-continuation",
               "toBlockId": "b055"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b055",
-              "reason": "same-section-continuation",
-              "toBlockId": "b057"
             }
           ],
           "groupId": "group-2",
           "instruction": [
             "Questions 7-13",
-            "Questions 7 – 13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. The role of capsaicin • some animals destroy the seeds, preventing 7 __________ • unlike many other plants, chilies contain an unpleasant chemical only in their"
+            "Questions 7 – 13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. The role of capsaicin Chili seeds and capsaicin • certain birds and other animals eat chili fruit and spread the seeds • some animals destroy the seeds, preventing 7 __________ • unlike many other plants, chilies contain an unpleasant chemical only in their"
           ],
           "isUmbrellaRange": false,
           "kind": "sentence_completion",
           "layout": {
             "layoutHint": "inline_completion",
-            "notes": "Questions 7 – 13\nComplete the notes below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 7–13 on your answer sheet.\nThe role of capsaicin\n• some animals destroy the seeds, preventing 7 __________\n• unlike many other plants, chilies contain an unpleasant chemical only in their\n8 __________\n• the 9 __________ of the chili causes an increase in capsaicin\n• rodents avoided chilies with a high 10 __________ of capsaicin\no this may make the 11 __________ of the seed softer\n• another role of capsaicin is in reducing infection caused by a 12 __________\nthe beauty of 13 __________",
+            "notes": "Questions 7 – 13\nComplete the notes below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 7–13 on your answer sheet.\nThe role of capsaicin\nChili seeds and capsaicin\n• certain birds and other animals eat chili fruit and spread the seeds\n• some animals destroy the seeds, preventing 7 __________\n• unlike many other plants, chilies contain an unpleasant chemical only in their\n8 __________\n• the 9 __________ of the chili causes an increase in capsaicin\nTewksbury’s experiments to test the effects of capsaicin\n• chilies offered to rodents and birds in laboratory conditions\n• rodents avoided chilies with a high 10 __________ of capsaicin\n• birds do not mind eating capsaicin\no capsaicin slows digestion in birds\no this may make the 11 __________ of the seed softer\n• another role of capsaicin is in reducing infection caused by a 12 __________\n• Tewksbury considers the role of capsaicin in chilies to be an example in nature of\nthe beauty of 13 __________",
             "template": "inline_text_completion"
           },
           "questionRange": [
@@ -912,19 +926,26 @@
               "prompt": "__________ • unlike many other plants, chilies contain an unpleasant chemical only in their",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b036",
+                "b037",
                 "b038",
                 "b039",
                 "b040",
                 "b041",
                 "b042",
+                "b043",
+                "b044",
                 "b045",
                 "b046",
                 "b047",
                 "b048",
+                "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
-                "b055",
-                "b057"
+                "b055"
               ],
               "verified": false
             },
@@ -941,19 +962,26 @@
               "prompt": "__________ • the",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b036",
+                "b037",
                 "b038",
                 "b039",
                 "b040",
                 "b041",
                 "b042",
+                "b043",
+                "b044",
                 "b045",
                 "b046",
                 "b047",
                 "b048",
+                "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
-                "b055",
-                "b057"
+                "b055"
               ],
               "verified": false
             },
@@ -967,22 +995,29 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "__________ of the chili causes an increase in capsaicin • rodents avoided chilies with a high",
+              "prompt": "__________ of the chili causes an increase in capsaicin Tewksbury’s experiments to test the effects of capsaicin • chilies offered to rodents and birds in laboratory conditions • rodents avoided chilies with a high",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b036",
+                "b037",
                 "b038",
                 "b039",
                 "b040",
                 "b041",
                 "b042",
+                "b043",
+                "b044",
                 "b045",
                 "b046",
                 "b047",
                 "b048",
+                "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
-                "b055",
-                "b057"
+                "b055"
               ],
               "verified": false
             },
@@ -996,22 +1031,29 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "__________ of capsaicin o this may make the",
+              "prompt": "__________ of capsaicin • birds do not mind eating capsaicin o capsaicin slows digestion in birds o this may make the",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b036",
+                "b037",
                 "b038",
                 "b039",
                 "b040",
                 "b041",
                 "b042",
+                "b043",
+                "b044",
                 "b045",
                 "b046",
                 "b047",
                 "b048",
+                "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
-                "b055",
-                "b057"
+                "b055"
               ],
               "verified": false
             },
@@ -1028,19 +1070,26 @@
               "prompt": "__________ of the seed softer • another role of capsaicin is in reducing infection caused by a",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b036",
+                "b037",
                 "b038",
                 "b039",
                 "b040",
                 "b041",
                 "b042",
+                "b043",
+                "b044",
                 "b045",
                 "b046",
                 "b047",
                 "b048",
+                "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
-                "b055",
-                "b057"
+                "b055"
               ],
               "verified": false
             },
@@ -1054,22 +1103,29 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "__________ the beauty of",
+              "prompt": "__________ • Tewksbury considers the role of capsaicin in chilies to be an example in nature of the beauty of",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b036",
+                "b037",
                 "b038",
                 "b039",
                 "b040",
                 "b041",
                 "b042",
+                "b043",
+                "b044",
                 "b045",
                 "b046",
                 "b047",
                 "b048",
+                "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
-                "b055",
-                "b057"
+                "b055"
               ],
               "verified": false
             },
@@ -1086,19 +1142,26 @@
               "prompt": "__________",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b036",
+                "b037",
                 "b038",
                 "b039",
                 "b040",
                 "b041",
                 "b042",
+                "b043",
+                "b044",
                 "b045",
                 "b046",
                 "b047",
                 "b048",
+                "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
-                "b055",
-                "b057"
+                "b055"
               ],
               "verified": false
             }
@@ -1113,7 +1176,7 @@
                 138.0532989501953,
                 761.8800048828125
               ],
-              "blockId": "b038",
+              "blockId": "b036",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1134,7 +1197,7 @@
                 192.75599670410156,
                 732.3600463867188
               ],
-              "blockId": "b039",
+              "blockId": "b037",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1155,7 +1218,7 @@
                 387.4625549316406,
                 702.6000366210938
               ],
-              "blockId": "b040",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1176,7 +1239,7 @@
                 352.821533203125,
                 673.0800170898438
               ],
-              "blockId": "b041",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1186,7 +1249,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 7–13 on your answer sheet."
             },
@@ -1197,7 +1260,7 @@
                 367.775390625,
                 622.4400024414062
               ],
-              "blockId": "b042",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 218.311767578125,
@@ -1213,12 +1276,54 @@
             },
             {
               "bbox": [
+                61.4399528503418,
+                578.0399780273438,
+                200.2295379638672,
+                586.4400024414062
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                578.0399780273438,
+                200.2295379638672,
+                586.4400024414062
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Chili seeds and capsaicin"
+            },
+            {
+              "bbox": [
+                79.19999694824219,
+                548.52001953125,
+                441.35028076171875,
+                556.9200439453125
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                79.19999694824219,
+                548.52001953125,
+                441.35028076171875,
+                556.9200439453125
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• certain birds and other animals eat chili fruit and spread the seeds"
+            },
+            {
+              "bbox": [
                 79.19999694824219,
                 525.4800415039062,
                 405.3472595214844,
                 533.8800659179688
               ],
-              "blockId": "b045",
+              "blockId": "b043",
               "column": 0,
               "normalizedBbox": [
                 79.19999694824219,
@@ -1239,7 +1344,7 @@
                 503.3878479003906,
                 510.84002685546875
               ],
-              "blockId": "b046",
+              "blockId": "b044",
               "column": 0,
               "normalizedBbox": [
                 79.19999694824219,
@@ -1260,7 +1365,7 @@
                 167.2222900390625,
                 488.0400390625
               ],
-              "blockId": "b047",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 97.13990020751953,
@@ -1281,7 +1386,7 @@
                 417.3636169433594,
                 465.0000305175781
               ],
-              "blockId": "b048",
+              "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 79.19999694824219,
@@ -1297,12 +1402,54 @@
             },
             {
               "bbox": [
+                61.4399528503418,
+                408.6000061035156,
+                376.22149658203125,
+                417.0000305175781
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                408.6000061035156,
+                376.22149658203125,
+                417.0000305175781
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Tewksbury’s experiments to test the effects of capsaicin"
+            },
+            {
+              "bbox": [
+                79.68000030517578,
+                379.08001708984375,
+                401.63037109375,
+                387.48004150390625
+              ],
+              "blockId": "b048",
+              "column": 0,
+              "normalizedBbox": [
+                79.68000030517578,
+                379.08001708984375,
+                401.63037109375,
+                387.48004150390625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• chilies offered to rodents and birds in laboratory conditions"
+            },
+            {
+              "bbox": [
                 79.68000030517578,
                 356.0400085449219,
                 427.0027160644531,
                 364.4400329589844
               ],
-              "blockId": "b051",
+              "blockId": "b049",
               "column": 0,
               "normalizedBbox": [
                 79.68000030517578,
@@ -1318,12 +1465,54 @@
             },
             {
               "bbox": [
+                79.68000030517578,
+                333,
+                272.21514892578125,
+                341.4000244140625
+              ],
+              "blockId": "b050",
+              "column": 0,
+              "normalizedBbox": [
+                79.68000030517578,
+                333,
+                272.21514892578125,
+                341.4000244140625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• birds do not mind eating capsaicin"
+            },
+            {
+              "bbox": [
+                115.58985137939453,
+                309.96002197265625,
+                304.20233154296875,
+                318.36004638671875
+              ],
+              "blockId": "b051",
+              "column": 0,
+              "normalizedBbox": [
+                115.58985137939453,
+                309.96002197265625,
+                304.20233154296875,
+                318.36004638671875
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "o capsaicin slows digestion in birds"
+            },
+            {
+              "bbox": [
                 115.58985137939453,
                 286.9200134277344,
                 409.6293640136719,
                 295.3200378417969
               ],
-              "blockId": "b054",
+              "blockId": "b052",
               "column": 0,
               "normalizedBbox": [
                 115.58985137939453,
@@ -1344,7 +1533,7 @@
                 498.3900146484375,
                 272.280029296875
               ],
-              "blockId": "b055",
+              "blockId": "b053",
               "column": 0,
               "normalizedBbox": [
                 79.68000030517578,
@@ -1360,12 +1549,33 @@
             },
             {
               "bbox": [
+                79.68000030517578,
+                240.8400421142578,
+                528.347900390625,
+                249.2400360107422
+              ],
+              "blockId": "b054",
+              "column": 0,
+              "normalizedBbox": [
+                79.68000030517578,
+                240.8400421142578,
+                528.347900390625,
+                249.2400360107422
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• Tewksbury considers the role of capsaicin in chilies to be an example in nature of"
+            },
+            {
+              "bbox": [
                 97.43994903564453,
                 217.80003356933594,
                 246.91744995117188,
                 226.2000274658203
               ],
-              "blockId": "b057",
+              "blockId": "b055",
               "column": 0,
               "normalizedBbox": [
                 97.43994903564453,
@@ -1376,24 +1586,31 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "the beauty of 13 __________"
             }
           ],
           "sourceBlockIds": [
+            "b036",
+            "b037",
             "b038",
             "b039",
             "b040",
             "b041",
             "b042",
+            "b043",
+            "b044",
             "b045",
             "b046",
             "b047",
             "b048",
+            "b049",
+            "b050",
             "b051",
+            "b052",
+            "b053",
             "b054",
-            "b055",
-            "b057"
+            "b055"
           ],
           "verified": false
         }
@@ -1402,7 +1619,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Chili peppers</p>\n<p>Origins</p>\n<p>Chili peppers, the fruit of the capsicum plant, are believed to have originated in what is now Bolivia in South America, home to dozens of wild species that are probably the ancestors of each and every chili variety today, from mild green peppers to fiery hot naga jolokia peppers. The chili pepper contains a heat-generating ingredient known as capsaicin, which has long been known to affect human taste buds, nerve cells and nasal membranes. People have been spicing their food with chilies for at least 8,000 years. At first they used wild chilies, adding them to potatoes, grain and corn, says Linda Perry, archaeobotanist at the Smithsonian Institution, Washington DC in the US. She has found traces of chilies on ancient stones used to grind grains, and in vessels used in food preparation from the</p>\n<p>Bahamas to southern Peru.</p>\n<p>Based on her examination of ancient pieces of pottery, Ms Perry concludes that people in the Americas began cultivating chilies more than 6,000 years ago. ‘Chilies were domesticated early and spread very quickly, just because people liked them,’ she says. The chilies, it would seem, made otherwise quite bland food more enjoyable to eat. Other researchers, such as Jennifer Billing and Paul Sherman of Cornell University in the US, argue that people learned early on that chilies could reduce food spoilage. And some scholars point to medical uses: ancient Mayan Indians in Central America incorporated chilies into medicinal preparations for treating wounds, stomach problems and earaches.</p>\n<p>Spreading chili peppers around the world</p>\n<p>Whatever the benefits, chilies spread around the world at astonishing speed, thanks in part to Christopher Columbus, who is credited with being the first European to reach America in 1492, and claiming the new land for Spain. When Columbus took chilies back to Spain, they were initially not popular, but soon became widely accepted throughout Europe. The Portuguese first encountered chilies in Brazil and carried them, along with tobacco and cotton, to Africa. By 1550, chilies were being cultivated all over the world, including in India,</p>\n<p>Japan and China.</p>\n<p>The heat of chili peppers</p>\n<p>When people call chilies hot, they are not just speaking metaphorically. Capsaicin stimulates the neural sensors in the tongue and skin that also detect rising temperatures. As far as these neurons and the brain are concerned, when someone eats a hot chili, the effect is the same as exposure to fire. With enough heat, adrenaline flows and the heart pumps faster. This reaction, according to some physiologists, is part of what makes</p>\n<p>peppers so stimulating and enjoyable to eat.</p>\n<p>The scale that scientists use to describe a chili’s heat was developed in 1912 by Wilbur Scoville, a chem ist from  Detroit in the US. He diluted a chili extract in sugar water until the heat was no longer detectable to a panel of trained tasters; that threshold is the basis of the Scoville rating. A sweet bell pepper, for instance, measures zero on the Scoville Heat Unit (SHU) scale, while a typical hot jalapeno chili pepper from Mexico falls between 2,500 and</p>\n<p>8,000 SHUs. Last year, the naga jolokia chili, grown in India, was rated at one million</p>\n<p>SHUs.</p>\n<p>The role of capsaicin</p>\n<p>But why would chilies have evolved to produce the varying degrees of heat of capsaicin? Chili peppers, like other fruit, lure birds and other animals to eat them and disperse their seeds. But chilies also attract predators, largely rodents like packrats and cactus mice, that crush seeds and make germination impossible. In order to deter animals from eating their seeds, many plants produce toxic or foul-tasting chemicals, but these are usually found in the plant’s leaves and roots as well as its fruit. In chilies, however, capsaicin is found just in the fruit, and becomes much stronger with ripening. Joshua Tewksbury, an ecologist at the University of Washington in the US, suspected that at least one role that capsaicin performs</p>\n<p>is to protect the chili seeds from rodents.</p>\n<p>To test his theory, Tewksbury grew plants that produced hot, spicy chilies as well as plants that yielded mild chilies (though both were from the same species). When he offered the fruits of those plants to laboratory rats and mice, they ate the mild chilies but avoided the ones with a strong concentration of capsaicin. He later found that birds do not seem to mind eating even the hottest chilies and, in fact, that the capsaicin had the strange effect of retarding birds’ digestion, which helps some seeds germinate, possibly by softening the seed coat. Even so, Tewksbury didn’t believe that deterring rodents and slowing bird digestion were enough to explain why the spicy heat of chilies evolved. Instead, he thinks that a chili’s heat protects it from disease that a certain fungus can trigger, the primary reason chili seeds die prior to being dispersed. In looking at chili populations that contain hot, spicy and mild plants, Tewksbury has found that the more capsaicin, the less fungal infection. ‘Capsaicin demonstrates the incredible elegance of evolution,’ says Tewksbury. ‘The capsaicin discourages rodents and deters microbes – and humans harness this ability when they use chilies to preserve food – but capsaicin doesn’t prevent birds from eating chili fruit and spreading seeds. Once in a while, the complex, often conflicting demands that nature places on complex traits result in a truly elegant solution. This is one of those times.’</p>\n<p>•  certain birds and other animals eat chili fruit and spread the seeds</p>\n<p>Tewksbury’s experiments to test the effects of capsaicin</p>\n<p>•  chilies offered to rodents and birds in laboratory conditions</p>\n<p>•  birds do not mind eating capsaicin</p>\n<p>o  capsaicin slows digestion in birds</p>\n<p>•  Tewksbury considers the role of capsaicin in chilies to be an example in nature of</p>"
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Chili peppers</p>\n<p>Origins</p>\n<p>Chili peppers, the fruit of the capsicum plant, are believed to have originated in what is now Bolivia in South America, home to dozens of wild species that are probably the ancestors of each and every chili variety today, from mild green peppers to fiery hot naga jolokia peppers. The chili pepper contains a heat-generating ingredient known as capsaicin, which has long been known to affect human taste buds, nerve cells and nasal membranes. People have been spicing their food with chilies for at least 8,000 years. At first they used wild chilies, adding them to potatoes, grain and corn, says Linda Perry, archaeobotanist at the Smithsonian Institution, Washington DC in the US. She has found traces of chilies on ancient stones used to grind grains, and in vessels used in food preparation from the</p>\n<p>Bahamas to southern Peru.</p>\n<p>Based on her examination of ancient pieces of pottery, Ms Perry concludes that people in the Americas began cultivating chilies more than 6,000 years ago. ‘Chilies were domesticated early and spread very quickly, just because people liked them,’ she says. The chilies, it would seem, made otherwise quite bland food more enjoyable to eat. Other researchers, such as Jennifer Billing and Paul Sherman of Cornell University in the US, argue that people learned early on that chilies could reduce food spoilage. And some scholars point to medical uses: ancient Mayan Indians in Central America incorporated chilies into medicinal preparations for treating wounds, stomach problems and earaches.</p>\n<p>Spreading chili peppers around the world</p>\n<p>Whatever the benefits, chilies spread around the world at astonishing speed, thanks in part to Christopher Columbus, who is credited with being the first European to reach America in 1492, and claiming the new land for Spain. When Columbus took chilies back to Spain, they were initially not popular, but soon became widely accepted throughout Europe. The Portuguese first encountered chilies in Brazil and carried them, along with tobacco and cotton, to Africa. By 1550, chilies were being cultivated all over the world, including in India,</p>\n<p>Japan and China.</p>\n<p>The heat of chili peppers</p>\n<p>When people call chilies hot, they are not just speaking metaphorically. Capsaicin stimulates the neural sensors in the tongue and skin that also detect rising temperatures. As far as these neurons and the brain are concerned, when someone eats a hot chili, the effect is the same as exposure to fire. With enough heat, adrenaline flows and the heart pumps faster. This reaction, according to some physiologists, is part of what makes</p>\n<p>peppers so stimulating and enjoyable to eat.</p>\n<p>The scale that scientists use to describe a chili’s heat was developed in 1912 by Wilbur Scoville, a chem ist from Detroit in the US. He diluted a chili extract in sugar water until the heat was no longer detectable to a panel of trained tasters; that threshold is the basis of the Scoville rating. A sweet bell pepper, for instance, measures zero on the Scoville Heat Unit (SHU) scale, while a typical hot jalapeno chili pepper from Mexico falls between 2,500 and 8,000 SHUs. Last year, the naga jolokia chili, grown in India, was rated at one million</p>\n<p>SHUs.</p>\n<p>The role of capsaicin</p>\n<p>But why would chilies have evolved to produce the varying degrees of heat of capsaicin? Chili peppers, like other fruit, lure birds and other animals to eat them and disperse their seeds. But chilies also attract predators, largely rodents like packrats and cactus mice, that crush seeds and make germination impossible. In order to deter animals from eating their seeds, many plants produce toxic or foul-tasting chemicals, but these are usually found in the plant’s leaves and roots as well as its fruit. In chilies, however, capsaicin is found just in the fruit, and becomes much stronger with ripening. Joshua Tewksbury, an ecologist at the University of Washington in the US, suspected that at least one role that capsaicin performs</p>\n<p>is to protect the chili seeds from rodents.</p>\n<p>To test his theory, Tewksbury grew plants that produced hot, spicy chilies as well as plants that yielded mild chilies (though both were from the same species). When he offered the fruits of those plants to laboratory rats and mice, they ate the mild chilies but avoided the ones with a strong concentration of capsaicin. He later found that birds do not seem to mind eating even the hottest chilies and, in fact, that the capsaicin had the strange effect of retarding birds’ digestion, which helps some seeds germinate, possibly by softening the seed coat. Even so, Tewksbury didn’t believe that deterring rodents and slowing bird digestion were enough to explain why the spicy heat of chilies evolved. Instead, he thinks that a chili’s heat protects it from disease that a certain fungus can trigger, the primary reason chili seeds die prior to being dispersed. In looking at chili populations that contain hot, spicy and mild plants, Tewksbury has found that the more capsaicin, the less fungal infection. ‘Capsaicin demonstrates the incredible elegance of evolution,’ says Tewksbury. ‘The capsaicin discourages rodents and deters microbes – and humans harness this ability when they use chilies to preserve food – but capsaicin doesn’t prevent birds from eating chili fruit and spreading seeds. Once in a while, the complex, often conflicting demands that nature places on complex traits result in a truly elegant solution. This is one of those times.’</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -1435,14 +1652,7 @@
           "b017",
           "b018",
           "b019",
-          "b020",
-          "b021",
-          "b044",
-          "b049",
-          "b050",
-          "b052",
-          "b053",
-          "b056"
+          "b020"
         ],
         "title": "Passage 1 below."
       },
@@ -1487,7 +1697,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 744.8400268554688,
@@ -1501,7 +1711,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -1513,7 +1723,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1532,18 +1742,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 706.6799926757812,
@@ -1557,10 +1766,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1569,7 +1778,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1588,7 +1797,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1596,7 +1805,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1615,7 +1824,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1623,7 +1832,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1642,7 +1851,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1650,7 +1859,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1669,7 +1878,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1677,7 +1886,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1696,7 +1905,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1704,7 +1913,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1723,7 +1932,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1731,7 +1940,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1750,7 +1959,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1758,7 +1967,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1777,7 +1986,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1792,8 +2001,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1812,7 +2021,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1820,8 +2029,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1840,7 +2049,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1848,8 +2057,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1868,7 +2077,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1876,83 +2085,55 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
-                560.0399780273438,
+                544.4400024414062,
                 538.978271484375,
                 630.8400268554688
               ],
               "blockId": "b015",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The scale that scientists use to describe a chili’s heat was developed in 1912 by Wilbur Scoville, a chem ist from  Detroit in the US. He diluted a chili extract in sugar water until the heat was no longer detectable to a panel of trained tasters; that threshold is the basis of the Scoville rating. A sweet bell pepper, for instance, measures zero on the Scoville Heat Unit (SHU) scale, while a typical hot jalapeno chili pepper from Mexico falls between 2,500 and</p>",
+              "html": "<p>The scale that scientists use to describe a chili’s heat was developed in 1912 by Wilbur Scoville, a chem ist from Detroit in the US. He diluted a chili extract in sugar water until the heat was no longer detectable to a panel of trained tasters; that threshold is the basis of the Scoville rating. A sweet bell pepper, for instance, measures zero on the Scoville Heat Unit (SHU) scale, while a typical hot jalapeno chili pepper from Mexico falls between 2,500 and 8,000 SHUs. Last year, the naga jolokia chili, grown in India, was rated at one million</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "The scale that scientists use to describe a chili’s heat was developed in 1912 by Wilbur Scoville, a chem ist from  Detroit in the US. He diluted a chili extract in sugar water until the heat was no longer detectable to a panel of trained tasters; that threshold is the basis of the Scoville rating. A sweet bell pepper, for instance, measures zero on the Scoville Heat Unit (SHU) scale, while a typical hot jalapeno chili pepper from Mexico falls between 2,500 and"
+              "text": "The scale that scientists use to describe a chili’s heat was developed in 1912 by Wilbur Scoville, a chem ist from Detroit in the US. He diluted a chili extract in sugar water until the heat was no longer detectable to a panel of trained tasters; that threshold is the basis of the Scoville rating. A sweet bell pepper, for instance, measures zero on the Scoville Heat Unit (SHU) scale, while a typical hot jalapeno chili pepper from Mexico falls between 2,500 and 8,000 SHUs. Last year, the naga jolokia chili, grown in India, was rated at one million"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
-              "bbox": [
-                54,
-                544.4400024414062,
-                503.5857238769531,
-                552.8400268554688
-              ],
-              "blockId": "b016",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>8,000 SHUs. Last year, the naga jolokia chili, grown in India, was rated at one million</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 1,
-                    "current": 0
-                  },
-                  "index": 2
-                }
-              },
-              "pageIndex": 2,
-              "text": "8,000 SHUs. Last year, the naga jolokia chili, grown in India, was rated at one million"
-            },
-            {
-              "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 5,
-              "_epic8SectionColumns": 3,
               "bbox": [
                 54,
                 528.8400268554688,
                 85.33679962158203,
                 537.2400512695312
               ],
-              "blockId": "b017",
+              "blockId": "b016",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>SHUs.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1960,27 +2141,27 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 6,
-              "_epic8SectionColumns": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 489.96002197265625,
                 166.03680419921875,
                 498.36004638671875
               ],
-              "blockId": "b018",
+              "blockId": "b017",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>The role of capsaicin</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1988,9 +2169,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 7,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1998,7 +2179,7 @@
                 540.259033203125,
                 475.08001708984375
               ],
-              "blockId": "b019",
+              "blockId": "b018",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>But why would chilies have evolved to produce the varying degrees of heat of capsaicin? Chili peppers, like other fruit, lure birds and other animals to eat them and disperse their seeds. But chilies also attract predators, largely rodents like packrats and cactus mice, that crush seeds and make germination impossible. In order to deter animals from eating their seeds, many plants produce toxic or foul-tasting chemicals, but these are usually found in the plant’s leaves and roots as well as its fruit. In chilies, however, capsaicin is found just in the fruit, and becomes much stronger with ripening. Joshua Tewksbury, an ecologist at the University of Washington in the US, suspected that at least one role that capsaicin performs</p>",
@@ -2008,7 +2189,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2016,9 +2197,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 8,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2026,7 +2207,7 @@
                 266.09906005859375,
                 350.0400390625
               ],
-              "blockId": "b020",
+              "blockId": "b019",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>is to protect the chili seeds from rodents.</p>",
@@ -2036,7 +2217,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2044,9 +2225,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 9,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2054,7 +2235,7 @@
                 540.290283203125,
                 320.5200500488281
               ],
-              "blockId": "b021",
+              "blockId": "b020",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>To test his theory, Tewksbury grew plants that produced hot, spicy chilies as well as plants that yielded mild chilies (though both were from the same species). When he offered the fruits of those plants to laboratory rats and mice, they ate the mild chilies but avoided the ones with a strong concentration of capsaicin. He later found that birds do not seem to mind eating even the hottest chilies and, in fact, that the capsaicin had the strange effect of retarding birds’ digestion, which helps some seeds germinate, possibly by softening the seed coat. Even so, Tewksbury didn’t believe that deterring rodents and slowing bird digestion were enough to explain why the spicy heat of chilies evolved. Instead, he thinks that a chili’s heat protects it from disease that a certain fungus can trigger, the primary reason chili seeds die prior to being dispersed. In looking at chili populations that contain hot, spicy and mild plants, Tewksbury has found that the more capsaicin, the less fungal infection. ‘Capsaicin demonstrates the incredible elegance of evolution,’ says Tewksbury. ‘The capsaicin discourages rodents and deters microbes – and humans harness this ability when they use chilies to preserve food – but capsaicin doesn’t prevent birds from eating chili fruit and spreading seeds. Once in a while, the complex, often conflicting demands that nature places on complex traits result in a truly elegant solution. This is one of those times.’</p>",
@@ -2064,7 +2245,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2081,21 +2262,21 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 753.47998046875,
                 131.37890625,
                 761.8800048828125
               ],
-              "blockId": "b022",
+              "blockId": "b021",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 1 – 6</h3>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -2107,7 +2288,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2116,7 +2297,7 @@
                 495.6094970703125,
                 732.3600463867188
               ],
-              "blockId": "b023",
+              "blockId": "b022",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Do the following statements agree with the information given in Reading Passage 1?</p>",
@@ -2126,16 +2307,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "roleHint": "passage",
+              "roleHint": "question",
               "text": "Do the following statements agree with the information given in Reading Passage 1?"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2144,7 +2325,7 @@
                 266.11932373046875,
                 702.6000366210938
               ],
-              "blockId": "b024",
+              "blockId": "b023",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>In boxes 1–6 on your answer sheet, write</p>",
@@ -2154,7 +2335,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2162,62 +2343,36 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
                 75,
-                649.0800170898438,
+                633.47998046875,
                 381.7848205566406,
                 673.0800170898438
               ],
-              "blockId": "b025",
+              "blockId": "b024",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>TRUE  if the statement agrees with the information FALSE  if the statement contradicts the information</p>",
+              "html": "<p>TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "TRUE  if the statement agrees with the information FALSE  if the statement contradicts the information"
+              "roleHint": "question",
+              "text": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 3,
-              "bbox": [
-                75,
-                633.47998046875,
-                319.75677490234375,
-                641.8800048828125
-              ],
-              "blockId": "b026",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>NOT GIVEN  if there is no information on this</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 3,
-                    "current": 0
-                  },
-                  "index": 3
-                }
-              },
-              "pageIndex": 3,
-              "text": "NOT GIVEN  if there is no information on this"
-            },
-            {
-              "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2225,44 +2380,44 @@
                 521.2991333007812,
                 612.3600463867188
               ],
-              "blockId": "b027",
+              "blockId": "b025",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>1  Archaeological evidence from pots has helped determine when people first began to</p>",
+              "html": "<p>1 Archaeological evidence from pots has helped determine when people first began to</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "1  Archaeological evidence from pots has helped determine when people first began to"
+              "text": "1 Archaeological evidence from pots has helped determine when people first began to"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
-              "_epic8Ordinal": 6,
-              "_epic8SectionColumns": 3,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75,
                 588.3599853515625,
                 181.72079467773438,
                 596.760009765625
               ],
-              "blockId": "b028",
+              "blockId": "b026",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>grow chilies for food.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2270,8 +2425,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
-              "_epic8Ordinal": 7,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2279,44 +2434,44 @@
                 521.9495849609375,
                 567.0000610351562
               ],
-              "blockId": "b029",
+              "blockId": "b027",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>2  Linda Perry thinks mankind began using chilies in cooking largely because they kept</p>",
+              "html": "<p>2 Linda Perry thinks mankind began using chilies in cooking largely because they kept</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "2  Linda Perry thinks mankind began using chilies in cooking largely because they kept"
+              "text": "2 Linda Perry thinks mankind began using chilies in cooking largely because they kept"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
-              "_epic8Ordinal": 8,
-              "_epic8SectionColumns": 3,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 7,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75,
                 543,
                 169.72079467773438,
                 551.4000244140625
               ],
-              "blockId": "b030",
+              "blockId": "b028",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>food from spoiling.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2324,8 +2479,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 8,
-              "_epic8Ordinal": 9,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2333,44 +2488,44 @@
                 541.3030395507812,
                 521.8800659179688
               ],
-              "blockId": "b031",
+              "blockId": "b029",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>3  Christopher Columbus is said to have enjoyed the new experience of eating food spiced</p>",
+              "html": "<p>3 Christopher Columbus is said to have enjoyed the new experience of eating food spiced</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 8
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "3  Christopher Columbus is said to have enjoyed the new experience of eating food spiced"
+              "text": "3 Christopher Columbus is said to have enjoyed the new experience of eating food spiced"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 9,
-              "_epic8Ordinal": 10,
-              "_epic8SectionColumns": 3,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 9,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75,
                 497.8800048828125,
                 133.02239990234375,
                 506.280029296875
               ],
-              "blockId": "b032",
+              "blockId": "b030",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>with chilies.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 9
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2378,8 +2533,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 10,
-              "_epic8Ordinal": 11,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2387,26 +2542,26 @@
                 386.476806640625,
                 476.7600402832031
               ],
-              "blockId": "b033",
+              "blockId": "b031",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>4  Explorers from Portugal were introduced to chilies in Africa.</p>",
+              "html": "<p>4 Explorers from Portugal were introduced to chilies in Africa.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 10
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "4  Explorers from Portugal were introduced to chilies in Africa."
+              "text": "4 Explorers from Portugal were introduced to chilies in Africa."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 10,
-              "_epic8Ordinal": 12,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2414,26 +2569,26 @@
                 515.2727661132812,
                 447.0000305175781
               ],
-              "blockId": "b034",
+              "blockId": "b032",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>5  The feeling of heat while eating chilies is a purely psychological effect rather than a</p>",
+              "html": "<p>5 The feeling of heat while eating chilies is a purely psychological effect rather than a</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 10
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "5  The feeling of heat while eating chilies is a purely psychological effect rather than a"
+              "text": "5 The feeling of heat while eating chilies is a purely psychological effect rather than a"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 10,
-              "_epic8Ordinal": 13,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
                 75,
@@ -2441,7 +2596,7 @@
                 141.71279907226562,
                 431.4000244140625
               ],
-              "blockId": "b035",
+              "blockId": "b033",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>physical one.</p>",
@@ -2451,7 +2606,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 10
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2459,8 +2614,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 11,
-              "_epic8Ordinal": 14,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2468,44 +2623,44 @@
                 526.6103515625,
                 401.8800354003906
               ],
-              "blockId": "b036",
+              "blockId": "b034",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>6  A chemist called Scoville created a heat scale based on the collective judgement of a</p>",
+              "html": "<p>6 A chemist called Scoville created a heat scale based on the collective judgement of a</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 11
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "6  A chemist called Scoville created a heat scale based on the collective judgement of a"
+              "text": "6 A chemist called Scoville created a heat scale based on the collective judgement of a"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 12,
-              "_epic8Ordinal": 15,
-              "_epic8SectionColumns": 3,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 14,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75,
                 377.8800048828125,
                 178.40640258789062,
                 386.280029296875
               ],
-              "blockId": "b037",
+              "blockId": "b035",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>group of individuals.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 12
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2529,7 +2684,7 @@
                 138.0532989501953,
                 761.8800048828125
               ],
-              "blockId": "b038",
+              "blockId": "b036",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 7 – 13</h3>",
@@ -2557,7 +2712,7 @@
                 192.75599670410156,
                 732.3600463867188
               ],
-              "blockId": "b039",
+              "blockId": "b037",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Complete the notes below.</p>",
@@ -2585,7 +2740,7 @@
                 387.4625549316406,
                 702.6000366210938
               ],
-              "blockId": "b040",
+              "blockId": "b038",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Choose ONE WORD ONLY from the passage for each answer.</p>",
@@ -2613,7 +2768,7 @@
                 352.821533203125,
                 673.0800170898438
               ],
-              "blockId": "b041",
+              "blockId": "b039",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Write your answers in boxes 7–13 on your answer sheet.</p>",
@@ -2627,6 +2782,7 @@
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write your answers in boxes 7–13 on your answer sheet."
             },
             {
@@ -2640,7 +2796,7 @@
                 367.775390625,
                 622.4400024414062
               ],
-              "blockId": "b042",
+              "blockId": "b040",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>The role of capsaicin</p>",
@@ -2658,26 +2814,26 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 61.4399528503418,
                 578.0399780273438,
                 200.2295379638672,
                 586.4400024414062
               ],
-              "blockId": "b043",
+              "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Chili seeds and capsaicin</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2685,7 +2841,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2694,25 +2850,25 @@
                 441.35028076171875,
                 556.9200439453125
               ],
-              "blockId": "b044",
+              "blockId": "b042",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  certain birds and other animals eat chili fruit and spread the seeds</p>",
+              "html": "<p>• certain birds and other animals eat chili fruit and spread the seeds</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  certain birds and other animals eat chili fruit and spread the seeds"
+              "text": "• certain birds and other animals eat chili fruit and spread the seeds"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2721,25 +2877,25 @@
                 405.3472595214844,
                 533.8800659179688
               ],
-              "blockId": "b045",
+              "blockId": "b043",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  some animals destroy the seeds, preventing 7 __________</p>",
+              "html": "<p>• some animals destroy the seeds, preventing 7 __________</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  some animals destroy the seeds, preventing 7 __________"
+              "text": "• some animals destroy the seeds, preventing 7 __________"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2748,25 +2904,25 @@
                 503.3878479003906,
                 510.84002685546875
               ],
-              "blockId": "b046",
+              "blockId": "b044",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  unlike many other plants, chilies contain an unpleasant chemical only in their</p>",
+              "html": "<p>• unlike many other plants, chilies contain an unpleasant chemical only in their</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  unlike many other plants, chilies contain an unpleasant chemical only in their"
+              "text": "• unlike many other plants, chilies contain an unpleasant chemical only in their"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2775,7 +2931,7 @@
                 167.2222900390625,
                 488.0400390625
               ],
-              "blockId": "b047",
+              "blockId": "b045",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>8 __________</p>",
@@ -2785,7 +2941,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2793,7 +2949,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2802,25 +2958,25 @@
                 417.3636169433594,
                 465.0000305175781
               ],
-              "blockId": "b048",
+              "blockId": "b046",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  the 9 __________ of the chili causes an increase in capsaicin</p>",
+              "html": "<p>• the 9 __________ of the chili causes an increase in capsaicin</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  the 9 __________ of the chili causes an increase in capsaicin"
+              "text": "• the 9 __________ of the chili causes an increase in capsaicin"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2829,7 +2985,7 @@
                 376.22149658203125,
                 417.0000305175781
               ],
-              "blockId": "b049",
+              "blockId": "b047",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Tewksbury’s experiments to test the effects of capsaicin</p>",
@@ -2839,7 +2995,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2847,7 +3003,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2856,25 +3012,25 @@
                 401.63037109375,
                 387.48004150390625
               ],
-              "blockId": "b050",
+              "blockId": "b048",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  chilies offered to rodents and birds in laboratory conditions</p>",
+              "html": "<p>• chilies offered to rodents and birds in laboratory conditions</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  chilies offered to rodents and birds in laboratory conditions"
+              "text": "• chilies offered to rodents and birds in laboratory conditions"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2883,25 +3039,25 @@
                 427.0027160644531,
                 364.4400329589844
               ],
-              "blockId": "b051",
+              "blockId": "b049",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  rodents avoided chilies with a high 10 __________ of capsaicin</p>",
+              "html": "<p>• rodents avoided chilies with a high 10 __________ of capsaicin</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  rodents avoided chilies with a high 10 __________ of capsaicin"
+              "text": "• rodents avoided chilies with a high 10 __________ of capsaicin"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2910,25 +3066,25 @@
                 272.21514892578125,
                 341.4000244140625
               ],
-              "blockId": "b052",
+              "blockId": "b050",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  birds do not mind eating capsaicin</p>",
+              "html": "<p>• birds do not mind eating capsaicin</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  birds do not mind eating capsaicin"
+              "text": "• birds do not mind eating capsaicin"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2937,25 +3093,25 @@
                 304.20233154296875,
                 318.36004638671875
               ],
-              "blockId": "b053",
+              "blockId": "b051",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>o  capsaicin slows digestion in birds</p>",
+              "html": "<p>o capsaicin slows digestion in birds</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "o  capsaicin slows digestion in birds"
+              "text": "o capsaicin slows digestion in birds"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2964,25 +3120,25 @@
                 409.6293640136719,
                 295.3200378417969
               ],
-              "blockId": "b054",
+              "blockId": "b052",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>o  this may make the 11 __________ of the seed softer</p>",
+              "html": "<p>o this may make the 11 __________ of the seed softer</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "o  this may make the 11 __________ of the seed softer"
+              "text": "o this may make the 11 __________ of the seed softer"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2991,25 +3147,25 @@
                 498.3900146484375,
                 272.280029296875
               ],
-              "blockId": "b055",
+              "blockId": "b053",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  another role of capsaicin is in reducing infection caused by a 12 __________</p>",
+              "html": "<p>• another role of capsaicin is in reducing infection caused by a 12 __________</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  another role of capsaicin is in reducing infection caused by a 12 __________"
+              "text": "• another role of capsaicin is in reducing infection caused by a 12 __________"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3018,44 +3174,44 @@
                 528.347900390625,
                 249.2400360107422
               ],
-              "blockId": "b056",
+              "blockId": "b054",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  Tewksbury considers the role of capsaicin in chilies to be an example in nature of</p>",
+              "html": "<p>• Tewksbury considers the role of capsaicin in chilies to be an example in nature of</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  Tewksbury considers the role of capsaicin in chilies to be an example in nature of"
+              "text": "• Tewksbury considers the role of capsaicin in chilies to be an example in nature of"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 97.43994903564453,
                 217.80003356933594,
                 246.91744995117188,
                 226.2000274658203
               ],
-              "blockId": "b057",
+              "blockId": "b055",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>the beauty of 13 __________</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3076,7 +3232,7 @@
                 520,
                 108
               ],
-              "blockId": "b058",
+              "blockId": "b056",
               "blockType": "paragraph",
               "confidence": 0.2,
               "html": "<p>[No extractable text on page 5]</p>",
@@ -3133,7 +3289,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Chili peppers</p>\n<p>Origins</p>\n<p>Chili peppers, the fruit of the capsicum plant, are believed to have originated in what is now Bolivia in South America, home to dozens of wild species that are probably the ancestors of each and every chili variety today, from mild green peppers to fiery hot naga jolokia peppers. The chili pepper contains a heat-generating ingredient known as capsaicin, which has long been known to affect human taste buds, nerve cells and nasal membranes. People have been spicing their food with chilies for at least 8,000 years. At first they used wild chilies, adding them to potatoes, grain and corn, says Linda Perry, archaeobotanist at the Smithsonian Institution, Washington DC in the US. She has found traces of chilies on ancient stones used to grind grains, and in vessels used in food preparation from the</p>\n<p>Bahamas to southern Peru.</p>\n<p>Based on her examination of ancient pieces of pottery, Ms Perry concludes that people in the Americas began cultivating chilies more than 6,000 years ago. ‘Chilies were domesticated early and spread very quickly, just because people liked them,’ she says. The chilies, it would seem, made otherwise quite bland food more enjoyable to eat. Other researchers, such as Jennifer Billing and Paul Sherman of Cornell University in the US, argue that people learned early on that chilies could reduce food spoilage. And some scholars point to medical uses: ancient Mayan Indians in Central America incorporated chilies into medicinal preparations for treating wounds, stomach problems and earaches.</p>\n<p>Spreading chili peppers around the world</p>\n<p>Whatever the benefits, chilies spread around the world at astonishing speed, thanks in part to Christopher Columbus, who is credited with being the first European to reach America in 1492, and claiming the new land for Spain. When Columbus took chilies back to Spain, they were initially not popular, but soon became widely accepted throughout Europe. The Portuguese first encountered chilies in Brazil and carried them, along with tobacco and cotton, to Africa. By 1550, chilies were being cultivated all over the world, including in India,</p>\n<p>Japan and China.</p>\n<p>The heat of chili peppers</p>\n<p>When people call chilies hot, they are not just speaking metaphorically. Capsaicin stimulates the neural sensors in the tongue and skin that also detect rising temperatures. As far as these neurons and the brain are concerned, when someone eats a hot chili, the effect is the same as exposure to fire. With enough heat, adrenaline flows and the heart pumps faster. This reaction, according to some physiologists, is part of what makes</p>\n<p>peppers so stimulating and enjoyable to eat.</p>\n<p>The scale that scientists use to describe a chili’s heat was developed in 1912 by Wilbur Scoville, a chem ist from  Detroit in the US. He diluted a chili extract in sugar water until the heat was no longer detectable to a panel of trained tasters; that threshold is the basis of the Scoville rating. A sweet bell pepper, for instance, measures zero on the Scoville Heat Unit (SHU) scale, while a typical hot jalapeno chili pepper from Mexico falls between 2,500 and</p>\n<p>8,000 SHUs. Last year, the naga jolokia chili, grown in India, was rated at one million</p>\n<p>SHUs.</p>\n<p>The role of capsaicin</p>\n<p>But why would chilies have evolved to produce the varying degrees of heat of capsaicin? Chili peppers, like other fruit, lure birds and other animals to eat them and disperse their seeds. But chilies also attract predators, largely rodents like packrats and cactus mice, that crush seeds and make germination impossible. In order to deter animals from eating their seeds, many plants produce toxic or foul-tasting chemicals, but these are usually found in the plant’s leaves and roots as well as its fruit. In chilies, however, capsaicin is found just in the fruit, and becomes much stronger with ripening. Joshua Tewksbury, an ecologist at the University of Washington in the US, suspected that at least one role that capsaicin performs</p>\n<p>is to protect the chili seeds from rodents.</p>\n<p>To test his theory, Tewksbury grew plants that produced hot, spicy chilies as well as plants that yielded mild chilies (though both were from the same species). When he offered the fruits of those plants to laboratory rats and mice, they ate the mild chilies but avoided the ones with a strong concentration of capsaicin. He later found that birds do not seem to mind eating even the hottest chilies and, in fact, that the capsaicin had the strange effect of retarding birds’ digestion, which helps some seeds germinate, possibly by softening the seed coat. Even so, Tewksbury didn’t believe that deterring rodents and slowing bird digestion were enough to explain why the spicy heat of chilies evolved. Instead, he thinks that a chili’s heat protects it from disease that a certain fungus can trigger, the primary reason chili seeds die prior to being dispersed. In looking at chili populations that contain hot, spicy and mild plants, Tewksbury has found that the more capsaicin, the less fungal infection. ‘Capsaicin demonstrates the incredible elegance of evolution,’ says Tewksbury. ‘The capsaicin discourages rodents and deters microbes – and humans harness this ability when they use chilies to preserve food – but capsaicin doesn’t prevent birds from eating chili fruit and spreading seeds. Once in a while, the complex, often conflicting demands that nature places on complex traits result in a truly elegant solution. This is one of those times.’</p>\n<p>•  certain birds and other animals eat chili fruit and spread the seeds</p>\n<p>Tewksbury’s experiments to test the effects of capsaicin</p>\n<p>•  chilies offered to rodents and birds in laboratory conditions</p>\n<p>•  birds do not mind eating capsaicin</p>\n<p>o  capsaicin slows digestion in birds</p>\n<p>•  Tewksbury considers the role of capsaicin in chilies to be an example in nature of</p>",
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Chili peppers</p>\n<p>Origins</p>\n<p>Chili peppers, the fruit of the capsicum plant, are believed to have originated in what is now Bolivia in South America, home to dozens of wild species that are probably the ancestors of each and every chili variety today, from mild green peppers to fiery hot naga jolokia peppers. The chili pepper contains a heat-generating ingredient known as capsaicin, which has long been known to affect human taste buds, nerve cells and nasal membranes. People have been spicing their food with chilies for at least 8,000 years. At first they used wild chilies, adding them to potatoes, grain and corn, says Linda Perry, archaeobotanist at the Smithsonian Institution, Washington DC in the US. She has found traces of chilies on ancient stones used to grind grains, and in vessels used in food preparation from the</p>\n<p>Bahamas to southern Peru.</p>\n<p>Based on her examination of ancient pieces of pottery, Ms Perry concludes that people in the Americas began cultivating chilies more than 6,000 years ago. ‘Chilies were domesticated early and spread very quickly, just because people liked them,’ she says. The chilies, it would seem, made otherwise quite bland food more enjoyable to eat. Other researchers, such as Jennifer Billing and Paul Sherman of Cornell University in the US, argue that people learned early on that chilies could reduce food spoilage. And some scholars point to medical uses: ancient Mayan Indians in Central America incorporated chilies into medicinal preparations for treating wounds, stomach problems and earaches.</p>\n<p>Spreading chili peppers around the world</p>\n<p>Whatever the benefits, chilies spread around the world at astonishing speed, thanks in part to Christopher Columbus, who is credited with being the first European to reach America in 1492, and claiming the new land for Spain. When Columbus took chilies back to Spain, they were initially not popular, but soon became widely accepted throughout Europe. The Portuguese first encountered chilies in Brazil and carried them, along with tobacco and cotton, to Africa. By 1550, chilies were being cultivated all over the world, including in India,</p>\n<p>Japan and China.</p>\n<p>The heat of chili peppers</p>\n<p>When people call chilies hot, they are not just speaking metaphorically. Capsaicin stimulates the neural sensors in the tongue and skin that also detect rising temperatures. As far as these neurons and the brain are concerned, when someone eats a hot chili, the effect is the same as exposure to fire. With enough heat, adrenaline flows and the heart pumps faster. This reaction, according to some physiologists, is part of what makes</p>\n<p>peppers so stimulating and enjoyable to eat.</p>\n<p>The scale that scientists use to describe a chili’s heat was developed in 1912 by Wilbur Scoville, a chem ist from Detroit in the US. He diluted a chili extract in sugar water until the heat was no longer detectable to a panel of trained tasters; that threshold is the basis of the Scoville rating. A sweet bell pepper, for instance, measures zero on the Scoville Heat Unit (SHU) scale, while a typical hot jalapeno chili pepper from Mexico falls between 2,500 and 8,000 SHUs. Last year, the naga jolokia chili, grown in India, was rated at one million</p>\n<p>SHUs.</p>\n<p>The role of capsaicin</p>\n<p>But why would chilies have evolved to produce the varying degrees of heat of capsaicin? Chili peppers, like other fruit, lure birds and other animals to eat them and disperse their seeds. But chilies also attract predators, largely rodents like packrats and cactus mice, that crush seeds and make germination impossible. In order to deter animals from eating their seeds, many plants produce toxic or foul-tasting chemicals, but these are usually found in the plant’s leaves and roots as well as its fruit. In chilies, however, capsaicin is found just in the fruit, and becomes much stronger with ripening. Joshua Tewksbury, an ecologist at the University of Washington in the US, suspected that at least one role that capsaicin performs</p>\n<p>is to protect the chili seeds from rodents.</p>\n<p>To test his theory, Tewksbury grew plants that produced hot, spicy chilies as well as plants that yielded mild chilies (though both were from the same species). When he offered the fruits of those plants to laboratory rats and mice, they ate the mild chilies but avoided the ones with a strong concentration of capsaicin. He later found that birds do not seem to mind eating even the hottest chilies and, in fact, that the capsaicin had the strange effect of retarding birds’ digestion, which helps some seeds germinate, possibly by softening the seed coat. Even so, Tewksbury didn’t believe that deterring rodents and slowing bird digestion were enough to explain why the spicy heat of chilies evolved. Instead, he thinks that a chili’s heat protects it from disease that a certain fungus can trigger, the primary reason chili seeds die prior to being dispersed. In looking at chili populations that contain hot, spicy and mild plants, Tewksbury has found that the more capsaicin, the less fungal infection. ‘Capsaicin demonstrates the incredible elegance of evolution,’ says Tewksbury. ‘The capsaicin discourages rodents and deters microbes – and humans harness this ability when they use chilies to preserve food – but capsaicin doesn’t prevent birds from eating chili fruit and spreading seeds. Once in a while, the complex, often conflicting demands that nature places on complex traits result in a truly elegant solution. This is one of those times.’</p>",
             "kind": "html"
           }
         ]
@@ -3171,10 +3327,10 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 7-13</p><p>Questions 7 – 13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. The role of capsaicin • some animals destroy the seeds, preventing 7 __________ • unlike many other plants, chilies contain an unpleasant chemical only in their</p></div><div class=\"notes-completion\">Questions 7 – 13\nComplete the notes below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 7–13 on your answer sheet.\nThe role of capsaicin\n• some animals destroy the seeds, preventing <span class=\"inline-completion\" data-question-id=\"q7\"><strong>7</strong> <input type=\"text\" id=\"q7_input\" name=\"q7\" placeholder=\"answer\"></span>\n• unlike many other plants, chilies contain an unpleasant chemical only in their\n<span class=\"inline-completion\" data-question-id=\"q8\"><strong>8</strong> <input type=\"text\" id=\"q8_input\" name=\"q8\" placeholder=\"answer\"></span>\n• the <span class=\"inline-completion\" data-question-id=\"q9\"><strong>9</strong> <input type=\"text\" id=\"q9_input\" name=\"q9\" placeholder=\"answer\"></span> of the chili causes an increase in capsaicin\n• rodents avoided chilies with a high <span class=\"inline-completion\" data-question-id=\"q10\"><strong>10</strong> <input type=\"text\" id=\"q10_input\" name=\"q10\" placeholder=\"answer\"></span> of capsaicin\no this may make the <span class=\"inline-completion\" data-question-id=\"q11\"><strong>11</strong> <input type=\"text\" id=\"q11_input\" name=\"q11\" placeholder=\"answer\"></span> of the seed softer\n• another role of capsaicin is in reducing infection caused by a <span class=\"inline-completion\" data-question-id=\"q12\"><strong>12</strong> <input type=\"text\" id=\"q12_input\" name=\"q12\" placeholder=\"answer\"></span>\nthe beauty of <span class=\"inline-completion\" data-question-id=\"q13\"><strong>13</strong> <input type=\"text\" id=\"q13_input\" name=\"q13\" placeholder=\"answer\"></span></div></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 7-13</p><p>Questions 7 – 13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. The role of capsaicin Chili seeds and capsaicin • certain birds and other animals eat chili fruit and spread the seeds • some animals destroy the seeds, preventing 7 __________ • unlike many other plants, chilies contain an unpleasant chemical only in their</p></div><div class=\"notes-completion\">Questions 7 – 13\nComplete the notes below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 7–13 on your answer sheet.\nThe role of capsaicin\nChili seeds and capsaicin\n• certain birds and other animals eat chili fruit and spread the seeds\n• some animals destroy the seeds, preventing <span class=\"inline-completion\" data-question-id=\"q7\"><strong>7</strong> <input type=\"text\" id=\"q7_input\" name=\"q7\" placeholder=\"answer\"></span>\n• unlike many other plants, chilies contain an unpleasant chemical only in their\n<span class=\"inline-completion\" data-question-id=\"q8\"><strong>8</strong> <input type=\"text\" id=\"q8_input\" name=\"q8\" placeholder=\"answer\"></span>\n• the <span class=\"inline-completion\" data-question-id=\"q9\"><strong>9</strong> <input type=\"text\" id=\"q9_input\" name=\"q9\" placeholder=\"answer\"></span> of the chili causes an increase in capsaicin\nTewksbury’s experiments to test the effects of capsaicin\n• chilies offered to rodents and birds in laboratory conditions\n• rodents avoided chilies with a high <span class=\"inline-completion\" data-question-id=\"q10\"><strong>10</strong> <input type=\"text\" id=\"q10_input\" name=\"q10\" placeholder=\"answer\"></span> of capsaicin\n• birds do not mind eating capsaicin\no capsaicin slows digestion in birds\no this may make the <span class=\"inline-completion\" data-question-id=\"q11\"><strong>11</strong> <input type=\"text\" id=\"q11_input\" name=\"q11\" placeholder=\"answer\"></span> of the seed softer\n• another role of capsaicin is in reducing infection caused by a <span class=\"inline-completion\" data-question-id=\"q12\"><strong>12</strong> <input type=\"text\" id=\"q12_input\" name=\"q12\" placeholder=\"answer\"></span>\n• Tewksbury considers the role of capsaicin in chilies to be an example in nature of\nthe beauty of <span class=\"inline-completion\" data-question-id=\"q13\"><strong>13</strong> <input type=\"text\" id=\"q13_input\" name=\"q13\" placeholder=\"answer\"></span></div></section>",
           "groupId": "group-2",
           "kind": "sentence_completion",
-          "leadHtml": "<p>Questions 7-13</p><p>Questions 7 – 13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. The role of capsaicin • some animals destroy the seeds, preventing 7 __________ • unlike many other plants, chilies contain an unpleasant chemical only in their</p>",
+          "leadHtml": "<p>Questions 7-13</p><p>Questions 7 – 13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. The role of capsaicin Chili seeds and capsaicin • certain birds and other animals eat chili fruit and spread the seeds • some animals destroy the seeds, preventing 7 __________ • unlike many other plants, chilies contain an unpleasant chemical only in their</p>",
           "questionIds": [
             "q7",
             "q8",
@@ -3239,14 +3395,7 @@
             "b017",
             "b018",
             "b019",
-            "b020",
-            "b021",
-            "b044",
-            "b049",
-            "b050",
-            "b052",
-            "b053",
-            "b056"
+            "b020"
           ],
           "title": "Passage 1 below."
         }
@@ -3254,6 +3403,7 @@
       "questionGroupCandidates": [
         {
           "blockIds": [
+            "b021",
             "b022",
             "b023",
             "b024",
@@ -3267,13 +3417,12 @@
             "b032",
             "b033",
             "b034",
-            "b035",
-            "b036",
-            "b037"
+            "b035"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
+              "b021",
               "b022",
               "b023",
               "b024",
@@ -3287,9 +3436,7 @@
               "b032",
               "b033",
               "b034",
-              "b035",
-              "b036",
-              "b037"
+              "b035"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -3305,6 +3452,12 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b021",
+              "reason": "same-section-continuation",
+              "toBlockId": "b022"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b022",
@@ -3382,18 +3535,6 @@
               "fromBlockId": "b034",
               "reason": "same-section-continuation",
               "toBlockId": "b035"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b035",
-              "reason": "same-section-continuation",
-              "toBlockId": "b036"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b036",
-              "reason": "same-section-continuation",
-              "toBlockId": "b037"
             }
           ],
           "groupId": "group-1",
@@ -3413,7 +3554,7 @@
                 131.37890625,
                 761.8800048828125
               ],
-              "blockId": "b022",
+              "blockId": "b021",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3424,7 +3565,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1 – 6"
             },
             {
@@ -3434,7 +3575,7 @@
                 495.6094970703125,
                 732.3600463867188
               ],
-              "blockId": "b023",
+              "blockId": "b022",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3444,7 +3585,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "passage",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
             },
@@ -3455,7 +3596,7 @@
                 266.11932373046875,
                 702.6000366210938
               ],
-              "blockId": "b024",
+              "blockId": "b023",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3472,44 +3613,23 @@
             {
               "bbox": [
                 75,
-                649.0800170898438,
+                633.47998046875,
                 381.7848205566406,
                 673.0800170898438
               ],
-              "blockId": "b025",
+              "blockId": "b024",
               "column": 0,
               "normalizedBbox": [
                 75,
-                649.0800170898438,
+                633.47998046875,
                 381.7848205566406,
                 673.0800170898438
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
-              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information"
-            },
-            {
-              "bbox": [
-                75,
-                633.47998046875,
-                319.75677490234375,
-                641.8800048828125
-              ],
-              "blockId": "b026",
-              "column": 0,
-              "normalizedBbox": [
-                75,
-                633.47998046875,
-                319.75677490234375,
-                641.8800048828125
-              ],
-              "pageIndex": 3,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 3,
-              "textPreview": "NOT GIVEN if there is no information on this"
+              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there "
             },
             {
               "bbox": [
@@ -3518,7 +3638,7 @@
                 521.2991333007812,
                 612.3600463867188
               ],
-              "blockId": "b027",
+              "blockId": "b025",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3539,7 +3659,7 @@
                 181.72079467773438,
                 596.760009765625
               ],
-              "blockId": "b028",
+              "blockId": "b026",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -3550,7 +3670,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "grow chilies for food."
             },
             {
@@ -3560,7 +3680,7 @@
                 521.9495849609375,
                 567.0000610351562
               ],
-              "blockId": "b029",
+              "blockId": "b027",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3581,7 +3701,7 @@
                 169.72079467773438,
                 551.4000244140625
               ],
-              "blockId": "b030",
+              "blockId": "b028",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -3592,7 +3712,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "food from spoiling."
             },
             {
@@ -3602,7 +3722,7 @@
                 541.3030395507812,
                 521.8800659179688
               ],
-              "blockId": "b031",
+              "blockId": "b029",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3623,7 +3743,7 @@
                 133.02239990234375,
                 506.280029296875
               ],
-              "blockId": "b032",
+              "blockId": "b030",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -3634,7 +3754,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "with chilies."
             },
             {
@@ -3644,7 +3764,7 @@
                 386.476806640625,
                 476.7600402832031
               ],
-              "blockId": "b033",
+              "blockId": "b031",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3665,7 +3785,7 @@
                 515.2727661132812,
                 447.0000305175781
               ],
-              "blockId": "b034",
+              "blockId": "b032",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3686,7 +3806,7 @@
                 141.71279907226562,
                 431.4000244140625
               ],
-              "blockId": "b035",
+              "blockId": "b033",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -3707,7 +3827,7 @@
                 526.6103515625,
                 401.8800354003906
               ],
-              "blockId": "b036",
+              "blockId": "b034",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3728,7 +3848,7 @@
                 178.40640258789062,
                 386.280029296875
               ],
-              "blockId": "b037",
+              "blockId": "b035",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -3739,43 +3859,57 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "group of individuals."
             }
           ]
         },
         {
           "blockIds": [
+            "b036",
+            "b037",
             "b038",
             "b039",
             "b040",
             "b041",
             "b042",
+            "b043",
+            "b044",
             "b045",
             "b046",
             "b047",
             "b048",
+            "b049",
+            "b050",
             "b051",
+            "b052",
+            "b053",
             "b054",
-            "b055",
-            "b057"
+            "b055"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
+              "b036",
+              "b037",
               "b038",
               "b039",
               "b040",
               "b041",
               "b042",
+              "b043",
+              "b044",
               "b045",
               "b046",
               "b047",
               "b048",
+              "b049",
+              "b050",
               "b051",
+              "b052",
+              "b053",
               "b054",
-              "b055",
-              "b057"
+              "b055"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -3787,6 +3921,18 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b036",
+              "reason": "same-section-continuation",
+              "toBlockId": "b037"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b037",
+              "reason": "same-section-continuation",
+              "toBlockId": "b038"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b038",
@@ -3815,6 +3961,18 @@
               "confidence": 0.72,
               "fromBlockId": "b042",
               "reason": "same-section-continuation",
+              "toBlockId": "b043"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
+              "reason": "same-section-continuation",
               "toBlockId": "b045"
             },
             {
@@ -3839,11 +3997,35 @@
               "confidence": 0.72,
               "fromBlockId": "b048",
               "reason": "same-section-continuation",
+              "toBlockId": "b049"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b049",
+              "reason": "same-section-continuation",
+              "toBlockId": "b050"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b050",
+              "reason": "same-section-continuation",
               "toBlockId": "b051"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b051",
+              "reason": "same-section-continuation",
+              "toBlockId": "b052"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b052",
+              "reason": "same-section-continuation",
+              "toBlockId": "b053"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b053",
               "reason": "same-section-continuation",
               "toBlockId": "b054"
             },
@@ -3852,17 +4034,11 @@
               "fromBlockId": "b054",
               "reason": "same-section-continuation",
               "toBlockId": "b055"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b055",
-              "reason": "same-section-continuation",
-              "toBlockId": "b057"
             }
           ],
           "groupId": "group-2",
           "heading": "Questions 7-13",
-          "instructionText": "Questions 7 – 13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. The role of capsaicin • some animals destroy the seeds, preventing 7 __________ • unlike many other plants, chilies contain an unpleasant chemical only in their",
+          "instructionText": "Questions 7 – 13 Complete the notes below. Choose ONE WORD ONLY from the passage for each answer. Write your answers in boxes 7–13 on your answer sheet. The role of capsaicin Chili seeds and capsaicin • certain birds and other animals eat chili fruit and spread the seeds • some animals destroy the seeds, preventing 7 __________ • unlike many other plants, chilies contain an unpleasant chemical only in their",
           "kindHint": "sentence_completion",
           "layoutHint": "inline_completion",
           "questionRange": [
@@ -3877,7 +4053,7 @@
                 138.0532989501953,
                 761.8800048828125
               ],
-              "blockId": "b038",
+              "blockId": "b036",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3898,7 +4074,7 @@
                 192.75599670410156,
                 732.3600463867188
               ],
-              "blockId": "b039",
+              "blockId": "b037",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3919,7 +4095,7 @@
                 387.4625549316406,
                 702.6000366210938
               ],
-              "blockId": "b040",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3940,7 +4116,7 @@
                 352.821533203125,
                 673.0800170898438
               ],
-              "blockId": "b041",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3950,7 +4126,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 7–13 on your answer sheet."
             },
@@ -3961,7 +4137,7 @@
                 367.775390625,
                 622.4400024414062
               ],
-              "blockId": "b042",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 218.311767578125,
@@ -3977,12 +4153,54 @@
             },
             {
               "bbox": [
+                61.4399528503418,
+                578.0399780273438,
+                200.2295379638672,
+                586.4400024414062
+              ],
+              "blockId": "b041",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                578.0399780273438,
+                200.2295379638672,
+                586.4400024414062
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Chili seeds and capsaicin"
+            },
+            {
+              "bbox": [
+                79.19999694824219,
+                548.52001953125,
+                441.35028076171875,
+                556.9200439453125
+              ],
+              "blockId": "b042",
+              "column": 0,
+              "normalizedBbox": [
+                79.19999694824219,
+                548.52001953125,
+                441.35028076171875,
+                556.9200439453125
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• certain birds and other animals eat chili fruit and spread the seeds"
+            },
+            {
+              "bbox": [
                 79.19999694824219,
                 525.4800415039062,
                 405.3472595214844,
                 533.8800659179688
               ],
-              "blockId": "b045",
+              "blockId": "b043",
               "column": 0,
               "normalizedBbox": [
                 79.19999694824219,
@@ -4003,7 +4221,7 @@
                 503.3878479003906,
                 510.84002685546875
               ],
-              "blockId": "b046",
+              "blockId": "b044",
               "column": 0,
               "normalizedBbox": [
                 79.19999694824219,
@@ -4024,7 +4242,7 @@
                 167.2222900390625,
                 488.0400390625
               ],
-              "blockId": "b047",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 97.13990020751953,
@@ -4045,7 +4263,7 @@
                 417.3636169433594,
                 465.0000305175781
               ],
-              "blockId": "b048",
+              "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 79.19999694824219,
@@ -4061,12 +4279,54 @@
             },
             {
               "bbox": [
+                61.4399528503418,
+                408.6000061035156,
+                376.22149658203125,
+                417.0000305175781
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                408.6000061035156,
+                376.22149658203125,
+                417.0000305175781
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Tewksbury’s experiments to test the effects of capsaicin"
+            },
+            {
+              "bbox": [
+                79.68000030517578,
+                379.08001708984375,
+                401.63037109375,
+                387.48004150390625
+              ],
+              "blockId": "b048",
+              "column": 0,
+              "normalizedBbox": [
+                79.68000030517578,
+                379.08001708984375,
+                401.63037109375,
+                387.48004150390625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• chilies offered to rodents and birds in laboratory conditions"
+            },
+            {
+              "bbox": [
                 79.68000030517578,
                 356.0400085449219,
                 427.0027160644531,
                 364.4400329589844
               ],
-              "blockId": "b051",
+              "blockId": "b049",
               "column": 0,
               "normalizedBbox": [
                 79.68000030517578,
@@ -4082,12 +4342,54 @@
             },
             {
               "bbox": [
+                79.68000030517578,
+                333,
+                272.21514892578125,
+                341.4000244140625
+              ],
+              "blockId": "b050",
+              "column": 0,
+              "normalizedBbox": [
+                79.68000030517578,
+                333,
+                272.21514892578125,
+                341.4000244140625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• birds do not mind eating capsaicin"
+            },
+            {
+              "bbox": [
+                115.58985137939453,
+                309.96002197265625,
+                304.20233154296875,
+                318.36004638671875
+              ],
+              "blockId": "b051",
+              "column": 0,
+              "normalizedBbox": [
+                115.58985137939453,
+                309.96002197265625,
+                304.20233154296875,
+                318.36004638671875
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "o capsaicin slows digestion in birds"
+            },
+            {
+              "bbox": [
                 115.58985137939453,
                 286.9200134277344,
                 409.6293640136719,
                 295.3200378417969
               ],
-              "blockId": "b054",
+              "blockId": "b052",
               "column": 0,
               "normalizedBbox": [
                 115.58985137939453,
@@ -4108,7 +4410,7 @@
                 498.3900146484375,
                 272.280029296875
               ],
-              "blockId": "b055",
+              "blockId": "b053",
               "column": 0,
               "normalizedBbox": [
                 79.68000030517578,
@@ -4124,12 +4426,33 @@
             },
             {
               "bbox": [
+                79.68000030517578,
+                240.8400421142578,
+                528.347900390625,
+                249.2400360107422
+              ],
+              "blockId": "b054",
+              "column": 0,
+              "normalizedBbox": [
+                79.68000030517578,
+                240.8400421142578,
+                528.347900390625,
+                249.2400360107422
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• Tewksbury considers the role of capsaicin in chilies to be an example in nature of"
+            },
+            {
+              "bbox": [
                 97.43994903564453,
                 217.80003356933594,
                 246.91744995117188,
                 226.2000274658203
               ],
-              "blockId": "b057",
+              "blockId": "b055",
               "column": 0,
               "normalizedBbox": [
                 97.43994903564453,
@@ -4140,7 +4463,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "the beauty of 13 __________"
             }
           ]

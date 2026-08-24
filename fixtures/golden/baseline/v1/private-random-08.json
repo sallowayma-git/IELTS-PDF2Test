@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 4,
-    "blockCount": 45,
+    "blockCount": 44,
     "groupCount": 1,
     "slotCount": 13,
     "assetCount": 0,
@@ -34,8 +34,7 @@
       "q13"
     ],
     "roles": [
-      "passage",
-      "question"
+      "passage"
     ]
   },
   "payload": {
@@ -340,7 +339,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Lever Brothers’ Sunlight Soap</p>\n<p>A Revolution in Hygiene and Industry</p>\n<p>Sunlight Soap, produced by the Lever Brothers in the late 19th century, was a groundbreaking innovation in the world of consumer goods. At a time when hygiene and cleanliness were not universally prioritised, Sunlight Soap not only introduced a revolutionary product but also played a crucial role in transforming industrial production, marketing strategies and public health. The success of Sunlight Soap laid the foundation for what would later become Unilever, one of the world’s largest multinational corporations.</p>\n<p>Origins and Innovation</p>\n<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother James Darcy Lever established the Lever Brothers company in England. They sought to create a high-quality soap that was both affordable and effective in promoting hygiene. Traditional soaps at the time were often harsh on the skin and required extensive preparation. The Lever Brothers aimed to change this by producing a soap that was easy to</p>\n<p>use and gentle while maintaining strong cleansing properties.</p>\n<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional method of soap-making, which relied on animal fats and wood ash, Sunlight Soap was manufactured using a blend of vegetable oils and alkali, resulting in a more consistent and superior-quality product. This not only improved the soap’s effectiveness but also made it a</p>\n<p>more ethical and sustainable option compared with its contemporaries.</p>\n<p>Marketing and Branding</p>\n<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ pioneering approach to marketing and branding. At a time when consumer goods were largely sold in bulk without much branding, Sunlight Soap was among the first products to be packaged and advertised extensively. The Lever Brothers recognised the power of branding and used eye-catching designs and slogans to establish a strong presence in the</p>\n<p>market.</p>\n<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding that set it apart from competitors. The company also employed creative advertising campaigns, utilising newspapers, posters and, later, radio and television advertisements. One of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the</p>\n<p>soap’s superior cleaning abilities and resonated with consumers.</p>\n<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional strategies. They introduced coupons, free samples and competitions to attract customers and build brand loyalty. These marketing techniques, which are now standard in the consumer-goods industry, were groundbreaking at the time and played a crucial role in</p>\n<p>establishing Sunlight Soap as a household name.</p>\n<p>Impact on Hygiene and Public Health</p>\n<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public health. In the late 19th and early 20th centuries, diseases related to poor hygiene were rampant, and access to effective cleansing products was limited. The affordability and widespread availability of Sunlight Soap helped improve sanitation and hygiene standards</p>\n<p>in homes across Britain and beyond.</p>\n<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap contributed to reducing the spread of infectious diseases. Public-health campaigns, often supported by the Lever Brothers, emphasised the importance of cleanliness, particularly in urban areas where overcrowding and poor sanitation were major issues. The soap’s role in promoting hygiene was especially crucial during times of public-health crises, such as</p>\n<p>cholera outbreaks and the Spanish-flu pandemic.</p>\n<p>Industrial and Social Innovations</p>\n<p>The Lever Brothers not only revolutionised soap production but also set new standards in industrial practices and social responsibility. In 1888, William Lever established Port Sunlight, a model village on the Wirral Peninsula, to house the workers of the company’s soap factory. Unlike the cramped and unsanitary living conditions common in industrial cities, Port Sunlight provided employees with well-built homes, access to education, recreational facilities and **health-**care services. This initiative was groundbreaking and demonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>\n<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility (CSR) initiatives. It set an example for other industrialists and showcased the benefits of treating workers with dignity and providing them with a better quality of life. Many of the principles applied in Port Sunlight would later influence labour policies and welfare</p>\n<p>programmes in various industries.</p>\n<p>Expansion and Global Reach</p>\n<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded</p>\n<p>their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing</p>\n<p>strategies ensured its continued growth.</p>\n<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding and marketing campaigns. The Lever Brothers tailored their advertisements and promotional efforts to suit different cultural and economic contexts. In many countries, Sunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its</p>\n<p>status as a trusted product worldwide.</p>\n<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to form Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in the soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying</p>\n<p>forward the legacy of Sunlight Soap.</p>\n<p>Legacy and Modern Relevance</p>\n<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original</p>\n<p>product has evolved over time, its core values of cleanliness, affordability and innovation</p>\n<p>remain relevant. The principles established by the Lever Brothers continue to influence</p>\n<p>modern consumer-goods companies, particularly in areas such as sustainability and social</p>\n<p>responsibility.</p>\n<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to</p>\n<p>prioritise sustainability and social impact. Initiatives such as reducing plastic waste,</p>\n<p>promoting handwashing in developing countries and supporting fair-trade practices reflect</p>\n<p>the same pioneering spirit that defined the success of Sunlight Soap.</p>"
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Lever Brothers’ Sunlight Soap</p>\n<p>A Revolution in Hygiene and Industry</p>\n<p>Sunlight Soap, produced by the Lever Brothers in the late 19th century, was a groundbreaking innovation in the world of consumer goods. At a time when hygiene and cleanliness were not universally prioritised, Sunlight Soap not only introduced a revolutionary product but also played a crucial role in transforming industrial production, marketing strategies and public health. The success of Sunlight Soap laid the foundation for what would later become Unilever, one of the world’s largest multinational corporations.</p>\n<p>Origins and Innovation</p>\n<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother James Darcy Lever established the Lever Brothers company in England. They sought to create a high-quality soap that was both affordable and effective in promoting hygiene. Traditional soaps at the time were often harsh on the skin and required extensive preparation. The Lever Brothers aimed to change this by producing a soap that was easy to</p>\n<p>use and gentle while maintaining strong cleansing properties.</p>\n<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional method of soap-making, which relied on animal fats and wood ash, Sunlight Soap was manufactured using a blend of vegetable oils and alkali, resulting in a more consistent and superior-quality product. This not only improved the soap’s effectiveness but also made it a</p>\n<p>more ethical and sustainable option compared with its contemporaries.</p>\n<p>Marketing and Branding</p>\n<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ pioneering approach to marketing and branding. At a time when consumer goods were largely sold in bulk without much branding, Sunlight Soap was among the first products to be packaged and advertised extensively. The Lever Brothers recognised the power of branding and used eye-catching designs and slogans to establish a strong presence in the</p>\n<p>market.</p>\n<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding that set it apart from competitors. The company also employed creative advertising campaigns, utilising newspapers, posters and, later, radio and television advertisements. One of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the</p>\n<p>soap’s superior cleaning abilities and resonated with consumers.</p>\n<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional strategies. They introduced coupons, free samples and competitions to attract customers and build brand loyalty. These marketing techniques, which are now standard in the consumer-goods industry, were groundbreaking at the time and played a crucial role in</p>\n<p>establishing Sunlight Soap as a household name.</p>\n<p>Impact on Hygiene and Public Health</p>\n<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public health. In the late 19th and early 20th centuries, diseases related to poor hygiene were rampant, and access to effective cleansing products was limited. The affordability and widespread availability of Sunlight Soap helped improve sanitation and hygiene standards</p>\n<p>in homes across Britain and beyond.</p>\n<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap contributed to reducing the spread of infectious diseases. Public-health campaigns, often supported by the Lever Brothers, emphasised the importance of cleanliness, particularly in urban areas where overcrowding and poor sanitation were major issues. The soap’s role in promoting hygiene was especially crucial during times of public-health crises, such as</p>\n<p>cholera outbreaks and the Spanish-flu pandemic.</p>\n<p>Industrial and Social Innovations</p>\n<p>The Lever Brothers not only revolutionised soap production but also set new standards in industrial practices and social responsibility. In 1888, William Lever established Port Sunlight, a model village on the Wirral Peninsula, to house the workers of the company’s soap factory. Unlike the cramped and unsanitary living conditions common in industrial cities, Port Sunlight provided employees with well-built homes, access to education, recreational facilities and **health-**care services. This initiative was groundbreaking and demonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>\n<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility (CSR) initiatives. It set an example for other industrialists and showcased the benefits of treating workers with dignity and providing them with a better quality of life. Many of the principles applied in Port Sunlight would later influence labour policies and welfare</p>\n<p>programmes in various industries.</p>\n<p>Expansion and Global Reach</p>\n<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing</p>\n<p>strategies ensured its continued growth.</p>\n<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding and marketing campaigns. The Lever Brothers tailored their advertisements and promotional efforts to suit different cultural and economic contexts. In many countries, Sunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its</p>\n<p>status as a trusted product worldwide.</p>\n<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to form Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in the soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying</p>\n<p>forward the legacy of Sunlight Soap.</p>\n<p>Legacy and Modern Relevance</p>\n<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original</p>\n<p>product has evolved over time, its core values of cleanliness, affordability and innovation</p>\n<p>remain relevant. The principles established by the Lever Brothers continue to influence</p>\n<p>modern consumer-goods companies, particularly in areas such as sustainability and social</p>\n<p>responsibility.</p>\n<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to</p>\n<p>prioritise sustainability and social impact. Initiatives such as reducing plastic waste,</p>\n<p>promoting handwashing in developing countries and supporting fair-trade practices reflect</p>\n<p>the same pioneering spirit that defined the success of Sunlight Soap.</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -397,8 +396,7 @@
           "b041",
           "b042",
           "b043",
-          "b044",
-          "b045"
+          "b044"
         ],
         "title": "Passage 1 below."
       },
@@ -443,7 +441,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 744.8400268554688,
@@ -457,7 +455,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -469,7 +467,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -488,18 +486,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 706.6799926757812,
@@ -513,10 +510,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -525,7 +522,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -544,7 +541,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -552,7 +549,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -571,7 +568,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -579,7 +576,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -598,7 +595,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -606,7 +603,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -625,7 +622,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -633,7 +630,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -652,7 +649,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -660,7 +657,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -679,7 +676,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -687,7 +684,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -706,7 +703,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -714,7 +711,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -733,7 +730,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -748,8 +745,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -768,7 +765,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -776,8 +773,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -796,7 +793,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -804,8 +801,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -824,7 +821,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -832,8 +829,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -852,7 +849,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -860,8 +857,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -880,7 +877,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -888,8 +885,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -908,7 +905,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -916,8 +913,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -936,7 +933,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -944,8 +941,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -964,7 +961,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -972,8 +969,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -992,7 +989,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1000,8 +997,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1020,7 +1017,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1028,8 +1025,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1048,7 +1045,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1056,8 +1053,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1076,7 +1073,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1091,8 +1088,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1111,7 +1108,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1119,8 +1116,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1139,7 +1136,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1147,8 +1144,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1167,7 +1164,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1175,8 +1172,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1195,7 +1192,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1203,10 +1200,10 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 496.67999267578125,
@@ -1220,10 +1217,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1231,65 +1228,37 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
-                474.3600158691406,
+                427.55999755859375,
                 522.2901611328125,
                 482.7600402832031
               ],
               "blockId": "b029",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded</p>",
+              "html": "<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded"
+              "text": "The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
-              "_epic8SectionColumns": 1,
-              "bbox": [
-                54,
-                427.55999755859375,
-                522.253662109375,
-                467.1600341796875
-              ],
-              "blockId": "b030",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 1,
-                    "current": 0
-                  },
-                  "index": 4
-                }
-              },
-              "pageIndex": 3,
-              "text": "their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing"
-            },
-            {
-              "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1297,7 +1266,7 @@
                 262.7951965332031,
                 420.36004638671875
               ],
-              "blockId": "b031",
+              "blockId": "b030",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>strategies ensured its continued growth.</p>",
@@ -1307,7 +1276,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1315,9 +1284,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 8,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1325,7 +1294,7 @@
                 540.2974243164062,
                 390.60003662109375
               ],
-              "blockId": "b032",
+              "blockId": "b031",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding and marketing campaigns. The Lever Brothers tailored their advertisements and promotional efforts to suit different cultural and economic contexts. In many countries, Sunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its</p>",
@@ -1335,7 +1304,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1343,9 +1312,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 9,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1353,7 +1322,7 @@
                 252.10562133789062,
                 328.2000427246094
               ],
-              "blockId": "b033",
+              "blockId": "b032",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>status as a trusted product worldwide.</p>",
@@ -1363,7 +1332,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1371,9 +1340,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 10,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1381,7 +1350,7 @@
                 534.9190673828125,
                 298.6800231933594
               ],
-              "blockId": "b034",
+              "blockId": "b033",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to form Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in the soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying</p>",
@@ -1391,7 +1360,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1399,9 +1368,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 11,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1409,7 +1378,7 @@
                 243.4583740234375,
                 251.88002014160156
               ],
-              "blockId": "b035",
+              "blockId": "b034",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>forward the legacy of Sunlight Soap.</p>",
@@ -1419,7 +1388,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -1434,8 +1403,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1444,7 +1413,7 @@
                 250.84825134277344,
                 751.8624267578125
               ],
-              "blockId": "b036",
+              "blockId": "b035",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Legacy and Modern Relevance</p>",
@@ -1454,7 +1423,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1462,8 +1431,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1472,7 +1441,7 @@
                 524.3037109375,
                 729.3024291992188
               ],
-              "blockId": "b037",
+              "blockId": "b036",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original</p>",
@@ -1482,7 +1451,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1490,8 +1459,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1500,7 +1469,7 @@
                 522.9429931640625,
                 713.702392578125
               ],
-              "blockId": "b038",
+              "blockId": "b037",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>product has evolved over time, its core values of cleanliness, affordability and innovation</p>",
@@ -1510,7 +1479,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1518,8 +1487,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1528,7 +1497,7 @@
                 513.594970703125,
                 698.1024169921875
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>remain relevant. The principles established by the Lever Brothers continue to influence</p>",
@@ -1538,7 +1507,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1546,8 +1515,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1556,7 +1525,7 @@
                 533.5882568359375,
                 682.5023803710938
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>modern consumer-goods companies, particularly in areas such as sustainability and social</p>",
@@ -1566,7 +1535,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1574,27 +1543,27 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 661.2576293945312,
                 123.36719512939453,
                 666.9024047851562
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>responsibility.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1602,8 +1571,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 6,
-              "_epic8LayoutSection": 6,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1612,7 +1581,7 @@
                 530.9326782226562,
                 637.3823852539062
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to</p>",
@@ -1622,7 +1591,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1630,8 +1599,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 6,
-              "_epic8LayoutSection": 6,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1640,7 +1609,7 @@
                 493.5504150390625,
                 621.7824096679688
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>prioritise sustainability and social impact. Initiatives such as reducing plastic waste,</p>",
@@ -1650,7 +1619,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1658,8 +1627,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 6,
-              "_epic8LayoutSection": 6,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1668,7 +1637,7 @@
                 528.9441528320312,
                 606.1824340820312
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>promoting handwashing in developing countries and supporting fair-trade practices reflect</p>",
@@ -1678,7 +1647,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1686,8 +1655,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 6,
-              "_epic8LayoutSection": 6,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1696,7 +1665,7 @@
                 415.57196044921875,
                 590.5823974609375
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>the same pioneering spirit that defined the success of Sunlight Soap.</p>",
@@ -1706,7 +1675,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -1760,7 +1729,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Lever Brothers’ Sunlight Soap</p>\n<p>A Revolution in Hygiene and Industry</p>\n<p>Sunlight Soap, produced by the Lever Brothers in the late 19th century, was a groundbreaking innovation in the world of consumer goods. At a time when hygiene and cleanliness were not universally prioritised, Sunlight Soap not only introduced a revolutionary product but also played a crucial role in transforming industrial production, marketing strategies and public health. The success of Sunlight Soap laid the foundation for what would later become Unilever, one of the world’s largest multinational corporations.</p>\n<p>Origins and Innovation</p>\n<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother James Darcy Lever established the Lever Brothers company in England. They sought to create a high-quality soap that was both affordable and effective in promoting hygiene. Traditional soaps at the time were often harsh on the skin and required extensive preparation. The Lever Brothers aimed to change this by producing a soap that was easy to</p>\n<p>use and gentle while maintaining strong cleansing properties.</p>\n<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional method of soap-making, which relied on animal fats and wood ash, Sunlight Soap was manufactured using a blend of vegetable oils and alkali, resulting in a more consistent and superior-quality product. This not only improved the soap’s effectiveness but also made it a</p>\n<p>more ethical and sustainable option compared with its contemporaries.</p>\n<p>Marketing and Branding</p>\n<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ pioneering approach to marketing and branding. At a time when consumer goods were largely sold in bulk without much branding, Sunlight Soap was among the first products to be packaged and advertised extensively. The Lever Brothers recognised the power of branding and used eye-catching designs and slogans to establish a strong presence in the</p>\n<p>market.</p>\n<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding that set it apart from competitors. The company also employed creative advertising campaigns, utilising newspapers, posters and, later, radio and television advertisements. One of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the</p>\n<p>soap’s superior cleaning abilities and resonated with consumers.</p>\n<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional strategies. They introduced coupons, free samples and competitions to attract customers and build brand loyalty. These marketing techniques, which are now standard in the consumer-goods industry, were groundbreaking at the time and played a crucial role in</p>\n<p>establishing Sunlight Soap as a household name.</p>\n<p>Impact on Hygiene and Public Health</p>\n<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public health. In the late 19th and early 20th centuries, diseases related to poor hygiene were rampant, and access to effective cleansing products was limited. The affordability and widespread availability of Sunlight Soap helped improve sanitation and hygiene standards</p>\n<p>in homes across Britain and beyond.</p>\n<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap contributed to reducing the spread of infectious diseases. Public-health campaigns, often supported by the Lever Brothers, emphasised the importance of cleanliness, particularly in urban areas where overcrowding and poor sanitation were major issues. The soap’s role in promoting hygiene was especially crucial during times of public-health crises, such as</p>\n<p>cholera outbreaks and the Spanish-flu pandemic.</p>\n<p>Industrial and Social Innovations</p>\n<p>The Lever Brothers not only revolutionised soap production but also set new standards in industrial practices and social responsibility. In 1888, William Lever established Port Sunlight, a model village on the Wirral Peninsula, to house the workers of the company’s soap factory. Unlike the cramped and unsanitary living conditions common in industrial cities, Port Sunlight provided employees with well-built homes, access to education, recreational facilities and **health-**care services. This initiative was groundbreaking and demonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>\n<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility (CSR) initiatives. It set an example for other industrialists and showcased the benefits of treating workers with dignity and providing them with a better quality of life. Many of the principles applied in Port Sunlight would later influence labour policies and welfare</p>\n<p>programmes in various industries.</p>\n<p>Expansion and Global Reach</p>\n<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded</p>\n<p>their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing</p>\n<p>strategies ensured its continued growth.</p>\n<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding and marketing campaigns. The Lever Brothers tailored their advertisements and promotional efforts to suit different cultural and economic contexts. In many countries, Sunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its</p>\n<p>status as a trusted product worldwide.</p>\n<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to form Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in the soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying</p>\n<p>forward the legacy of Sunlight Soap.</p>\n<p>Legacy and Modern Relevance</p>\n<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original</p>\n<p>product has evolved over time, its core values of cleanliness, affordability and innovation</p>\n<p>remain relevant. The principles established by the Lever Brothers continue to influence</p>\n<p>modern consumer-goods companies, particularly in areas such as sustainability and social</p>\n<p>responsibility.</p>\n<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to</p>\n<p>prioritise sustainability and social impact. Initiatives such as reducing plastic waste,</p>\n<p>promoting handwashing in developing countries and supporting fair-trade practices reflect</p>\n<p>the same pioneering spirit that defined the success of Sunlight Soap.</p>",
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Lever Brothers’ Sunlight Soap</p>\n<p>A Revolution in Hygiene and Industry</p>\n<p>Sunlight Soap, produced by the Lever Brothers in the late 19th century, was a groundbreaking innovation in the world of consumer goods. At a time when hygiene and cleanliness were not universally prioritised, Sunlight Soap not only introduced a revolutionary product but also played a crucial role in transforming industrial production, marketing strategies and public health. The success of Sunlight Soap laid the foundation for what would later become Unilever, one of the world’s largest multinational corporations.</p>\n<p>Origins and Innovation</p>\n<p>The story of Sunlight Soap begins in 1884, when William Hesketh Lever and his brother James Darcy Lever established the Lever Brothers company in England. They sought to create a high-quality soap that was both affordable and effective in promoting hygiene. Traditional soaps at the time were often harsh on the skin and required extensive preparation. The Lever Brothers aimed to change this by producing a soap that was easy to</p>\n<p>use and gentle while maintaining strong cleansing properties.</p>\n<p>The innovation behind Sunlight Soap lay in its production process. Unlike the traditional method of soap-making, which relied on animal fats and wood ash, Sunlight Soap was manufactured using a blend of vegetable oils and alkali, resulting in a more consistent and superior-quality product. This not only improved the soap’s effectiveness but also made it a</p>\n<p>more ethical and sustainable option compared with its contemporaries.</p>\n<p>Marketing and Branding</p>\n<p>One of the key reasons behind the success of Sunlight Soap was the Lever Brothers’ pioneering approach to marketing and branding. At a time when consumer goods were largely sold in bulk without much branding, Sunlight Soap was among the first products to be packaged and advertised extensively. The Lever Brothers recognised the power of branding and used eye-catching designs and slogans to establish a strong presence in the</p>\n<p>market.</p>\n<p>The packaging of Sunlight Soap was distinctive, featuring bright colours and clear branding that set it apart from competitors. The company also employed creative advertising campaigns, utilising newspapers, posters and, later, radio and television advertisements. One of their most famous slogans, “Sunlight Soap — Washes Whiter,” emphasised the</p>\n<p>soap’s superior cleaning abilities and resonated with consumers.</p>\n<p>In addition to traditional advertising, the Lever Brothers pioneered innovative promotional strategies. They introduced coupons, free samples and competitions to attract customers and build brand loyalty. These marketing techniques, which are now standard in the consumer-goods industry, were groundbreaking at the time and played a crucial role in</p>\n<p>establishing Sunlight Soap as a household name.</p>\n<p>Impact on Hygiene and Public Health</p>\n<p>Sunlight Soap was not just a commercial success; it also had a significant impact on public health. In the late 19th and early 20th centuries, diseases related to poor hygiene were rampant, and access to effective cleansing products was limited. The affordability and widespread availability of Sunlight Soap helped improve sanitation and hygiene standards</p>\n<p>in homes across Britain and beyond.</p>\n<p>By promoting regular washing of hands, clothes and household surfaces, Sunlight Soap contributed to reducing the spread of infectious diseases. Public-health campaigns, often supported by the Lever Brothers, emphasised the importance of cleanliness, particularly in urban areas where overcrowding and poor sanitation were major issues. The soap’s role in promoting hygiene was especially crucial during times of public-health crises, such as</p>\n<p>cholera outbreaks and the Spanish-flu pandemic.</p>\n<p>Industrial and Social Innovations</p>\n<p>The Lever Brothers not only revolutionised soap production but also set new standards in industrial practices and social responsibility. In 1888, William Lever established Port Sunlight, a model village on the Wirral Peninsula, to house the workers of the company’s soap factory. Unlike the cramped and unsanitary living conditions common in industrial cities, Port Sunlight provided employees with well-built homes, access to education, recreational facilities and **health-**care services. This initiative was groundbreaking and demonstrated Lever’s belief in corporate responsibility and the welfare of workers.</p>\n<p>The Port Sunlight experiment was a precursor to modern corporate social-responsibility (CSR) initiatives. It set an example for other industrialists and showcased the benefits of treating workers with dignity and providing them with a better quality of life. Many of the principles applied in Port Sunlight would later influence labour policies and welfare</p>\n<p>programmes in various industries.</p>\n<p>Expansion and Global Reach</p>\n<p>The success of Sunlight Soap was not confined to Britain. The Lever Brothers expanded their operations internationally, establishing factories and distribution networks across Europe, Africa, Asia and the Americas. The soap’s reputation for quality and affordability helped it gain popularity in various markets, and the company’s aggressive marketing</p>\n<p>strategies ensured its continued growth.</p>\n<p>One of the key factors in Sunlight Soap’s global success was the adaptability of its branding and marketing campaigns. The Lever Brothers tailored their advertisements and promotional efforts to suit different cultural and economic contexts. In many countries, Sunlight Soap became synonymous with cleanliness and household hygiene, reinforcing its</p>\n<p>status as a trusted product worldwide.</p>\n<p>As the company grew, it merged with Dutch margarine producer Margarine Unie in 1930 to form Unilever, a global consumer-goods giant. Today, Unilever continues to be a leader in the soap and detergent industry, with brands such as Dove, Lifebuoy and Lux carrying</p>\n<p>forward the legacy of Sunlight Soap.</p>\n<p>Legacy and Modern Relevance</p>\n<p>Despite being over a century old, the legacy of Sunlight Soap endures. While the original</p>\n<p>product has evolved over time, its core values of cleanliness, affordability and innovation</p>\n<p>remain relevant. The principles established by the Lever Brothers continue to influence</p>\n<p>modern consumer-goods companies, particularly in areas such as sustainability and social</p>\n<p>responsibility.</p>\n<p>Unilever, the company that emerged from the Lever Brothers’ enterprise, has continued to</p>\n<p>prioritise sustainability and social impact. Initiatives such as reducing plastic waste,</p>\n<p>promoting handwashing in developing countries and supporting fair-trade practices reflect</p>\n<p>the same pioneering spirit that defined the success of Sunlight Soap.</p>",
             "kind": "html"
           }
         ]
@@ -1882,8 +1851,7 @@
             "b041",
             "b042",
             "b043",
-            "b044",
-            "b045"
+            "b044"
           ],
           "title": "Passage 1 below."
         }

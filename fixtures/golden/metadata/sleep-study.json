@@ -299,7 +299,7 @@
     "v1Path": "fixtures/golden/baseline/v1/sleep-study.json",
     "observed": {
       "pageCount": 6,
-      "blockCount": 60,
+      "blockCount": 59,
       "groupCount": 2,
       "slotCount": 13,
       "assetCount": 0,

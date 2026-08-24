@@ -292,7 +292,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -334,7 +334,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -376,7 +376,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ],
@@ -397,7 +397,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic font and Unicode mapping fixture</p>\n<p>Unicode probe: cafe - resume - naive - replacement glyph:</p>\n<p>The source may contain a missing-glyph marker and unusual dash characters.</p>"
+            "html": "<p>Synthetic font and Unicode mapping fixture</p>\n<p>Unicode probe: cafe-resume-naive-replacement glyph:</p>\n<p>The source may contain a missing-glyph marker and unusual dash characters.</p>"
           }
         ],
         "questionUmbrellaRanges": [],
@@ -466,7 +466,7 @@
               "blockId": "b002",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Unicode probe: cafe - resume - naive - replacement glyph:</p>",
+              "html": "<p>Unicode probe: cafe-resume-naive-replacement glyph:</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -477,7 +477,7 @@
                 }
               },
               "pageIndex": 1,
-              "text": "Unicode probe: cafe - resume - naive - replacement glyph:"
+              "text": "Unicode probe: cafe-resume-naive-replacement glyph:"
             },
             {
               "_epic8ColumnIndex": 0,
@@ -590,9 +590,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 564.7999877929688,
@@ -606,10 +606,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -617,7 +617,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -636,7 +636,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -644,9 +644,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 525.7999877929688,
@@ -660,10 +660,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -671,7 +671,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -690,7 +690,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -698,9 +698,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 486.79998779296875,
@@ -714,10 +714,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -761,7 +761,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic font and Unicode mapping fixture</p>\n<p>Unicode probe: cafe - resume - naive - replacement glyph:</p>\n<p>The source may contain a missing-glyph marker and unusual dash characters.</p>",
+            "html": "<p>Synthetic font and Unicode mapping fixture</p>\n<p>Unicode probe: cafe-resume-naive-replacement glyph:</p>\n<p>The source may contain a missing-glyph marker and unusual dash characters.</p>",
             "kind": "html"
           }
         ]
@@ -985,7 +985,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -1027,7 +1027,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -1069,7 +1069,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ]

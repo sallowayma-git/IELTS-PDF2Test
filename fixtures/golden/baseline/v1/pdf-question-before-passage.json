@@ -73,6 +73,7 @@
             "b006",
             "b007",
             "b008",
+            "b009",
             "b011",
             "b012"
           ],
@@ -117,6 +118,12 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b008",
+              "reason": "same-section-continuation",
+              "toBlockId": "b009"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b009",
               "reason": "cross-page-continuation",
               "toBlockId": "b011"
             },
@@ -150,11 +157,11 @@
               "id": "q1",
               "interaction": {
                 "allowOptionReuse": false,
-                "optionTexts": {
-                  "A": "B C D"
-                },
                 "options": [
-                  "A"
+                  "A",
+                  "B",
+                  "C",
+                  "D"
                 ],
                 "type": "matching"
               },
@@ -168,6 +175,7 @@
                 "b006",
                 "b007",
                 "b008",
+                "b009",
                 "b011",
                 "b012"
               ],
@@ -180,11 +188,11 @@
               "id": "q2",
               "interaction": {
                 "allowOptionReuse": false,
-                "optionTexts": {
-                  "A": "B C D"
-                },
                 "options": [
-                  "A"
+                  "A",
+                  "B",
+                  "C",
+                  "D"
                 ],
                 "type": "matching"
               },
@@ -198,6 +206,7 @@
                 "b006",
                 "b007",
                 "b008",
+                "b009",
                 "b011",
                 "b012"
               ],
@@ -210,15 +219,15 @@
               "id": "q3",
               "interaction": {
                 "allowOptionReuse": false,
-                "optionTexts": {
-                  "A": "B C D"
-                },
                 "options": [
-                  "A"
+                  "A",
+                  "B",
+                  "C",
+                  "D"
                 ],
                 "type": "matching"
               },
-              "prompt": "The source statement describes a synthetic test condition. The passage is intentionally placed after the question list. Semantic role, not page order, determines the final authoring layout.",
+              "prompt": "The source statement describes a synthetic test condition.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b002",
@@ -228,6 +237,7 @@
                 "b006",
                 "b007",
                 "b008",
+                "b009",
                 "b011",
                 "b012"
               ],
@@ -257,7 +267,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1-3"
             },
             {
@@ -277,7 +287,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct heading for each paragraph."
             },
@@ -320,7 +330,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -362,7 +372,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -385,6 +395,27 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "3. The source statement describes a synthetic test condition."
+            },
+            {
+              "bbox": [
+                72,
+                557.7274780273438,
+                113.02200317382812,
+                564.2725219726562
+              ],
+              "blockId": "b009",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                557.7274780273438,
+                113.02200317382812,
+                564.2725219726562
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A B C D"
             },
             {
               "bbox": [
@@ -425,7 +456,7 @@
               "pageIndex": 2,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "authoring layout."
             }
           ],
@@ -437,6 +468,7 @@
             "b006",
             "b007",
             "b008",
+            "b009",
             "b011",
             "b012"
           ],
@@ -447,15 +479,15 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>A B C D</p>\n<h3>Reading Passage 1</h3>"
+            "html": "<h3>Questions appear before the passage</h3>\n<h3>Reading Passage 1</h3>"
           }
         ],
         "questionUmbrellaRanges": [],
         "sourceBlockIds": [
-          "b009",
+          "b001",
           "b010"
         ],
-        "title": "A B C D"
+        "title": "Questions appear before the passage"
       },
       "questionDisplayMap": {
         "q1": "1",
@@ -499,14 +531,13 @@
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "Questions appear before the passage"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 686.7274780273438,
@@ -520,10 +551,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -532,7 +563,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -551,15 +582,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
+              "roleHint": "question",
               "text": "Choose the correct heading for each paragraph."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -578,7 +610,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -586,9 +618,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 635.7274780273438,
@@ -602,10 +634,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -613,7 +645,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -632,7 +664,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -640,9 +672,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 596.7274780273438,
@@ -656,10 +688,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -667,7 +699,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -686,7 +718,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -694,9 +726,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 557.7274780273438,
@@ -710,10 +742,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -730,7 +762,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 48,
                 746.5999755859375,
@@ -744,7 +776,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -756,7 +788,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -775,7 +807,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -783,9 +815,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 683.5999755859375,
@@ -799,10 +831,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -846,7 +878,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>A B C D</p>\n<h3>Reading Passage 1</h3>",
+            "html": "<h3>Questions appear before the passage</h3>\n<h3>Reading Passage 1</h3>",
             "kind": "html"
           }
         ]
@@ -859,7 +891,7 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-3</p><p>Questions 1-3 Choose the correct heading for each paragraph.</p></div><ol><li><div><strong>1</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">B C D</span></label></div></li><li><div><strong>2</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">B C D</span></label></div></li><li><div><strong>3</strong> The source statement describes a synthetic test condition. The passage is intentionally placed after the question list. Semantic role, not page order, determines the final authoring layout.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">B C D</span></label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-3</p><p>Questions 1-3 Choose the correct heading for each paragraph.</p></div><ol><li><div><strong>1</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q1\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q1\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q1\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>2</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q2\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q2\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q2\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>3</strong> The source statement describes a synthetic test condition.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q3\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q3\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q3\" type=\"radio\" value=\"D\"> D</label></div></li></ol></section>",
           "groupId": "group-1",
           "kind": "matching",
           "leadHtml": "<p>Questions 1-3</p><p>Questions 1-3 Choose the correct heading for each paragraph.</p>",
@@ -895,10 +927,10 @@
         {
           "categoryHint": "P1",
           "range": [
-            "b009",
+            "b001",
             "b010"
           ],
-          "title": "A B C D"
+          "title": "Questions appear before the passage"
         }
       ],
       "questionGroupCandidates": [
@@ -911,6 +943,7 @@
             "b006",
             "b007",
             "b008",
+            "b009",
             "b011",
             "b012"
           ],
@@ -924,6 +957,7 @@
               "b006",
               "b007",
               "b008",
+              "b009",
               "b011",
               "b012"
             ],
@@ -983,6 +1017,12 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b008",
+              "reason": "same-section-continuation",
+              "toBlockId": "b009"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b009",
               "reason": "cross-page-continuation",
               "toBlockId": "b011"
             },
@@ -1021,7 +1061,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1-3"
             },
             {
@@ -1041,7 +1081,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct heading for each paragraph."
             },
@@ -1084,7 +1124,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -1126,7 +1166,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -1149,6 +1189,27 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "3. The source statement describes a synthetic test condition."
+            },
+            {
+              "bbox": [
+                72,
+                557.7274780273438,
+                113.02200317382812,
+                564.2725219726562
+              ],
+              "blockId": "b009",
+              "column": 0,
+              "normalizedBbox": [
+                72,
+                557.7274780273438,
+                113.02200317382812,
+                564.2725219726562
+              ],
+              "pageIndex": 1,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A B C D"
             },
             {
               "bbox": [
@@ -1189,7 +1250,7 @@
               "pageIndex": 2,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "authoring layout."
             }
           ]

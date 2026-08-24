@@ -341,7 +341,7 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.",
+              "prompt": "maps | room",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b009",
@@ -361,7 +361,7 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.",
+              "prompt": "diaries | room",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b009",
@@ -373,7 +373,9 @@
             }
           ],
           "requiresManualQuestionImport": false,
-          "reviewWarnings": [],
+          "reviewWarnings": [
+            "TABLE_ROW_MAPPING_INFERRED"
+          ],
           "sectionEvidence": [
             {
               "bbox": [
@@ -414,7 +416,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Item | Location"
             },
             {
@@ -435,7 +437,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "maps | room"
             },
             {
@@ -726,7 +728,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -745,7 +747,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -754,9 +756,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 577.7999877929688,
@@ -770,10 +772,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -781,9 +783,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 555.7999877929688,
@@ -797,10 +799,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -808,7 +810,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -827,7 +829,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -835,7 +837,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -854,7 +856,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -932,7 +934,7 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 4-5</p><p>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</p></div><table class=\"completion-table\"><thead><tr><th>Question</th><th>Prompt</th><th>Answer</th></tr></thead><tbody><tr><td><strong>4</strong></td><td>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</td><td><input type=\"text\" id=\"q4_input\" name=\"q4\" placeholder=\"answer\"></td></tr><tr><td><strong>5</strong></td><td>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</td><td><input type=\"text\" id=\"q5_input\" name=\"q5\" placeholder=\"answer\"></td></tr></tbody></table></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 4-5</p><p>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</p></div><table class=\"completion-table\"><thead><tr><th>Question</th><th>Prompt</th><th>Answer</th></tr></thead><tbody><tr><td><strong>4</strong></td><td>maps | room</td><td><input type=\"text\" id=\"q4_input\" name=\"q4\" placeholder=\"answer\"></td></tr><tr><td><strong>5</strong></td><td>diaries | room</td><td><input type=\"text\" id=\"q5_input\" name=\"q5\" placeholder=\"answer\"></td></tr></tbody></table></section>",
           "groupId": "group-2",
           "kind": "table_completion",
           "leadHtml": "<p>Questions 4-5</p><p>Questions 4-5 Complete the table below. Choose ONE WORD ONLY from the passage for each answer.</p>",
@@ -1224,7 +1226,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Item | Location"
             },
             {
@@ -1245,7 +1247,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "maps | room"
             },
             {

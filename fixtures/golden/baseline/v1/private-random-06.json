@@ -619,7 +619,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct letter A, B, C or D."
             },
@@ -640,7 +640,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter in boxes 27–31 on your answer sheet."
             },
@@ -1442,7 +1442,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 32–35"
             },
             {
@@ -1462,7 +1462,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "passage",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Do the following statements agree with the views of the writer in Reading Passage 3?"
             },
@@ -1484,7 +1484,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "In boxes 32–35 on your answer sheet write"
             },
             {
@@ -1589,7 +1589,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "written something better."
             },
             {
@@ -1677,6 +1677,8 @@
             "b106",
             "b107",
             "b108",
+            "b109",
+            "b110",
             "b111",
             "b112",
             "b113",
@@ -1710,6 +1712,18 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b108",
+              "reason": "same-section-continuation",
+              "toBlockId": "b109"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b109",
+              "reason": "same-section-continuation",
+              "toBlockId": "b110"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b110",
               "reason": "same-section-continuation",
               "toBlockId": "b111"
             },
@@ -1807,7 +1821,7 @@
           "kind": "summary_completion",
           "layout": {
             "layoutHint": "inline_completion",
-            "notes": "Questions 36–40\nComplete the summary using the list of words and phrases, A–I below.\nWrite the correct letter, A–I, in boxes 36–40 on your answer sheet.\nconsidered Scotland’s best writer. Scott had greater 36 _____, but Stevenson had more\n37_____, and the same distinction can be made between the two composers\nShostakovich and Prokofiev. It is true that Scott’s books showed more 38 _____ when it\ncame to tragedy, though in an old-fashioned way, while Stevenson’s books are still\npopular because of his 39 _____. And Stevenson’s understanding of 40 _____ has\nresulted in the widespread use of an expression from one of his books.\nA natural ability\nD romance\nG storytelling\nB critical acclaim\nE colourful language\nH depth\nC humour\nF technical control\nI human nature",
+            "notes": "Questions 36–40\nComplete the summary using the list of words and phrases, A–I below.\nWrite the correct letter, A–I, in boxes 36–40 on your answer sheet.\nRobert Louis Stevenson and Sir Walter Scott\nOpinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be\nconsidered Scotland’s best writer. Scott had greater 36 _____, but Stevenson had more\n37_____, and the same distinction can be made between the two composers\nShostakovich and Prokofiev. It is true that Scott’s books showed more 38 _____ when it\ncame to tragedy, though in an old-fashioned way, while Stevenson’s books are still\npopular because of his 39 _____. And Stevenson’s understanding of 40 _____ has\nresulted in the widespread use of an expression from one of his books.\nA natural ability\nD romance\nG storytelling\nB critical acclaim\nE colourful language\nH depth\nC humour\nF technical control\nI human nature",
             "template": "summary_text_completion"
           },
           "questionRange": [
@@ -1852,6 +1866,8 @@
                 "b106",
                 "b107",
                 "b108",
+                "b109",
+                "b110",
                 "b111",
                 "b112",
                 "b113",
@@ -1907,6 +1923,8 @@
                 "b106",
                 "b107",
                 "b108",
+                "b109",
+                "b110",
                 "b111",
                 "b112",
                 "b113",
@@ -1962,6 +1980,8 @@
                 "b106",
                 "b107",
                 "b108",
+                "b109",
+                "b110",
                 "b111",
                 "b112",
                 "b113",
@@ -2017,6 +2037,8 @@
                 "b106",
                 "b107",
                 "b108",
+                "b109",
+                "b110",
                 "b111",
                 "b112",
                 "b113",
@@ -2072,6 +2094,8 @@
                 "b106",
                 "b107",
                 "b108",
+                "b109",
+                "b110",
                 "b111",
                 "b112",
                 "b113",
@@ -2153,9 +2177,51 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–I, in boxes 36–40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                149.16455078125,
+                339.2400207519531,
+                442.39752197265625,
+                347.6400451660156
+              ],
+              "blockId": "b109",
+              "column": 0,
+              "normalizedBbox": [
+                149.16455078125,
+                339.2400207519531,
+                442.39752197265625,
+                347.6400451660156
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Robert Louis Stevenson and Sir Walter Scott"
+            },
+            {
+              "bbox": [
+                61.67992401123047,
+                311.4000244140625,
+                501.9190368652344,
+                319.800048828125
+              ],
+              "blockId": "b110",
+              "column": 0,
+              "normalizedBbox": [
+                61.67992401123047,
+                311.4000244140625,
+                501.9190368652344,
+                319.800048828125
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be"
             },
             {
               "bbox": [
@@ -2477,6 +2543,8 @@
             "b106",
             "b107",
             "b108",
+            "b109",
+            "b110",
             "b111",
             "b112",
             "b113",
@@ -2500,7 +2568,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Robert Louis Stevenson</p>\n<p>The writer of some of the best-known stories in the English language, including</p>\n<p>Treasure Island and The Strange Case of Dr. Jekyll and Mr. Hyde</p>\n<p>It is more than 100 years since the death of the Scottish writer Robert Louis Stevenson on</p>\n<p>the South Pacific island of Samoa, and it seems that time has not been kind to Stevenson’s</p>\n<p>memory. Immediately after his death, his family and friends set to work to fashion the</p>\n<p>legend of Robert Louis Stevenson, or R. L. S., as he became known, one of the few writers</p>\n<p>familiar from his initials alone. Subsequent works of biography then turned him into a writer</p>\n<p>of almost religious importance. One example was literary critic Balfour, who in 1901</p>\n<p>portrayed Stevenson’s family as ministering angels to the dying genius during his final</p>\n<p>illness. Similarly, the biographer Crouch absurdly overstated Stevenson’s significance by</p>\n<p>placing him in the same company as those most revered names in English literature:</p>\n<p>Shakespeare and Keats. The reaction to this nonsense was a number of highly critical</p>\n<p>assessments of Stevenson’s legacy in the 1920s.</p>\n<p>Normally, the critical pendulum can be relied on to swing back again, but there are several</p>\n<p>aspects of Stevenson’s work that have, until recently, acted against a more balanced</p>\n<p>appraisal. First is the allegation that Stevenson was a mere master of linguistic fireworks,</p>\n<p>who lacked moral depth. Some critics accused him of being a literary charlatan, of juggling</p>\n<p>words very prettily to strike effects which overawed an ignorant public, and served to</p>\n<p>distract from the inadequacy of his ideas.</p>\n<p>Then there has long been a prejudice against the adventure story as the proper medium for</p>\n<p>deep moral seriousness, a prejudice which is still extremely influential today. It seems that</p>\n<p>we can accept that an adventure film can successfully express profound moral truths, but</p>\n<p>we reject the same idea for a book. The absurdity of this becomes apparent when we think</p>\n<p>of writers like Joseph Conrad and Graham Greene, but it is no use pretending that this bias</p>\n<p>against adventure stories is not part of our high culture. A further problem is that Stevenson</p>\n<p>has often not found favour in the land of his birth because his conservatism so often</p>\n<p>collides with the strong radical tradition in Scotland. His many escapist stories and</p>\n<p>preference for living abroad have led to accusations that he camouflaged Scotland’s</p>\n<p>problems. Lastly, the high adventure of Stevenson’s own lifestyle has sometimes obscured</p>\n<p>his output, his life a greater story than any he could devise. This was precisely what his</p>\n<p>friends feared would happen towards the end of his short life: his art might be overwhelmed</p>\n<p>by the drama of life in Samoa.</p>\n<p>One consequence of this has been that Stevenson’s influence on other writers has too</p>\n<p>often been neglected. The writer and poet Oscar Wilde was deeply influenced by</p>\n<p>Stevenson, even though he declared that Stevenson would have produced better work if he</p>\n<p>had lived in London rather than Samoa. Stevenson tends to stick in the throat even of those</p>\n<p>writers who would like to spit him out, such as Shaw, who claimed to have learned from him</p>\n<p>that the romantic hero is always mocked by reality. Likewise, the writer Galsworthy, who</p>\n<p>began as a determined critic, later changed his mind and said that the superiority of</p>\n<p>Stevenson over the novelist Hardy was that Stevenson was all life and Hardy all death. The</p>\n<p>influence on the novelist Chesterton would also repay detailed study, for it was through him</p>\n<p>that Stevenson has managed to cross the ages, emerging as an influence on the modernist</p>\n<p>movement and our own contemporary Latin American school of “magical realism”.</p>\n<p>When making an assessment of his life and work one question must inevitably be asked:</p>\n<p>was Robert Louis Stevenson Scotland’s greatest writer of English prose? For most</p>\n<p>commentators this honour falls to Sir Walter Scott, author of Ivanhoe among many other</p>\n<p>classic novels, and it is true that in terms of craftsmanship, precision and the ability to</p>\n<p>minutely regulate language to create the desired effect, Scott takes the prize. However, this</p>\n<p>is not the same thing at all as inherent talent; by way of comparison one may take the</p>\n<p>example of the two great Russian composers Shostakovich and Prokofiev, of whom the</p>\n<p>former had learned more precise skills of execution but the latter’s intrinsic genius was</p>\n<p>greater, and so it seems to be with Scott and Stevenson. Admittedly, Scott’s detailed style</p>\n<p>does permit his stories to explore levels of tragedy that are beyond Stevenson’s reach, but</p>\n<p>in this regard they have the musty smell of the museum, somehow artificial and removed</p>\n<p>from modern day reality. On the other hand, Stevenson’s skill with plotting and narrative</p>\n<p>gives his books a timeless quality, so that they still live today, and Stevenson was also the</p>\n<p>shrewder judge of behaviour and psychology. For example, his compelling descriptions of a</p>\n<p>man with a split personality in The Strange Case of Dr. Jekyll and Mr. Hyde have proved so</p>\n<p>accessible and accurate that the expression “Jekyll and Hyde” has entered common</p>\n<p>English usage. Even if we do not see a revival of critical interest in this great Scottish writer,</p>\n<p>it is to be hoped that readers go back to Robert Louis Stevenson’s magnificent stories and</p>\n<p>reassess this neglected genius.</p>\n<p>Robert Louis Stevenson and Sir Walter Scott</p>\n<p>Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be</p>"
+            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Robert Louis Stevenson</p>\n<p>The writer of some of the best-known stories in the English language, including</p>\n<p>Treasure Island and The Strange Case of Dr. Jekyll and Mr. Hyde</p>\n<p>It is more than 100 years since the death of the Scottish writer Robert Louis Stevenson on</p>\n<p>the South Pacific island of Samoa, and it seems that time has not been kind to Stevenson’s</p>\n<p>memory. Immediately after his death, his family and friends set to work to fashion the</p>\n<p>legend of Robert Louis Stevenson, or R. L. S., as he became known, one of the few writers</p>\n<p>familiar from his initials alone. Subsequent works of biography then turned him into a writer</p>\n<p>of almost religious importance. One example was literary critic Balfour, who in 1901</p>\n<p>portrayed Stevenson’s family as ministering angels to the dying genius during his final</p>\n<p>illness. Similarly, the biographer Crouch absurdly overstated Stevenson’s significance by</p>\n<p>placing him in the same company as those most revered names in English literature:</p>\n<p>Shakespeare and Keats. The reaction to this nonsense was a number of highly critical</p>\n<p>assessments of Stevenson’s legacy in the 1920s.</p>\n<p>Normally, the critical pendulum can be relied on to swing back again, but there are several</p>\n<p>aspects of Stevenson’s work that have, until recently, acted against a more balanced</p>\n<p>appraisal. First is the allegation that Stevenson was a mere master of linguistic fireworks,</p>\n<p>who lacked moral depth. Some critics accused him of being a literary charlatan, of juggling</p>\n<p>words very prettily to strike effects which overawed an ignorant public, and served to</p>\n<p>distract from the inadequacy of his ideas.</p>\n<p>Then there has long been a prejudice against the adventure story as the proper medium for</p>\n<p>deep moral seriousness, a prejudice which is still extremely influential today. It seems that</p>\n<p>we can accept that an adventure film can successfully express profound moral truths, but</p>\n<p>we reject the same idea for a book. The absurdity of this becomes apparent when we think</p>\n<p>of writers like Joseph Conrad and Graham Greene, but it is no use pretending that this bias</p>\n<p>against adventure stories is not part of our high culture. A further problem is that Stevenson</p>\n<p>has often not found favour in the land of his birth because his conservatism so often</p>\n<p>collides with the strong radical tradition in Scotland. His many escapist stories and</p>\n<p>preference for living abroad have led to accusations that he camouflaged Scotland’s</p>\n<p>problems. Lastly, the high adventure of Stevenson’s own lifestyle has sometimes obscured</p>\n<p>his output, his life a greater story than any he could devise. This was precisely what his</p>\n<p>friends feared would happen towards the end of his short life: his art might be overwhelmed</p>\n<p>by the drama of life in Samoa.</p>\n<p>One consequence of this has been that Stevenson’s influence on other writers has too</p>\n<p>often been neglected. The writer and poet Oscar Wilde was deeply influenced by</p>\n<p>Stevenson, even though he declared that Stevenson would have produced better work if he</p>\n<p>had lived in London rather than Samoa. Stevenson tends to stick in the throat even of those</p>\n<p>writers who would like to spit him out, such as Shaw, who claimed to have learned from him</p>\n<p>that the romantic hero is always mocked by reality. Likewise, the writer Galsworthy, who</p>\n<p>began as a determined critic, later changed his mind and said that the superiority of</p>\n<p>Stevenson over the novelist Hardy was that Stevenson was all life and Hardy all death. The</p>\n<p>influence on the novelist Chesterton would also repay detailed study, for it was through him</p>\n<p>that Stevenson has managed to cross the ages, emerging as an influence on the modernist</p>\n<p>movement and our own contemporary Latin American school of “magical realism”.</p>\n<p>When making an assessment of his life and work one question must inevitably be asked:</p>\n<p>was Robert Louis Stevenson Scotland’s greatest writer of English prose? For most</p>\n<p>commentators this honour falls to Sir Walter Scott, author of Ivanhoe among many other</p>\n<p>classic novels, and it is true that in terms of craftsmanship, precision and the ability to</p>\n<p>minutely regulate language to create the desired effect, Scott takes the prize. However, this</p>\n<p>is not the same thing at all as inherent talent; by way of comparison one may take the</p>\n<p>example of the two great Russian composers Shostakovich and Prokofiev, of whom the</p>\n<p>former had learned more precise skills of execution but the latter’s intrinsic genius was</p>\n<p>greater, and so it seems to be with Scott and Stevenson. Admittedly, Scott’s detailed style</p>\n<p>does permit his stories to explore levels of tragedy that are beyond Stevenson’s reach, but</p>\n<p>in this regard they have the musty smell of the museum, somehow artificial and removed</p>\n<p>from modern day reality. On the other hand, Stevenson’s skill with plotting and narrative</p>\n<p>gives his books a timeless quality, so that they still live today, and Stevenson was also the</p>\n<p>shrewder judge of behaviour and psychology. For example, his compelling descriptions of a</p>\n<p>man with a split personality in The Strange Case of Dr. Jekyll and Mr. Hyde have proved so</p>\n<p>accessible and accurate that the expression “Jekyll and Hyde” has entered common</p>\n<p>English usage. Even if we do not see a revival of critical interest in this great Scottish writer,</p>\n<p>it is to be hoped that readers go back to Robert Louis Stevenson’s magnificent stories and</p>\n<p>reassess this neglected genius.</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -2579,9 +2647,7 @@
           "b063",
           "b064",
           "b065",
-          "b066",
-          "b109",
-          "b110"
+          "b066"
         ],
         "title": "Passage 3 below."
       },
@@ -2628,7 +2694,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 752.2799682617188,
@@ -2642,7 +2708,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -2654,7 +2720,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2673,18 +2739,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 712.4400024414062,
@@ -2698,10 +2763,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2710,7 +2775,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2729,7 +2794,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2737,7 +2802,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2756,7 +2821,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2764,7 +2829,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2783,7 +2848,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2791,7 +2856,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2810,7 +2875,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2818,7 +2883,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2837,7 +2902,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2845,7 +2910,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2864,7 +2929,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2872,7 +2937,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2891,7 +2956,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2899,7 +2964,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2918,7 +2983,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2926,7 +2991,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2945,7 +3010,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2953,7 +3018,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2972,7 +3037,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2980,7 +3045,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2999,7 +3064,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3007,7 +3072,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3026,7 +3091,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3034,7 +3099,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3053,7 +3118,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3061,7 +3126,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3080,7 +3145,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3088,7 +3153,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3107,7 +3172,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3115,7 +3180,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3134,7 +3199,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3142,7 +3207,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3161,7 +3226,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3169,7 +3234,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3188,7 +3253,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3196,7 +3261,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3215,7 +3280,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3223,7 +3288,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 22,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3242,7 +3307,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3250,7 +3315,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 23,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3269,7 +3334,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3277,7 +3342,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 24,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3296,7 +3361,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3304,7 +3369,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 25,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3323,7 +3388,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3331,7 +3396,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 26,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3350,7 +3415,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3358,7 +3423,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 27,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3377,7 +3442,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3385,7 +3450,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 28,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3404,7 +3469,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3412,7 +3477,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 29,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3431,7 +3496,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3439,7 +3504,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 30,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3458,7 +3523,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3466,7 +3531,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 31,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3485,7 +3550,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3493,7 +3558,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 32,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3512,7 +3577,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3520,7 +3585,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 33,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3539,7 +3604,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3547,7 +3612,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 34,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3566,7 +3631,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3574,7 +3639,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 35,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3593,7 +3658,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -3608,8 +3673,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3628,7 +3693,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3636,8 +3701,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3656,7 +3721,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3664,8 +3729,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3684,7 +3749,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3692,8 +3757,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3712,7 +3777,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3720,8 +3785,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3740,7 +3805,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3748,8 +3813,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3768,7 +3833,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3776,8 +3841,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3796,7 +3861,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3804,8 +3869,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3824,7 +3889,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3832,8 +3897,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3852,7 +3917,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3860,8 +3925,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3880,7 +3945,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3888,8 +3953,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3908,7 +3973,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3916,8 +3981,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3936,7 +4001,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3944,8 +4009,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3964,7 +4029,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3972,8 +4037,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3992,7 +4057,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4000,8 +4065,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4020,7 +4085,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4028,8 +4093,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4048,7 +4113,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4056,8 +4121,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4076,7 +4141,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4084,8 +4149,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4104,7 +4169,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4112,8 +4177,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4132,7 +4197,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4140,8 +4205,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4160,7 +4225,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4168,8 +4233,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4188,7 +4253,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4196,8 +4261,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4216,7 +4281,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4224,8 +4289,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 22,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4244,7 +4309,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4252,8 +4317,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 23,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4272,7 +4337,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4280,8 +4345,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 24,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4300,7 +4365,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4308,8 +4373,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 25,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4328,7 +4393,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4336,8 +4401,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 26,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4356,7 +4421,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4364,8 +4429,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 27,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4384,7 +4449,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4392,8 +4457,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 28,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4412,7 +4477,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4420,8 +4485,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 29,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4440,7 +4505,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -4506,6 +4571,7 @@
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Choose the correct letter A, B, C or D."
             },
             {
@@ -4533,6 +4599,7 @@
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Write the correct letter in boxes 27–31 on your answer sheet."
             },
             {
@@ -4576,7 +4643,7 @@
               "blockId": "b071",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  understated the role played by Stevenson’s family.</p>",
+              "html": "<p>A understated the role played by Stevenson’s family.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4587,7 +4654,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  understated the role played by Stevenson’s family."
+              "text": "A understated the role played by Stevenson’s family."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4603,7 +4670,7 @@
               "blockId": "b072",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  misunderstood Stevenson’s religious beliefs.</p>",
+              "html": "<p>B misunderstood Stevenson’s religious beliefs.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4614,7 +4681,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "B  misunderstood Stevenson’s religious beliefs."
+              "text": "B misunderstood Stevenson’s religious beliefs."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4630,7 +4697,7 @@
               "blockId": "b073",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  overestimated other writers’ influence on Stevenson.</p>",
+              "html": "<p>C overestimated other writers’ influence on Stevenson.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4641,7 +4708,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "C  overestimated other writers’ influence on Stevenson."
+              "text": "C overestimated other writers’ influence on Stevenson."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4657,7 +4724,7 @@
               "blockId": "b074",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  elevated Stevenson above his true status as a writer.</p>",
+              "html": "<p>D elevated Stevenson above his true status as a writer.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4668,7 +4735,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "D  elevated Stevenson above his true status as a writer."
+              "text": "D elevated Stevenson above his true status as a writer."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4711,7 +4778,7 @@
               "blockId": "b076",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  The public judged him more fairly than the critics.</p>",
+              "html": "<p>A The public judged him more fairly than the critics.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4722,7 +4789,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  The public judged him more fairly than the critics."
+              "text": "A The public judged him more fairly than the critics."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4738,7 +4805,7 @@
               "blockId": "b077",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  Recent criticism of him has been justified.</p>",
+              "html": "<p>B Recent criticism of him has been justified.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4749,7 +4816,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "B  Recent criticism of him has been justified."
+              "text": "B Recent criticism of him has been justified."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4765,7 +4832,7 @@
               "blockId": "b078",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  Critics argued that his style covered up his faults.</p>",
+              "html": "<p>C Critics argued that his style covered up his faults.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4776,7 +4843,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "C  Critics argued that his style covered up his faults."
+              "text": "C Critics argued that his style covered up his faults."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4792,7 +4859,7 @@
               "blockId": "b079",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  The ethical nature of his stories was often criticized.</p>",
+              "html": "<p>D The ethical nature of his stories was often criticized.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4803,7 +4870,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "D  The ethical nature of his stories was often criticized."
+              "text": "D The ethical nature of his stories was often criticized."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4846,7 +4913,7 @@
               "blockId": "b081",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  is more appropriate for books than films.</p>",
+              "html": "<p>A is more appropriate for books than films.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4857,7 +4924,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  is more appropriate for books than films."
+              "text": "A is more appropriate for books than films."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4873,7 +4940,7 @@
               "blockId": "b082",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  can be used by writers to tell moral stories.</p>",
+              "html": "<p>B can be used by writers to tell moral stories.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4884,7 +4951,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "B  can be used by writers to tell moral stories."
+              "text": "B can be used by writers to tell moral stories."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4900,7 +4967,7 @@
               "blockId": "b083",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  is more fashionable today than in the past.</p>",
+              "html": "<p>C is more fashionable today than in the past.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4911,7 +4978,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "C  is more fashionable today than in the past."
+              "text": "C is more fashionable today than in the past."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4927,7 +4994,7 @@
               "blockId": "b084",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  has been used by other writers but not Stevenson.</p>",
+              "html": "<p>D has been used by other writers but not Stevenson.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4938,7 +5005,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "D  has been used by other writers but not Stevenson."
+              "text": "D has been used by other writers but not Stevenson."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -4981,7 +5048,7 @@
               "blockId": "b086",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  His ideas contrasted with those of many Scots.</p>",
+              "html": "<p>A His ideas contrasted with those of many Scots.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -4992,7 +5059,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  His ideas contrasted with those of many Scots."
+              "text": "A His ideas contrasted with those of many Scots."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5008,7 +5075,7 @@
               "blockId": "b087",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  He demonstrated great sympathy for Scotland’s problems.</p>",
+              "html": "<p>B He demonstrated great sympathy for Scotland’s problems.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5019,7 +5086,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "B  He demonstrated great sympathy for Scotland’s problems."
+              "text": "B He demonstrated great sympathy for Scotland’s problems."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5035,7 +5102,7 @@
               "blockId": "b088",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  He was not considered a true Scot as he was not born there.</p>",
+              "html": "<p>C He was not considered a true Scot as he was not born there.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5046,7 +5113,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "C  He was not considered a true Scot as he was not born there."
+              "text": "C He was not considered a true Scot as he was not born there."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5062,7 +5129,7 @@
               "blockId": "b089",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  His unflattering stories about Scotland angered many Scots.</p>",
+              "html": "<p>D His unflattering stories about Scotland angered many Scots.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5073,7 +5140,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "D  His unflattering stories about Scotland angered many Scots."
+              "text": "D His unflattering stories about Scotland angered many Scots."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5116,7 +5183,7 @@
               "blockId": "b091",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  was envied by his friends.</p>",
+              "html": "<p>A was envied by his friends.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5127,7 +5194,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "A  was envied by his friends."
+              "text": "A was envied by his friends."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5143,7 +5210,7 @@
               "blockId": "b092",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  was responsible for his early death.</p>",
+              "html": "<p>B was responsible for his early death.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5154,7 +5221,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "B  was responsible for his early death."
+              "text": "B was responsible for his early death."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5170,7 +5237,7 @@
               "blockId": "b093",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  attracted more attention than his books.</p>",
+              "html": "<p>C attracted more attention than his books.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5181,7 +5248,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "C  attracted more attention than his books."
+              "text": "C attracted more attention than his books."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -5197,7 +5264,7 @@
               "blockId": "b094",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  did not prepare him for living in Samoa.</p>",
+              "html": "<p>D did not prepare him for living in Samoa.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -5208,7 +5275,7 @@
                 }
               },
               "pageIndex": 3,
-              "text": "D  did not prepare him for living in Samoa."
+              "text": "D did not prepare him for living in Samoa."
             }
           ],
           "height": 841.9199829101562,
@@ -5221,7 +5288,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 753.239990234375,
@@ -5235,7 +5302,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -5247,7 +5314,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5266,18 +5333,18 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "roleHint": "passage",
+              "roleHint": "question",
               "text": "Do the following statements agree with the views of the writer in Reading Passage 3?"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 692.760009765625,
@@ -5291,10 +5358,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5302,7 +5369,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5314,22 +5381,22 @@
               "blockId": "b098",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>YES  if the statement agrees with the views of the writer</p>",
+              "html": "<p>YES if the statement agrees with the views of the writer</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "YES  if the statement agrees with the views of the writer"
+              "text": "YES if the statement agrees with the views of the writer"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5341,22 +5408,22 @@
               "blockId": "b099",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>NO  if the statement contradicts the views of the writer</p>",
+              "html": "<p>NO if the statement contradicts the views of the writer</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "NO  if the statement contradicts the views of the writer"
+              "text": "NO if the statement contradicts the views of the writer"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5368,22 +5435,22 @@
               "blockId": "b100",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>NOT GIVEN  if it is impossible to say what the writer thinks about this</p>",
+              "html": "<p>NOT GIVEN if it is impossible to say what the writer thinks about this</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "NOT GIVEN  if it is impossible to say what the writer thinks about this"
+              "text": "NOT GIVEN if it is impossible to say what the writer thinks about this"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5402,7 +5469,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5410,9 +5477,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75,
                 583.0800170898438,
@@ -5426,10 +5493,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5437,7 +5504,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5456,7 +5523,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5464,7 +5531,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5483,7 +5550,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5491,7 +5558,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5510,7 +5577,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5518,7 +5585,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5537,7 +5604,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5546,7 +5613,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5565,7 +5632,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5574,7 +5641,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5593,15 +5660,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write the correct letter, A–I, in boxes 36–40 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5620,7 +5688,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5628,7 +5696,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5647,7 +5715,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5655,7 +5723,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5674,7 +5742,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5682,7 +5750,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5701,7 +5769,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5709,7 +5777,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5728,7 +5796,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5736,7 +5804,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5755,7 +5823,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5763,7 +5831,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5782,7 +5850,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5790,7 +5858,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -5809,7 +5877,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -5817,7 +5885,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 1,
               "_epic8Ordinal": 22,
               "_epic8SectionColumns": 3,
               "bbox": [
@@ -5829,22 +5897,22 @@
               "blockId": "b117",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  natural ability</p>",
+              "html": "<p>A natural ability</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 3,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 1
                 }
               },
               "pageIndex": 4,
-              "text": "A  natural ability"
+              "text": "A natural ability"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 1,
               "_epic8Ordinal": 23,
               "_epic8SectionColumns": 3,
               "bbox": [
@@ -5856,22 +5924,22 @@
               "blockId": "b118",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  romance</p>",
+              "html": "<p>D romance</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 3,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 1
                 }
               },
               "pageIndex": 4,
-              "text": "D  romance"
+              "text": "D romance"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 1,
               "_epic8Ordinal": 24,
               "_epic8SectionColumns": 3,
               "bbox": [
@@ -5883,22 +5951,22 @@
               "blockId": "b119",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>G  storytelling</p>",
+              "html": "<p>G storytelling</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 3,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 1
                 }
               },
               "pageIndex": 4,
-              "text": "G  storytelling"
+              "text": "G storytelling"
             },
             {
               "_epic8ColumnIndex": 1,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 1,
               "_epic8Ordinal": 25,
               "_epic8SectionColumns": 3,
               "bbox": [
@@ -5910,22 +5978,22 @@
               "blockId": "b120",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  critical acclaim</p>",
+              "html": "<p>B critical acclaim</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 3,
                     "current": 1
                   },
-                  "index": 7
+                  "index": 1
                 }
               },
               "pageIndex": 4,
-              "text": "B  critical acclaim"
+              "text": "B critical acclaim"
             },
             {
               "_epic8ColumnIndex": 1,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 1,
               "_epic8Ordinal": 26,
               "_epic8SectionColumns": 3,
               "bbox": [
@@ -5937,22 +6005,22 @@
               "blockId": "b121",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>E  colourful language</p>",
+              "html": "<p>E colourful language</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 3,
                     "current": 1
                   },
-                  "index": 7
+                  "index": 1
                 }
               },
               "pageIndex": 4,
-              "text": "E  colourful language"
+              "text": "E colourful language"
             },
             {
               "_epic8ColumnIndex": 1,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 1,
               "_epic8Ordinal": 27,
               "_epic8SectionColumns": 3,
               "bbox": [
@@ -5964,22 +6032,22 @@
               "blockId": "b122",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>H  depth</p>",
+              "html": "<p>H depth</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 3,
                     "current": 1
                   },
-                  "index": 7
+                  "index": 1
                 }
               },
               "pageIndex": 4,
-              "text": "H  depth"
+              "text": "H depth"
             },
             {
               "_epic8ColumnIndex": 2,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 1,
               "_epic8Ordinal": 28,
               "_epic8SectionColumns": 3,
               "bbox": [
@@ -5991,22 +6059,22 @@
               "blockId": "b123",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  humour</p>",
+              "html": "<p>C humour</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 3,
                     "current": 2
                   },
-                  "index": 7
+                  "index": 1
                 }
               },
               "pageIndex": 4,
-              "text": "C  humour"
+              "text": "C humour"
             },
             {
               "_epic8ColumnIndex": 2,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 1,
               "_epic8Ordinal": 29,
               "_epic8SectionColumns": 3,
               "bbox": [
@@ -6018,22 +6086,22 @@
               "blockId": "b124",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>F  technical control</p>",
+              "html": "<p>F technical control</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 3,
                     "current": 2
                   },
-                  "index": 7
+                  "index": 1
                 }
               },
               "pageIndex": 4,
-              "text": "F  technical control"
+              "text": "F technical control"
             },
             {
               "_epic8ColumnIndex": 2,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 1,
               "_epic8Ordinal": 30,
               "_epic8SectionColumns": 3,
               "bbox": [
@@ -6045,18 +6113,18 @@
               "blockId": "b125",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>I  human nature</p>",
+              "html": "<p>I human nature</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 3,
                     "current": 2
                   },
-                  "index": 7
+                  "index": 1
                 }
               },
               "pageIndex": 4,
-              "text": "I  human nature"
+              "text": "I human nature"
             }
           ],
           "height": 841.9199829101562,
@@ -6153,7 +6221,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Robert Louis Stevenson</p>\n<p>The writer of some of the best-known stories in the English language, including</p>\n<p>Treasure Island and The Strange Case of Dr. Jekyll and Mr. Hyde</p>\n<p>It is more than 100 years since the death of the Scottish writer Robert Louis Stevenson on</p>\n<p>the South Pacific island of Samoa, and it seems that time has not been kind to Stevenson’s</p>\n<p>memory. Immediately after his death, his family and friends set to work to fashion the</p>\n<p>legend of Robert Louis Stevenson, or R. L. S., as he became known, one of the few writers</p>\n<p>familiar from his initials alone. Subsequent works of biography then turned him into a writer</p>\n<p>of almost religious importance. One example was literary critic Balfour, who in 1901</p>\n<p>portrayed Stevenson’s family as ministering angels to the dying genius during his final</p>\n<p>illness. Similarly, the biographer Crouch absurdly overstated Stevenson’s significance by</p>\n<p>placing him in the same company as those most revered names in English literature:</p>\n<p>Shakespeare and Keats. The reaction to this nonsense was a number of highly critical</p>\n<p>assessments of Stevenson’s legacy in the 1920s.</p>\n<p>Normally, the critical pendulum can be relied on to swing back again, but there are several</p>\n<p>aspects of Stevenson’s work that have, until recently, acted against a more balanced</p>\n<p>appraisal. First is the allegation that Stevenson was a mere master of linguistic fireworks,</p>\n<p>who lacked moral depth. Some critics accused him of being a literary charlatan, of juggling</p>\n<p>words very prettily to strike effects which overawed an ignorant public, and served to</p>\n<p>distract from the inadequacy of his ideas.</p>\n<p>Then there has long been a prejudice against the adventure story as the proper medium for</p>\n<p>deep moral seriousness, a prejudice which is still extremely influential today. It seems that</p>\n<p>we can accept that an adventure film can successfully express profound moral truths, but</p>\n<p>we reject the same idea for a book. The absurdity of this becomes apparent when we think</p>\n<p>of writers like Joseph Conrad and Graham Greene, but it is no use pretending that this bias</p>\n<p>against adventure stories is not part of our high culture. A further problem is that Stevenson</p>\n<p>has often not found favour in the land of his birth because his conservatism so often</p>\n<p>collides with the strong radical tradition in Scotland. His many escapist stories and</p>\n<p>preference for living abroad have led to accusations that he camouflaged Scotland’s</p>\n<p>problems. Lastly, the high adventure of Stevenson’s own lifestyle has sometimes obscured</p>\n<p>his output, his life a greater story than any he could devise. This was precisely what his</p>\n<p>friends feared would happen towards the end of his short life: his art might be overwhelmed</p>\n<p>by the drama of life in Samoa.</p>\n<p>One consequence of this has been that Stevenson’s influence on other writers has too</p>\n<p>often been neglected. The writer and poet Oscar Wilde was deeply influenced by</p>\n<p>Stevenson, even though he declared that Stevenson would have produced better work if he</p>\n<p>had lived in London rather than Samoa. Stevenson tends to stick in the throat even of those</p>\n<p>writers who would like to spit him out, such as Shaw, who claimed to have learned from him</p>\n<p>that the romantic hero is always mocked by reality. Likewise, the writer Galsworthy, who</p>\n<p>began as a determined critic, later changed his mind and said that the superiority of</p>\n<p>Stevenson over the novelist Hardy was that Stevenson was all life and Hardy all death. The</p>\n<p>influence on the novelist Chesterton would also repay detailed study, for it was through him</p>\n<p>that Stevenson has managed to cross the ages, emerging as an influence on the modernist</p>\n<p>movement and our own contemporary Latin American school of “magical realism”.</p>\n<p>When making an assessment of his life and work one question must inevitably be asked:</p>\n<p>was Robert Louis Stevenson Scotland’s greatest writer of English prose? For most</p>\n<p>commentators this honour falls to Sir Walter Scott, author of Ivanhoe among many other</p>\n<p>classic novels, and it is true that in terms of craftsmanship, precision and the ability to</p>\n<p>minutely regulate language to create the desired effect, Scott takes the prize. However, this</p>\n<p>is not the same thing at all as inherent talent; by way of comparison one may take the</p>\n<p>example of the two great Russian composers Shostakovich and Prokofiev, of whom the</p>\n<p>former had learned more precise skills of execution but the latter’s intrinsic genius was</p>\n<p>greater, and so it seems to be with Scott and Stevenson. Admittedly, Scott’s detailed style</p>\n<p>does permit his stories to explore levels of tragedy that are beyond Stevenson’s reach, but</p>\n<p>in this regard they have the musty smell of the museum, somehow artificial and removed</p>\n<p>from modern day reality. On the other hand, Stevenson’s skill with plotting and narrative</p>\n<p>gives his books a timeless quality, so that they still live today, and Stevenson was also the</p>\n<p>shrewder judge of behaviour and psychology. For example, his compelling descriptions of a</p>\n<p>man with a split personality in The Strange Case of Dr. Jekyll and Mr. Hyde have proved so</p>\n<p>accessible and accurate that the expression “Jekyll and Hyde” has entered common</p>\n<p>English usage. Even if we do not see a revival of critical interest in this great Scottish writer,</p>\n<p>it is to be hoped that readers go back to Robert Louis Stevenson’s magnificent stories and</p>\n<p>reassess this neglected genius.</p>\n<p>Robert Louis Stevenson and Sir Walter Scott</p>\n<p>Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be</p>",
+            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Robert Louis Stevenson</p>\n<p>The writer of some of the best-known stories in the English language, including</p>\n<p>Treasure Island and The Strange Case of Dr. Jekyll and Mr. Hyde</p>\n<p>It is more than 100 years since the death of the Scottish writer Robert Louis Stevenson on</p>\n<p>the South Pacific island of Samoa, and it seems that time has not been kind to Stevenson’s</p>\n<p>memory. Immediately after his death, his family and friends set to work to fashion the</p>\n<p>legend of Robert Louis Stevenson, or R. L. S., as he became known, one of the few writers</p>\n<p>familiar from his initials alone. Subsequent works of biography then turned him into a writer</p>\n<p>of almost religious importance. One example was literary critic Balfour, who in 1901</p>\n<p>portrayed Stevenson’s family as ministering angels to the dying genius during his final</p>\n<p>illness. Similarly, the biographer Crouch absurdly overstated Stevenson’s significance by</p>\n<p>placing him in the same company as those most revered names in English literature:</p>\n<p>Shakespeare and Keats. The reaction to this nonsense was a number of highly critical</p>\n<p>assessments of Stevenson’s legacy in the 1920s.</p>\n<p>Normally, the critical pendulum can be relied on to swing back again, but there are several</p>\n<p>aspects of Stevenson’s work that have, until recently, acted against a more balanced</p>\n<p>appraisal. First is the allegation that Stevenson was a mere master of linguistic fireworks,</p>\n<p>who lacked moral depth. Some critics accused him of being a literary charlatan, of juggling</p>\n<p>words very prettily to strike effects which overawed an ignorant public, and served to</p>\n<p>distract from the inadequacy of his ideas.</p>\n<p>Then there has long been a prejudice against the adventure story as the proper medium for</p>\n<p>deep moral seriousness, a prejudice which is still extremely influential today. It seems that</p>\n<p>we can accept that an adventure film can successfully express profound moral truths, but</p>\n<p>we reject the same idea for a book. The absurdity of this becomes apparent when we think</p>\n<p>of writers like Joseph Conrad and Graham Greene, but it is no use pretending that this bias</p>\n<p>against adventure stories is not part of our high culture. A further problem is that Stevenson</p>\n<p>has often not found favour in the land of his birth because his conservatism so often</p>\n<p>collides with the strong radical tradition in Scotland. His many escapist stories and</p>\n<p>preference for living abroad have led to accusations that he camouflaged Scotland’s</p>\n<p>problems. Lastly, the high adventure of Stevenson’s own lifestyle has sometimes obscured</p>\n<p>his output, his life a greater story than any he could devise. This was precisely what his</p>\n<p>friends feared would happen towards the end of his short life: his art might be overwhelmed</p>\n<p>by the drama of life in Samoa.</p>\n<p>One consequence of this has been that Stevenson’s influence on other writers has too</p>\n<p>often been neglected. The writer and poet Oscar Wilde was deeply influenced by</p>\n<p>Stevenson, even though he declared that Stevenson would have produced better work if he</p>\n<p>had lived in London rather than Samoa. Stevenson tends to stick in the throat even of those</p>\n<p>writers who would like to spit him out, such as Shaw, who claimed to have learned from him</p>\n<p>that the romantic hero is always mocked by reality. Likewise, the writer Galsworthy, who</p>\n<p>began as a determined critic, later changed his mind and said that the superiority of</p>\n<p>Stevenson over the novelist Hardy was that Stevenson was all life and Hardy all death. The</p>\n<p>influence on the novelist Chesterton would also repay detailed study, for it was through him</p>\n<p>that Stevenson has managed to cross the ages, emerging as an influence on the modernist</p>\n<p>movement and our own contemporary Latin American school of “magical realism”.</p>\n<p>When making an assessment of his life and work one question must inevitably be asked:</p>\n<p>was Robert Louis Stevenson Scotland’s greatest writer of English prose? For most</p>\n<p>commentators this honour falls to Sir Walter Scott, author of Ivanhoe among many other</p>\n<p>classic novels, and it is true that in terms of craftsmanship, precision and the ability to</p>\n<p>minutely regulate language to create the desired effect, Scott takes the prize. However, this</p>\n<p>is not the same thing at all as inherent talent; by way of comparison one may take the</p>\n<p>example of the two great Russian composers Shostakovich and Prokofiev, of whom the</p>\n<p>former had learned more precise skills of execution but the latter’s intrinsic genius was</p>\n<p>greater, and so it seems to be with Scott and Stevenson. Admittedly, Scott’s detailed style</p>\n<p>does permit his stories to explore levels of tragedy that are beyond Stevenson’s reach, but</p>\n<p>in this regard they have the musty smell of the museum, somehow artificial and removed</p>\n<p>from modern day reality. On the other hand, Stevenson’s skill with plotting and narrative</p>\n<p>gives his books a timeless quality, so that they still live today, and Stevenson was also the</p>\n<p>shrewder judge of behaviour and psychology. For example, his compelling descriptions of a</p>\n<p>man with a split personality in The Strange Case of Dr. Jekyll and Mr. Hyde have proved so</p>\n<p>accessible and accurate that the expression “Jekyll and Hyde” has entered common</p>\n<p>English usage. Even if we do not see a revival of critical interest in this great Scottish writer,</p>\n<p>it is to be hoped that readers go back to Robert Louis Stevenson’s magnificent stories and</p>\n<p>reassess this neglected genius.</p>",
             "kind": "html"
           }
         ]
@@ -6204,7 +6272,7 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 36-40</p><p>Questions 36–40</p></div><div class=\"notes-completion\">Questions 36–40\nComplete the summary using the list of words and phrases, A–I below.\nWrite the correct letter, A–I, in boxes 36–40 on your answer sheet.\nconsidered Scotland’s best writer. Scott had greater <span class=\"inline-completion\" data-question-id=\"q36\"><strong>36</strong> <span class=\"choice-row\"><label><input name=\"q36\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q36\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q36\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q36\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q36\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q36\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q36\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q36\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q36\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span>, but Stevenson had more\n<span class=\"inline-completion\" data-question-id=\"q37\"><strong>37</strong> <span class=\"choice-row\"><label><input name=\"q37\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q37\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q37\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q37\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q37\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q37\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q37\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q37\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q37\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span>, and the same distinction can be made between the two composers\nShostakovich and Prokofiev. It is true that Scott’s books showed more <span class=\"inline-completion\" data-question-id=\"q38\"><strong>38</strong> <span class=\"choice-row\"><label><input name=\"q38\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q38\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q38\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q38\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q38\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q38\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q38\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q38\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q38\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span> when it\ncame to tragedy, though in an old-fashioned way, while Stevenson’s books are still\npopular because of his <span class=\"inline-completion\" data-question-id=\"q39\"><strong>39</strong> <span class=\"choice-row\"><label><input name=\"q39\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q39\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q39\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q39\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q39\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q39\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q39\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q39\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q39\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span> And Stevenson’s understanding of <span class=\"inline-completion\" data-question-id=\"q40\"><strong>40</strong> <span class=\"choice-row\"><label><input name=\"q40\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q40\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q40\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q40\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q40\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q40\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q40\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q40\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q40\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span> has\nresulted in the widespread use of an expression from one of his books.\nA natural ability\nD romance\nG storytelling\nB critical acclaim\nE colourful language\nH depth\nC humour\nF technical control\nI human nature</div></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 36-40</p><p>Questions 36–40</p></div><div class=\"notes-completion\">Questions 36–40\nComplete the summary using the list of words and phrases, A–I below.\nWrite the correct letter, A–I, in boxes 36–40 on your answer sheet.\nRobert Louis Stevenson and Sir Walter Scott\nOpinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be\nconsidered Scotland’s best writer. Scott had greater <span class=\"inline-completion\" data-question-id=\"q36\"><strong>36</strong> <span class=\"choice-row\"><label><input name=\"q36\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q36\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q36\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q36\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q36\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q36\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q36\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q36\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q36\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span>, but Stevenson had more\n<span class=\"inline-completion\" data-question-id=\"q37\"><strong>37</strong> <span class=\"choice-row\"><label><input name=\"q37\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q37\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q37\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q37\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q37\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q37\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q37\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q37\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q37\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span>, and the same distinction can be made between the two composers\nShostakovich and Prokofiev. It is true that Scott’s books showed more <span class=\"inline-completion\" data-question-id=\"q38\"><strong>38</strong> <span class=\"choice-row\"><label><input name=\"q38\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q38\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q38\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q38\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q38\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q38\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q38\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q38\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q38\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span> when it\ncame to tragedy, though in an old-fashioned way, while Stevenson’s books are still\npopular because of his <span class=\"inline-completion\" data-question-id=\"q39\"><strong>39</strong> <span class=\"choice-row\"><label><input name=\"q39\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q39\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q39\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q39\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q39\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q39\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q39\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q39\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q39\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span> And Stevenson’s understanding of <span class=\"inline-completion\" data-question-id=\"q40\"><strong>40</strong> <span class=\"choice-row\"><label><input name=\"q40\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">natural ability</span></label><label><input name=\"q40\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">critical acclaim</span></label><label><input name=\"q40\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">humour</span></label><label><input name=\"q40\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">romance</span></label><label><input name=\"q40\" type=\"radio\" value=\"E\"> <span class=\"choice-label\">E</span> <span class=\"choice-text\">colourful language</span></label><label><input name=\"q40\" type=\"radio\" value=\"F\"> <span class=\"choice-label\">F</span> <span class=\"choice-text\">technical control</span></label><label><input name=\"q40\" type=\"radio\" value=\"G\"> <span class=\"choice-label\">G</span> <span class=\"choice-text\">storytelling</span></label><label><input name=\"q40\" type=\"radio\" value=\"H\"> <span class=\"choice-label\">H</span> <span class=\"choice-text\">depth</span></label><label><input name=\"q40\" type=\"radio\" value=\"I\"> <span class=\"choice-label\">I</span> <span class=\"choice-text\">human nature</span></label></span></span> has\nresulted in the widespread use of an expression from one of his books.\nA natural ability\nD romance\nG storytelling\nB critical acclaim\nE colourful language\nH depth\nC humour\nF technical control\nI human nature</div></section>",
           "groupId": "group-3",
           "kind": "summary_completion",
           "leadHtml": "<p>Questions 36-40</p><p>Questions 36–40</p>",
@@ -6317,9 +6385,7 @@
             "b063",
             "b064",
             "b065",
-            "b066",
-            "b109",
-            "b110"
+            "b066"
           ],
           "title": "Passage 3 below."
         }
@@ -6616,7 +6682,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct letter A, B, C or D."
             },
@@ -6637,7 +6703,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter in boxes 27–31 on your answer sheet."
             },
@@ -7300,7 +7366,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 32–35"
             },
             {
@@ -7320,7 +7386,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "passage",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Do the following statements agree with the views of the writer in Reading Passage 3?"
             },
@@ -7342,7 +7408,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "In boxes 32–35 on your answer sheet write"
             },
             {
@@ -7447,7 +7513,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "written something better."
             },
             {
@@ -7520,6 +7586,8 @@
             "b106",
             "b107",
             "b108",
+            "b109",
+            "b110",
             "b111",
             "b112",
             "b113",
@@ -7542,6 +7610,8 @@
               "b106",
               "b107",
               "b108",
+              "b109",
+              "b110",
               "b111",
               "b112",
               "b113",
@@ -7583,6 +7653,18 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b108",
+              "reason": "same-section-continuation",
+              "toBlockId": "b109"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b109",
+              "reason": "same-section-continuation",
+              "toBlockId": "b110"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b110",
               "reason": "same-section-continuation",
               "toBlockId": "b111"
             },
@@ -7740,9 +7822,51 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–I, in boxes 36–40 on your answer sheet."
+            },
+            {
+              "bbox": [
+                149.16455078125,
+                339.2400207519531,
+                442.39752197265625,
+                347.6400451660156
+              ],
+              "blockId": "b109",
+              "column": 0,
+              "normalizedBbox": [
+                149.16455078125,
+                339.2400207519531,
+                442.39752197265625,
+                347.6400451660156
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Robert Louis Stevenson and Sir Walter Scott"
+            },
+            {
+              "bbox": [
+                61.67992401123047,
+                311.4000244140625,
+                501.9190368652344,
+                319.800048828125
+              ],
+              "blockId": "b110",
+              "column": 0,
+              "normalizedBbox": [
+                61.67992401123047,
+                311.4000244140625,
+                501.9190368652344,
+                319.800048828125
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Opinions differ as to whether Robert Louis Stevenson or Sir Walter Scott should be"
             },
             {
               "bbox": [

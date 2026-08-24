@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 6,
-    "blockCount": 68,
+    "blockCount": 66,
     "groupCount": 2,
     "slotCount": 14,
     "assetCount": 0,
@@ -89,6 +89,7 @@
         {
           "allowOptionReuse": true,
           "classificationEvidence": [
+            "b038",
             "b039",
             "b040",
             "b041",
@@ -97,11 +98,16 @@
             "b044",
             "b045",
             "b046",
-            "b047",
-            "b048"
+            "b047"
           ],
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b039",
@@ -149,12 +155,6 @@
               "fromBlockId": "b046",
               "reason": "same-section-continuation",
               "toBlockId": "b047"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b047",
-              "reason": "same-section-continuation",
-              "toBlockId": "b048"
             }
           ],
           "groupId": "group-1",
@@ -193,6 +193,7 @@
               "prompt": "detailed criticism of the methodology of a project",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b038",
                 "b039",
                 "b040",
                 "b041",
@@ -201,8 +202,7 @@
                 "b044",
                 "b045",
                 "b046",
-                "b047",
-                "b048"
+                "b047"
               ],
               "verified": false
             },
@@ -226,6 +226,7 @@
               "prompt": "a comparison of the data from class-size reduction projects",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b038",
                 "b039",
                 "b040",
                 "b041",
@@ -234,8 +235,7 @@
                 "b044",
                 "b045",
                 "b046",
-                "b047",
-                "b048"
+                "b047"
               ],
               "verified": false
             },
@@ -259,6 +259,7 @@
               "prompt": "the level of public interest in the issues of class-size reduction",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b038",
                 "b039",
                 "b040",
                 "b041",
@@ -267,8 +268,7 @@
                 "b044",
                 "b045",
                 "b046",
-                "b047",
-                "b048"
+                "b047"
               ],
               "verified": false
             },
@@ -292,6 +292,7 @@
               "prompt": "details of action taken to protect the validity of a project",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b038",
                 "b039",
                 "b040",
                 "b041",
@@ -300,8 +301,7 @@
                 "b044",
                 "b045",
                 "b046",
-                "b047",
-                "b048"
+                "b047"
               ],
               "verified": false
             },
@@ -325,6 +325,7 @@
               "prompt": "reasons why class composition changed during a project",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b038",
                 "b039",
                 "b040",
                 "b041",
@@ -333,8 +334,7 @@
                 "b044",
                 "b045",
                 "b046",
-                "b047",
-                "b048"
+                "b047"
               ],
               "verified": false
             }
@@ -349,7 +349,7 @@
                 143.3853302001953,
                 761.8800048828125
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -370,7 +370,7 @@
                 276.11712646484375,
                 732.3600463867188
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -391,7 +391,7 @@
                 326.16241455078125,
                 702.6000366210938
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -401,7 +401,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which paragraph contains the following information?"
             },
@@ -412,7 +412,7 @@
                 407.5063171386719,
                 673.0800170898438
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -422,7 +422,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–F, in boxes 27–31 on your answer sheet."
             },
@@ -433,7 +433,7 @@
                 284.1212158203125,
                 643.56005859375
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -454,7 +454,7 @@
                 328.47357177734375,
                 613.800048828125
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -475,7 +475,7 @@
                 382.4805603027344,
                 584.280029296875
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -496,7 +496,7 @@
                 395.82647705078125,
                 554.760009765625
               ],
-              "blockId": "b046",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -517,7 +517,7 @@
                 363.8399963378906,
                 525.0000610351562
               ],
-              "blockId": "b047",
+              "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -538,7 +538,7 @@
                 372.5111999511719,
                 495.48004150390625
               ],
-              "blockId": "b048",
+              "blockId": "b047",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -554,6 +554,7 @@
             }
           ],
           "sourceBlockIds": [
+            "b038",
             "b039",
             "b040",
             "b041",
@@ -562,14 +563,14 @@
             "b044",
             "b045",
             "b046",
-            "b047",
-            "b048"
+            "b047"
           ],
           "verified": false
         },
         {
           "allowOptionReuse": true,
           "classificationEvidence": [
+            "b048",
             "b049",
             "b050",
             "b051",
@@ -583,12 +584,16 @@
             "b059",
             "b060",
             "b061",
-            "b062",
-            "b063",
-            "b064"
+            "b062"
           ],
           "confidence": 0.68,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b048",
+              "reason": "same-section-continuation",
+              "toBlockId": "b049"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b049",
@@ -666,18 +671,6 @@
               "fromBlockId": "b061",
               "reason": "same-section-continuation",
               "toBlockId": "b062"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b062",
-              "reason": "same-section-continuation",
-              "toBlockId": "b063"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b063",
-              "reason": "same-section-continuation",
-              "toBlockId": "b064"
             }
           ],
           "groupId": "group-2",
@@ -718,6 +711,7 @@
               "prompt": "The student composition of each class was left to chance.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b048",
                 "b049",
                 "b050",
                 "b051",
@@ -731,9 +725,7 @@
                 "b059",
                 "b060",
                 "b061",
-                "b062",
-                "b063",
-                "b064"
+                "b062"
               ],
               "verified": false
             },
@@ -759,6 +751,7 @@
               "prompt": "A long-term improvement in performance was claimed.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b048",
                 "b049",
                 "b050",
                 "b051",
@@ -772,9 +765,7 @@
                 "b059",
                 "b060",
                 "b061",
-                "b062",
-                "b063",
-                "b064"
+                "b062"
               ],
               "verified": false
             },
@@ -800,6 +791,7 @@
               "prompt": "Similar results were obtained for all social groups.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b048",
                 "b049",
                 "b050",
                 "b051",
@@ -813,9 +805,7 @@
                 "b059",
                 "b060",
                 "b061",
-                "b062",
-                "b063",
-                "b064"
+                "b062"
               ],
               "verified": false
             },
@@ -841,6 +831,7 @@
               "prompt": "The project was a preliminary to a more comprehensive study.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b048",
                 "b049",
                 "b050",
                 "b051",
@@ -854,9 +845,7 @@
                 "b059",
                 "b060",
                 "b061",
-                "b062",
-                "b063",
-                "b064"
+                "b062"
               ],
               "verified": false
             },
@@ -882,6 +871,7 @@
               "prompt": "Several different class types were involved in the project.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b048",
                 "b049",
                 "b050",
                 "b051",
@@ -895,9 +885,7 @@
                 "b059",
                 "b060",
                 "b061",
-                "b062",
-                "b063",
-                "b064"
+                "b062"
               ],
               "verified": false
             },
@@ -923,6 +911,7 @@
               "prompt": "A special group of schools was selected to take part.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b048",
                 "b049",
                 "b050",
                 "b051",
@@ -936,9 +925,7 @@
                 "b059",
                 "b060",
                 "b061",
-                "b062",
-                "b063",
-                "b064"
+                "b062"
               ],
               "verified": false
             },
@@ -964,6 +951,7 @@
               "prompt": "Classroom assistants were used as part of the project.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b048",
                 "b049",
                 "b050",
                 "b051",
@@ -977,9 +965,7 @@
                 "b059",
                 "b060",
                 "b061",
-                "b062",
-                "b063",
-                "b064"
+                "b062"
               ],
               "verified": false
             },
@@ -1005,6 +991,7 @@
               "prompt": "The project was responsible for aggravating existing problems.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b048",
                 "b049",
                 "b050",
                 "b051",
@@ -1018,9 +1005,7 @@
                 "b059",
                 "b060",
                 "b061",
-                "b062",
-                "b063",
-                "b064"
+                "b062"
               ],
               "verified": false
             },
@@ -1046,6 +1031,7 @@
               "prompt": "Certain groups of pupils within the sample were identified as having benefited.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b048",
                 "b049",
                 "b050",
                 "b051",
@@ -1059,9 +1045,7 @@
                 "b059",
                 "b060",
                 "b061",
-                "b062",
-                "b063",
-                "b064"
+                "b062"
               ],
               "verified": false
             }
@@ -1078,7 +1062,7 @@
                 148.56544494628906,
                 761.4000244140625
               ],
-              "blockId": "b049",
+              "blockId": "b048",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1099,7 +1083,7 @@
                 298.7760009765625,
                 732.3600463867188
               ],
-              "blockId": "b050",
+              "blockId": "b049",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1116,44 +1100,23 @@
             {
               "bbox": [
                 75,
-                694.2000122070312,
-                160.02000427246094,
+                678.5999755859375,
+                208.05360412597656,
                 702.6000366210938
               ],
-              "blockId": "b051",
+              "blockId": "b050",
               "column": 0,
               "normalizedBbox": [
                 75,
-                694.2000122070312,
-                160.02000427246094,
+                678.5999755859375,
+                208.05360412597656,
                 702.6000366210938
               ],
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
               "sectionColumnCount": 1,
-              "textPreview": "A Project STAR"
-            },
-            {
-              "bbox": [
-                75,
-                678.5999755859375,
-                208.05360412597656,
-                687
-              ],
-              "blockId": "b052",
-              "column": 0,
-              "normalizedBbox": [
-                75,
-                678.5999755859375,
-                208.05360412597656,
-                687
-              ],
-              "pageIndex": 5,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 3,
-              "textPreview": "B The California Project"
+              "textPreview": "A Project STAR B The California Project"
             },
             {
               "bbox": [
@@ -1162,7 +1125,7 @@
                 121.34159851074219,
                 671.4000244140625
               ],
-              "blockId": "b053",
+              "blockId": "b051",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -1173,7 +1136,7 @@
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "C SAGE"
             },
             {
@@ -1183,7 +1146,7 @@
                 432.1624755859375,
                 641.8800048828125
               ],
-              "blockId": "b054",
+              "blockId": "b052",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1193,7 +1156,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B or C, in boxes 32-40 on your answer sheet."
             },
@@ -1204,7 +1167,7 @@
                 378.5063781738281,
                 612.3600463867188
               ],
-              "blockId": "b055",
+              "blockId": "b053",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1225,7 +1188,7 @@
                 362.45111083984375,
                 582.6000366210938
               ],
-              "blockId": "b056",
+              "blockId": "b054",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1246,7 +1209,7 @@
                 335.7935791015625,
                 553.0800170898438
               ],
-              "blockId": "b057",
+              "blockId": "b055",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1267,7 +1230,7 @@
                 402.48480224609375,
                 523.56005859375
               ],
-              "blockId": "b058",
+              "blockId": "b056",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1288,7 +1251,7 @@
                 373.826416015625,
                 493.800048828125
               ],
-              "blockId": "b059",
+              "blockId": "b057",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1309,7 +1272,7 @@
                 351.1607666015625,
                 464.280029296875
               ],
-              "blockId": "b060",
+              "blockId": "b058",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1330,7 +1293,7 @@
                 360.4703674316406,
                 434.7600402832031
               ],
-              "blockId": "b061",
+              "blockId": "b059",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1351,7 +1314,7 @@
                 404.51519775390625,
                 405.0000305175781
               ],
-              "blockId": "b062",
+              "blockId": "b060",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1372,7 +1335,7 @@
                 485.93035888671875,
                 375.48004150390625
               ],
-              "blockId": "b063",
+              "blockId": "b061",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1393,7 +1356,7 @@
                 113.29346466064453,
                 180.3600311279297
               ],
-              "blockId": "b064",
+              "blockId": "b062",
               "column": 0,
               "normalizedBbox": [
                 61.919925689697266,
@@ -1404,11 +1367,12 @@
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Disclaimer"
             }
           ],
           "sourceBlockIds": [
+            "b048",
             "b049",
             "b050",
             "b051",
@@ -1422,9 +1386,7 @@
             "b059",
             "b060",
             "b061",
-            "b062",
-            "b063",
-            "b064"
+            "b062"
           ],
           "verified": false
         }
@@ -1433,7 +1395,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Does Class Size Matter?</p>\n<p>A  Of all the ideas for improving education, few are as simple or attractive as reducing the</p>\n<p>number of pupils per teacher. Unlike competing proposals for reform, class-size reductions rarely elicit huge outcries or involve structural change. The testing of educators, by contrast, generally arouses the anger of unions. Similarly, establishing special ‘charter’ schools involves privileging some schools over others, with the credits provided usually coming out of the budgets of struggling local schools. With its uncomplicated appeal, class-size reduction in the U.S. has lately gone from being a subject of primary academic interest to a policy juggernaut with over twenty states</p>\n<p>aiming at decreasing class sizes.</p>\n<p>B  Do small classes improve school achievement? To answer this, investigators have</p>\n<p>attempted to analyse existing data, such as records at the U.S. Department of Education. These reveal that there were steep drops in pupil-teacher ratios between</p>\n<p>1969 and 1997, but no significant gains in academic performance.</p>\n<p>But do these findings mean that class size makes no difference? Not necessarily. For instance, schools strive for more than just high test scores; they also usually try to keep their drop-out rates low. And, indeed, the drop-out rate for older students fell considerably over that period. Because drop-outs generally come from the low end of</p>\n<p>the achievement distribution, a reduction in the drop-out rate could be expected to pull</p>\n<p>down average test scores.</p>\n<p>Another reason for discounting those data is the difficulty of ensuring a level playing field. In a perfect world, U.S. students would all com e from  well-off fam ilies, with two highly educated English-speaking parents who are involved in their children’s schooling. Teachers would all be creative and have complete mastery of the subject</p>\n<p>m atter. The reality is very different.</p>\n<p>C  Over the past 35 years, some studies of existing data have produced evidence that</p>\n<p>smaller classes benefit students, but most of these studies were poorly designed. The exception was the Tennessee study called Project STAR (Student Teacher Achievement Ratio). Frederick Mosteller of Harvard University has called it ‘one of the</p>\n<p>greatest experiments in education in United States history’.</p>\n<p>Students entering kindergarten were randomly assigned to one of three kinds of classes: a small class of 13 to 17 students, a regular-size class of 22 to 26 or a regular\u0002</p>\n<p>size class with both a teacher and a full-time teacher’s aide.</p>\n<p>The students remained in whatever category they had been assigned to throughout the third grade, after which they joined a regular classroom in the fourth. To ensure that teaching quality did not differ, teachers were randomly assigned to small and regular\u0002 size classrooms. Few teachers received any special training for working with small</p>\n<p>classes, and there were no new curricular materials.</p>\n<p>D  At the end of STAR, researchers analysed the data. Jeremy Finn of New York</p>\n<p>University and Charles Achilles of Eastern Michigan University found evidence for ‘an array of benefits of small classes’. They calculated that students in smaller classes were outperforming their counterparts in regular-sized classes by the first grade and that this advantage persisted even after students returned to larger classes. They also found that the effect was stronger for black and Hispanic minority groups – a significant</p>\n<p>finding for policy-makers.</p>\n<p>Eric Hanushek of Stanford, however, criticises some of STAR’s key conclusions. He argues that STAR does not prove that gains persist long after students return to regular classes. It was debatable how much later improvement stemmed from other factors, such as a supportive home. Nor does he accept that the benefits accumulate, with participants widening the gap with their peers in larger classes year by year.</p>\n<p>Hanushek and others have also shown that during the study too many children moved from regular to small classes, probably because school personnel caved in to parent demands. And Hanushek also asserts that STAR failed to ensure good randomisation of teacher and student assignments. However, these points do not undermine STAR’s</p>\n<p>basic findings.</p>\n<p>E  The largest public class size reduction programme so far, California’s, stands more as a</p>\n<p>warning than as worthy of emulation. That state is trying to reduce classes in kindergarten through grade three despite a shortage of teachers that is most acute in</p>\n<p>low-income areas.</p>\n<p>This is exacerbating the disparity in resources available to rich and poor schools in California, because more affluent areas can attract the best teachers. Indeed, some of the extra teachers needed are being recruited from the poorer schools. Researchers found a statistically significant achievement advantage in reading, writing and mathematics for students in classes that had been reduced to 20. What is more, the</p>\n<p>effect did not vary for students of different backgrounds.</p>\n<p>F  Wisconsin’s Student Achievement Guarantee in Education (SAGE) was a five-year pilot</p>\n<p>study to do some of the groundwork for a major project. Class sizes were reduced in only 14 schools, but it was noteworthy for targeting schools at which 30% of the students were below poverty level, compared with California’s across-the-board approach. SAGE lowered the average pupil-teacher ratio in kindergarten through third grade to 12–15:1 from 21–25:1. Analysts have studied the results of first-grade students in these schools and similar first-grade students elsewhere and found the</p>\n<p>results accord with those from STAR.</p>\n<p>STAR and SAGE have made it hard to argue against reducing class sizes. But the California initiative shows that reductions made with too little forethought can yield minuscule gains. Administrators need solid information before they can make sensible</p>\n<p>policy decisions.</p>\n<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks.</p>\n<p>All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies.</p>\n<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>"
+            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Does Class Size Matter?</p>\n<p>A Of all the ideas for improving education, few are as simple or attractive as reducing the</p>\n<p>number of pupils per teacher. Unlike competing proposals for reform, class-size reductions rarely elicit huge outcries or involve structural change. The testing of educators, by contrast, generally arouses the anger of unions. Similarly, establishing special ‘charter’ schools involves privileging some schools over others, with the credits provided usually coming out of the budgets of struggling local schools. With its uncomplicated appeal, class-size reduction in the U.S. has lately gone from being a subject of primary academic interest to a policy juggernaut with over twenty states</p>\n<p>aiming at decreasing class sizes.</p>\n<p>B Do small classes improve school achievement? To answer this, investigators have</p>\n<p>attempted to analyse existing data, such as records at the U.S. Department of Education. These reveal that there were steep drops in pupil-teacher ratios between</p>\n<p>1969 and 1997, but no significant gains in academic performance.</p>\n<p>But do these findings mean that class size makes no difference? Not necessarily. For instance, schools strive for more than just high test scores; they also usually try to keep their drop-out rates low. And, indeed, the drop-out rate for older students fell considerably over that period. Because drop-outs generally come from the low end of the achievement distribution, a reduction in the drop-out rate could be expected to pull</p>\n<p>down average test scores.</p>\n<p>Another reason for discounting those data is the difficulty of ensuring a level playing field. In a perfect world, U.S. students would all com e from well-off fam ilies, with two highly educated English-speaking parents who are involved in their children’s schooling. Teachers would all be creative and have complete mastery of the subject</p>\n<p>m atter. The reality is very different.</p>\n<p>C Over the past 35 years, some studies of existing data have produced evidence that</p>\n<p>smaller classes benefit students, but most of these studies were poorly designed. The exception was the Tennessee study called Project STAR (Student Teacher Achievement Ratio). Frederick Mosteller of Harvard University has called it ‘one of the</p>\n<p>greatest experiments in education in United States history’.</p>\n<p>Students entering kindergarten were randomly assigned to one of three kinds of classes: a small class of 13 to 17 students, a regular-size class of 22 to 26 or a regular\u0002</p>\n<p>size class with both a teacher and a full-time teacher’s aide.</p>\n<p>The students remained in whatever category they had been assigned to throughout the third grade, after which they joined a regular classroom in the fourth. To ensure that teaching quality did not differ, teachers were randomly assigned to small and regular\u0002 size classrooms. Few teachers received any special training for working with small</p>\n<p>classes, and there were no new curricular materials.</p>\n<p>D At the end of STAR, researchers analysed the data. Jeremy Finn of New York</p>\n<p>University and Charles Achilles of Eastern Michigan University found evidence for ‘an array of benefits of small classes’. They calculated that students in smaller classes were outperforming their counterparts in regular-sized classes by the first grade and that this advantage persisted even after students returned to larger classes. They also found that the effect was stronger for black and Hispanic minority groups – a significant</p>\n<p>finding for policy-makers.</p>\n<p>Eric Hanushek of Stanford, however, criticises some of STAR’s key conclusions. He argues that STAR does not prove that gains persist long after students return to regular classes. It was debatable how much later improvement stemmed from other factors, such as a supportive home. Nor does he accept that the benefits accumulate, with participants widening the gap with their peers in larger classes year by year.</p>\n<p>Hanushek and others have also shown that during the study too many children moved from regular to small classes, probably because school personnel caved in to parent demands. And Hanushek also asserts that STAR failed to ensure good randomisation of teacher and student assignments. However, these points do not undermine STAR’s</p>\n<p>basic findings.</p>\n<p>E The largest public class size reduction programme so far, California’s, stands more as a</p>\n<p>warning than as worthy of emulation. That state is trying to reduce classes in kindergarten through grade three despite a shortage of teachers that is most acute in</p>\n<p>low-income areas.</p>\n<p>This is exacerbating the disparity in resources available to rich and poor schools in California, because more affluent areas can attract the best teachers. Indeed, some of the extra teachers needed are being recruited from the poorer schools. Researchers found a statistically significant achievement advantage in reading, writing and mathematics for students in classes that had been reduced to 20. What is more, the</p>\n<p>effect did not vary for students of different backgrounds.</p>\n<p>F Wisconsin’s Student Achievement Guarantee in Education (SAGE) was a five-year pilot</p>\n<p>study to do some of the groundwork for a major project. Class sizes were reduced in only 14 schools, but it was noteworthy for targeting schools at which 30% of the students were below poverty level, compared with California’s across-the-board approach. SAGE lowered the average pupil-teacher ratio in kindergarten through third grade to 12–15:1 from 21–25:1. Analysts have studied the results of first-grade students in these schools and similar first-grade students elsewhere and found the</p>\n<p>results accord with those from STAR.</p>\n<p>STAR and SAGE have made it hard to argue against reducing class sizes. But the California initiative shows that reductions made with too little forethought can yield minuscule gains. Administrators need solid information before they can make sensible</p>\n<p>policy decisions.</p>\n<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks.</p>\n<p>All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies.</p>\n<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -1484,10 +1446,9 @@
           "b035",
           "b036",
           "b037",
-          "b038",
-          "b065",
-          "b066",
-          "b067"
+          "b063",
+          "b064",
+          "b065"
         ],
         "title": "Passage 3 below."
       },
@@ -1534,7 +1495,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 744.8400268554688,
@@ -1548,7 +1509,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -1560,7 +1521,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1579,18 +1540,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 27-40, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 706.6799926757812,
@@ -1604,10 +1564,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1616,7 +1576,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1635,7 +1595,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1643,7 +1603,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1655,22 +1615,22 @@
               "blockId": "b005",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Of all the ideas for improving education, few are as simple or attractive as reducing the</p>",
+              "html": "<p>A Of all the ideas for improving education, few are as simple or attractive as reducing the</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "A  Of all the ideas for improving education, few are as simple or attractive as reducing the"
+              "text": "A Of all the ideas for improving education, few are as simple or attractive as reducing the"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1689,7 +1649,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1697,7 +1657,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1716,7 +1676,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1724,7 +1684,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1736,22 +1696,22 @@
               "blockId": "b008",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  Do small classes improve school achievement? To answer this, investigators have</p>",
+              "html": "<p>B Do small classes improve school achievement? To answer this, investigators have</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "B  Do small classes improve school achievement? To answer this, investigators have"
+              "text": "B Do small classes improve school achievement? To answer this, investigators have"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1770,7 +1730,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1778,7 +1738,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1797,7 +1757,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1805,80 +1765,53 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
                 76,
-                357.2400207519531,
+                341.6400146484375,
                 538.8950805664062,
                 412.4400329589844
               ],
               "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>But do these findings mean that class size makes no difference? Not necessarily. For instance, schools strive for more than just high test scores; they also usually try to keep their drop-out rates low. And, indeed, the drop-out rate for older students fell considerably over that period. Because drop-outs generally come from the low end of</p>",
+              "html": "<p>But do these findings mean that class size makes no difference? Not necessarily. For instance, schools strive for more than just high test scores; they also usually try to keep their drop-out rates low. And, indeed, the drop-out rate for older students fell considerably over that period. Because drop-outs generally come from the low end of the achievement distribution, a reduction in the drop-out rate could be expected to pull</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "But do these findings mean that class size makes no difference? Not necessarily. For instance, schools strive for more than just high test scores; they also usually try to keep their drop-out rates low. And, indeed, the drop-out rate for older students fell considerably over that period. Because drop-outs generally come from the low end of"
+              "text": "But do these findings mean that class size makes no difference? Not necessarily. For instance, schools strive for more than just high test scores; they also usually try to keep their drop-out rates low. And, indeed, the drop-out rate for older students fell considerably over that period. Because drop-outs generally come from the low end of the achievement distribution, a reduction in the drop-out rate could be expected to pull"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
-              "bbox": [
-                76,
-                341.6400146484375,
-                532.2928466796875,
-                350.0400390625
-              ],
-              "blockId": "b012",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>the achievement distribution, a reduction in the drop-out rate could be expected to pull</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 1,
-                    "current": 0
-                  },
-                  "index": 4
-                }
-              },
-              "pageIndex": 1,
-              "text": "the achievement distribution, a reduction in the drop-out rate could be expected to pull"
-            },
-            {
-              "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
-              "_epic8Ordinal": 12,
-              "_epic8SectionColumns": 3,
               "bbox": [
                 76,
                 326.0400085449219,
                 212.7447967529297,
                 334.4400329589844
               ],
-              "blockId": "b013",
+              "blockId": "b012",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>down average test scores.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1886,8 +1819,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
-              "_epic8Ordinal": 13,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
                 76,
@@ -1895,26 +1828,26 @@
                 520.6235961914062,
                 303.24005126953125
               ],
-              "blockId": "b014",
+              "blockId": "b013",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Another reason for discounting those data is the difficulty of ensuring a level playing field. In a perfect world, U.S. students would all com e from  well-off fam ilies, with two highly educated English-speaking parents who are involved in their children’s schooling. Teachers would all be creative and have complete mastery of the subject</p>",
+              "html": "<p>Another reason for discounting those data is the difficulty of ensuring a level playing field. In a perfect world, U.S. students would all com e from well-off fam ilies, with two highly educated English-speaking parents who are involved in their children’s schooling. Teachers would all be creative and have complete mastery of the subject</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "Another reason for discounting those data is the difficulty of ensuring a level playing field. In a perfect world, U.S. students would all com e from  well-off fam ilies, with two highly educated English-speaking parents who are involved in their children’s schooling. Teachers would all be creative and have complete mastery of the subject"
+              "text": "Another reason for discounting those data is the difficulty of ensuring a level playing field. In a perfect world, U.S. students would all com e from well-off fam ilies, with two highly educated English-speaking parents who are involved in their children’s schooling. Teachers would all be creative and have complete mastery of the subject"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
-              "_epic8Ordinal": 14,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
                 76,
@@ -1922,7 +1855,7 @@
                 256.3023681640625,
                 240.8400115966797
               ],
-              "blockId": "b015",
+              "blockId": "b014",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>m atter. The reality is very different.</p>",
@@ -1932,7 +1865,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1947,8 +1880,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1957,26 +1890,26 @@
                 516.27392578125,
                 761.8800048828125
               ],
-              "blockId": "b016",
+              "blockId": "b015",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  Over the past 35 years, some studies of existing data have produced evidence that</p>",
+              "html": "<p>C Over the past 35 years, some studies of existing data have produced evidence that</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "C  Over the past 35 years, some studies of existing data have produced evidence that"
+              "text": "C Over the past 35 years, some studies of existing data have produced evidence that"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1985,7 +1918,7 @@
                 530.8607788085938,
                 746.280029296875
               ],
-              "blockId": "b017",
+              "blockId": "b016",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>smaller classes benefit students, but most of these studies were poorly designed. The exception was the Tennessee study called Project STAR (Student Teacher Achievement Ratio). Frederick Mosteller of Harvard University has called it ‘one of the</p>",
@@ -1995,7 +1928,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2003,8 +1936,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2013,7 +1946,7 @@
                 385.5087890625,
                 699.4800415039062
               ],
-              "blockId": "b018",
+              "blockId": "b017",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>greatest experiments in education in United States history’.</p>",
@@ -2023,7 +1956,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2031,8 +1964,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2041,7 +1974,7 @@
                 534.8944702148438,
                 668.280029296875
               ],
-              "blockId": "b019",
+              "blockId": "b018",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Students entering kindergarten were randomly assigned to one of three kinds of classes: a small class of 13 to 17 students, a regular-size class of 22 to 26 or a regular\u0002</p>",
@@ -2051,7 +1984,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2059,8 +1992,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2069,7 +2002,7 @@
                 389.72613525390625,
                 637.0800170898438
               ],
-              "blockId": "b020",
+              "blockId": "b019",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>size class with both a teacher and a full-time teacher’s aide.</p>",
@@ -2079,7 +2012,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2087,8 +2020,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2097,7 +2030,7 @@
                 537.653076171875,
                 621.4800415039062
               ],
-              "blockId": "b021",
+              "blockId": "b020",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>The students remained in whatever category they had been assigned to throughout the third grade, after which they joined a regular classroom in the fourth. To ensure that teaching quality did not differ, teachers were randomly assigned to small and regular\u0002 size classrooms. Few teachers received any special training for working with small</p>",
@@ -2107,7 +2040,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2115,8 +2048,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2125,7 +2058,7 @@
                 349.4608154296875,
                 559.0800170898438
               ],
-              "blockId": "b022",
+              "blockId": "b021",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>classes, and there were no new curricular materials.</p>",
@@ -2135,7 +2068,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2143,8 +2076,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2153,26 +2086,26 @@
                 486.6639404296875,
                 527.8800659179688
               ],
-              "blockId": "b023",
+              "blockId": "b022",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  At the end of STAR, researchers analysed the data. Jeremy Finn of New York</p>",
+              "html": "<p>D At the end of STAR, researchers analysed the data. Jeremy Finn of New York</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "D  At the end of STAR, researchers analysed the data. Jeremy Finn of New York"
+              "text": "D At the end of STAR, researchers analysed the data. Jeremy Finn of New York"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2181,7 +2114,7 @@
                 537.3640747070312,
                 512.280029296875
               ],
-              "blockId": "b024",
+              "blockId": "b023",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>University and Charles Achilles of Eastern Michigan University found evidence for ‘an array of benefits of small classes’. They calculated that students in smaller classes were outperforming their counterparts in regular-sized classes by the first grade and that this advantage persisted even after students returned to larger classes. They also found that the effect was stronger for black and Hispanic minority groups – a significant</p>",
@@ -2191,7 +2124,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2199,8 +2132,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2209,7 +2142,7 @@
                 206.04977416992188,
                 434.280029296875
               ],
-              "blockId": "b025",
+              "blockId": "b024",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>finding for policy-makers.</p>",
@@ -2219,7 +2152,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2227,8 +2160,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2237,7 +2170,7 @@
                 538.046630859375,
                 403.08001708984375
               ],
-              "blockId": "b026",
+              "blockId": "b025",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Eric Hanushek of Stanford, however, criticises some of STAR’s key conclusions. He argues that STAR does not prove that gains persist long after students return to regular classes. It was debatable how much later improvement stemmed from other factors, such as a supportive home. Nor does he accept that the benefits accumulate, with participants widening the gap with their peers in larger classes year by year.</p>",
@@ -2247,7 +2180,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2255,8 +2188,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2265,7 +2198,7 @@
                 532.2913818359375,
                 309.48004150390625
               ],
-              "blockId": "b027",
+              "blockId": "b026",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Hanushek and others have also shown that during the study too many children moved from regular to small classes, probably because school personnel caved in to parent demands. And Hanushek also asserts that STAR failed to ensure good randomisation of teacher and student assignments. However, these points do not undermine STAR’s</p>",
@@ -2275,7 +2208,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2283,8 +2216,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2293,7 +2226,7 @@
                 148.71279907226562,
                 247.0800323486328
               ],
-              "blockId": "b028",
+              "blockId": "b027",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>basic findings.</p>",
@@ -2303,7 +2236,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2318,8 +2251,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2328,26 +2261,26 @@
                 540.66748046875,
                 761.8800048828125
               ],
-              "blockId": "b029",
+              "blockId": "b028",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>E  The largest public class size reduction programme so far, California’s, stands more as a</p>",
+              "html": "<p>E The largest public class size reduction programme so far, California’s, stands more as a</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "E  The largest public class size reduction programme so far, California’s, stands more as a"
+              "text": "E The largest public class size reduction programme so far, California’s, stands more as a"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2356,7 +2289,7 @@
                 526.290283203125,
                 746.280029296875
               ],
-              "blockId": "b030",
+              "blockId": "b029",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>warning than as worthy of emulation. That state is trying to reduce classes in kindergarten through grade three despite a shortage of teachers that is most acute in</p>",
@@ -2366,7 +2299,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2374,8 +2307,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2384,7 +2317,7 @@
                 170.04034423828125,
                 715.0800170898438
               ],
-              "blockId": "b031",
+              "blockId": "b030",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>low-income areas.</p>",
@@ -2394,7 +2327,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2402,8 +2335,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2412,7 +2345,7 @@
                 532.7222900390625,
                 683.8800048828125
               ],
-              "blockId": "b032",
+              "blockId": "b031",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>This is exacerbating the disparity in resources available to rich and poor schools in California, because more affluent areas can attract the best teachers. Indeed, some of the extra teachers needed are being recruited from the poorer schools. Researchers found a statistically significant achievement advantage in reading, writing and mathematics for students in classes that had been reduced to 20. What is more, the</p>",
@@ -2422,7 +2355,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2430,8 +2363,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2440,7 +2373,7 @@
                 368.40875244140625,
                 605.8800048828125
               ],
-              "blockId": "b033",
+              "blockId": "b032",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>effect did not vary for students of different backgrounds.</p>",
@@ -2450,7 +2383,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2458,8 +2391,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2468,26 +2401,26 @@
                 539.3440551757812,
                 574.6800537109375
               ],
-              "blockId": "b034",
+              "blockId": "b033",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>F  Wisconsin’s Student Achievement Guarantee in Education (SAGE) was a five-year pilot</p>",
+              "html": "<p>F Wisconsin’s Student Achievement Guarantee in Education (SAGE) was a five-year pilot</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "F  Wisconsin’s Student Achievement Guarantee in Education (SAGE) was a five-year pilot"
+              "text": "F Wisconsin’s Student Achievement Guarantee in Education (SAGE) was a five-year pilot"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2496,7 +2429,7 @@
                 530.9473876953125,
                 559.0800170898438
               ],
-              "blockId": "b035",
+              "blockId": "b034",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>study to do some of the groundwork for a major project. Class sizes were reduced in only 14 schools, but it was noteworthy for targeting schools at which 30% of the students were below poverty level, compared with California’s across-the-board approach. SAGE lowered the average pupil-teacher ratio in kindergarten through third grade to 12–15:1 from 21–25:1. Analysts have studied the results of first-grade students in these schools and similar first-grade students elsewhere and found the</p>",
@@ -2506,7 +2439,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2514,8 +2447,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2524,7 +2457,7 @@
                 269.84320068359375,
                 465.48004150390625
               ],
-              "blockId": "b036",
+              "blockId": "b035",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>results accord with those from STAR.</p>",
@@ -2534,7 +2467,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2542,8 +2475,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2552,7 +2485,7 @@
                 531.5906372070312,
                 434.280029296875
               ],
-              "blockId": "b037",
+              "blockId": "b036",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>STAR and SAGE have made it hard to argue against reducing class sizes. But the California initiative shows that reductions made with too little forethought can yield minuscule gains. Administrators need solid information before they can make sensible</p>",
@@ -2562,7 +2495,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2570,8 +2503,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2580,7 +2513,7 @@
                 160.04559326171875,
                 387.48004150390625
               ],
-              "blockId": "b038",
+              "blockId": "b037",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>policy decisions.</p>",
@@ -2590,7 +2523,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2614,7 +2547,7 @@
                 143.3853302001953,
                 761.8800048828125
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 27—31</h3>",
@@ -2642,7 +2575,7 @@
                 276.11712646484375,
                 732.3600463867188
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Reading Passage 3 has six sections, A–F.</h3>",
@@ -2670,7 +2603,7 @@
                 326.16241455078125,
                 702.6000366210938
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Which paragraph contains the following information?</p>",
@@ -2684,6 +2617,7 @@
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Which paragraph contains the following information?"
             },
             {
@@ -2697,7 +2631,7 @@
                 407.5063171386719,
                 673.0800170898438
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Write the correct letter, A–F, in boxes 27–31 on your answer sheet.</p>",
@@ -2711,6 +2645,7 @@
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write the correct letter, A–F, in boxes 27–31 on your answer sheet."
             },
             {
@@ -2724,7 +2659,7 @@
                 284.1212158203125,
                 643.56005859375
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>NB You may use any letter more than once.</p>",
@@ -2751,7 +2686,7 @@
                 328.47357177734375,
                 613.800048828125
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>27 detailed criticism of the methodology of a project</p>",
@@ -2778,7 +2713,7 @@
                 382.4805603027344,
                 584.280029296875
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>28 a comparison of the data from class-size reduction projects</p>",
@@ -2805,7 +2740,7 @@
                 395.82647705078125,
                 554.760009765625
               ],
-              "blockId": "b046",
+              "blockId": "b045",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>29 the level of public interest in the issues of class-size reduction</p>",
@@ -2832,7 +2767,7 @@
                 363.8399963378906,
                 525.0000610351562
               ],
-              "blockId": "b047",
+              "blockId": "b046",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>30 details of action taken to protect the validity of a project</p>",
@@ -2859,7 +2794,7 @@
                 372.5111999511719,
                 495.48004150390625
               ],
-              "blockId": "b048",
+              "blockId": "b047",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>31 reasons why class composition changed during a project</p>",
@@ -2893,7 +2828,7 @@
                 148.56544494628906,
                 761.4000244140625
               ],
-              "blockId": "b049",
+              "blockId": "b048",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 32–40</h3>",
@@ -2921,7 +2856,7 @@
                 298.7760009765625,
                 732.3600463867188
               ],
-              "blockId": "b050",
+              "blockId": "b049",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Classify the following statements as referring to</p>",
@@ -2944,14 +2879,14 @@
               "_epic8SectionColumns": 1,
               "bbox": [
                 75,
-                694.2000122070312,
-                160.02000427246094,
+                678.5999755859375,
+                208.05360412597656,
                 702.6000366210938
               ],
-              "blockId": "b051",
+              "blockId": "b050",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Project STAR</p>",
+              "html": "<p>A Project STAR B The California Project</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2962,66 +2897,39 @@
                 }
               },
               "pageIndex": 5,
-              "text": "A  Project STAR"
+              "text": "A Project STAR B The California Project"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
-              "_epic8SectionColumns": 3,
-              "bbox": [
-                75,
-                678.5999755859375,
-                208.05360412597656,
-                687
-              ],
-              "blockId": "b052",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>B  The California Project</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 3,
-                    "current": 0
-                  },
-                  "index": 1
-                }
-              },
-              "pageIndex": 5,
-              "text": "B  The California Project"
-            },
-            {
-              "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
-              "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75,
                 663,
                 121.34159851074219,
                 671.4000244140625
               ],
-              "blockId": "b053",
+              "blockId": "b051",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  SAGE</p>",
+              "html": "<p>C SAGE</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 5,
-              "text": "C  SAGE"
+              "text": "C SAGE"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 5,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3029,7 +2937,7 @@
                 432.1624755859375,
                 641.8800048828125
               ],
-              "blockId": "b054",
+              "blockId": "b052",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Write the correct letter, A, B or C, in boxes 32-40 on your answer sheet.</p>",
@@ -3039,16 +2947,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 5,
+              "roleHint": "question",
               "text": "Write the correct letter, A, B or C, in boxes 32-40 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 6,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3056,7 +2965,7 @@
                 378.5063781738281,
                 612.3600463867188
               ],
-              "blockId": "b055",
+              "blockId": "b053",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>32 The student composition of each class was left to chance.</p>",
@@ -3066,7 +2975,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3074,8 +2983,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 7,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3083,7 +2992,7 @@
                 362.45111083984375,
                 582.6000366210938
               ],
-              "blockId": "b056",
+              "blockId": "b054",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>33 A long-term improvement in performance was claimed.</p>",
@@ -3093,7 +3002,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3101,8 +3010,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 8,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3110,7 +3019,7 @@
                 335.7935791015625,
                 553.0800170898438
               ],
-              "blockId": "b057",
+              "blockId": "b055",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>34 Similar results were obtained for all social groups.</p>",
@@ -3120,7 +3029,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3128,8 +3037,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 9,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3137,7 +3046,7 @@
                 402.48480224609375,
                 523.56005859375
               ],
-              "blockId": "b058",
+              "blockId": "b056",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>35 The project was a preliminary to a more comprehensive study.</p>",
@@ -3147,7 +3056,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3155,8 +3064,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 10,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3164,7 +3073,7 @@
                 373.826416015625,
                 493.800048828125
               ],
-              "blockId": "b059",
+              "blockId": "b057",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>36 Several different class types were involved in the project.</p>",
@@ -3174,7 +3083,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3182,8 +3091,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 11,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3191,7 +3100,7 @@
                 351.1607666015625,
                 464.280029296875
               ],
-              "blockId": "b060",
+              "blockId": "b058",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>37 A special group of schools was selected to take part.</p>",
@@ -3201,7 +3110,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3209,8 +3118,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 12,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3218,7 +3127,7 @@
                 360.4703674316406,
                 434.7600402832031
               ],
-              "blockId": "b061",
+              "blockId": "b059",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>38 Classroom assistants were used as part of the project.</p>",
@@ -3228,7 +3137,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3236,8 +3145,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 13,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3245,7 +3154,7 @@
                 404.51519775390625,
                 405.0000305175781
               ],
-              "blockId": "b062",
+              "blockId": "b060",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>39 The project was responsible for aggravating existing problems.</p>",
@@ -3255,7 +3164,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3263,8 +3172,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 14,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -3272,7 +3181,7 @@
                 485.93035888671875,
                 375.48004150390625
               ],
-              "blockId": "b063",
+              "blockId": "b061",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>40 Certain groups of pupils within the sample were identified as having benefited.</p>",
@@ -3282,7 +3191,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3290,26 +3199,26 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 15,
-              "_epic8SectionColumns": 3,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 14,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 61.919925689697266,
                 171.9600372314453,
                 113.29346466064453,
                 180.3600311279297
               ],
-              "blockId": "b064",
+              "blockId": "b062",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Disclaimer</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3317,8 +3226,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
-              "_epic8Ordinal": 16,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
                 61.919925689697266,
@@ -3326,7 +3235,7 @@
                 382.4089050292969,
                 157.0800323486328
               ],
-              "blockId": "b065",
+              "blockId": "b063",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks.</p>",
@@ -3336,7 +3245,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3344,8 +3253,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
-              "_epic8Ordinal": 17,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
                 61.919925689697266,
@@ -3353,7 +3262,7 @@
                 475.9085693359375,
                 141.4800262451172
               ],
-              "blockId": "b066",
+              "blockId": "b064",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies.</p>",
@@ -3363,7 +3272,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3371,8 +3280,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
-              "_epic8Ordinal": 18,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
                 61.919925689697266,
@@ -3380,7 +3289,7 @@
                 519.8615112304688,
                 86.76005554199219
               ],
-              "blockId": "b067",
+              "blockId": "b065",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
@@ -3390,7 +3299,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3411,7 +3320,7 @@
                 520,
                 108
               ],
-              "blockId": "b068",
+              "blockId": "b066",
               "blockType": "paragraph",
               "confidence": 0.2,
               "html": "<p>[No extractable text on page 6]</p>",
@@ -3468,7 +3377,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Does Class Size Matter?</p>\n<p>A  Of all the ideas for improving education, few are as simple or attractive as reducing the</p>\n<p>number of pupils per teacher. Unlike competing proposals for reform, class-size reductions rarely elicit huge outcries or involve structural change. The testing of educators, by contrast, generally arouses the anger of unions. Similarly, establishing special ‘charter’ schools involves privileging some schools over others, with the credits provided usually coming out of the budgets of struggling local schools. With its uncomplicated appeal, class-size reduction in the U.S. has lately gone from being a subject of primary academic interest to a policy juggernaut with over twenty states</p>\n<p>aiming at decreasing class sizes.</p>\n<p>B  Do small classes improve school achievement? To answer this, investigators have</p>\n<p>attempted to analyse existing data, such as records at the U.S. Department of Education. These reveal that there were steep drops in pupil-teacher ratios between</p>\n<p>1969 and 1997, but no significant gains in academic performance.</p>\n<p>But do these findings mean that class size makes no difference? Not necessarily. For instance, schools strive for more than just high test scores; they also usually try to keep their drop-out rates low. And, indeed, the drop-out rate for older students fell considerably over that period. Because drop-outs generally come from the low end of</p>\n<p>the achievement distribution, a reduction in the drop-out rate could be expected to pull</p>\n<p>down average test scores.</p>\n<p>Another reason for discounting those data is the difficulty of ensuring a level playing field. In a perfect world, U.S. students would all com e from  well-off fam ilies, with two highly educated English-speaking parents who are involved in their children’s schooling. Teachers would all be creative and have complete mastery of the subject</p>\n<p>m atter. The reality is very different.</p>\n<p>C  Over the past 35 years, some studies of existing data have produced evidence that</p>\n<p>smaller classes benefit students, but most of these studies were poorly designed. The exception was the Tennessee study called Project STAR (Student Teacher Achievement Ratio). Frederick Mosteller of Harvard University has called it ‘one of the</p>\n<p>greatest experiments in education in United States history’.</p>\n<p>Students entering kindergarten were randomly assigned to one of three kinds of classes: a small class of 13 to 17 students, a regular-size class of 22 to 26 or a regular\u0002</p>\n<p>size class with both a teacher and a full-time teacher’s aide.</p>\n<p>The students remained in whatever category they had been assigned to throughout the third grade, after which they joined a regular classroom in the fourth. To ensure that teaching quality did not differ, teachers were randomly assigned to small and regular\u0002 size classrooms. Few teachers received any special training for working with small</p>\n<p>classes, and there were no new curricular materials.</p>\n<p>D  At the end of STAR, researchers analysed the data. Jeremy Finn of New York</p>\n<p>University and Charles Achilles of Eastern Michigan University found evidence for ‘an array of benefits of small classes’. They calculated that students in smaller classes were outperforming their counterparts in regular-sized classes by the first grade and that this advantage persisted even after students returned to larger classes. They also found that the effect was stronger for black and Hispanic minority groups – a significant</p>\n<p>finding for policy-makers.</p>\n<p>Eric Hanushek of Stanford, however, criticises some of STAR’s key conclusions. He argues that STAR does not prove that gains persist long after students return to regular classes. It was debatable how much later improvement stemmed from other factors, such as a supportive home. Nor does he accept that the benefits accumulate, with participants widening the gap with their peers in larger classes year by year.</p>\n<p>Hanushek and others have also shown that during the study too many children moved from regular to small classes, probably because school personnel caved in to parent demands. And Hanushek also asserts that STAR failed to ensure good randomisation of teacher and student assignments. However, these points do not undermine STAR’s</p>\n<p>basic findings.</p>\n<p>E  The largest public class size reduction programme so far, California’s, stands more as a</p>\n<p>warning than as worthy of emulation. That state is trying to reduce classes in kindergarten through grade three despite a shortage of teachers that is most acute in</p>\n<p>low-income areas.</p>\n<p>This is exacerbating the disparity in resources available to rich and poor schools in California, because more affluent areas can attract the best teachers. Indeed, some of the extra teachers needed are being recruited from the poorer schools. Researchers found a statistically significant achievement advantage in reading, writing and mathematics for students in classes that had been reduced to 20. What is more, the</p>\n<p>effect did not vary for students of different backgrounds.</p>\n<p>F  Wisconsin’s Student Achievement Guarantee in Education (SAGE) was a five-year pilot</p>\n<p>study to do some of the groundwork for a major project. Class sizes were reduced in only 14 schools, but it was noteworthy for targeting schools at which 30% of the students were below poverty level, compared with California’s across-the-board approach. SAGE lowered the average pupil-teacher ratio in kindergarten through third grade to 12–15:1 from 21–25:1. Analysts have studied the results of first-grade students in these schools and similar first-grade students elsewhere and found the</p>\n<p>results accord with those from STAR.</p>\n<p>STAR and SAGE have made it hard to argue against reducing class sizes. But the California initiative shows that reductions made with too little forethought can yield minuscule gains. Administrators need solid information before they can make sensible</p>\n<p>policy decisions.</p>\n<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks.</p>\n<p>All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies.</p>\n<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
+            "html": "<h3>READING PASSAGE 3</h3>\n<p>Passage 3 below.</p>\n<p>Does Class Size Matter?</p>\n<p>A Of all the ideas for improving education, few are as simple or attractive as reducing the</p>\n<p>number of pupils per teacher. Unlike competing proposals for reform, class-size reductions rarely elicit huge outcries or involve structural change. The testing of educators, by contrast, generally arouses the anger of unions. Similarly, establishing special ‘charter’ schools involves privileging some schools over others, with the credits provided usually coming out of the budgets of struggling local schools. With its uncomplicated appeal, class-size reduction in the U.S. has lately gone from being a subject of primary academic interest to a policy juggernaut with over twenty states</p>\n<p>aiming at decreasing class sizes.</p>\n<p>B Do small classes improve school achievement? To answer this, investigators have</p>\n<p>attempted to analyse existing data, such as records at the U.S. Department of Education. These reveal that there were steep drops in pupil-teacher ratios between</p>\n<p>1969 and 1997, but no significant gains in academic performance.</p>\n<p>But do these findings mean that class size makes no difference? Not necessarily. For instance, schools strive for more than just high test scores; they also usually try to keep their drop-out rates low. And, indeed, the drop-out rate for older students fell considerably over that period. Because drop-outs generally come from the low end of the achievement distribution, a reduction in the drop-out rate could be expected to pull</p>\n<p>down average test scores.</p>\n<p>Another reason for discounting those data is the difficulty of ensuring a level playing field. In a perfect world, U.S. students would all com e from well-off fam ilies, with two highly educated English-speaking parents who are involved in their children’s schooling. Teachers would all be creative and have complete mastery of the subject</p>\n<p>m atter. The reality is very different.</p>\n<p>C Over the past 35 years, some studies of existing data have produced evidence that</p>\n<p>smaller classes benefit students, but most of these studies were poorly designed. The exception was the Tennessee study called Project STAR (Student Teacher Achievement Ratio). Frederick Mosteller of Harvard University has called it ‘one of the</p>\n<p>greatest experiments in education in United States history’.</p>\n<p>Students entering kindergarten were randomly assigned to one of three kinds of classes: a small class of 13 to 17 students, a regular-size class of 22 to 26 or a regular\u0002</p>\n<p>size class with both a teacher and a full-time teacher’s aide.</p>\n<p>The students remained in whatever category they had been assigned to throughout the third grade, after which they joined a regular classroom in the fourth. To ensure that teaching quality did not differ, teachers were randomly assigned to small and regular\u0002 size classrooms. Few teachers received any special training for working with small</p>\n<p>classes, and there were no new curricular materials.</p>\n<p>D At the end of STAR, researchers analysed the data. Jeremy Finn of New York</p>\n<p>University and Charles Achilles of Eastern Michigan University found evidence for ‘an array of benefits of small classes’. They calculated that students in smaller classes were outperforming their counterparts in regular-sized classes by the first grade and that this advantage persisted even after students returned to larger classes. They also found that the effect was stronger for black and Hispanic minority groups – a significant</p>\n<p>finding for policy-makers.</p>\n<p>Eric Hanushek of Stanford, however, criticises some of STAR’s key conclusions. He argues that STAR does not prove that gains persist long after students return to regular classes. It was debatable how much later improvement stemmed from other factors, such as a supportive home. Nor does he accept that the benefits accumulate, with participants widening the gap with their peers in larger classes year by year.</p>\n<p>Hanushek and others have also shown that during the study too many children moved from regular to small classes, probably because school personnel caved in to parent demands. And Hanushek also asserts that STAR failed to ensure good randomisation of teacher and student assignments. However, these points do not undermine STAR’s</p>\n<p>basic findings.</p>\n<p>E The largest public class size reduction programme so far, California’s, stands more as a</p>\n<p>warning than as worthy of emulation. That state is trying to reduce classes in kindergarten through grade three despite a shortage of teachers that is most acute in</p>\n<p>low-income areas.</p>\n<p>This is exacerbating the disparity in resources available to rich and poor schools in California, because more affluent areas can attract the best teachers. Indeed, some of the extra teachers needed are being recruited from the poorer schools. Researchers found a statistically significant achievement advantage in reading, writing and mathematics for students in classes that had been reduced to 20. What is more, the</p>\n<p>effect did not vary for students of different backgrounds.</p>\n<p>F Wisconsin’s Student Achievement Guarantee in Education (SAGE) was a five-year pilot</p>\n<p>study to do some of the groundwork for a major project. Class sizes were reduced in only 14 schools, but it was noteworthy for targeting schools at which 30% of the students were below poverty level, compared with California’s across-the-board approach. SAGE lowered the average pupil-teacher ratio in kindergarten through third grade to 12–15:1 from 21–25:1. Analysts have studied the results of first-grade students in these schools and similar first-grade students elsewhere and found the</p>\n<p>results accord with those from STAR.</p>\n<p>STAR and SAGE have made it hard to argue against reducing class sizes. But the California initiative shows that reductions made with too little forethought can yield minuscule gains. Administrators need solid information before they can make sensible</p>\n<p>policy decisions.</p>\n<p>Compiled, formatted, and lightly proofread by ZYZ Reading Walks.</p>\n<p>All copyright in the underlying works remains with the original authors and publishers. No affiliation with or endorsement by any rights holder (including IELTS® owners). For non-commercial educational use only. This notice must remain intact in all copies.</p>\n<p>Available free of charge from ZYZ Reading Walks. Resale or any paid distribution is prohibited.</p>",
             "kind": "html"
           }
         ]
@@ -3595,10 +3504,9 @@
             "b035",
             "b036",
             "b037",
-            "b038",
-            "b065",
-            "b066",
-            "b067"
+            "b063",
+            "b064",
+            "b065"
           ],
           "title": "Passage 3 below."
         }
@@ -3606,6 +3514,7 @@
       "questionGroupCandidates": [
         {
           "blockIds": [
+            "b038",
             "b039",
             "b040",
             "b041",
@@ -3614,12 +3523,12 @@
             "b044",
             "b045",
             "b046",
-            "b047",
-            "b048"
+            "b047"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
+              "b038",
               "b039",
               "b040",
               "b041",
@@ -3628,8 +3537,7 @@
               "b044",
               "b045",
               "b046",
-              "b047",
-              "b048"
+              "b047"
             ],
             "interaction": {
               "allowOptionReuse": true,
@@ -3648,6 +3556,12 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b038",
+              "reason": "same-section-continuation",
+              "toBlockId": "b039"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b039",
@@ -3695,12 +3609,6 @@
               "fromBlockId": "b046",
               "reason": "same-section-continuation",
               "toBlockId": "b047"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b047",
-              "reason": "same-section-continuation",
-              "toBlockId": "b048"
             }
           ],
           "groupId": "group-1",
@@ -3720,7 +3628,7 @@
                 143.3853302001953,
                 761.8800048828125
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3741,7 +3649,7 @@
                 276.11712646484375,
                 732.3600463867188
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3762,7 +3670,7 @@
                 326.16241455078125,
                 702.6000366210938
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3772,7 +3680,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which paragraph contains the following information?"
             },
@@ -3783,7 +3691,7 @@
                 407.5063171386719,
                 673.0800170898438
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3793,7 +3701,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–F, in boxes 27–31 on your answer sheet."
             },
@@ -3804,7 +3712,7 @@
                 284.1212158203125,
                 643.56005859375
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3825,7 +3733,7 @@
                 328.47357177734375,
                 613.800048828125
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3846,7 +3754,7 @@
                 382.4805603027344,
                 584.280029296875
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3867,7 +3775,7 @@
                 395.82647705078125,
                 554.760009765625
               ],
-              "blockId": "b046",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3888,7 +3796,7 @@
                 363.8399963378906,
                 525.0000610351562
               ],
-              "blockId": "b047",
+              "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3909,7 +3817,7 @@
                 372.5111999511719,
                 495.48004150390625
               ],
-              "blockId": "b048",
+              "blockId": "b047",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3927,6 +3835,7 @@
         },
         {
           "blockIds": [
+            "b048",
             "b049",
             "b050",
             "b051",
@@ -3940,13 +3849,12 @@
             "b059",
             "b060",
             "b061",
-            "b062",
-            "b063",
-            "b064"
+            "b062"
           ],
           "classification": {
             "confidence": 0.68,
             "evidence": [
+              "b048",
               "b049",
               "b050",
               "b051",
@@ -3960,17 +3868,14 @@
               "b059",
               "b060",
               "b061",
-              "b062",
-              "b063",
-              "b064"
+              "b062"
             ],
             "interaction": {
               "allowOptionReuse": true,
               "options": [
                 "A",
                 "B",
-                "C",
-                "D"
+                "C"
               ],
               "type": "matching"
             },
@@ -3981,6 +3886,12 @@
           },
           "confidence": 0.68,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b048",
+              "reason": "same-section-continuation",
+              "toBlockId": "b049"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b049",
@@ -4058,18 +3969,6 @@
               "fromBlockId": "b061",
               "reason": "same-section-continuation",
               "toBlockId": "b062"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b062",
-              "reason": "same-section-continuation",
-              "toBlockId": "b063"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b063",
-              "reason": "same-section-continuation",
-              "toBlockId": "b064"
             }
           ],
           "groupId": "group-2",
@@ -4089,7 +3988,7 @@
                 148.56544494628906,
                 761.4000244140625
               ],
-              "blockId": "b049",
+              "blockId": "b048",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4110,7 +4009,7 @@
                 298.7760009765625,
                 732.3600463867188
               ],
-              "blockId": "b050",
+              "blockId": "b049",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4127,44 +4026,23 @@
             {
               "bbox": [
                 75,
-                694.2000122070312,
-                160.02000427246094,
+                678.5999755859375,
+                208.05360412597656,
                 702.6000366210938
               ],
-              "blockId": "b051",
+              "blockId": "b050",
               "column": 0,
               "normalizedBbox": [
                 75,
-                694.2000122070312,
-                160.02000427246094,
+                678.5999755859375,
+                208.05360412597656,
                 702.6000366210938
               ],
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
               "sectionColumnCount": 1,
-              "textPreview": "A Project STAR"
-            },
-            {
-              "bbox": [
-                75,
-                678.5999755859375,
-                208.05360412597656,
-                687
-              ],
-              "blockId": "b052",
-              "column": 0,
-              "normalizedBbox": [
-                75,
-                678.5999755859375,
-                208.05360412597656,
-                687
-              ],
-              "pageIndex": 5,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 3,
-              "textPreview": "B The California Project"
+              "textPreview": "A Project STAR B The California Project"
             },
             {
               "bbox": [
@@ -4173,7 +4051,7 @@
                 121.34159851074219,
                 671.4000244140625
               ],
-              "blockId": "b053",
+              "blockId": "b051",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -4184,7 +4062,7 @@
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "C SAGE"
             },
             {
@@ -4194,7 +4072,7 @@
                 432.1624755859375,
                 641.8800048828125
               ],
-              "blockId": "b054",
+              "blockId": "b052",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4204,7 +4082,7 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B or C, in boxes 32-40 on your answer sheet."
             },
@@ -4215,7 +4093,7 @@
                 378.5063781738281,
                 612.3600463867188
               ],
-              "blockId": "b055",
+              "blockId": "b053",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4236,7 +4114,7 @@
                 362.45111083984375,
                 582.6000366210938
               ],
-              "blockId": "b056",
+              "blockId": "b054",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4257,7 +4135,7 @@
                 335.7935791015625,
                 553.0800170898438
               ],
-              "blockId": "b057",
+              "blockId": "b055",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4278,7 +4156,7 @@
                 402.48480224609375,
                 523.56005859375
               ],
-              "blockId": "b058",
+              "blockId": "b056",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4299,7 +4177,7 @@
                 373.826416015625,
                 493.800048828125
               ],
-              "blockId": "b059",
+              "blockId": "b057",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4320,7 +4198,7 @@
                 351.1607666015625,
                 464.280029296875
               ],
-              "blockId": "b060",
+              "blockId": "b058",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4341,7 +4219,7 @@
                 360.4703674316406,
                 434.7600402832031
               ],
-              "blockId": "b061",
+              "blockId": "b059",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4362,7 +4240,7 @@
                 404.51519775390625,
                 405.0000305175781
               ],
-              "blockId": "b062",
+              "blockId": "b060",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4383,7 +4261,7 @@
                 485.93035888671875,
                 375.48004150390625
               ],
-              "blockId": "b063",
+              "blockId": "b061",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -4404,7 +4282,7 @@
                 113.29346466064453,
                 180.3600311279297
               ],
-              "blockId": "b064",
+              "blockId": "b062",
               "column": 0,
               "normalizedBbox": [
                 61.919925689697266,
@@ -4415,7 +4293,7 @@
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Disclaimer"
             }
           ]

@@ -748,7 +748,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct heading for each paragraph from the list of headings below."
             },
@@ -769,7 +769,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct number, i–x, in boxes 14–20 on your answer sheet."
             },
@@ -790,7 +790,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "List of Headings"
             },
@@ -1430,7 +1430,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 21–23"
             },
             {
@@ -1450,7 +1450,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the following statements (Questions 21–23) and the list of historical periods in Europe"
             },
@@ -1472,7 +1472,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "below."
             },
             {
@@ -1492,7 +1492,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Match each statement with the correct historical period, A, B, C, or D."
             },
@@ -1513,7 +1513,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B, C, or D, in boxes 21–23 on your answer sheet."
             },
@@ -1709,7 +1709,15 @@
             "b093",
             "b094",
             "b095",
-            "b096"
+            "b096",
+            "b097",
+            "b098",
+            "b099",
+            "b100",
+            "b101",
+            "b102",
+            "b103",
+            "b104"
           ],
           "confidence": 0.82,
           "continuationEdges": [
@@ -1730,6 +1738,54 @@
               "fromBlockId": "b095",
               "reason": "same-section-continuation",
               "toBlockId": "b096"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b096",
+              "reason": "same-section-continuation",
+              "toBlockId": "b097"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b097",
+              "reason": "same-section-continuation",
+              "toBlockId": "b098"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b098",
+              "reason": "same-section-continuation",
+              "toBlockId": "b099"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b099",
+              "reason": "same-section-continuation",
+              "toBlockId": "b100"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b100",
+              "reason": "same-section-continuation",
+              "toBlockId": "b101"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b101",
+              "reason": "same-section-continuation",
+              "toBlockId": "b102"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b102",
+              "reason": "same-section-continuation",
+              "toBlockId": "b103"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b103",
+              "reason": "same-section-continuation",
+              "toBlockId": "b104"
             }
           ],
           "groupId": "group-3",
@@ -1741,7 +1797,7 @@
           "kind": "summary_completion",
           "layout": {
             "layoutHint": "inline_completion",
-            "notes": "Questions 24–26\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 24–26 on your answer sheet.",
+            "notes": "Questions 24–26\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 24–26 on your answer sheet.\nCelebrities achieve a global status\nThe development of the publishing industry in the 1700s signalled the beginning of international\nfame. A growing number of people could read, which meant they had the chance to become\ninformed about their favourite figures by reading 24…………. This exposure to celebrities\nexpanded further when radio and television became popular, and it was mass media attention that\nresulted in higher status and fame for some celebrities. The recent rise of reality television has\nalso meant that a person’s 25 ………… rather than their talent can bring fame. With this type of\ntelevision programme, fame may be entirely dependent on the response of the 26………….",
             "template": "summary_text_completion"
           },
           "questionRange": [
@@ -1759,13 +1815,21 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "A growing number of people could read, which meant they had the chance to become informed about their favourite figures by reading 24………… .",
+              "prompt": "…………. This exposure to celebrities expanded further when radio and television became popular, and it was mass media attention that resulted in higher status and fame for some celebrities. The recent rise of reality television has also meant that a person’s",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b093",
                 "b094",
                 "b095",
-                "b096"
+                "b096",
+                "b097",
+                "b098",
+                "b099",
+                "b100",
+                "b101",
+                "b102",
+                "b103",
+                "b104"
               ],
               "verified": false
             },
@@ -1779,13 +1843,21 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "The recent rise of reality television has also meant that a person’s 25 ………… rather than their talent can bring fame.",
+              "prompt": "………… rather than their talent can bring fame. With this type of television programme, fame may be entirely dependent on the response of the",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b093",
                 "b094",
                 "b095",
-                "b096"
+                "b096",
+                "b097",
+                "b098",
+                "b099",
+                "b100",
+                "b101",
+                "b102",
+                "b103",
+                "b104"
               ],
               "verified": false
             },
@@ -1799,13 +1871,21 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "With this type of television programme, fame may be entirely dependent on the response of the 26………… .",
+              "prompt": "………….",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b093",
                 "b094",
                 "b095",
-                "b096"
+                "b096",
+                "b097",
+                "b098",
+                "b099",
+                "b100",
+                "b101",
+                "b102",
+                "b103",
+                "b104"
               ],
               "verified": false
             }
@@ -1893,16 +1973,192 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 24–26 on your answer sheet."
+            },
+            {
+              "bbox": [
+                199.61082458496094,
+                230.04002380371094,
+                389.01641845703125,
+                238.4400177001953
+              ],
+              "blockId": "b097",
+              "column": 0,
+              "normalizedBbox": [
+                199.61082458496094,
+                230.04002380371094,
+                389.01641845703125,
+                238.4400177001953
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Celebrities achieve a global status"
+            },
+            {
+              "bbox": [
+                36,
+                204.6000213623047,
+                541.7060546875,
+                213.00001525878906
+              ],
+              "blockId": "b098",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                204.6000213623047,
+                541.7060546875,
+                213.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "The development of the publishing industry in the 1700s signalled the beginning of international"
+            },
+            {
+              "bbox": [
+                36,
+                186.6000213623047,
+                523.646240234375,
+                195.00001525878906
+              ],
+              "blockId": "b099",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                186.6000213623047,
+                523.646240234375,
+                195.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "fame. A growing number of people could read, which meant they had the chance to become"
+            },
+            {
+              "bbox": [
+                36,
+                168.6000213623047,
+                511.5686340332031,
+                177.00001525878906
+              ],
+              "blockId": "b100",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                168.6000213623047,
+                511.5686340332031,
+                177.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "informed about their favourite figures by reading 24…………. This exposure to celebrities"
+            },
+            {
+              "bbox": [
+                36,
+                150.6000213623047,
+                556.3390502929688,
+                159.00001525878906
+              ],
+              "blockId": "b101",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                150.6000213623047,
+                556.3390502929688,
+                159.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "expanded further when radio and television became popular, and it was mass media attention that"
+            },
+            {
+              "bbox": [
+                36,
+                132.6000213623047,
+                535.5910034179688,
+                141.00001525878906
+              ],
+              "blockId": "b102",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                132.6000213623047,
+                535.5910034179688,
+                141.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "resulted in higher status and fame for some celebrities. The recent rise of reality television has"
+            },
+            {
+              "bbox": [
+                36,
+                114.60005187988281,
+                540.2516479492188,
+                123.00004577636719
+              ],
+              "blockId": "b103",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                114.60005187988281,
+                540.2516479492188,
+                123.00004577636719
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "also meant that a person’s 25 ………… rather than their talent can bring fame. With this type of"
+            },
+            {
+              "bbox": [
+                36,
+                96.60005187988281,
+                519.5913696289062,
+                105.00004577636719
+              ],
+              "blockId": "b104",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                96.60005187988281,
+                519.5913696289062,
+                105.00004577636719
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "television programme, fame may be entirely dependent on the response of the 26…………."
             }
           ],
           "sourceBlockIds": [
             "b093",
             "b094",
             "b095",
-            "b096"
+            "b096",
+            "b097",
+            "b098",
+            "b099",
+            "b100",
+            "b101",
+            "b102",
+            "b103",
+            "b104"
           ],
           "verified": false
         }
@@ -1911,7 +2167,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 2</h3>\n<p>2 below.</p>\n<p>A study of western celebrity</p>\n<p>In our celebrity-obsessed culture, TV shows, internet blogs, and even newspapers are often full of</p>\n<p>the latest news, gossip and scandals about current celebrities</p>\n<p>A  It seems that our current society cannot get enough information about the daily lives of</p>\n<p>celebrities. But how did celebrities become such an important force in our culture? While</p>\n<p>people have always shared a certain obsession with the fantastic and the famous, the notion</p>\n<p>of celebrity, as well as the types of people termed ‘celebrities’, has evolved greatly throughout</p>\n<p>the ages. The word ‘celebrity’ has its roots in the language of the ancient Roman civilization.</p>\n<p>The word we now know to mean ‘a condition of being famous’ or ‘a famous person’ is derived</p>\n<p>from the Latin word ‘celeber’, meaning ‘frequented or populous’.</p>\n<p>B  The celebrities of the ancient world were the powerful and awesome deities of Greece and</p>\n<p>Rome, and the citizens of these civilizations believed in a vast number of immortals who had a</p>\n<p>direct impact on their lives. It was, therefore, important to know about these figures’ personal</p>\n<p>lives. This need to know led to the creation of myths, which personalized the gods and</p>\n<p>involved them in ancient celebrity scandals that thrilled and excited the common people.</p>\n<p>C  During ancient times, amateur and professional athletes also began to make an impact on the</p>\n<p>celebrity culture. Victors in the ancient Olympic Games were treated as heroes and were often</p>\n<p>elevated to god-like status. In the ancient Roman civilization, gladiators – the equivalent of</p>\n<p>today’s professional athletes – were also revered by the common people for their heroics and</p>\n<p>seemingly superhuman strength.</p>\n<p>D  As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a</p>\n<p>time when athletics and the arts were largely forgotten, monarchs and rulers continued to</p>\n<p>maintain celebrity status, while religious figures took on newfound fame. The miraculous lives</p>\n<p>and fascinating deaths of spiritual figures lent excitement to the lives of common people when</p>\n<p>there was often little else to be excited about, as they faced war, disease and food shortages.</p>\n<p>E  During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling</p>\n<p>figures faded. As Europe emerged from its long neglect of the arts, there was greater</p>\n<p>appreciation for portraits, statues and stone carvings. This period of appreciation for the arts</p>\n<p>lent a sense of celebrity to artists who were noted for their works and their personal</p>\n<p>achievements. It was a time when artists began to surpass political and religious individuals</p>\n<p>for supreme celebrity – a trend that would continue into later centuries.</p>\n<p>F  While the figures of the ancient and early modern civilizations were able to achieve moderate</p>\n<p>and sometimes lasting celebrity within particular cultures, the global reach of their fame was</p>\n<p>limited. It was not until the 1700s, when technological advances made publishing</p>\n<p>commercially viable, that the extent of a person’s fame could spread further. The increase in</p>\n<p>the availability of the written word was accompanied by a huge rise in the number of common</p>\n<p>people who could read, allowing a mass audience to find out about celebrities for the first time.</p>\n<p>Suddenly, the lives of authors, politicians, war heroes, and other celebrities could now be read</p>\n<p>about in newspapers around the world. These gave ordinary people the opportunity to become</p>\n<p>intimately knowledgeable about the figures they most admired.</p>\n<p>G  In the modern era, particularly as radio and film took off in the 1900s, things really began to</p>\n<p>change. First, radio began to make its way into the average home in the 1920s and 1930s.</p>\n<p>Professional athletes also began to be regarded as stars, as their games and exploits could</p>\n<p>be broadcast over the air for an entirely new audience. Then, the rise of television in the</p>\n<p>1950s only cemented the premier level of celebrity that film stars, athletes and television</p>\n<p>actors were beginning to share. This also meant a huge increase in the individual salaries of</p>\n<p>these celebrities. Even a few animals gained fame through children’s TV shows. The</p>\n<p>emergence of reality television shows in the late 1990s allowed all kinds of people with little</p>\n<p>ability to enjoy a short burst of fame on the television screen. All you needed, it seemed, was</p>\n<p>an attractive appearance. Today, reality television programmers make it possible to be famous</p>\n<p>not for doing anything in particular, but simply for being, with the audience deciding whether</p>\n<p>someone deserves to become a celebrity or not. As the meaning of celebrity continues to</p>\n<p>evolve and redefine itself in a quickly changing world, there is no telling who will become of</p>\n<p>interest next.</p>\n<p>Celebrities achieve a global status</p>\n<p>The development of the publishing industry in the 1700s signalled the beginning of international</p>\n<p>fame. A growing number of people could read, which meant they had the chance to become</p>\n<p>informed about their favourite figures by reading 24………… . This exposure to celebrities</p>\n<p>expanded further when radio and television became popular, and it was mass media attention that</p>\n<p>resulted in higher status and fame for some celebrities. The recent rise of reality television has</p>\n<p>also meant that a person’s 25 ………… rather than their talent can bring fame. With this type of</p>\n<p>television programme, fame may be entirely dependent on the response of the 26………… .</p>"
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>2 below.</p>\n<p>A study of western celebrity</p>\n<p>In our celebrity-obsessed culture, TV shows, internet blogs, and even newspapers are often full of</p>\n<p>the latest news, gossip and scandals about current celebrities</p>\n<p>A It seems that our current society cannot get enough information about the daily lives of</p>\n<p>celebrities. But how did celebrities become such an important force in our culture? While</p>\n<p>people have always shared a certain obsession with the fantastic and the famous, the notion</p>\n<p>of celebrity, as well as the types of people termed ‘celebrities’, has evolved greatly throughout</p>\n<p>the ages. The word ‘celebrity’ has its roots in the language of the ancient Roman civilization.</p>\n<p>The word we now know to mean ‘a condition of being famous’ or ‘a famous person’ is derived</p>\n<p>from the Latin word ‘celeber’, meaning ‘frequented or populous’.</p>\n<p>B The celebrities of the ancient world were the powerful and awesome deities of Greece and</p>\n<p>Rome, and the citizens of these civilizations believed in a vast number of immortals who had a</p>\n<p>direct impact on their lives. It was, therefore, important to know about these figures’ personal</p>\n<p>lives. This need to know led to the creation of myths, which personalized the gods and</p>\n<p>involved them in ancient celebrity scandals that thrilled and excited the common people.</p>\n<p>C During ancient times, amateur and professional athletes also began to make an impact on the</p>\n<p>celebrity culture. Victors in the ancient Olympic Games were treated as heroes and were often</p>\n<p>elevated to god-like status. In the ancient Roman civilization, gladiators – the equivalent of</p>\n<p>today’s professional athletes – were also revered by the common people for their heroics and</p>\n<p>seemingly superhuman strength.</p>\n<p>D As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a</p>\n<p>time when athletics and the arts were largely forgotten, monarchs and rulers continued to</p>\n<p>maintain celebrity status, while religious figures took on newfound fame. The miraculous lives</p>\n<p>and fascinating deaths of spiritual figures lent excitement to the lives of common people when</p>\n<p>there was often little else to be excited about, as they faced war, disease and food shortages.</p>\n<p>E During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling</p>\n<p>figures faded. As Europe emerged from its long neglect of the arts, there was greater</p>\n<p>appreciation for portraits, statues and stone carvings. This period of appreciation for the arts</p>\n<p>lent a sense of celebrity to artists who were noted for their works and their personal</p>\n<p>achievements. It was a time when artists began to surpass political and religious individuals</p>\n<p>for supreme celebrity – a trend that would continue into later centuries.</p>\n<p>F While the figures of the ancient and early modern civilizations were able to achieve moderate</p>\n<p>and sometimes lasting celebrity within particular cultures, the global reach of their fame was</p>\n<p>limited. It was not until the 1700s, when technological advances made publishing</p>\n<p>commercially viable, that the extent of a person’s fame could spread further. The increase in</p>\n<p>the availability of the written word was accompanied by a huge rise in the number of common</p>\n<p>people who could read, allowing a mass audience to find out about celebrities for the first time.</p>\n<p>Suddenly, the lives of authors, politicians, war heroes, and other celebrities could now be read</p>\n<p>about in newspapers around the world. These gave ordinary people the opportunity to become</p>\n<p>intimately knowledgeable about the figures they most admired.</p>\n<p>G In the modern era, particularly as radio and film took off in the 1900s, things really began to</p>\n<p>change. First, radio began to make its way into the average home in the 1920s and 1930s.</p>\n<p>Professional athletes also began to be regarded as stars, as their games and exploits could</p>\n<p>be broadcast over the air for an entirely new audience. Then, the rise of television in the</p>\n<p>1950s only cemented the premier level of celebrity that film stars, athletes and television</p>\n<p>actors were beginning to share. This also meant a huge increase in the individual salaries of</p>\n<p>these celebrities. Even a few animals gained fame through children’s TV shows. The</p>\n<p>emergence of reality television shows in the late 1990s allowed all kinds of people with little</p>\n<p>ability to enjoy a short burst of fame on the television screen. All you needed, it seemed, was</p>\n<p>an attractive appearance. Today, reality television programmers make it possible to be famous</p>\n<p>not for doing anything in particular, but simply for being, with the audience deciding whether</p>\n<p>someone deserves to become a celebrity or not. As the meaning of celebrity continues to</p>\n<p>evolve and redefine itself in a quickly changing world, there is no telling who will become of</p>\n<p>interest next.</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -1981,15 +2237,7 @@
           "b076",
           "b077",
           "b078",
-          "b079",
-          "b097",
-          "b098",
-          "b099",
-          "b100",
-          "b101",
-          "b102",
-          "b103",
-          "b104"
+          "b079"
         ],
         "title": "2 below."
       },
@@ -2034,7 +2282,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 781.0800170898438,
@@ -2048,7 +2296,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -2060,7 +2308,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2079,18 +2327,18 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
+              "roleHint": "passage",
               "text": "You should spend about 20 minutes on Questions 14–26, which are based on Reading Passage"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 728.760009765625,
@@ -2104,10 +2352,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2115,7 +2363,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2134,7 +2382,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2143,7 +2391,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2162,7 +2410,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2171,7 +2419,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2190,15 +2438,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
+              "roleHint": "question",
               "text": "Choose the correct heading for each paragraph from the list of headings below."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2217,15 +2466,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
+              "roleHint": "question",
               "text": "Write the correct number, i–x, in boxes 14–20 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2244,15 +2494,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
+              "roleHint": "question",
               "text": "List of Headings"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2264,22 +2515,22 @@
               "blockId": "b009",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>i  Why it is necessary to explain the meaning of the word celebrity</p>",
+              "html": "<p>i Why it is necessary to explain the meaning of the word celebrity</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "i  Why it is necessary to explain the meaning of the word celebrity"
+              "text": "i Why it is necessary to explain the meaning of the word celebrity"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2291,22 +2542,22 @@
               "blockId": "b010",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>ii  The influence of non-human celebrities on societies</p>",
+              "html": "<p>ii The influence of non-human celebrities on societies</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "ii  The influence of non-human celebrities on societies"
+              "text": "ii The influence of non-human celebrities on societies"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2318,22 +2569,22 @@
               "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>iii  The impact of broadcasting on concepts of celebrity</p>",
+              "html": "<p>iii The impact of broadcasting on concepts of celebrity</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "iii  The impact of broadcasting on concepts of celebrity"
+              "text": "iii The impact of broadcasting on concepts of celebrity"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2345,22 +2596,22 @@
               "blockId": "b012",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>iv  Creativity having greater value</p>",
+              "html": "<p>iv Creativity having greater value</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "iv  Creativity having greater value"
+              "text": "iv Creativity having greater value"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2372,22 +2623,22 @@
               "blockId": "b013",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>v  Admiration for physical achievement</p>",
+              "html": "<p>v Admiration for physical achievement</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "v  Admiration for physical achievement"
+              "text": "v Admiration for physical achievement"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2399,22 +2650,22 @@
               "blockId": "b014",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>vi  The advantages of celebrity status in the ancient world</p>",
+              "html": "<p>vi The advantages of celebrity status in the ancient world</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "vi  The advantages of celebrity status in the ancient world"
+              "text": "vi The advantages of celebrity status in the ancient world"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2426,22 +2677,22 @@
               "blockId": "b015",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>vii  A result of hardship</p>",
+              "html": "<p>vii A result of hardship</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "vii  A result of hardship"
+              "text": "vii A result of hardship"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2453,22 +2704,22 @@
               "blockId": "b016",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>viii  Literacy and widespread celebrity</p>",
+              "html": "<p>viii Literacy and widespread celebrity</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "viii  Literacy and widespread celebrity"
+              "text": "viii Literacy and widespread celebrity"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2480,22 +2731,22 @@
               "blockId": "b017",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>ix  Attitudes of celebrities towards the media</p>",
+              "html": "<p>ix Attitudes of celebrities towards the media</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "ix  Attitudes of celebrities towards the media"
+              "text": "ix Attitudes of celebrities towards the media"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2507,22 +2758,22 @@
               "blockId": "b018",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>x  The original definition of celebrity</p>",
+              "html": "<p>x The original definition of celebrity</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "x  The original definition of celebrity"
+              "text": "x The original definition of celebrity"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2541,7 +2792,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2549,7 +2800,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2568,7 +2819,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2576,7 +2827,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2595,7 +2846,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2603,7 +2854,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2622,7 +2873,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2630,7 +2881,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 22,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2649,7 +2900,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2657,7 +2908,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 23,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2676,7 +2927,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2684,7 +2935,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 24,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2703,7 +2954,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2718,8 +2969,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2738,7 +2989,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2746,8 +2997,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2766,7 +3017,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2774,8 +3025,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2794,7 +3045,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2802,8 +3053,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2815,23 +3066,23 @@
               "blockId": "b029",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  It seems that our current society cannot get enough information about the daily lives of</p>",
+              "html": "<p>A It seems that our current society cannot get enough information about the daily lives of</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "A  It seems that our current society cannot get enough information about the daily lives of"
+              "text": "A It seems that our current society cannot get enough information about the daily lives of"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2850,7 +3101,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2858,8 +3109,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2878,7 +3129,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2886,8 +3137,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2906,7 +3157,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2914,8 +3165,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2934,7 +3185,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2942,8 +3193,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2962,7 +3213,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2970,8 +3221,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2990,7 +3241,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2998,8 +3249,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3011,23 +3262,23 @@
               "blockId": "b036",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  The celebrities of the ancient world were the powerful and awesome deities of Greece and</p>",
+              "html": "<p>B The celebrities of the ancient world were the powerful and awesome deities of Greece and</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "B  The celebrities of the ancient world were the powerful and awesome deities of Greece and"
+              "text": "B The celebrities of the ancient world were the powerful and awesome deities of Greece and"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3046,7 +3297,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3054,8 +3305,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3074,7 +3325,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3082,8 +3333,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3102,7 +3353,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3110,8 +3361,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3130,7 +3381,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3138,8 +3389,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3151,23 +3402,23 @@
               "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  During ancient times, amateur and professional athletes also began to make an impact on the</p>",
+              "html": "<p>C During ancient times, amateur and professional athletes also began to make an impact on the</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "C  During ancient times, amateur and professional athletes also began to make an impact on the"
+              "text": "C During ancient times, amateur and professional athletes also began to make an impact on the"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3186,7 +3437,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3194,8 +3445,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3214,7 +3465,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3222,8 +3473,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3242,7 +3493,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3250,8 +3501,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3270,7 +3521,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3278,8 +3529,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3291,23 +3542,23 @@
               "blockId": "b046",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a</p>",
+              "html": "<p>D As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "D  As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a"
+              "text": "D As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3326,7 +3577,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3334,8 +3585,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 22,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3354,7 +3605,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3362,8 +3613,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 23,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3382,7 +3633,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3390,8 +3641,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 24,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3410,7 +3661,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3418,8 +3669,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 25,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3431,23 +3682,23 @@
               "blockId": "b051",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>E  During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling</p>",
+              "html": "<p>E During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "E  During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling"
+              "text": "E During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 26,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3466,7 +3717,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3474,8 +3725,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 27,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3494,7 +3745,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3502,8 +3753,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 28,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3522,7 +3773,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3530,8 +3781,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 29,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3550,7 +3801,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3558,8 +3809,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 30,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3578,7 +3829,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -3593,8 +3844,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3606,23 +3857,23 @@
               "blockId": "b057",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>F  While the figures of the ancient and early modern civilizations were able to achieve moderate</p>",
+              "html": "<p>F While the figures of the ancient and early modern civilizations were able to achieve moderate</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "F  While the figures of the ancient and early modern civilizations were able to achieve moderate"
+              "text": "F While the figures of the ancient and early modern civilizations were able to achieve moderate"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3641,7 +3892,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3649,8 +3900,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3669,7 +3920,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3677,8 +3928,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3697,7 +3948,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3705,8 +3956,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3725,7 +3976,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3733,8 +3984,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3753,7 +4004,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3761,8 +4012,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3781,7 +4032,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3789,8 +4040,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3809,7 +4060,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3817,8 +4068,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3837,7 +4088,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3845,8 +4096,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3858,23 +4109,23 @@
               "blockId": "b066",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>G  In the modern era, particularly as radio and film took off in the 1900s, things really began to</p>",
+              "html": "<p>G In the modern era, particularly as radio and film took off in the 1900s, things really began to</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "G  In the modern era, particularly as radio and film took off in the 1900s, things really began to"
+              "text": "G In the modern era, particularly as radio and film took off in the 1900s, things really began to"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3893,7 +4144,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3901,8 +4152,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3921,7 +4172,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3929,8 +4180,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3949,7 +4200,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3957,8 +4208,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3977,7 +4228,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3985,8 +4236,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4005,7 +4256,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -4013,8 +4264,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4033,7 +4284,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -4041,8 +4292,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4061,7 +4312,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -4069,8 +4320,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4089,7 +4340,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -4097,8 +4348,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4117,7 +4368,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -4125,8 +4376,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4145,7 +4396,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -4153,8 +4404,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4173,7 +4424,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -4181,8 +4432,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4201,7 +4452,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -4209,10 +4460,10 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 22,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 58.00000762939453,
                 372.6000061035156,
@@ -4226,10 +4477,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -4246,7 +4497,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 789.47998046875,
@@ -4260,7 +4511,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -4272,7 +4523,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4291,18 +4542,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "roleHint": "question",
               "text": "Look at the following statements (Questions 21–23) and the list of historical periods in Europe"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 744.3599853515625,
@@ -4316,10 +4566,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4327,7 +4577,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4346,15 +4596,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Match each statement with the correct historical period, A, B, C, or D."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4373,15 +4624,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write the correct letter, A, B, C, or D, in boxes 21–23 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4400,7 +4652,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4408,7 +4660,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4427,7 +4679,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4435,7 +4687,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4454,7 +4706,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4462,7 +4714,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4481,7 +4733,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4489,7 +4741,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4501,22 +4753,22 @@
               "blockId": "b089",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Ancient times</p>",
+              "html": "<p>A Ancient times</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "A  Ancient times"
+              "text": "A Ancient times"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4528,22 +4780,22 @@
               "blockId": "b090",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  Dark Ages</p>",
+              "html": "<p>B Dark Ages</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "B  Dark Ages"
+              "text": "B Dark Ages"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4555,22 +4807,22 @@
               "blockId": "b091",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  Renaissance</p>",
+              "html": "<p>C Renaissance</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "C  Renaissance"
+              "text": "C Renaissance"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4582,22 +4834,22 @@
               "blockId": "b092",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  Modern era</p>",
+              "html": "<p>D Modern era</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "D  Modern era"
+              "text": "D Modern era"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4616,7 +4868,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4625,7 +4877,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4644,7 +4896,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4653,7 +4905,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4672,7 +4924,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4681,7 +4933,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4700,15 +4952,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write your answers in boxes 24–26 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4727,7 +4980,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4735,7 +4988,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4754,7 +5007,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4762,7 +5015,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 19,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4781,7 +5034,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4789,7 +5042,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 20,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4801,22 +5054,22 @@
               "blockId": "b100",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>informed about their favourite figures by reading 24………… . This exposure to celebrities</p>",
+              "html": "<p>informed about their favourite figures by reading 24…………. This exposure to celebrities</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "informed about their favourite figures by reading 24………… . This exposure to celebrities"
+              "text": "informed about their favourite figures by reading 24…………. This exposure to celebrities"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 21,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4835,7 +5088,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4843,7 +5096,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 22,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4862,7 +5115,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4870,7 +5123,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 23,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4889,7 +5142,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -4897,7 +5150,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 24,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -4909,18 +5162,18 @@
               "blockId": "b104",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>television programme, fame may be entirely dependent on the response of the 26………… .</p>",
+              "html": "<p>television programme, fame may be entirely dependent on the response of the 26………….</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "television programme, fame may be entirely dependent on the response of the 26………… ."
+              "text": "television programme, fame may be entirely dependent on the response of the 26…………."
             }
           ],
           "height": 841.9199829101562,
@@ -4994,7 +5247,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 2</h3>\n<p>2 below.</p>\n<p>A study of western celebrity</p>\n<p>In our celebrity-obsessed culture, TV shows, internet blogs, and even newspapers are often full of</p>\n<p>the latest news, gossip and scandals about current celebrities</p>\n<p>A  It seems that our current society cannot get enough information about the daily lives of</p>\n<p>celebrities. But how did celebrities become such an important force in our culture? While</p>\n<p>people have always shared a certain obsession with the fantastic and the famous, the notion</p>\n<p>of celebrity, as well as the types of people termed ‘celebrities’, has evolved greatly throughout</p>\n<p>the ages. The word ‘celebrity’ has its roots in the language of the ancient Roman civilization.</p>\n<p>The word we now know to mean ‘a condition of being famous’ or ‘a famous person’ is derived</p>\n<p>from the Latin word ‘celeber’, meaning ‘frequented or populous’.</p>\n<p>B  The celebrities of the ancient world were the powerful and awesome deities of Greece and</p>\n<p>Rome, and the citizens of these civilizations believed in a vast number of immortals who had a</p>\n<p>direct impact on their lives. It was, therefore, important to know about these figures’ personal</p>\n<p>lives. This need to know led to the creation of myths, which personalized the gods and</p>\n<p>involved them in ancient celebrity scandals that thrilled and excited the common people.</p>\n<p>C  During ancient times, amateur and professional athletes also began to make an impact on the</p>\n<p>celebrity culture. Victors in the ancient Olympic Games were treated as heroes and were often</p>\n<p>elevated to god-like status. In the ancient Roman civilization, gladiators – the equivalent of</p>\n<p>today’s professional athletes – were also revered by the common people for their heroics and</p>\n<p>seemingly superhuman strength.</p>\n<p>D  As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a</p>\n<p>time when athletics and the arts were largely forgotten, monarchs and rulers continued to</p>\n<p>maintain celebrity status, while religious figures took on newfound fame. The miraculous lives</p>\n<p>and fascinating deaths of spiritual figures lent excitement to the lives of common people when</p>\n<p>there was often little else to be excited about, as they faced war, disease and food shortages.</p>\n<p>E  During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling</p>\n<p>figures faded. As Europe emerged from its long neglect of the arts, there was greater</p>\n<p>appreciation for portraits, statues and stone carvings. This period of appreciation for the arts</p>\n<p>lent a sense of celebrity to artists who were noted for their works and their personal</p>\n<p>achievements. It was a time when artists began to surpass political and religious individuals</p>\n<p>for supreme celebrity – a trend that would continue into later centuries.</p>\n<p>F  While the figures of the ancient and early modern civilizations were able to achieve moderate</p>\n<p>and sometimes lasting celebrity within particular cultures, the global reach of their fame was</p>\n<p>limited. It was not until the 1700s, when technological advances made publishing</p>\n<p>commercially viable, that the extent of a person’s fame could spread further. The increase in</p>\n<p>the availability of the written word was accompanied by a huge rise in the number of common</p>\n<p>people who could read, allowing a mass audience to find out about celebrities for the first time.</p>\n<p>Suddenly, the lives of authors, politicians, war heroes, and other celebrities could now be read</p>\n<p>about in newspapers around the world. These gave ordinary people the opportunity to become</p>\n<p>intimately knowledgeable about the figures they most admired.</p>\n<p>G  In the modern era, particularly as radio and film took off in the 1900s, things really began to</p>\n<p>change. First, radio began to make its way into the average home in the 1920s and 1930s.</p>\n<p>Professional athletes also began to be regarded as stars, as their games and exploits could</p>\n<p>be broadcast over the air for an entirely new audience. Then, the rise of television in the</p>\n<p>1950s only cemented the premier level of celebrity that film stars, athletes and television</p>\n<p>actors were beginning to share. This also meant a huge increase in the individual salaries of</p>\n<p>these celebrities. Even a few animals gained fame through children’s TV shows. The</p>\n<p>emergence of reality television shows in the late 1990s allowed all kinds of people with little</p>\n<p>ability to enjoy a short burst of fame on the television screen. All you needed, it seemed, was</p>\n<p>an attractive appearance. Today, reality television programmers make it possible to be famous</p>\n<p>not for doing anything in particular, but simply for being, with the audience deciding whether</p>\n<p>someone deserves to become a celebrity or not. As the meaning of celebrity continues to</p>\n<p>evolve and redefine itself in a quickly changing world, there is no telling who will become of</p>\n<p>interest next.</p>\n<p>Celebrities achieve a global status</p>\n<p>The development of the publishing industry in the 1700s signalled the beginning of international</p>\n<p>fame. A growing number of people could read, which meant they had the chance to become</p>\n<p>informed about their favourite figures by reading 24………… . This exposure to celebrities</p>\n<p>expanded further when radio and television became popular, and it was mass media attention that</p>\n<p>resulted in higher status and fame for some celebrities. The recent rise of reality television has</p>\n<p>also meant that a person’s 25 ………… rather than their talent can bring fame. With this type of</p>\n<p>television programme, fame may be entirely dependent on the response of the 26………… .</p>",
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>2 below.</p>\n<p>A study of western celebrity</p>\n<p>In our celebrity-obsessed culture, TV shows, internet blogs, and even newspapers are often full of</p>\n<p>the latest news, gossip and scandals about current celebrities</p>\n<p>A It seems that our current society cannot get enough information about the daily lives of</p>\n<p>celebrities. But how did celebrities become such an important force in our culture? While</p>\n<p>people have always shared a certain obsession with the fantastic and the famous, the notion</p>\n<p>of celebrity, as well as the types of people termed ‘celebrities’, has evolved greatly throughout</p>\n<p>the ages. The word ‘celebrity’ has its roots in the language of the ancient Roman civilization.</p>\n<p>The word we now know to mean ‘a condition of being famous’ or ‘a famous person’ is derived</p>\n<p>from the Latin word ‘celeber’, meaning ‘frequented or populous’.</p>\n<p>B The celebrities of the ancient world were the powerful and awesome deities of Greece and</p>\n<p>Rome, and the citizens of these civilizations believed in a vast number of immortals who had a</p>\n<p>direct impact on their lives. It was, therefore, important to know about these figures’ personal</p>\n<p>lives. This need to know led to the creation of myths, which personalized the gods and</p>\n<p>involved them in ancient celebrity scandals that thrilled and excited the common people.</p>\n<p>C During ancient times, amateur and professional athletes also began to make an impact on the</p>\n<p>celebrity culture. Victors in the ancient Olympic Games were treated as heroes and were often</p>\n<p>elevated to god-like status. In the ancient Roman civilization, gladiators – the equivalent of</p>\n<p>today’s professional athletes – were also revered by the common people for their heroics and</p>\n<p>seemingly superhuman strength.</p>\n<p>D As Europe moved into the Dark Ages (the years spanning approximately 400–1300 AD) and a</p>\n<p>time when athletics and the arts were largely forgotten, monarchs and rulers continued to</p>\n<p>maintain celebrity status, while religious figures took on newfound fame. The miraculous lives</p>\n<p>and fascinating deaths of spiritual figures lent excitement to the lives of common people when</p>\n<p>there was often little else to be excited about, as they faced war, disease and food shortages.</p>\n<p>E During the period 1300–1600 AD, or the Renaissance period as it is known, interest in ruling</p>\n<p>figures faded. As Europe emerged from its long neglect of the arts, there was greater</p>\n<p>appreciation for portraits, statues and stone carvings. This period of appreciation for the arts</p>\n<p>lent a sense of celebrity to artists who were noted for their works and their personal</p>\n<p>achievements. It was a time when artists began to surpass political and religious individuals</p>\n<p>for supreme celebrity – a trend that would continue into later centuries.</p>\n<p>F While the figures of the ancient and early modern civilizations were able to achieve moderate</p>\n<p>and sometimes lasting celebrity within particular cultures, the global reach of their fame was</p>\n<p>limited. It was not until the 1700s, when technological advances made publishing</p>\n<p>commercially viable, that the extent of a person’s fame could spread further. The increase in</p>\n<p>the availability of the written word was accompanied by a huge rise in the number of common</p>\n<p>people who could read, allowing a mass audience to find out about celebrities for the first time.</p>\n<p>Suddenly, the lives of authors, politicians, war heroes, and other celebrities could now be read</p>\n<p>about in newspapers around the world. These gave ordinary people the opportunity to become</p>\n<p>intimately knowledgeable about the figures they most admired.</p>\n<p>G In the modern era, particularly as radio and film took off in the 1900s, things really began to</p>\n<p>change. First, radio began to make its way into the average home in the 1920s and 1930s.</p>\n<p>Professional athletes also began to be regarded as stars, as their games and exploits could</p>\n<p>be broadcast over the air for an entirely new audience. Then, the rise of television in the</p>\n<p>1950s only cemented the premier level of celebrity that film stars, athletes and television</p>\n<p>actors were beginning to share. This also meant a huge increase in the individual salaries of</p>\n<p>these celebrities. Even a few animals gained fame through children’s TV shows. The</p>\n<p>emergence of reality television shows in the late 1990s allowed all kinds of people with little</p>\n<p>ability to enjoy a short burst of fame on the television screen. All you needed, it seemed, was</p>\n<p>an attractive appearance. Today, reality television programmers make it possible to be famous</p>\n<p>not for doing anything in particular, but simply for being, with the audience deciding whether</p>\n<p>someone deserves to become a celebrity or not. As the meaning of celebrity continues to</p>\n<p>evolve and redefine itself in a quickly changing world, there is no telling who will become of</p>\n<p>interest next.</p>",
             "kind": "html"
           }
         ]
@@ -5045,7 +5298,7 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 24-26</p><p>Questions 24–26</p></div><ol><li><label><strong>24</strong> A growing number of people could read, which meant they had the chance to become informed about their favourite figures by reading 24………… . <input type=\"text\" id=\"q24_input\" name=\"q24\"></label></li><li><label><strong>25</strong> The recent rise of reality television has also meant that a person’s 25 ………… rather than their talent can bring fame. <input type=\"text\" id=\"q25_input\" name=\"q25\"></label></li><li><label><strong>26</strong> With this type of television programme, fame may be entirely dependent on the response of the 26………… . <input type=\"text\" id=\"q26_input\" name=\"q26\"></label></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 24-26</p><p>Questions 24–26</p></div><div class=\"notes-completion\">Questions 24–26\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 24–26 on your answer sheet.\nCelebrities achieve a global status\nThe development of the publishing industry in the 1700s signalled the beginning of international\nfame. A growing number of people could read, which meant they had the chance to become\ninformed about their favourite figures by reading <span class=\"inline-completion\" data-question-id=\"q24\"><strong>24</strong> <input type=\"text\" id=\"q24_input\" name=\"q24\" placeholder=\"answer\"></span> This exposure to celebrities\nexpanded further when radio and television became popular, and it was mass media attention that\nresulted in higher status and fame for some celebrities. The recent rise of reality television has\nalso meant that a person’s <span class=\"inline-completion\" data-question-id=\"q25\"><strong>25</strong> <input type=\"text\" id=\"q25_input\" name=\"q25\" placeholder=\"answer\"></span> rather than their talent can bring fame. With this type of\ntelevision programme, fame may be entirely dependent on the response of the <span class=\"inline-completion\" data-question-id=\"q26\"><strong>26</strong> <input type=\"text\" id=\"q26_input\" name=\"q26\" placeholder=\"answer\"></span></div></section>",
           "groupId": "group-3",
           "kind": "summary_completion",
           "leadHtml": "<p>Questions 24-26</p><p>Questions 24–26</p>",
@@ -5146,15 +5399,7 @@
             "b076",
             "b077",
             "b078",
-            "b079",
-            "b097",
-            "b098",
-            "b099",
-            "b100",
-            "b101",
-            "b102",
-            "b103",
-            "b104"
+            "b079"
           ],
           "title": "2 below."
         }
@@ -5214,13 +5459,16 @@
             "interaction": {
               "allowOptionReuse": false,
               "options": [
-                "A",
-                "B",
-                "C",
-                "D",
-                "E",
-                "F",
-                "G"
+                "i",
+                "ii",
+                "iii",
+                "iv",
+                "v",
+                "vi",
+                "vii",
+                "viii",
+                "ix",
+                "x"
               ],
               "type": "matching"
             },
@@ -5427,7 +5675,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct heading for each paragraph from the list of headings below."
             },
@@ -5448,7 +5696,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct number, i–x, in boxes 14–20 on your answer sheet."
             },
@@ -5469,7 +5717,7 @@
               ],
               "pageIndex": 1,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "List of Headings"
             },
@@ -5983,7 +6231,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 21–23"
             },
             {
@@ -6003,7 +6251,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the following statements (Questions 21–23) and the list of historical periods in Europe"
             },
@@ -6025,7 +6273,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "below."
             },
             {
@@ -6045,7 +6293,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Match each statement with the correct historical period, A, B, C, or D."
             },
@@ -6066,7 +6314,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B, C, or D, in boxes 21–23 on your answer sheet."
             },
@@ -6245,7 +6493,15 @@
             "b093",
             "b094",
             "b095",
-            "b096"
+            "b096",
+            "b097",
+            "b098",
+            "b099",
+            "b100",
+            "b101",
+            "b102",
+            "b103",
+            "b104"
           ],
           "classification": {
             "confidence": 0.82,
@@ -6253,7 +6509,15 @@
               "b093",
               "b094",
               "b095",
-              "b096"
+              "b096",
+              "b097",
+              "b098",
+              "b099",
+              "b100",
+              "b101",
+              "b102",
+              "b103",
+              "b104"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -6282,6 +6546,54 @@
               "fromBlockId": "b095",
               "reason": "same-section-continuation",
               "toBlockId": "b096"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b096",
+              "reason": "same-section-continuation",
+              "toBlockId": "b097"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b097",
+              "reason": "same-section-continuation",
+              "toBlockId": "b098"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b098",
+              "reason": "same-section-continuation",
+              "toBlockId": "b099"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b099",
+              "reason": "same-section-continuation",
+              "toBlockId": "b100"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b100",
+              "reason": "same-section-continuation",
+              "toBlockId": "b101"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b101",
+              "reason": "same-section-continuation",
+              "toBlockId": "b102"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b102",
+              "reason": "same-section-continuation",
+              "toBlockId": "b103"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b103",
+              "reason": "same-section-continuation",
+              "toBlockId": "b104"
             }
           ],
           "groupId": "group-3",
@@ -6374,9 +6686,177 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 24–26 on your answer sheet."
+            },
+            {
+              "bbox": [
+                199.61082458496094,
+                230.04002380371094,
+                389.01641845703125,
+                238.4400177001953
+              ],
+              "blockId": "b097",
+              "column": 0,
+              "normalizedBbox": [
+                199.61082458496094,
+                230.04002380371094,
+                389.01641845703125,
+                238.4400177001953
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Celebrities achieve a global status"
+            },
+            {
+              "bbox": [
+                36,
+                204.6000213623047,
+                541.7060546875,
+                213.00001525878906
+              ],
+              "blockId": "b098",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                204.6000213623047,
+                541.7060546875,
+                213.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "The development of the publishing industry in the 1700s signalled the beginning of international"
+            },
+            {
+              "bbox": [
+                36,
+                186.6000213623047,
+                523.646240234375,
+                195.00001525878906
+              ],
+              "blockId": "b099",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                186.6000213623047,
+                523.646240234375,
+                195.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "fame. A growing number of people could read, which meant they had the chance to become"
+            },
+            {
+              "bbox": [
+                36,
+                168.6000213623047,
+                511.5686340332031,
+                177.00001525878906
+              ],
+              "blockId": "b100",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                168.6000213623047,
+                511.5686340332031,
+                177.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "informed about their favourite figures by reading 24…………. This exposure to celebrities"
+            },
+            {
+              "bbox": [
+                36,
+                150.6000213623047,
+                556.3390502929688,
+                159.00001525878906
+              ],
+              "blockId": "b101",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                150.6000213623047,
+                556.3390502929688,
+                159.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "expanded further when radio and television became popular, and it was mass media attention that"
+            },
+            {
+              "bbox": [
+                36,
+                132.6000213623047,
+                535.5910034179688,
+                141.00001525878906
+              ],
+              "blockId": "b102",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                132.6000213623047,
+                535.5910034179688,
+                141.00001525878906
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "resulted in higher status and fame for some celebrities. The recent rise of reality television has"
+            },
+            {
+              "bbox": [
+                36,
+                114.60005187988281,
+                540.2516479492188,
+                123.00004577636719
+              ],
+              "blockId": "b103",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                114.60005187988281,
+                540.2516479492188,
+                123.00004577636719
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "also meant that a person’s 25 ………… rather than their talent can bring fame. With this type of"
+            },
+            {
+              "bbox": [
+                36,
+                96.60005187988281,
+                519.5913696289062,
+                105.00004577636719
+              ],
+              "blockId": "b104",
+              "column": 0,
+              "normalizedBbox": [
+                36,
+                96.60005187988281,
+                519.5913696289062,
+                105.00004577636719
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "television programme, fame may be entirely dependent on the response of the 26…………."
             }
           ]
         }

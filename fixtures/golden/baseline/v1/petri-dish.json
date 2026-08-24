@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 7,
-    "blockCount": 70,
+    "blockCount": 69,
     "groupCount": 3,
     "slotCount": 16,
     "assetCount": 0,
@@ -94,6 +94,7 @@
         {
           "allowOptionReuse": true,
           "classificationEvidence": [
+            "b033",
             "b034",
             "b035",
             "b036",
@@ -104,11 +105,16 @@
             "b041",
             "b042",
             "b043",
-            "b044",
-            "b045"
+            "b044"
           ],
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b034",
@@ -168,12 +174,6 @@
               "fromBlockId": "b043",
               "reason": "same-section-continuation",
               "toBlockId": "b044"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b044",
-              "reason": "same-section-continuation",
-              "toBlockId": "b045"
             }
           ],
           "groupId": "group-1",
@@ -212,6 +212,7 @@
               "prompt": "a description of an experiment involving both human and non-human cells of a specific type",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b033",
                 "b034",
                 "b035",
                 "b036",
@@ -222,8 +223,7 @@
                 "b041",
                 "b042",
                 "b043",
-                "b044",
-                "b045"
+                "b044"
               ],
               "verified": false
             },
@@ -247,6 +247,7 @@
               "prompt": "possibilities for improved research into various medical conditions",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b033",
                 "b034",
                 "b035",
                 "b036",
@@ -257,8 +258,7 @@
                 "b041",
                 "b042",
                 "b043",
-                "b044",
-                "b045"
+                "b044"
               ],
               "verified": false
             },
@@ -282,6 +282,7 @@
               "prompt": "contrasting views of the importance of the Petri dish",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b033",
                 "b034",
                 "b035",
                 "b036",
@@ -292,8 +293,7 @@
                 "b041",
                 "b042",
                 "b043",
-                "b044",
-                "b045"
+                "b044"
               ],
               "verified": false
             },
@@ -317,6 +317,7 @@
               "prompt": "a change remarked on by one scientist in the material used for the Petri dish",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b033",
                 "b034",
                 "b035",
                 "b036",
@@ -327,8 +328,7 @@
                 "b041",
                 "b042",
                 "b043",
-                "b044",
-                "b045"
+                "b044"
               ],
               "verified": false
             },
@@ -352,6 +352,7 @@
               "prompt": "a claim that the Petri dish enables a scientist to monitor the progress of an experiment on a regular basis",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b033",
                 "b034",
                 "b035",
                 "b036",
@@ -362,8 +363,7 @@
                 "b041",
                 "b042",
                 "b043",
-                "b044",
-                "b045"
+                "b044"
               ],
               "verified": false
             },
@@ -387,6 +387,7 @@
               "prompt": "a reference to the importance of a material for different types of laboratory equipment",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b033",
                 "b034",
                 "b035",
                 "b036",
@@ -397,8 +398,7 @@
                 "b041",
                 "b042",
                 "b043",
-                "b044",
-                "b045"
+                "b044"
               ],
               "verified": false
             }
@@ -413,7 +413,7 @@
                 117.38143157958984,
                 797.8800048828125
               ],
-              "blockId": "b034",
+              "blockId": "b033",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -434,7 +434,7 @@
                 258.11712646484375,
                 768.3600463867188
               ],
-              "blockId": "b035",
+              "blockId": "b034",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -455,7 +455,7 @@
                 291.4728088378906,
                 738.6000366210938
               ],
-              "blockId": "b036",
+              "blockId": "b035",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -465,7 +465,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which section contains the following information?"
             },
@@ -476,7 +476,7 @@
                 386.82861328125,
                 709.0800170898438
               ],
-              "blockId": "b037",
+              "blockId": "b036",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -486,7 +486,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–F, in boxes 14-19 on your answer sheet."
             },
@@ -497,7 +497,7 @@
                 266.1212158203125,
                 679.5599975585938
               ],
-              "blockId": "b038",
+              "blockId": "b037",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -508,7 +508,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "NB You may use any letter more than once."
             },
             {
@@ -518,7 +518,7 @@
                 535.2813720703125,
                 648.3600463867188
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -539,7 +539,7 @@
                 399.1728210449219,
                 618.6000366210938
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -560,7 +560,7 @@
                 325.1375732421875,
                 589.0800170898438
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -581,7 +581,7 @@
                 455.2271728515625,
                 559.5599975585938
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -602,7 +602,7 @@
                 539.9374389648438,
                 529.800048828125
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -623,7 +623,7 @@
                 119.70479583740234,
                 514.2000122070312
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "column": 0,
               "normalizedBbox": [
                 57,
@@ -634,7 +634,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "regular basis"
             },
             {
@@ -644,7 +644,7 @@
                 505.2550048828125,
                 484.6800537109375
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -660,6 +660,7 @@
             }
           ],
           "sourceBlockIds": [
+            "b033",
             "b034",
             "b035",
             "b036",
@@ -670,14 +671,14 @@
             "b041",
             "b042",
             "b043",
-            "b044",
-            "b045"
+            "b044"
           ],
           "verified": false
         },
         {
           "allowOptionReuse": true,
           "classificationEvidence": [
+            "b045",
             "b046",
             "b047",
             "b048",
@@ -689,11 +690,16 @@
             "b054",
             "b055",
             "b056",
-            "b057",
-            "b058"
+            "b057"
           ],
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b046",
@@ -759,12 +765,6 @@
               "fromBlockId": "b056",
               "reason": "same-section-continuation",
               "toBlockId": "b057"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b057",
-              "reason": "same-section-continuation",
-              "toBlockId": "b058"
             }
           ],
           "groupId": "group-2",
@@ -807,6 +807,7 @@
               "prompt": "To deal with the injury, cells must go through a series of activities in a particular order.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b045",
                 "b046",
                 "b047",
                 "b048",
@@ -818,8 +819,7 @@
                 "b054",
                 "b055",
                 "b056",
-                "b057",
-                "b058"
+                "b057"
               ],
               "verified": false
             },
@@ -847,6 +847,7 @@
               "prompt": "One technological development formed the basis of all modern scientific research.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b045",
                 "b046",
                 "b047",
                 "b048",
@@ -858,8 +859,7 @@
                 "b054",
                 "b055",
                 "b056",
-                "b057",
-                "b058"
+                "b057"
               ],
               "verified": false
             },
@@ -887,6 +887,7 @@
               "prompt": "A modification to the Petri dish allows experiments to provide more accurate information.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b045",
                 "b046",
                 "b047",
                 "b048",
@@ -898,8 +899,7 @@
                 "b054",
                 "b055",
                 "b056",
-                "b057",
-                "b058"
+                "b057"
               ],
               "verified": false
             },
@@ -927,6 +927,7 @@
               "prompt": "Petri dishes allow observation of medical conditions that are normally impossible to observe.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b045",
                 "b046",
                 "b047",
                 "b048",
@@ -938,8 +939,7 @@
                 "b054",
                 "b055",
                 "b056",
-                "b057",
-                "b058"
+                "b057"
               ],
               "verified": false
             },
@@ -967,6 +967,7 @@
               "prompt": "Visual evidence is a very important requirement for the provision of reliable information.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b045",
                 "b046",
                 "b047",
                 "b048",
@@ -978,8 +979,7 @@
                 "b054",
                 "b055",
                 "b056",
-                "b057",
-                "b058"
+                "b057"
               ],
               "verified": false
             },
@@ -1007,6 +1007,7 @@
               "prompt": "Petri dishes can be used to help produce a range of new cells of many different kinds.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b045",
                 "b046",
                 "b047",
                 "b048",
@@ -1018,8 +1019,7 @@
                 "b054",
                 "b055",
                 "b056",
-                "b057",
-                "b058"
+                "b057"
               ],
               "verified": false
             }
@@ -1034,7 +1034,7 @@
                 117.38143157958984,
                 797.8800048828125
               ],
-              "blockId": "b046",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1045,7 +1045,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 20-25"
             },
             {
@@ -1055,7 +1055,7 @@
                 455.59033203125,
                 768.3600463867188
               ],
-              "blockId": "b047",
+              "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1065,7 +1065,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the following statements (Questions 20-25) and the list of people below."
             },
@@ -1076,7 +1076,7 @@
                 350.7890319824219,
                 738.6000366210938
               ],
-              "blockId": "b048",
+              "blockId": "b047",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1086,7 +1086,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Match each statement with the correct person, A, B, C or D."
             },
@@ -1097,7 +1097,7 @@
                 429.4965515136719,
                 709.0800170898438
               ],
-              "blockId": "b049",
+              "blockId": "b048",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1107,7 +1107,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B, C or D, in boxes 20-25 on your answer sheet."
             },
@@ -1118,7 +1118,7 @@
                 266.1212158203125,
                 679.5599975585938
               ],
-              "blockId": "b050",
+              "blockId": "b049",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1129,7 +1129,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "NB You may use any letter more than once."
             },
             {
@@ -1139,7 +1139,7 @@
                 509.2222595214844,
                 648.3600463867188
               ],
-              "blockId": "b051",
+              "blockId": "b050",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1160,7 +1160,7 @@
                 489.2447204589844,
                 618.6000366210938
               ],
-              "blockId": "b052",
+              "blockId": "b051",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1181,7 +1181,7 @@
                 523.2335205078125,
                 589.0800170898438
               ],
-              "blockId": "b053",
+              "blockId": "b052",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1202,7 +1202,7 @@
                 543.259033203125,
                 559.5599975585938
               ],
-              "blockId": "b054",
+              "blockId": "b053",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1223,7 +1223,7 @@
                 516.5734252929688,
                 529.800048828125
               ],
-              "blockId": "b055",
+              "blockId": "b054",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1244,7 +1244,7 @@
                 508.6150817871094,
                 500.280029296875
               ],
-              "blockId": "b056",
+              "blockId": "b055",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1265,7 +1265,7 @@
                 322.70037841796875,
                 447.24005126953125
               ],
-              "blockId": "b057",
+              "blockId": "b056",
               "column": 0,
               "normalizedBbox": [
                 250.70278930664062,
@@ -1286,7 +1286,7 @@
                 373.1759948730469,
                 423.72003173828125
               ],
-              "blockId": "b058",
+              "blockId": "b057",
               "column": 0,
               "normalizedBbox": [
                 202.43995666503906,
@@ -1302,6 +1302,7 @@
             }
           ],
           "sourceBlockIds": [
+            "b045",
             "b046",
             "b047",
             "b048",
@@ -1313,25 +1314,32 @@
             "b054",
             "b055",
             "b056",
-            "b057",
-            "b058"
+            "b057"
           ],
           "verified": false
         },
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
+            "b058",
             "b059",
             "b060",
             "b061",
             "b062",
+            "b063",
+            "b064",
             "b065",
             "b066",
-            "b067",
-            "b068"
+            "b067"
           ],
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b058",
+              "reason": "same-section-continuation",
+              "toBlockId": "b059"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b059",
@@ -1354,6 +1362,18 @@
               "confidence": 0.72,
               "fromBlockId": "b062",
               "reason": "same-section-continuation",
+              "toBlockId": "b063"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b063",
+              "reason": "same-section-continuation",
+              "toBlockId": "b064"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b064",
+              "reason": "same-section-continuation",
               "toBlockId": "b065"
             },
             {
@@ -1367,12 +1387,6 @@
               "fromBlockId": "b066",
               "reason": "same-section-continuation",
               "toBlockId": "b067"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b067",
-              "reason": "same-section-continuation",
-              "toBlockId": "b068"
             }
           ],
           "groupId": "group-3",
@@ -1383,7 +1397,7 @@
           "kind": "summary_completion",
           "layout": {
             "layoutHint": "inline_completion",
-            "notes": "Questions 26-29\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 29-32 on your answer sheet.\nfrom 26 _______ to them. The aim is to allow the neurons to grow in three 27 _______. This\nresults in a 28 _______ that resembles a developing brain. The technology could help scientists\nstudy how neuron production varies in different 29 _______, leading to possibilities for\nincreased medical knowledge.",
+            "notes": "Questions 26-29\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 29-32 on your answer sheet.\nResearch in the MRC Lab of Molecular Biology\nA team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells\nfrom 26 _______ to them. The aim is to allow the neurons to grow in three 27 _______. This\nresults in a 28 _______ that resembles a developing brain. The technology could help scientists\nstudy how neuron production varies in different 29 _______, leading to possibilities for\nincreased medical knowledge.",
             "template": "summary_text_completion"
           },
           "questionRange": [
@@ -1404,14 +1418,16 @@
               "prompt": "_______ to them. The aim is to allow the neurons to grow in three",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b058",
                 "b059",
                 "b060",
                 "b061",
                 "b062",
+                "b063",
+                "b064",
                 "b065",
                 "b066",
-                "b067",
-                "b068"
+                "b067"
               ],
               "verified": false
             },
@@ -1428,14 +1444,16 @@
               "prompt": "_______. This results in a",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b058",
                 "b059",
                 "b060",
                 "b061",
                 "b062",
+                "b063",
+                "b064",
                 "b065",
                 "b066",
-                "b067",
-                "b068"
+                "b067"
               ],
               "verified": false
             },
@@ -1452,14 +1470,16 @@
               "prompt": "_______ that resembles a developing brain. The technology could help scientists study how neuron production varies in different",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b058",
                 "b059",
                 "b060",
                 "b061",
                 "b062",
+                "b063",
+                "b064",
                 "b065",
                 "b066",
-                "b067",
-                "b068"
+                "b067"
               ],
               "verified": false
             },
@@ -1476,14 +1496,16 @@
               "prompt": "_______, leading to possibilities for increased medical knowledge.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b058",
                 "b059",
                 "b060",
                 "b061",
                 "b062",
+                "b063",
+                "b064",
                 "b065",
                 "b066",
-                "b067",
-                "b068"
+                "b067"
               ],
               "verified": false
             }
@@ -1498,7 +1520,7 @@
                 117.38143157958984,
                 797.8800048828125
               ],
-              "blockId": "b059",
+              "blockId": "b058",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1519,7 +1541,7 @@
                 194.73599243164062,
                 768.3600463867188
               ],
-              "blockId": "b060",
+              "blockId": "b059",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1540,7 +1562,7 @@
                 369.4625549316406,
                 738.6000366210938
               ],
-              "blockId": "b061",
+              "blockId": "b060",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1561,7 +1583,7 @@
                 338.817626953125,
                 709.0800170898438
               ],
-              "blockId": "b062",
+              "blockId": "b061",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -1571,9 +1593,51 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 29-32 on your answer sheet."
+            },
+            {
+              "bbox": [
+                142.700439453125,
+                650.760009765625,
+                445.2779846191406,
+                659.1600341796875
+              ],
+              "blockId": "b062",
+              "column": 0,
+              "normalizedBbox": [
+                142.700439453125,
+                650.760009765625,
+                445.2779846191406,
+                659.1600341796875
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Research in the MRC Lab of Molecular Biology"
+            },
+            {
+              "bbox": [
+                43.4399528503418,
+                624.1199951171875,
+                526.3582153320312,
+                632.52001953125
+              ],
+              "blockId": "b063",
+              "column": 0,
+              "normalizedBbox": [
+                43.4399528503418,
+                624.1199951171875,
+                526.3582153320312,
+                632.52001953125
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells"
             },
             {
               "bbox": [
@@ -1582,7 +1646,7 @@
                 532.3927001953125,
                 609.2400512695312
               ],
-              "blockId": "b065",
+              "blockId": "b064",
               "column": 0,
               "normalizedBbox": [
                 43.4399528503418,
@@ -1603,7 +1667,7 @@
                 551.1061401367188,
                 585.7200317382812
               ],
-              "blockId": "b066",
+              "blockId": "b065",
               "column": 0,
               "normalizedBbox": [
                 43.4399528503418,
@@ -1624,7 +1688,7 @@
                 499.7327880859375,
                 562.4400024414062
               ],
-              "blockId": "b067",
+              "blockId": "b066",
               "column": 0,
               "normalizedBbox": [
                 43.4399528503418,
@@ -1645,7 +1709,7 @@
                 200.8727569580078,
                 538.9200439453125
               ],
-              "blockId": "b068",
+              "blockId": "b067",
               "column": 0,
               "normalizedBbox": [
                 43.4399528503418,
@@ -1656,19 +1720,21 @@
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "increased medical knowledge."
             }
           ],
           "sourceBlockIds": [
+            "b058",
             "b059",
             "b060",
             "b061",
             "b062",
+            "b063",
+            "b064",
             "b065",
             "b066",
-            "b067",
-            "b068"
+            "b067"
           ],
           "verified": false
         }
@@ -1677,7 +1743,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 below.</p>\n<p>How the Petri dish supports scientific advances</p>\n<p>A simple piece of scientific equipment is helping research in three institutions in Cambridge, UK</p>\n<p>A  Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive</p>\n<p>the appreciation or attention that their more complex lab companions like the microscope enjoy. They are simple, utilitarian little things, and it’s understandable that some people see them as just shallow dishes with lids. But Petri dishes deserve celebrating; they are still at the</p>\n<p>forefront of scientific discovery.</p>\n<p>B  The invention of the Petri dish, and the advances it has helped to create, are part of a bigger</p>\n<p>whole, of course – the development of glass scientific instruments, from microscope lenses to laboratory beakers. In The Glass Bathyscaphe: How Glass Changed the World, Alan Macfarlane argues that without glass, the Renaissance and the scientific revolution would</p>\n<p>never have happened.</p>\n<p>Around 70 per cent of what we know about the world comes in through our eyes, Macfarlane points out, and glass instruments enabled us to see better. Until about 1400, knowledge was based on what people had been told in the past. ‘Glass allowed the growth of the experimental method. Don’t trust what you are being told: see it for yourself. It was transformational,’ he</p>\n<p>says.</p>\n<p>C  At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his</p>\n<p>first encounter with a Petri dish was a classic example of understanding the world in this way:</p>\n<p>students used the dishes to see which bacteria could grow in the presence of antibiotics. ‘It’s good to see things grow,’ he says. ‘It is a fascinating experience. Now, we grow cells in the</p>\n<p>Petri dish, and we don’t use glass any more, but plastic.’</p>\n<p>Today, his team focuses on stem cells, which have the capacity to become any cell type in the human body: neurons, skin cells, liver cells, and so on. Vallier and his colleagues study them in order to understand how they do this, and how they can produce more cells. And to study them, they need to grow them. ‘We put the stem cells on the dish and then we feed them and they grow,’ he says. ‘And then… we divide them and distribute them in new Petri dishes, and we grow them again. We feed them on a liquid medium that is basically food for cells: it tells them to grow and also what to do, as we want to produce new cells. So by feeding them this medium we can allow the cells to become neurons, cardiac cells, liver cells, and so on. We can then model disease in a dish, or produce cells for regenerative-medicine applications.’ This means that the Petri dish becomes a place where Vallier and his team can study what happens to those cells when disease strikes. ‘We work a lot on fatty-liver diseases, and in this case the liver cell in the dish becomes full of fat, which we can see … We can’t look inside a patient’s liver to see what’s happening. So we are reproducing those diseases in our dishes.’</p>\n<p>Huch’s team is examining the molecular mechanisms by which these cells decide to multiply. She says: ‘You can divide regeneration into different phases. The cells first have to realise that there is damage and activate the response. Once they activate the response, the cells will proliferate to compensate for the loss of cells owing to the damage. And once they have</p>\n<p>proliferated, they then become functional cells.’</p>\n<p>E  In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini\u0002</p>\n<p>brains’ in hundreds of Petri dishes. Here, the dish has been specially treated to stop cells</p>\n<p>sticking to it and to encourage them to float freely.</p>\n<p>Dr Lancaster explains that they want the cells to develop in three, rather than two, dimensions as that’s the way our brains are. ‘If you can grow neurons in a dish in two dimensions, you can see individual neurons and see what they do, but you won’t be able to understand the architecture of those cells – their positioning relative to one another.’ She says that this new method gives you a structure that looks a lot more like that of an actual developing brain.</p>\n<p>F  The aim of this research is to look at exactly how neurons are made and how that differs in</p>\n<p>humans compared with other species. One day, says Lancaster, this work could translate into understanding far more about Alzheimer’s disease, Parkinson’s and schizophrenia. So in a world of cutting-edge and highly complex technology, Petri dishes, in their relative simplicity, remain a vital weapon in the fight against the world’s most serious diseases. And they also</p>\n<p>enable a hands-on approach that she finds satisfying.</p>\n<p>‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and you check it every day. You change the media this day or that day to help it grow better. It’s rewarding to see something grow before your eyes. There’s something about the interplay</p>\n<p>between new, next-generation and classic technologies. They give you capabilities that were</p>\n<p>not possible before.’</p>"
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 below.</p>\n<p>How the Petri dish supports scientific advances</p>\n<p>A simple piece of scientific equipment is helping research in three institutions in Cambridge, UK</p>\n<p>A Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive</p>\n<p>the appreciation or attention that their more complex lab companions like the microscope enjoy. They are simple, utilitarian little things, and it’s understandable that some people see them as just shallow dishes with lids. But Petri dishes deserve celebrating; they are still at the</p>\n<p>forefront of scientific discovery.</p>\n<p>B The invention of the Petri dish, and the advances it has helped to create, are part of a bigger</p>\n<p>whole, of course – the development of glass scientific instruments, from microscope lenses to laboratory beakers. In The Glass Bathyscaphe: How Glass Changed the World, Alan Macfarlane argues that without glass, the Renaissance and the scientific revolution would</p>\n<p>never have happened.</p>\n<p>Around 70 per cent of what we know about the world comes in through our eyes, Macfarlane points out, and glass instruments enabled us to see better. Until about 1400, knowledge was based on what people had been told in the past. ‘Glass allowed the growth of the experimental method. Don’t trust what you are being told: see it for yourself. It was transformational,’ he</p>\n<p>says.</p>\n<p>C At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his</p>\n<p>first encounter with a Petri dish was a classic example of understanding the world in this way:</p>\n<p>students used the dishes to see which bacteria could grow in the presence of antibiotics. ‘It’s good to see things grow,’ he says. ‘It is a fascinating experience. Now, we grow cells in the</p>\n<p>Petri dish, and we don’t use glass any more, but plastic.’</p>\n<p>Today, his team focuses on stem cells, which have the capacity to become any cell type in the human body: neurons, skin cells, liver cells, and so on. Vallier and his colleagues study them in order to understand how they do this, and how they can produce more cells. And to study them, they need to grow them. ‘We put the stem cells on the dish and then we feed them and they grow,’ he says. ‘And then… we divide them and distribute them in new Petri dishes, and we grow them again. We feed them on a liquid medium that is basically food for cells: it tells them to grow and also what to do, as we want to produce new cells. So by feeding them this medium we can allow the cells to become neurons, cardiac cells, liver cells, and so on. We can then model disease in a dish, or produce cells for regenerative-medicine applications.’ This means that the Petri dish becomes a place where Vallier and his team can study what happens to those cells when disease strikes. ‘We work a lot on fatty-liver diseases, and in this case the liver cell in the dish becomes full of fat, which we can see … We can’t look inside a patient’s liver to see what’s happening. So we are reproducing those diseases in our dishes.’</p>\n<p>Huch’s team is examining the molecular mechanisms by which these cells decide to multiply. She says: ‘You can divide regeneration into different phases. The cells first have to realise that there is damage and activate the response. Once they activate the response, the cells will proliferate to compensate for the loss of cells owing to the damage. And once they have</p>\n<p>proliferated, they then become functional cells.’</p>\n<p>E In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini\u0002</p>\n<p>brains’ in hundreds of Petri dishes. Here, the dish has been specially treated to stop cells</p>\n<p>sticking to it and to encourage them to float freely.</p>\n<p>Dr Lancaster explains that they want the cells to develop in three, rather than two, dimensions as that’s the way our brains are. ‘If you can grow neurons in a dish in two dimensions, you can see individual neurons and see what they do, but you won’t be able to understand the architecture of those cells – their positioning relative to one another.’ She says that this new method gives you a structure that looks a lot more like that of an actual developing brain.</p>\n<p>F The aim of this research is to look at exactly how neurons are made and how that differs in</p>\n<p>humans compared with other species. One day, says Lancaster, this work could translate into understanding far more about Alzheimer’s disease, Parkinson’s and schizophrenia. So in a world of cutting-edge and highly complex technology, Petri dishes, in their relative simplicity, remain a vital weapon in the fight against the world’s most serious diseases. And they also</p>\n<p>enable a hands-on approach that she finds satisfying.</p>\n<p>‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and you check it every day. You change the media this day or that day to help it grow better. It’s rewarding to see something grow before your eyes. There’s something about the interplay between new, next-generation and classic technologies. They give you capabilities that were</p>\n<p>not possible before.’</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -1719,8 +1785,7 @@
           "b029",
           "b030",
           "b031",
-          "b032",
-          "b033"
+          "b032"
         ],
         "title": "Passage 2 below."
       },
@@ -1771,7 +1836,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 780.1199951171875,
@@ -1785,7 +1850,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -1797,7 +1862,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1816,18 +1881,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 14–29, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 742.6799926757812,
@@ -1841,10 +1905,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1853,7 +1917,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1872,7 +1936,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1880,7 +1944,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1899,7 +1963,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1907,7 +1971,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1919,22 +1983,22 @@
               "blockId": "b006",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive</p>",
+              "html": "<p>A Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "A  Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive"
+              "text": "A Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1953,7 +2017,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1961,7 +2025,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1980,7 +2044,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1988,7 +2052,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2000,22 +2064,22 @@
               "blockId": "b009",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  The invention of the Petri dish, and the advances it has helped to create, are part of a bigger</p>",
+              "html": "<p>B The invention of the Petri dish, and the advances it has helped to create, are part of a bigger</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "B  The invention of the Petri dish, and the advances it has helped to create, are part of a bigger"
+              "text": "B The invention of the Petri dish, and the advances it has helped to create, are part of a bigger"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2034,7 +2098,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2042,7 +2106,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2061,7 +2125,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2069,7 +2133,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2088,7 +2152,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2096,7 +2160,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2115,7 +2179,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2123,7 +2187,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2135,22 +2199,22 @@
               "blockId": "b014",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his</p>",
+              "html": "<p>C At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "C  At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his"
+              "text": "C At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2169,7 +2233,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2177,7 +2241,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2196,7 +2260,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2204,7 +2268,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2223,7 +2287,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2231,7 +2295,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2250,7 +2314,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -2265,8 +2329,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2278,23 +2342,23 @@
               "blockId": "b019",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  ‘Disease in a dish’ is also the focus of Dr Meritxell Huch’s team at the Gurdon Institute. They</p>",
+              "html": "<p>D ‘Disease in a dish’ is also the focus of Dr Meritxell Huch’s team at the Gurdon Institute. They</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "D  ‘Disease in a dish’ is also the focus of Dr Meritxell Huch’s team at the Gurdon Institute. They"
+              "text": "D ‘Disease in a dish’ is also the focus of Dr Meritxell Huch’s team at the Gurdon Institute. They"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2313,7 +2377,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2321,8 +2385,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2341,7 +2405,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2349,8 +2413,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2369,7 +2433,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2377,10 +2441,10 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 57,
                 666.3599853515625,
@@ -2394,10 +2458,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2405,8 +2469,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2418,23 +2482,23 @@
               "blockId": "b024",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>E  In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini\u0002</p>",
+              "html": "<p>E In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini\u0002</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "E  In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini\u0002"
+              "text": "E In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini\u0002"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2453,7 +2517,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2461,8 +2525,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2481,7 +2545,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2489,8 +2553,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2509,7 +2573,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2517,8 +2581,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2530,23 +2594,23 @@
               "blockId": "b028",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>F  The aim of this research is to look at exactly how neurons are made and how that differs in</p>",
+              "html": "<p>F The aim of this research is to look at exactly how neurons are made and how that differs in</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "F  The aim of this research is to look at exactly how neurons are made and how that differs in"
+              "text": "F The aim of this research is to look at exactly how neurons are made and how that differs in"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2565,7 +2629,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2573,8 +2637,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2593,7 +2657,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2601,83 +2665,55 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
                 58.00000762939453,
-                343.55999755859375,
+                327.96002197265625,
                 553.6430053710938,
                 383.1600341796875
               ],
               "blockId": "b031",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and you check it every day. You change the media this day or that day to help it grow better. It’s rewarding to see something grow before your eyes. There’s something about the interplay</p>",
+              "html": "<p>‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and you check it every day. You change the media this day or that day to help it grow better. It’s rewarding to see something grow before your eyes. There’s something about the interplay between new, next-generation and classic technologies. They give you capabilities that were</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and you check it every day. You change the media this day or that day to help it grow better. It’s rewarding to see something grow before your eyes. There’s something about the interplay"
+              "text": "‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and you check it every day. You change the media this day or that day to help it grow better. It’s rewarding to see something grow before your eyes. There’s something about the interplay between new, next-generation and classic technologies. They give you capabilities that were"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 5,
-              "_epic8LayoutSection": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
-              "bbox": [
-                58.00000762939453,
-                327.96002197265625,
-                548.9736938476562,
-                336.36004638671875
-              ],
-              "blockId": "b032",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>between new, next-generation and classic technologies. They give you capabilities that were</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 1,
-                    "current": 0
-                  },
-                  "index": 5
-                }
-              },
-              "pageIndex": 2,
-              "text": "between new, next-generation and classic technologies. They give you capabilities that were"
-            },
-            {
-              "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 6,
-              "_epic8LayoutSection": 6,
-              "_epic8Ordinal": 14,
-              "_epic8SectionColumns": 3,
               "bbox": [
                 58.00000762939453,
                 312.3600158691406,
                 162.74078369140625,
                 320.7600402832031
               ],
-              "blockId": "b033",
+              "blockId": "b032",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>not possible before.’</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2701,7 +2737,7 @@
                 117.38143157958984,
                 797.8800048828125
               ],
-              "blockId": "b034",
+              "blockId": "b033",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 14-19</h3>",
@@ -2729,7 +2765,7 @@
                 258.11712646484375,
                 768.3600463867188
               ],
-              "blockId": "b035",
+              "blockId": "b034",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Reading Passage 2 has six sections, A–F.</h3>",
@@ -2757,7 +2793,7 @@
                 291.4728088378906,
                 738.6000366210938
               ],
-              "blockId": "b036",
+              "blockId": "b035",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Which section contains the following information?</p>",
@@ -2771,6 +2807,7 @@
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Which section contains the following information?"
             },
             {
@@ -2784,7 +2821,7 @@
                 386.82861328125,
                 709.0800170898438
               ],
-              "blockId": "b037",
+              "blockId": "b036",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Write the correct letter, A–F, in boxes 14-19 on your answer sheet.</p>",
@@ -2798,30 +2835,31 @@
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Write the correct letter, A–F, in boxes 14-19 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 671.1599731445312,
                 266.1212158203125,
                 679.5599975585938
               ],
-              "blockId": "b038",
+              "blockId": "b037",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>NB You may use any letter more than once.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2829,7 +2867,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2838,7 +2876,7 @@
                 535.2813720703125,
                 648.3600463867188
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>14 a description of an experiment involving both human and non-human cells of a specific type</p>",
@@ -2848,7 +2886,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2856,7 +2894,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2865,7 +2903,7 @@
                 399.1728210449219,
                 618.6000366210938
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>15 possibilities for improved research into various medical conditions</p>",
@@ -2875,7 +2913,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2883,7 +2921,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2892,7 +2930,7 @@
                 325.1375732421875,
                 589.0800170898438
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>16 contrasting views of the importance of the Petri dish</p>",
@@ -2902,7 +2940,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2910,7 +2948,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2919,7 +2957,7 @@
                 455.2271728515625,
                 559.5599975585938
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>17 a change remarked on by one scientist in the material used for the Petri dish</p>",
@@ -2929,7 +2967,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2937,7 +2975,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2946,7 +2984,7 @@
                 539.9374389648438,
                 529.800048828125
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>18 a claim that the Petri dish enables a scientist to monitor the progress of an experiment on a</p>",
@@ -2956,7 +2994,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2964,26 +3002,26 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 57,
                 505.79998779296875,
                 119.70479583740234,
                 514.2000122070312
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>regular basis</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2991,7 +3029,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3000,7 +3038,7 @@
                 505.2550048828125,
                 484.6800537109375
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>19 a reference to the importance of a material for different types of laboratory equipment</p>",
@@ -3010,7 +3048,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -3027,21 +3065,21 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 789.47998046875,
                 117.38143157958984,
                 797.8800048828125
               ],
-              "blockId": "b046",
+              "blockId": "b045",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 20-25</h3>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -3053,7 +3091,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3062,7 +3100,7 @@
                 455.59033203125,
                 768.3600463867188
               ],
-              "blockId": "b047",
+              "blockId": "b046",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Look at the following statements (Questions 20-25) and the list of people below.</p>",
@@ -3072,16 +3110,15 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "roleHint": "question",
               "text": "Look at the following statements (Questions 20-25) and the list of people below."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3090,7 +3127,7 @@
                 350.7890319824219,
                 738.6000366210938
               ],
-              "blockId": "b048",
+              "blockId": "b047",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Match each statement with the correct person, A, B, C or D.</p>",
@@ -3100,15 +3137,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Match each statement with the correct person, A, B, C or D."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3117,7 +3155,7 @@
                 429.4965515136719,
                 709.0800170898438
               ],
-              "blockId": "b049",
+              "blockId": "b048",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Write the correct letter, A, B, C or D, in boxes 20-25 on your answer sheet.</p>",
@@ -3127,34 +3165,35 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write the correct letter, A, B, C or D, in boxes 20-25 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 36,
                 671.1599731445312,
                 266.1212158203125,
                 679.5599975585938
               ],
-              "blockId": "b050",
+              "blockId": "b049",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>NB You may use any letter more than once.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3162,7 +3201,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3171,7 +3210,7 @@
                 509.2222595214844,
                 648.3600463867188
               ],
-              "blockId": "b051",
+              "blockId": "b050",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>20 To deal with the injury, cells must go through a series of activities in a particular order.</p>",
@@ -3181,7 +3220,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3189,7 +3228,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3198,7 +3237,7 @@
                 489.2447204589844,
                 618.6000366210938
               ],
-              "blockId": "b052",
+              "blockId": "b051",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>21 One technological development formed the basis of all modern scientific research.</p>",
@@ -3208,7 +3247,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3216,7 +3255,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3225,7 +3264,7 @@
                 523.2335205078125,
                 589.0800170898438
               ],
-              "blockId": "b053",
+              "blockId": "b052",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>22 A modification to the Petri dish allows experiments to provide more accurate information.</p>",
@@ -3235,7 +3274,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3243,7 +3282,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3252,7 +3291,7 @@
                 543.259033203125,
                 559.5599975585938
               ],
-              "blockId": "b054",
+              "blockId": "b053",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>23 Petri dishes allow observation of medical conditions that are normally impossible to observe.</p>",
@@ -3262,7 +3301,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3270,7 +3309,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3279,7 +3318,7 @@
                 516.5734252929688,
                 529.800048828125
               ],
-              "blockId": "b055",
+              "blockId": "b054",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>24 Visual evidence is a very important requirement for the provision of reliable information.</p>",
@@ -3289,7 +3328,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3297,7 +3336,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3306,7 +3345,7 @@
                 508.6150817871094,
                 500.280029296875
               ],
-              "blockId": "b056",
+              "blockId": "b055",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>25 Petri dishes can be used to help produce a range of new cells of many different kinds.</p>",
@@ -3316,7 +3355,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3324,7 +3363,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3333,7 +3372,7 @@
                 322.70037841796875,
                 447.24005126953125
               ],
-              "blockId": "b057",
+              "blockId": "b056",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>List of People</p>",
@@ -3343,7 +3382,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3351,7 +3390,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3360,21 +3399,21 @@
                 373.1759948730469,
                 423.72003173828125
               ],
-              "blockId": "b058",
+              "blockId": "b057",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Alan Macfarlane B  Professor Ludovic Vallier C  Dr Meritxell Huch D  Dr Madeline Lancaster</p>",
+              "html": "<p>A Alan Macfarlane B Professor Ludovic Vallier C Dr Meritxell Huch D Dr Madeline Lancaster</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "A  Alan Macfarlane B  Professor Ludovic Vallier C  Dr Meritxell Huch D  Dr Madeline Lancaster"
+              "text": "A Alan Macfarlane B Professor Ludovic Vallier C Dr Meritxell Huch D Dr Madeline Lancaster"
             }
           ],
           "height": 841.9199829101562,
@@ -3394,7 +3433,7 @@
                 117.38143157958984,
                 797.8800048828125
               ],
-              "blockId": "b059",
+              "blockId": "b058",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 26-29</h3>",
@@ -3422,7 +3461,7 @@
                 194.73599243164062,
                 768.3600463867188
               ],
-              "blockId": "b060",
+              "blockId": "b059",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Complete the summary below.</p>",
@@ -3450,7 +3489,7 @@
                 369.4625549316406,
                 738.6000366210938
               ],
-              "blockId": "b061",
+              "blockId": "b060",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Choose ONE WORD ONLY from the passage for each answer.</p>",
@@ -3478,7 +3517,7 @@
                 338.817626953125,
                 709.0800170898438
               ],
-              "blockId": "b062",
+              "blockId": "b061",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Write your answers in boxes 29-32 on your answer sheet.</p>",
@@ -3492,6 +3531,7 @@
                 }
               },
               "pageIndex": 5,
+              "roleHint": "question",
               "text": "Write your answers in boxes 29-32 on your answer sheet."
             },
             {
@@ -3505,7 +3545,7 @@
                 445.2779846191406,
                 659.1600341796875
               ],
-              "blockId": "b063",
+              "blockId": "b062",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Research in the MRC Lab of Molecular Biology</p>",
@@ -3532,7 +3572,7 @@
                 526.3582153320312,
                 632.52001953125
               ],
-              "blockId": "b064",
+              "blockId": "b063",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>A team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells</p>",
@@ -3559,7 +3599,7 @@
                 532.3927001953125,
                 609.2400512695312
               ],
-              "blockId": "b065",
+              "blockId": "b064",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>from 26 _______ to them. The aim is to allow the neurons to grow in three 27 _______. This</p>",
@@ -3586,7 +3626,7 @@
                 551.1061401367188,
                 585.7200317382812
               ],
-              "blockId": "b066",
+              "blockId": "b065",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>results in a 28 _______ that resembles a developing brain. The technology could help scientists</p>",
@@ -3604,7 +3644,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3613,7 +3653,7 @@
                 499.7327880859375,
                 562.4400024414062
               ],
-              "blockId": "b067",
+              "blockId": "b066",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>study how neuron production varies in different 29 _______, leading to possibilities for</p>",
@@ -3623,7 +3663,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3631,26 +3671,26 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 43.4399528503418,
                 530.52001953125,
                 200.8727569580078,
                 538.9200439453125
               ],
-              "blockId": "b068",
+              "blockId": "b067",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>increased medical knowledge.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 5,
@@ -3671,7 +3711,7 @@
                 520,
                 108
               ],
-              "blockId": "b069",
+              "blockId": "b068",
               "blockType": "paragraph",
               "confidence": 0.2,
               "html": "<p>[No extractable text on page 6]</p>",
@@ -3693,7 +3733,7 @@
                 520,
                 108
               ],
-              "blockId": "b070",
+              "blockId": "b069",
               "blockType": "paragraph",
               "confidence": 0.2,
               "html": "<p>[No extractable text on page 7]</p>",
@@ -3751,7 +3791,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 below.</p>\n<p>How the Petri dish supports scientific advances</p>\n<p>A simple piece of scientific equipment is helping research in three institutions in Cambridge, UK</p>\n<p>A  Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive</p>\n<p>the appreciation or attention that their more complex lab companions like the microscope enjoy. They are simple, utilitarian little things, and it’s understandable that some people see them as just shallow dishes with lids. But Petri dishes deserve celebrating; they are still at the</p>\n<p>forefront of scientific discovery.</p>\n<p>B  The invention of the Petri dish, and the advances it has helped to create, are part of a bigger</p>\n<p>whole, of course – the development of glass scientific instruments, from microscope lenses to laboratory beakers. In The Glass Bathyscaphe: How Glass Changed the World, Alan Macfarlane argues that without glass, the Renaissance and the scientific revolution would</p>\n<p>never have happened.</p>\n<p>Around 70 per cent of what we know about the world comes in through our eyes, Macfarlane points out, and glass instruments enabled us to see better. Until about 1400, knowledge was based on what people had been told in the past. ‘Glass allowed the growth of the experimental method. Don’t trust what you are being told: see it for yourself. It was transformational,’ he</p>\n<p>says.</p>\n<p>C  At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his</p>\n<p>first encounter with a Petri dish was a classic example of understanding the world in this way:</p>\n<p>students used the dishes to see which bacteria could grow in the presence of antibiotics. ‘It’s good to see things grow,’ he says. ‘It is a fascinating experience. Now, we grow cells in the</p>\n<p>Petri dish, and we don’t use glass any more, but plastic.’</p>\n<p>Today, his team focuses on stem cells, which have the capacity to become any cell type in the human body: neurons, skin cells, liver cells, and so on. Vallier and his colleagues study them in order to understand how they do this, and how they can produce more cells. And to study them, they need to grow them. ‘We put the stem cells on the dish and then we feed them and they grow,’ he says. ‘And then… we divide them and distribute them in new Petri dishes, and we grow them again. We feed them on a liquid medium that is basically food for cells: it tells them to grow and also what to do, as we want to produce new cells. So by feeding them this medium we can allow the cells to become neurons, cardiac cells, liver cells, and so on. We can then model disease in a dish, or produce cells for regenerative-medicine applications.’ This means that the Petri dish becomes a place where Vallier and his team can study what happens to those cells when disease strikes. ‘We work a lot on fatty-liver diseases, and in this case the liver cell in the dish becomes full of fat, which we can see … We can’t look inside a patient’s liver to see what’s happening. So we are reproducing those diseases in our dishes.’</p>\n<p>Huch’s team is examining the molecular mechanisms by which these cells decide to multiply. She says: ‘You can divide regeneration into different phases. The cells first have to realise that there is damage and activate the response. Once they activate the response, the cells will proliferate to compensate for the loss of cells owing to the damage. And once they have</p>\n<p>proliferated, they then become functional cells.’</p>\n<p>E  In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini\u0002</p>\n<p>brains’ in hundreds of Petri dishes. Here, the dish has been specially treated to stop cells</p>\n<p>sticking to it and to encourage them to float freely.</p>\n<p>Dr Lancaster explains that they want the cells to develop in three, rather than two, dimensions as that’s the way our brains are. ‘If you can grow neurons in a dish in two dimensions, you can see individual neurons and see what they do, but you won’t be able to understand the architecture of those cells – their positioning relative to one another.’ She says that this new method gives you a structure that looks a lot more like that of an actual developing brain.</p>\n<p>F  The aim of this research is to look at exactly how neurons are made and how that differs in</p>\n<p>humans compared with other species. One day, says Lancaster, this work could translate into understanding far more about Alzheimer’s disease, Parkinson’s and schizophrenia. So in a world of cutting-edge and highly complex technology, Petri dishes, in their relative simplicity, remain a vital weapon in the fight against the world’s most serious diseases. And they also</p>\n<p>enable a hands-on approach that she finds satisfying.</p>\n<p>‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and you check it every day. You change the media this day or that day to help it grow better. It’s rewarding to see something grow before your eyes. There’s something about the interplay</p>\n<p>between new, next-generation and classic technologies. They give you capabilities that were</p>\n<p>not possible before.’</p>",
+            "html": "<h3>READING PASSAGE 2</h3>\n<p>Passage 2 below.</p>\n<p>How the Petri dish supports scientific advances</p>\n<p>A simple piece of scientific equipment is helping research in three institutions in Cambridge, UK</p>\n<p>A Petri dishes, invented by German microbiologist Julius Richard Petri in 1887, rarely receive</p>\n<p>the appreciation or attention that their more complex lab companions like the microscope enjoy. They are simple, utilitarian little things, and it’s understandable that some people see them as just shallow dishes with lids. But Petri dishes deserve celebrating; they are still at the</p>\n<p>forefront of scientific discovery.</p>\n<p>B The invention of the Petri dish, and the advances it has helped to create, are part of a bigger</p>\n<p>whole, of course – the development of glass scientific instruments, from microscope lenses to laboratory beakers. In The Glass Bathyscaphe: How Glass Changed the World, Alan Macfarlane argues that without glass, the Renaissance and the scientific revolution would</p>\n<p>never have happened.</p>\n<p>Around 70 per cent of what we know about the world comes in through our eyes, Macfarlane points out, and glass instruments enabled us to see better. Until about 1400, knowledge was based on what people had been told in the past. ‘Glass allowed the growth of the experimental method. Don’t trust what you are being told: see it for yourself. It was transformational,’ he</p>\n<p>says.</p>\n<p>C At the Wellcome-MRC Cambridge Stem Cell Institute, Professor Ludovic Vallier says that his</p>\n<p>first encounter with a Petri dish was a classic example of understanding the world in this way:</p>\n<p>students used the dishes to see which bacteria could grow in the presence of antibiotics. ‘It’s good to see things grow,’ he says. ‘It is a fascinating experience. Now, we grow cells in the</p>\n<p>Petri dish, and we don’t use glass any more, but plastic.’</p>\n<p>Today, his team focuses on stem cells, which have the capacity to become any cell type in the human body: neurons, skin cells, liver cells, and so on. Vallier and his colleagues study them in order to understand how they do this, and how they can produce more cells. And to study them, they need to grow them. ‘We put the stem cells on the dish and then we feed them and they grow,’ he says. ‘And then… we divide them and distribute them in new Petri dishes, and we grow them again. We feed them on a liquid medium that is basically food for cells: it tells them to grow and also what to do, as we want to produce new cells. So by feeding them this medium we can allow the cells to become neurons, cardiac cells, liver cells, and so on. We can then model disease in a dish, or produce cells for regenerative-medicine applications.’ This means that the Petri dish becomes a place where Vallier and his team can study what happens to those cells when disease strikes. ‘We work a lot on fatty-liver diseases, and in this case the liver cell in the dish becomes full of fat, which we can see … We can’t look inside a patient’s liver to see what’s happening. So we are reproducing those diseases in our dishes.’</p>\n<p>Huch’s team is examining the molecular mechanisms by which these cells decide to multiply. She says: ‘You can divide regeneration into different phases. The cells first have to realise that there is damage and activate the response. Once they activate the response, the cells will proliferate to compensate for the loss of cells owing to the damage. And once they have</p>\n<p>proliferated, they then become functional cells.’</p>\n<p>E In the MRC Laboratory of Molecular Biology, Dr Madeline Lancaster and her team grow ‘mini\u0002</p>\n<p>brains’ in hundreds of Petri dishes. Here, the dish has been specially treated to stop cells</p>\n<p>sticking to it and to encourage them to float freely.</p>\n<p>Dr Lancaster explains that they want the cells to develop in three, rather than two, dimensions as that’s the way our brains are. ‘If you can grow neurons in a dish in two dimensions, you can see individual neurons and see what they do, but you won’t be able to understand the architecture of those cells – their positioning relative to one another.’ She says that this new method gives you a structure that looks a lot more like that of an actual developing brain.</p>\n<p>F The aim of this research is to look at exactly how neurons are made and how that differs in</p>\n<p>humans compared with other species. One day, says Lancaster, this work could translate into understanding far more about Alzheimer’s disease, Parkinson’s and schizophrenia. So in a world of cutting-edge and highly complex technology, Petri dishes, in their relative simplicity, remain a vital weapon in the fight against the world’s most serious diseases. And they also</p>\n<p>enable a hands-on approach that she finds satisfying.</p>\n<p>‘It’s a bit like gardening,’ she says. ‘You’re taking care of this thing. You keep an eye on it and you check it every day. You change the media this day or that day to help it grow better. It’s rewarding to see something grow before your eyes. There’s something about the interplay between new, next-generation and classic technologies. They give you capabilities that were</p>\n<p>not possible before.’</p>",
             "kind": "html"
           }
         ]
@@ -3807,7 +3847,7 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 26-29</p></div><div class=\"notes-completion\">Questions 26-29\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 29-32 on your answer sheet.\nfrom <span class=\"inline-completion\" data-question-id=\"q26\"><strong>26</strong> <input type=\"text\" id=\"q26_input\" name=\"q26\" placeholder=\"answer\"></span> to them. The aim is to allow the neurons to grow in three <span class=\"inline-completion\" data-question-id=\"q27\"><strong>27</strong> <input type=\"text\" id=\"q27_input\" name=\"q27\" placeholder=\"answer\"></span> This\nresults in a <span class=\"inline-completion\" data-question-id=\"q28\"><strong>28</strong> <input type=\"text\" id=\"q28_input\" name=\"q28\" placeholder=\"answer\"></span> that resembles a developing brain. The technology could help scientists\nstudy how neuron production varies in different <span class=\"inline-completion\" data-question-id=\"q29\"><strong>29</strong> <input type=\"text\" id=\"q29_input\" name=\"q29\" placeholder=\"answer\"></span>, leading to possibilities for\nincreased medical knowledge.</div></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 26-29</p></div><div class=\"notes-completion\">Questions 26-29\nComplete the summary below.\nChoose ONE WORD ONLY from the passage for each answer.\nWrite your answers in boxes 29-32 on your answer sheet.\nResearch in the MRC Lab of Molecular Biology\nA team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells\nfrom <span class=\"inline-completion\" data-question-id=\"q26\"><strong>26</strong> <input type=\"text\" id=\"q26_input\" name=\"q26\" placeholder=\"answer\"></span> to them. The aim is to allow the neurons to grow in three <span class=\"inline-completion\" data-question-id=\"q27\"><strong>27</strong> <input type=\"text\" id=\"q27_input\" name=\"q27\" placeholder=\"answer\"></span> This\nresults in a <span class=\"inline-completion\" data-question-id=\"q28\"><strong>28</strong> <input type=\"text\" id=\"q28_input\" name=\"q28\" placeholder=\"answer\"></span> that resembles a developing brain. The technology could help scientists\nstudy how neuron production varies in different <span class=\"inline-completion\" data-question-id=\"q29\"><strong>29</strong> <input type=\"text\" id=\"q29_input\" name=\"q29\" placeholder=\"answer\"></span>, leading to possibilities for\nincreased medical knowledge.</div></section>",
           "groupId": "group-3",
           "kind": "summary_completion",
           "leadHtml": "<p>Questions 26-29</p>",
@@ -3884,8 +3924,7 @@
             "b029",
             "b030",
             "b031",
-            "b032",
-            "b033"
+            "b032"
           ],
           "title": "Passage 2 below."
         }
@@ -3893,6 +3932,7 @@
       "questionGroupCandidates": [
         {
           "blockIds": [
+            "b033",
             "b034",
             "b035",
             "b036",
@@ -3903,12 +3943,12 @@
             "b041",
             "b042",
             "b043",
-            "b044",
-            "b045"
+            "b044"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
+              "b033",
               "b034",
               "b035",
               "b036",
@@ -3919,8 +3959,7 @@
               "b041",
               "b042",
               "b043",
-              "b044",
-              "b045"
+              "b044"
             ],
             "interaction": {
               "allowOptionReuse": true,
@@ -3939,6 +3978,12 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b033",
+              "reason": "same-section-continuation",
+              "toBlockId": "b034"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b034",
@@ -3998,12 +4043,6 @@
               "fromBlockId": "b043",
               "reason": "same-section-continuation",
               "toBlockId": "b044"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b044",
-              "reason": "same-section-continuation",
-              "toBlockId": "b045"
             }
           ],
           "groupId": "group-1",
@@ -4023,7 +4062,7 @@
                 117.38143157958984,
                 797.8800048828125
               ],
-              "blockId": "b034",
+              "blockId": "b033",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4044,7 +4083,7 @@
                 258.11712646484375,
                 768.3600463867188
               ],
-              "blockId": "b035",
+              "blockId": "b034",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4065,7 +4104,7 @@
                 291.4728088378906,
                 738.6000366210938
               ],
-              "blockId": "b036",
+              "blockId": "b035",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4075,7 +4114,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which section contains the following information?"
             },
@@ -4086,7 +4125,7 @@
                 386.82861328125,
                 709.0800170898438
               ],
-              "blockId": "b037",
+              "blockId": "b036",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4096,7 +4135,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–F, in boxes 14-19 on your answer sheet."
             },
@@ -4107,7 +4146,7 @@
                 266.1212158203125,
                 679.5599975585938
               ],
-              "blockId": "b038",
+              "blockId": "b037",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4118,7 +4157,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "NB You may use any letter more than once."
             },
             {
@@ -4128,7 +4167,7 @@
                 535.2813720703125,
                 648.3600463867188
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4149,7 +4188,7 @@
                 399.1728210449219,
                 618.6000366210938
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4170,7 +4209,7 @@
                 325.1375732421875,
                 589.0800170898438
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4191,7 +4230,7 @@
                 455.2271728515625,
                 559.5599975585938
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4212,7 +4251,7 @@
                 539.9374389648438,
                 529.800048828125
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4233,7 +4272,7 @@
                 119.70479583740234,
                 514.2000122070312
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "column": 0,
               "normalizedBbox": [
                 57,
@@ -4244,7 +4283,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "regular basis"
             },
             {
@@ -4254,7 +4293,7 @@
                 505.2550048828125,
                 484.6800537109375
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4272,6 +4311,7 @@
         },
         {
           "blockIds": [
+            "b045",
             "b046",
             "b047",
             "b048",
@@ -4283,12 +4323,12 @@
             "b054",
             "b055",
             "b056",
-            "b057",
-            "b058"
+            "b057"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
+              "b045",
               "b046",
               "b047",
               "b048",
@@ -4300,8 +4340,7 @@
               "b054",
               "b055",
               "b056",
-              "b057",
-              "b058"
+              "b057"
             ],
             "interaction": {
               "allowOptionReuse": true,
@@ -4318,6 +4357,12 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b045",
+              "reason": "same-section-continuation",
+              "toBlockId": "b046"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b046",
@@ -4383,12 +4428,6 @@
               "fromBlockId": "b056",
               "reason": "same-section-continuation",
               "toBlockId": "b057"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b057",
-              "reason": "same-section-continuation",
-              "toBlockId": "b058"
             }
           ],
           "groupId": "group-2",
@@ -4408,7 +4447,7 @@
                 117.38143157958984,
                 797.8800048828125
               ],
-              "blockId": "b046",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4419,7 +4458,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 20-25"
             },
             {
@@ -4429,7 +4468,7 @@
                 455.59033203125,
                 768.3600463867188
               ],
-              "blockId": "b047",
+              "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4439,7 +4478,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
               "sectionColumnCount": 1,
               "textPreview": "Look at the following statements (Questions 20-25) and the list of people below."
             },
@@ -4450,7 +4489,7 @@
                 350.7890319824219,
                 738.6000366210938
               ],
-              "blockId": "b048",
+              "blockId": "b047",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4460,7 +4499,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Match each statement with the correct person, A, B, C or D."
             },
@@ -4471,7 +4510,7 @@
                 429.4965515136719,
                 709.0800170898438
               ],
-              "blockId": "b049",
+              "blockId": "b048",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4481,7 +4520,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A, B, C or D, in boxes 20-25 on your answer sheet."
             },
@@ -4492,7 +4531,7 @@
                 266.1212158203125,
                 679.5599975585938
               ],
-              "blockId": "b050",
+              "blockId": "b049",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4503,7 +4542,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "NB You may use any letter more than once."
             },
             {
@@ -4513,7 +4552,7 @@
                 509.2222595214844,
                 648.3600463867188
               ],
-              "blockId": "b051",
+              "blockId": "b050",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4534,7 +4573,7 @@
                 489.2447204589844,
                 618.6000366210938
               ],
-              "blockId": "b052",
+              "blockId": "b051",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4555,7 +4594,7 @@
                 523.2335205078125,
                 589.0800170898438
               ],
-              "blockId": "b053",
+              "blockId": "b052",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4576,7 +4615,7 @@
                 543.259033203125,
                 559.5599975585938
               ],
-              "blockId": "b054",
+              "blockId": "b053",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4597,7 +4636,7 @@
                 516.5734252929688,
                 529.800048828125
               ],
-              "blockId": "b055",
+              "blockId": "b054",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4618,7 +4657,7 @@
                 508.6150817871094,
                 500.280029296875
               ],
-              "blockId": "b056",
+              "blockId": "b055",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4639,7 +4678,7 @@
                 322.70037841796875,
                 447.24005126953125
               ],
-              "blockId": "b057",
+              "blockId": "b056",
               "column": 0,
               "normalizedBbox": [
                 250.70278930664062,
@@ -4660,7 +4699,7 @@
                 373.1759948730469,
                 423.72003173828125
               ],
-              "blockId": "b058",
+              "blockId": "b057",
               "column": 0,
               "normalizedBbox": [
                 202.43995666503906,
@@ -4678,26 +4717,30 @@
         },
         {
           "blockIds": [
+            "b058",
             "b059",
             "b060",
             "b061",
             "b062",
+            "b063",
+            "b064",
             "b065",
             "b066",
-            "b067",
-            "b068"
+            "b067"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
+              "b058",
               "b059",
               "b060",
               "b061",
               "b062",
+              "b063",
+              "b064",
               "b065",
               "b066",
-              "b067",
-              "b068"
+              "b067"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -4709,6 +4752,12 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b058",
+              "reason": "same-section-continuation",
+              "toBlockId": "b059"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b059",
@@ -4731,6 +4780,18 @@
               "confidence": 0.72,
               "fromBlockId": "b062",
               "reason": "same-section-continuation",
+              "toBlockId": "b063"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b063",
+              "reason": "same-section-continuation",
+              "toBlockId": "b064"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b064",
+              "reason": "same-section-continuation",
               "toBlockId": "b065"
             },
             {
@@ -4744,12 +4805,6 @@
               "fromBlockId": "b066",
               "reason": "same-section-continuation",
               "toBlockId": "b067"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b067",
-              "reason": "same-section-continuation",
-              "toBlockId": "b068"
             }
           ],
           "groupId": "group-3",
@@ -4769,7 +4824,7 @@
                 117.38143157958984,
                 797.8800048828125
               ],
-              "blockId": "b059",
+              "blockId": "b058",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4790,7 +4845,7 @@
                 194.73599243164062,
                 768.3600463867188
               ],
-              "blockId": "b060",
+              "blockId": "b059",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4811,7 +4866,7 @@
                 369.4625549316406,
                 738.6000366210938
               ],
-              "blockId": "b061",
+              "blockId": "b060",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4832,7 +4887,7 @@
                 338.817626953125,
                 709.0800170898438
               ],
-              "blockId": "b062",
+              "blockId": "b061",
               "column": 0,
               "normalizedBbox": [
                 36,
@@ -4842,9 +4897,51 @@
               ],
               "pageIndex": 5,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 29-32 on your answer sheet."
+            },
+            {
+              "bbox": [
+                142.700439453125,
+                650.760009765625,
+                445.2779846191406,
+                659.1600341796875
+              ],
+              "blockId": "b062",
+              "column": 0,
+              "normalizedBbox": [
+                142.700439453125,
+                650.760009765625,
+                445.2779846191406,
+                659.1600341796875
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Research in the MRC Lab of Molecular Biology"
+            },
+            {
+              "bbox": [
+                43.4399528503418,
+                624.1199951171875,
+                526.3582153320312,
+                632.52001953125
+              ],
+              "blockId": "b063",
+              "column": 0,
+              "normalizedBbox": [
+                43.4399528503418,
+                624.1199951171875,
+                526.3582153320312,
+                632.52001953125
+              ],
+              "pageIndex": 5,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A team led by Dr Madeline Lancaster is using special Petri dishes which prevent brain cells"
             },
             {
               "bbox": [
@@ -4853,7 +4950,7 @@
                 532.3927001953125,
                 609.2400512695312
               ],
-              "blockId": "b065",
+              "blockId": "b064",
               "column": 0,
               "normalizedBbox": [
                 43.4399528503418,
@@ -4874,7 +4971,7 @@
                 551.1061401367188,
                 585.7200317382812
               ],
-              "blockId": "b066",
+              "blockId": "b065",
               "column": 0,
               "normalizedBbox": [
                 43.4399528503418,
@@ -4895,7 +4992,7 @@
                 499.7327880859375,
                 562.4400024414062
               ],
-              "blockId": "b067",
+              "blockId": "b066",
               "column": 0,
               "normalizedBbox": [
                 43.4399528503418,
@@ -4916,7 +5013,7 @@
                 200.8727569580078,
                 538.9200439453125
               ],
-              "blockId": "b068",
+              "blockId": "b067",
               "column": 0,
               "normalizedBbox": [
                 43.4399528503418,
@@ -4927,7 +5024,7 @@
               "pageIndex": 5,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "increased medical knowledge."
             }
           ]

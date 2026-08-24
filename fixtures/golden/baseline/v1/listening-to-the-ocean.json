@@ -314,7 +314,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1 – 4"
             },
             {
@@ -334,7 +334,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "passage",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
             },
@@ -440,7 +440,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "ocean."
             },
             {
@@ -482,7 +482,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "other methods."
             },
             {
@@ -503,7 +503,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "4 Hydrophones can distinguish different kinds of rain."
             }
           ],
@@ -796,7 +796,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which paragraph contains the following information?"
             },
@@ -817,7 +817,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–G, in boxes 5–8 on your answer sheet."
             },
@@ -948,10 +948,15 @@
             "b047",
             "b048",
             "b049",
+            "b050",
             "b051",
+            "b052",
+            "b053",
             "b054",
             "b055",
             "b056",
+            "b057",
+            "b058",
             "b059",
             "b060"
           ],
@@ -985,11 +990,29 @@
               "confidence": 0.72,
               "fromBlockId": "b049",
               "reason": "same-section-continuation",
+              "toBlockId": "b050"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b050",
+              "reason": "same-section-continuation",
               "toBlockId": "b051"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b051",
+              "reason": "same-section-continuation",
+              "toBlockId": "b052"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b052",
+              "reason": "same-section-continuation",
+              "toBlockId": "b053"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b053",
               "reason": "same-section-continuation",
               "toBlockId": "b054"
             },
@@ -1008,6 +1031,18 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b056",
+              "reason": "same-section-continuation",
+              "toBlockId": "b057"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b057",
+              "reason": "same-section-continuation",
+              "toBlockId": "b058"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b058",
               "reason": "same-section-continuation",
               "toBlockId": "b059"
             },
@@ -1041,6 +1076,12 @@
               "id": "q9",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "Leonardo da Vinci",
+                  "B": "Colladon and Sturm",
+                  "C": "Ewing and Worzel",
+                  "D": "Jeff Nystuen"
+                },
                 "options": [
                   "A",
                   "B",
@@ -1057,10 +1098,15 @@
                 "b047",
                 "b048",
                 "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
                 "b055",
                 "b056",
+                "b057",
+                "b058",
                 "b059",
                 "b060"
               ],
@@ -1073,6 +1119,12 @@
               "id": "q10",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "Leonardo da Vinci",
+                  "B": "Colladon and Sturm",
+                  "C": "Ewing and Worzel",
+                  "D": "Christopher Clark"
+                },
                 "options": [
                   "A",
                   "B",
@@ -1081,7 +1133,7 @@
                 ],
                 "type": "radio"
               },
-              "prompt": "According to the passage, who conducted research into the distances certain types of",
+              "prompt": "According to the passage, who conducted research into the distances certain types of sound waves travel in water?",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b045",
@@ -1089,10 +1141,15 @@
                 "b047",
                 "b048",
                 "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
                 "b055",
                 "b056",
+                "b057",
+                "b058",
                 "b059",
                 "b060"
               ],
@@ -1127,10 +1184,15 @@
                 "b047",
                 "b048",
                 "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
                 "b055",
                 "b056",
+                "b057",
+                "b058",
                 "b059",
                 "b060"
               ],
@@ -1143,6 +1205,12 @@
               "id": "q12",
               "interaction": {
                 "allowOptionReuse": false,
+                "optionTexts": {
+                  "A": "when scientists track them.",
+                  "B": "at different tim es of year.",
+                  "C": "when whales communicate with other species.",
+                  "D": "when whales come to the surface."
+                },
                 "options": [
                   "A",
                   "B",
@@ -1159,10 +1227,15 @@
                 "b047",
                 "b048",
                 "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
                 "b055",
                 "b056",
+                "b057",
+                "b058",
                 "b059",
                 "b060"
               ],
@@ -1197,10 +1270,15 @@
                 "b047",
                 "b048",
                 "b049",
+                "b050",
                 "b051",
+                "b052",
+                "b053",
                 "b054",
                 "b055",
                 "b056",
+                "b057",
+                "b058",
                 "b059",
                 "b060"
               ],
@@ -1250,7 +1328,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct letter, A, B, C or D."
             },
@@ -1271,7 +1349,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter in boxes 9–13 on your answer sheet."
             },
@@ -1314,8 +1392,29 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "in water?"
+            },
+            {
+              "bbox": [
+                96,
+                579,
+                213.06961059570312,
+                634.2000122070312
+              ],
+              "blockId": "b050",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                579,
+                213.06961059570312,
+                634.2000122070312
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A Leonardo da Vinci B Colladon and Sturm C Ewing and Worzel D Jeff Nystuen"
             },
             {
               "bbox": [
@@ -1337,6 +1436,48 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "10 According to the passage, who conducted research into the distances certain types of"
+            },
+            {
+              "bbox": [
+                75,
+                532.2000122070312,
+                223.07760620117188,
+                540.6000366210938
+              ],
+              "blockId": "b052",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                532.2000122070312,
+                223.07760620117188,
+                540.6000366210938
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "sound waves travel in water?"
+            },
+            {
+              "bbox": [
+                96,
+                461.8800048828125,
+                213.06961059570312,
+                517.0800170898438
+              ],
+              "blockId": "b053",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                461.8800048828125,
+                213.06961059570312,
+                517.0800170898438
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A Leonardo da Vinci B Colladon and Sturm C Ewing and Worzel D Christopher Clark"
             },
             {
               "bbox": [
@@ -1403,6 +1544,48 @@
             },
             {
               "bbox": [
+                96,
+                282.6000061035156,
+                257.7215881347656,
+                306.60003662109375
+              ],
+              "blockId": "b057",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                282.6000061035156,
+                257.7215881347656,
+                306.60003662109375
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A when scientists track them. B at different tim es of year."
+            },
+            {
+              "bbox": [
+                96,
+                251.40003967285156,
+                360.4607849121094,
+                275.4000244140625
+              ],
+              "blockId": "b058",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                251.40003967285156,
+                360.4607849121094,
+                275.4000244140625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "C when whales communicate with other species. D when whales come to the surface."
+            },
+            {
+              "bbox": [
                 54,
                 212.28004455566406,
                 213.04318237304688,
@@ -1450,10 +1633,15 @@
             "b047",
             "b048",
             "b049",
+            "b050",
             "b051",
+            "b052",
+            "b053",
             "b054",
             "b055",
             "b056",
+            "b057",
+            "b058",
             "b059",
             "b060"
           ],
@@ -1464,7 +1652,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Listening to the Ocean</p>\n<p>The results of some recent research answer some long-standing questions</p>\n<p>A  The oceans cover more than 70 per cent of the planet’s surface, yet until quite recently</p>\n<p>we knew less about their depths than about the surface of the Moon. The Moon has been far more accessible to study because astronomers have long been able to look at its surface, first with the naked eye and then with the telescope, both instruments that focus light. Until the twentieth century, however, no instruments were available for the study of Earth’s oceans: light, which can travel trillions of kilometres through the vast</p>\n<p>vacuum of space, cannot penetrate very far in seawater.</p>\n<p>B  It turns out that for penetrating water the best instrument is sound. Curious</p>\n<p>investigators have long been fascinated by sound and the way it travels in water. As early as 1490, the artist and scientist Leonardo da Vinci observed: ‘If you cause your ship to stop and place the head of a long tube in the water and place the outer extremity to your ear, you will hear ships at a great distance from you.’ It was not until 1826 that two scientists, Colladon and Sturm, accurately measured the speed of sound in water. Using a long tube to listen under water (as da Vinci had suggested), they recorded how fast the sound of a submerged bell travelled across Lake Geneva in Switzerland. What these investigators demonstrated was that water is an excellent medium for sound, transmitting it almost five times faster than its speed in air.</p>\n<p>C  A number of factors influence how far sound travels under water and how long it lasts,</p>\n<p>including particles, salinity, temperature and pressure. Particles in seawater can reflect, scatter and absorb certain frequencies of sound, just as certain wavelengths of light may be reflected, scattered and absorbed by specific types of particles in the atmosphere. In 1943, Maurice Ewing and J. L. Worzel conducted an experiment to test the theory that low-frequency waves, which are less vulnerable than higher frequencies to scattering and absorption, should be able to travel great distances, if the sound source is placed correctly. The researchers set off an underwater explosion and learned that it was detected easily by receivers 3,200 kilometres away. In analysing the results of this test, they discovered a kind of ‘sound pipeline’, known as the ‘deep sound channel’. Sound introduced into this channel of water could travel thousands of</p>\n<p>kilometres with minimal loss of signal.</p>\n<p>D  The US Navy was quick to appreciate the usefulness of low-frequency sound and the</p>\n<p>deep sound channel. They developed the Sound Surveillance System (SOSUS), which involved underwater microphones, called hydrophones, that were placed on the ocean bottom and connected by cables to on-shore processing centres. It was Christopher Clark of Cornell University who soon realised that SOSUS could be used to listen to whales. Using a SOSUS receiver in the West Indies, he could hear whales that were</p>\n<p>1,770 kilometres away.</p>\n<p>E  Whales are the biggest of Earth’s creatures, yet these animals are also remarkably</p>\n<p>elusive. Scientists wishing to observe blue whales must simply wait in their ships for the whales to surface. A few whales have been tracked briefly in the wild in this way but not for very great distances, and much about them remains unknown. But by using SOSUS, scientists can track the whales and position them on a map. Moreover, they can track not just one whale at a time, but many creatures simultaneously. They can also learn to distinguish whale calls; researchers have detected changes in the calls of finback whales as the seasons change, and have found that blue whales in different</p>\n<p>regions of the Pacific Ocean have different calls.</p>\n<p>F  SOSUS has also proved instrumental in obtaining information crucial to our</p>\n<p>understanding of climate. The system has enabled researchers to begin making ocean\u0002 temperature measurements on a global scale, measurements that are key to understanding the workings of heat transfer between the ocean and the atmosphere. The ocean plays an enormous role in determining air temperature — the heat capacity in only the upper few metres of ocean is thought to be equal to all of the heat in the entire atmosphere. For sound waves travelling horizontally in the ocean, speed is largely a function of temperature. Thus, the travel time of a wave of sound between two points is a sensitive indicator of the average temperature along its path. Transmitting sound in numerous directions through the deep sound channel can give scientists measurements spanning vast areas of the globe. Thousands of sound paths in the ocean can be pieced together into a map of global ocean temperatures, and by repeating measurements along the same paths over time, scientists can track changes</p>\n<p>in temperature over months or years.</p>\n<p>G  Researchers are also using other acoustic techniques to monitor climate.</p>\n<p>nature.</p>\n<p>A  Leonardo da Vinci B  Colladon and Sturm C  Ewing and Worzel D  Jeff Nystuen</p>\n<p>sound waves travel in water?</p>\n<p>A  Leonardo da Vinci B  Colladon and Sturm C  Ewing and Worzel D  Christopher Clark</p>\n<p>A  when scientists track them. B  at different tim es of year.</p>\n<p>C  when whales communicate with other species. D  when whales come to the surface.</p>"
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Listening to the Ocean</p>\n<p>The results of some recent research answer some long-standing questions</p>\n<p>A The oceans cover more than 70 per cent of the planet’s surface, yet until quite recently</p>\n<p>we knew less about their depths than about the surface of the Moon. The Moon has been far more accessible to study because astronomers have long been able to look at its surface, first with the naked eye and then with the telescope, both instruments that focus light. Until the twentieth century, however, no instruments were available for the study of Earth’s oceans: light, which can travel trillions of kilometres through the vast</p>\n<p>vacuum of space, cannot penetrate very far in seawater.</p>\n<p>B It turns out that for penetrating water the best instrument is sound. Curious</p>\n<p>investigators have long been fascinated by sound and the way it travels in water. As early as 1490, the artist and scientist Leonardo da Vinci observed: ‘If you cause your ship to stop and place the head of a long tube in the water and place the outer extremity to your ear, you will hear ships at a great distance from you.’ It was not until 1826 that two scientists, Colladon and Sturm, accurately measured the speed of sound in water. Using a long tube to listen under water (as da Vinci had suggested), they recorded how fast the sound of a submerged bell travelled across Lake Geneva in Switzerland. What these investigators demonstrated was that water is an excellent medium for sound, transmitting it almost five times faster than its speed in air.</p>\n<p>C A number of factors influence how far sound travels under water and how long it lasts,</p>\n<p>including particles, salinity, temperature and pressure. Particles in seawater can reflect, scatter and absorb certain frequencies of sound, just as certain wavelengths of light may be reflected, scattered and absorbed by specific types of particles in the atmosphere. In 1943, Maurice Ewing and J. L. Worzel conducted an experiment to test the theory that low-frequency waves, which are less vulnerable than higher frequencies to scattering and absorption, should be able to travel great distances, if the sound source is placed correctly. The researchers set off an underwater explosion and learned that it was detected easily by receivers 3,200 kilometres away. In analysing the results of this test, they discovered a kind of ‘sound pipeline’, known as the ‘deep sound channel’. Sound introduced into this channel of water could travel thousands of</p>\n<p>kilometres with minimal loss of signal.</p>\n<p>D The US Navy was quick to appreciate the usefulness of low-frequency sound and the</p>\n<p>deep sound channel. They developed the Sound Surveillance System (SOSUS), which involved underwater microphones, called hydrophones, that were placed on the ocean bottom and connected by cables to on-shore processing centres. It was Christopher Clark of Cornell University who soon realised that SOSUS could be used to listen to whales. Using a SOSUS receiver in the West Indies, he could hear whales that were</p>\n<p>1,770 kilometres away.</p>\n<p>E Whales are the biggest of Earth’s creatures, yet these animals are also remarkably</p>\n<p>elusive. Scientists wishing to observe blue whales must simply wait in their ships for the whales to surface. A few whales have been tracked briefly in the wild in this way but not for very great distances, and much about them remains unknown. But by using SOSUS, scientists can track the whales and position them on a map. Moreover, they can track not just one whale at a time, but many creatures simultaneously. They can also learn to distinguish whale calls; researchers have detected changes in the calls of finback whales as the seasons change, and have found that blue whales in different</p>\n<p>regions of the Pacific Ocean have different calls.</p>\n<p>F SOSUS has also proved instrumental in obtaining information crucial to our</p>\n<p>understanding of climate. The system has enabled researchers to begin making ocean\u0002 temperature measurements on a global scale, measurements that are key to understanding the workings of heat transfer between the ocean and the atmosphere. The ocean plays an enormous role in determining air temperature — the heat capacity in only the upper few metres of ocean is thought to be equal to all of the heat in the entire atmosphere. For sound waves travelling horizontally in the ocean, speed is largely a function of temperature. Thus, the travel time of a wave of sound between two points is a sensitive indicator of the average temperature along its path. Transmitting sound in numerous directions through the deep sound channel can give scientists measurements spanning vast areas of the globe. Thousands of sound paths in the ocean can be pieced together into a map of global ocean temperatures, and by repeating measurements along the same paths over time, scientists can track changes</p>\n<p>in temperature over months or years.</p>\n<p>G Researchers are also using other acoustic techniques to monitor climate.</p>\n<p>Oceanographer Jeff Nystuen, for example, has explored the use of sound to measure rainfall over the ocean. Monitoring changing global rainfall patterns will contribute to understanding major climate change as well as the weather phenomenon known as El Niño. Since 1985, Nystuen has used hydrophones to listen to rain over the ocean, acoustically measuring not only the rainfall rate but also the rainfall type, ranging from drizzle to thunderstorms. By using the sound of rain under water as a ‘natural’ rain gauge, the measurement of rainfall over the oceans will become available to climatologists. In this way, modern society continues to benefit from the investigations of those who, like Leonardo da Vinci, pursued the answers to some basic questions of</p>\n<p>nature.</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -1501,12 +1689,8 @@
           "b021",
           "b022",
           "b023",
-          "b025",
-          "b050",
-          "b052",
-          "b053",
-          "b057",
-          "b058"
+          "b024",
+          "b025"
         ],
         "title": "Passage 1 below."
       },
@@ -1551,7 +1735,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 744.8400268554688,
@@ -1565,7 +1749,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -1577,7 +1761,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1596,18 +1780,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 706.6799926757812,
@@ -1621,10 +1804,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1633,7 +1816,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1652,7 +1835,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1660,7 +1843,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1679,7 +1862,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1687,7 +1870,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1699,22 +1882,22 @@
               "blockId": "b006",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  The oceans cover more than 70 per cent of the planet’s surface, yet until quite recently</p>",
+              "html": "<p>A The oceans cover more than 70 per cent of the planet’s surface, yet until quite recently</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "A  The oceans cover more than 70 per cent of the planet’s surface, yet until quite recently"
+              "text": "A The oceans cover more than 70 per cent of the planet’s surface, yet until quite recently"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1733,7 +1916,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1741,7 +1924,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1760,7 +1943,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1768,7 +1951,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1780,22 +1963,22 @@
               "blockId": "b009",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>B  It turns out that for penetrating water the best instrument is sound. Curious</p>",
+              "html": "<p>B It turns out that for penetrating water the best instrument is sound. Curious</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "B  It turns out that for penetrating water the best instrument is sound. Curious"
+              "text": "B It turns out that for penetrating water the best instrument is sound. Curious"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1814,7 +1997,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1822,7 +2005,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1834,22 +2017,22 @@
               "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  A number of factors influence how far sound travels under water and how long it lasts,</p>",
+              "html": "<p>C A number of factors influence how far sound travels under water and how long it lasts,</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "text": "C  A number of factors influence how far sound travels under water and how long it lasts,"
+              "text": "C A number of factors influence how far sound travels under water and how long it lasts,"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1868,7 +2051,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1876,7 +2059,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1895,7 +2078,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1910,8 +2093,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1923,23 +2106,23 @@
               "blockId": "b014",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>D  The US Navy was quick to appreciate the usefulness of low-frequency sound and the</p>",
+              "html": "<p>D The US Navy was quick to appreciate the usefulness of low-frequency sound and the</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "D  The US Navy was quick to appreciate the usefulness of low-frequency sound and the"
+              "text": "D The US Navy was quick to appreciate the usefulness of low-frequency sound and the"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1958,7 +2141,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1966,8 +2149,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1986,7 +2169,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1994,8 +2177,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2007,23 +2190,23 @@
               "blockId": "b017",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>E  Whales are the biggest of Earth’s creatures, yet these animals are also remarkably</p>",
+              "html": "<p>E Whales are the biggest of Earth’s creatures, yet these animals are also remarkably</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "E  Whales are the biggest of Earth’s creatures, yet these animals are also remarkably"
+              "text": "E Whales are the biggest of Earth’s creatures, yet these animals are also remarkably"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2042,7 +2225,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2050,8 +2233,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2070,7 +2253,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2078,8 +2261,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2091,23 +2274,23 @@
               "blockId": "b020",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>F  SOSUS has also proved instrumental in obtaining information crucial to our</p>",
+              "html": "<p>F SOSUS has also proved instrumental in obtaining information crucial to our</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "F  SOSUS has also proved instrumental in obtaining information crucial to our"
+              "text": "F SOSUS has also proved instrumental in obtaining information crucial to our"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2126,7 +2309,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2134,8 +2317,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2154,7 +2337,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2162,8 +2345,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2175,23 +2358,23 @@
               "blockId": "b023",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>G  Researchers are also using other acoustic techniques to monitor climate.</p>",
+              "html": "<p>G Researchers are also using other acoustic techniques to monitor climate.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "G  Researchers are also using other acoustic techniques to monitor climate."
+              "text": "G Researchers are also using other acoustic techniques to monitor climate."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2210,17 +2393,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "roleHint": "question",
               "text": "Oceanographer Jeff Nystuen, for example, has explored the use of sound to measure rainfall over the ocean. Monitoring changing global rainfall patterns will contribute to understanding major climate change as well as the weather phenomenon known as El Niño. Since 1985, Nystuen has used hydrophones to listen to rain over the ocean, acoustically measuring not only the rainfall rate but also the rainfall type, ranging from drizzle to thunderstorms. By using the sound of rain under water as a ‘natural’ rain gauge, the measurement of rainfall over the oceans will become available to climatologists. In this way, modern society continues to benefit from the investigations of those who, like Leonardo da Vinci, pursued the answers to some basic questions of"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2239,7 +2421,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -2256,7 +2438,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 753.47998046875,
@@ -2270,7 +2452,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -2282,7 +2464,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2301,16 +2483,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "roleHint": "passage",
+              "roleHint": "question",
               "text": "Do the following statements agree with the information given in Reading Passage 1?"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2329,7 +2511,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2337,7 +2519,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2349,23 +2531,23 @@
               "blockId": "b029",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>TRUE  if the statement agrees with the information FALSE  if the statement contradicts the information NOT GIVEN  if there is no information on this</p>",
+              "html": "<p>TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 3,
               "roleHint": "question",
-              "text": "TRUE  if the statement agrees with the information FALSE  if the statement contradicts the information NOT GIVEN  if there is no information on this"
+              "text": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2377,22 +2559,22 @@
               "blockId": "b030",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>1  In the past, it was easier for scientists to study the Moon than the oceans.</p>",
+              "html": "<p>1 In the past, it was easier for scientists to study the Moon than the oceans.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "1  In the past, it was easier for scientists to study the Moon than the oceans."
+              "text": "1 In the past, it was easier for scientists to study the Moon than the oceans."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2404,24 +2586,24 @@
               "blockId": "b031",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>2  Techniques for investigating the Moon are the same as techniques for researching the</p>",
+              "html": "<p>2 Techniques for investigating the Moon are the same as techniques for researching the</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "2  Techniques for investigating the Moon are the same as techniques for researching the"
+              "text": "2 Techniques for investigating the Moon are the same as techniques for researching the"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 71.85009002685547,
                 547.7999877929688,
@@ -2435,10 +2617,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2446,7 +2628,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2458,24 +2640,24 @@
               "blockId": "b033",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>3  Measuring temperature changes in the ocean using sound is more time-consuming than</p>",
+              "html": "<p>3 Measuring temperature changes in the ocean using sound is more time-consuming than</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "3  Measuring temperature changes in the ocean using sound is more time-consuming than"
+              "text": "3 Measuring temperature changes in the ocean using sound is more time-consuming than"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 71.85009002685547,
                 501,
@@ -2489,10 +2671,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2500,9 +2682,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 469.79998779296875,
@@ -2512,22 +2694,22 @@
               "blockId": "b035",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>4  Hydrophones can distinguish different kinds of rain.</p>",
+              "html": "<p>4 Hydrophones can distinguish different kinds of rain.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "4  Hydrophones can distinguish different kinds of rain."
+              "text": "4 Hydrophones can distinguish different kinds of rain."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2546,7 +2728,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2555,7 +2737,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2574,7 +2756,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2583,7 +2765,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2602,15 +2784,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Which paragraph contains the following information?"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2629,15 +2812,16 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
+              "roleHint": "question",
               "text": "Write the correct letter, A–G, in boxes 5–8 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2649,22 +2833,22 @@
               "blockId": "b040",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>NB  You may use any letter more than once.</p>",
+              "html": "<p>NB You may use any letter more than once.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "NB  You may use any letter more than once."
+              "text": "NB You may use any letter more than once."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2676,22 +2860,22 @@
               "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>5  examples of things that affect the distance sound can travel in water</p>",
+              "html": "<p>5 examples of things that affect the distance sound can travel in water</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "5  examples of things that affect the distance sound can travel in water"
+              "text": "5 examples of things that affect the distance sound can travel in water"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2703,22 +2887,22 @@
               "blockId": "b042",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>6  details of the connection between ocean temperatures and climate</p>",
+              "html": "<p>6 details of the connection between ocean temperatures and climate</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "6  details of the connection between ocean temperatures and climate"
+              "text": "6 details of the connection between ocean temperatures and climate"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2730,22 +2914,22 @@
               "blockId": "b043",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>7  details of ways in which light and sound are similar</p>",
+              "html": "<p>7 details of ways in which light and sound are similar</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "7  details of ways in which light and sound are similar"
+              "text": "7 details of ways in which light and sound are similar"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2757,18 +2941,18 @@
               "blockId": "b044",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>8  a reference to a long-term study of different types of weather</p>",
+              "html": "<p>8 a reference to a long-term study of different types of weather</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "8  a reference to a long-term study of different types of weather"
+              "text": "8 a reference to a long-term study of different types of weather"
             }
           ],
           "height": 841.9199829101562,
@@ -2819,7 +3003,7 @@
               "blockId": "b046",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Choose the correct letter, A, B, C  or D.</p>",
+              "html": "<p>Choose the correct letter, A, B, C or D.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -2830,7 +3014,8 @@
                 }
               },
               "pageIndex": 4,
-              "text": "Choose the correct letter, A, B, C  or D."
+              "roleHint": "question",
+              "text": "Choose the correct letter, A, B, C or D."
             },
             {
               "_epic8ColumnIndex": 0,
@@ -2857,11 +3042,12 @@
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write the correct letter in boxes 9–13 on your answer sheet."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2873,24 +3059,24 @@
               "blockId": "b048",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>9  According to the passage, who conducted research into the rate at which sound travels</p>",
+              "html": "<p>9 According to the passage, who conducted research into the rate at which sound travels</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "9  According to the passage, who conducted research into the rate at which sound travels"
+              "text": "9 According to the passage, who conducted research into the rate at which sound travels"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75,
                 649.0800170898438,
@@ -2904,10 +3090,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2915,7 +3101,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2927,22 +3113,22 @@
               "blockId": "b050",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Leonardo da Vinci B  Colladon and Sturm C  Ewing and Worzel D  Jeff Nystuen</p>",
+              "html": "<p>A Leonardo da Vinci B Colladon and Sturm C Ewing and Worzel D Jeff Nystuen</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "A  Leonardo da Vinci B  Colladon and Sturm C  Ewing and Worzel D  Jeff Nystuen"
+              "text": "A Leonardo da Vinci B Colladon and Sturm C Ewing and Worzel D Jeff Nystuen"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2961,7 +3147,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2969,9 +3155,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75,
                 532.2000122070312,
@@ -2985,10 +3171,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2996,7 +3182,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3008,22 +3194,22 @@
               "blockId": "b053",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  Leonardo da Vinci B  Colladon and Sturm C  Ewing and Worzel D  Christopher Clark</p>",
+              "html": "<p>A Leonardo da Vinci B Colladon and Sturm C Ewing and Worzel D Christopher Clark</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "A  Leonardo da Vinci B  Colladon and Sturm C  Ewing and Worzel D  Christopher Clark"
+              "text": "A Leonardo da Vinci B Colladon and Sturm C Ewing and Worzel D Christopher Clark"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3042,7 +3228,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3050,7 +3236,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3062,22 +3248,22 @@
               "blockId": "b055",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  follow a number of whales at the same time. B  protect whales as they migrate. C  imitate whale calls of different species. D  change the whales’ direction of travel.</p>",
+              "html": "<p>A follow a number of whales at the same time. B protect whales as they migrate. C imitate whale calls of different species. D change the whales’ direction of travel.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "A  follow a number of whales at the same time. B  protect whales as they migrate. C  imitate whale calls of different species. D  change the whales’ direction of travel."
+              "text": "A follow a number of whales at the same time. B protect whales as they migrate. C imitate whale calls of different species. D change the whales’ direction of travel."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3096,7 +3282,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3104,7 +3290,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3116,22 +3302,22 @@
               "blockId": "b057",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  when scientists track them. B  at different tim es of year.</p>",
+              "html": "<p>A when scientists track them. B at different tim es of year.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "A  when scientists track them. B  at different tim es of year."
+              "text": "A when scientists track them. B at different tim es of year."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3143,22 +3329,22 @@
               "blockId": "b058",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>C  when whales communicate with other species. D  when whales come to the surface.</p>",
+              "html": "<p>C when whales communicate with other species. D when whales come to the surface.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "C  when whales communicate with other species. D  when whales come to the surface."
+              "text": "C when whales communicate with other species. D when whales come to the surface."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3177,7 +3363,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -3185,7 +3371,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -3197,18 +3383,18 @@
               "blockId": "b060",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>A  make accurate maps of the ocean floor. B  measure water-level changes. C  investigate ocean currents. D  measure variations in temperature.</p>",
+              "html": "<p>A make accurate maps of the ocean floor. B measure water-level changes. C investigate ocean currents. D measure variations in temperature.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "A  make accurate maps of the ocean floor. B  measure water-level changes. C  investigate ocean currents. D  measure variations in temperature."
+              "text": "A make accurate maps of the ocean floor. B measure water-level changes. C investigate ocean currents. D measure variations in temperature."
             }
           ],
           "height": 841.9199829101562,
@@ -3305,7 +3491,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Listening to the Ocean</p>\n<p>The results of some recent research answer some long-standing questions</p>\n<p>A  The oceans cover more than 70 per cent of the planet’s surface, yet until quite recently</p>\n<p>we knew less about their depths than about the surface of the Moon. The Moon has been far more accessible to study because astronomers have long been able to look at its surface, first with the naked eye and then with the telescope, both instruments that focus light. Until the twentieth century, however, no instruments were available for the study of Earth’s oceans: light, which can travel trillions of kilometres through the vast</p>\n<p>vacuum of space, cannot penetrate very far in seawater.</p>\n<p>B  It turns out that for penetrating water the best instrument is sound. Curious</p>\n<p>investigators have long been fascinated by sound and the way it travels in water. As early as 1490, the artist and scientist Leonardo da Vinci observed: ‘If you cause your ship to stop and place the head of a long tube in the water and place the outer extremity to your ear, you will hear ships at a great distance from you.’ It was not until 1826 that two scientists, Colladon and Sturm, accurately measured the speed of sound in water. Using a long tube to listen under water (as da Vinci had suggested), they recorded how fast the sound of a submerged bell travelled across Lake Geneva in Switzerland. What these investigators demonstrated was that water is an excellent medium for sound, transmitting it almost five times faster than its speed in air.</p>\n<p>C  A number of factors influence how far sound travels under water and how long it lasts,</p>\n<p>including particles, salinity, temperature and pressure. Particles in seawater can reflect, scatter and absorb certain frequencies of sound, just as certain wavelengths of light may be reflected, scattered and absorbed by specific types of particles in the atmosphere. In 1943, Maurice Ewing and J. L. Worzel conducted an experiment to test the theory that low-frequency waves, which are less vulnerable than higher frequencies to scattering and absorption, should be able to travel great distances, if the sound source is placed correctly. The researchers set off an underwater explosion and learned that it was detected easily by receivers 3,200 kilometres away. In analysing the results of this test, they discovered a kind of ‘sound pipeline’, known as the ‘deep sound channel’. Sound introduced into this channel of water could travel thousands of</p>\n<p>kilometres with minimal loss of signal.</p>\n<p>D  The US Navy was quick to appreciate the usefulness of low-frequency sound and the</p>\n<p>deep sound channel. They developed the Sound Surveillance System (SOSUS), which involved underwater microphones, called hydrophones, that were placed on the ocean bottom and connected by cables to on-shore processing centres. It was Christopher Clark of Cornell University who soon realised that SOSUS could be used to listen to whales. Using a SOSUS receiver in the West Indies, he could hear whales that were</p>\n<p>1,770 kilometres away.</p>\n<p>E  Whales are the biggest of Earth’s creatures, yet these animals are also remarkably</p>\n<p>elusive. Scientists wishing to observe blue whales must simply wait in their ships for the whales to surface. A few whales have been tracked briefly in the wild in this way but not for very great distances, and much about them remains unknown. But by using SOSUS, scientists can track the whales and position them on a map. Moreover, they can track not just one whale at a time, but many creatures simultaneously. They can also learn to distinguish whale calls; researchers have detected changes in the calls of finback whales as the seasons change, and have found that blue whales in different</p>\n<p>regions of the Pacific Ocean have different calls.</p>\n<p>F  SOSUS has also proved instrumental in obtaining information crucial to our</p>\n<p>understanding of climate. The system has enabled researchers to begin making ocean\u0002 temperature measurements on a global scale, measurements that are key to understanding the workings of heat transfer between the ocean and the atmosphere. The ocean plays an enormous role in determining air temperature — the heat capacity in only the upper few metres of ocean is thought to be equal to all of the heat in the entire atmosphere. For sound waves travelling horizontally in the ocean, speed is largely a function of temperature. Thus, the travel time of a wave of sound between two points is a sensitive indicator of the average temperature along its path. Transmitting sound in numerous directions through the deep sound channel can give scientists measurements spanning vast areas of the globe. Thousands of sound paths in the ocean can be pieced together into a map of global ocean temperatures, and by repeating measurements along the same paths over time, scientists can track changes</p>\n<p>in temperature over months or years.</p>\n<p>G  Researchers are also using other acoustic techniques to monitor climate.</p>\n<p>nature.</p>\n<p>A  Leonardo da Vinci B  Colladon and Sturm C  Ewing and Worzel D  Jeff Nystuen</p>\n<p>sound waves travel in water?</p>\n<p>A  Leonardo da Vinci B  Colladon and Sturm C  Ewing and Worzel D  Christopher Clark</p>\n<p>A  when scientists track them. B  at different tim es of year.</p>\n<p>C  when whales communicate with other species. D  when whales come to the surface.</p>",
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Listening to the Ocean</p>\n<p>The results of some recent research answer some long-standing questions</p>\n<p>A The oceans cover more than 70 per cent of the planet’s surface, yet until quite recently</p>\n<p>we knew less about their depths than about the surface of the Moon. The Moon has been far more accessible to study because astronomers have long been able to look at its surface, first with the naked eye and then with the telescope, both instruments that focus light. Until the twentieth century, however, no instruments were available for the study of Earth’s oceans: light, which can travel trillions of kilometres through the vast</p>\n<p>vacuum of space, cannot penetrate very far in seawater.</p>\n<p>B It turns out that for penetrating water the best instrument is sound. Curious</p>\n<p>investigators have long been fascinated by sound and the way it travels in water. As early as 1490, the artist and scientist Leonardo da Vinci observed: ‘If you cause your ship to stop and place the head of a long tube in the water and place the outer extremity to your ear, you will hear ships at a great distance from you.’ It was not until 1826 that two scientists, Colladon and Sturm, accurately measured the speed of sound in water. Using a long tube to listen under water (as da Vinci had suggested), they recorded how fast the sound of a submerged bell travelled across Lake Geneva in Switzerland. What these investigators demonstrated was that water is an excellent medium for sound, transmitting it almost five times faster than its speed in air.</p>\n<p>C A number of factors influence how far sound travels under water and how long it lasts,</p>\n<p>including particles, salinity, temperature and pressure. Particles in seawater can reflect, scatter and absorb certain frequencies of sound, just as certain wavelengths of light may be reflected, scattered and absorbed by specific types of particles in the atmosphere. In 1943, Maurice Ewing and J. L. Worzel conducted an experiment to test the theory that low-frequency waves, which are less vulnerable than higher frequencies to scattering and absorption, should be able to travel great distances, if the sound source is placed correctly. The researchers set off an underwater explosion and learned that it was detected easily by receivers 3,200 kilometres away. In analysing the results of this test, they discovered a kind of ‘sound pipeline’, known as the ‘deep sound channel’. Sound introduced into this channel of water could travel thousands of</p>\n<p>kilometres with minimal loss of signal.</p>\n<p>D The US Navy was quick to appreciate the usefulness of low-frequency sound and the</p>\n<p>deep sound channel. They developed the Sound Surveillance System (SOSUS), which involved underwater microphones, called hydrophones, that were placed on the ocean bottom and connected by cables to on-shore processing centres. It was Christopher Clark of Cornell University who soon realised that SOSUS could be used to listen to whales. Using a SOSUS receiver in the West Indies, he could hear whales that were</p>\n<p>1,770 kilometres away.</p>\n<p>E Whales are the biggest of Earth’s creatures, yet these animals are also remarkably</p>\n<p>elusive. Scientists wishing to observe blue whales must simply wait in their ships for the whales to surface. A few whales have been tracked briefly in the wild in this way but not for very great distances, and much about them remains unknown. But by using SOSUS, scientists can track the whales and position them on a map. Moreover, they can track not just one whale at a time, but many creatures simultaneously. They can also learn to distinguish whale calls; researchers have detected changes in the calls of finback whales as the seasons change, and have found that blue whales in different</p>\n<p>regions of the Pacific Ocean have different calls.</p>\n<p>F SOSUS has also proved instrumental in obtaining information crucial to our</p>\n<p>understanding of climate. The system has enabled researchers to begin making ocean\u0002 temperature measurements on a global scale, measurements that are key to understanding the workings of heat transfer between the ocean and the atmosphere. The ocean plays an enormous role in determining air temperature — the heat capacity in only the upper few metres of ocean is thought to be equal to all of the heat in the entire atmosphere. For sound waves travelling horizontally in the ocean, speed is largely a function of temperature. Thus, the travel time of a wave of sound between two points is a sensitive indicator of the average temperature along its path. Transmitting sound in numerous directions through the deep sound channel can give scientists measurements spanning vast areas of the globe. Thousands of sound paths in the ocean can be pieced together into a map of global ocean temperatures, and by repeating measurements along the same paths over time, scientists can track changes</p>\n<p>in temperature over months or years.</p>\n<p>G Researchers are also using other acoustic techniques to monitor climate.</p>\n<p>Oceanographer Jeff Nystuen, for example, has explored the use of sound to measure rainfall over the ocean. Monitoring changing global rainfall patterns will contribute to understanding major climate change as well as the weather phenomenon known as El Niño. Since 1985, Nystuen has used hydrophones to listen to rain over the ocean, acoustically measuring not only the rainfall rate but also the rainfall type, ranging from drizzle to thunderstorms. By using the sound of rain under water as a ‘natural’ rain gauge, the measurement of rainfall over the oceans will become available to climatologists. In this way, modern society continues to benefit from the investigations of those who, like Leonardo da Vinci, pursued the answers to some basic questions of</p>\n<p>nature.</p>",
             "kind": "html"
           }
         ]
@@ -3354,7 +3540,7 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 9-13</p><p>Questions 9 – 13 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 9–13 on your answer sheet.</p></div><ol><li><div><strong>9</strong> According to the passage, who conducted research into the rate at which sound travels in water?</div><div class=\"choice-row\"><label><input name=\"q9\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q9\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q9\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q9\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>10</strong> According to the passage, who conducted research into the distances certain types of</div><div class=\"choice-row\"><label><input name=\"q10\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q10\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q10\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q10\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>11</strong> SOSUS allows whale researchers to</div><div class=\"choice-row\"><label><input name=\"q11\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">follow a number of whales at the same time.</span></label><label><input name=\"q11\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">protect whales as they migrate.</span></label><label><input name=\"q11\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">imitate whale calls of different species.</span></label><label><input name=\"q11\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">change the whales’ direction of travel.</span></label></div></li><li><div><strong>12</strong> Finback whale calls change</div><div class=\"choice-row\"><label><input name=\"q12\" type=\"radio\" value=\"A\"> A</label><label><input name=\"q12\" type=\"radio\" value=\"B\"> B</label><label><input name=\"q12\" type=\"radio\" value=\"C\"> C</label><label><input name=\"q12\" type=\"radio\" value=\"D\"> D</label></div></li><li><div><strong>13</strong> SOSUS allows scientists to</div><div class=\"choice-row\"><label><input name=\"q13\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">make accurate maps of the ocean floor.</span></label><label><input name=\"q13\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">measure water-level changes.</span></label><label><input name=\"q13\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">investigate ocean currents.</span></label><label><input name=\"q13\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">measure variations in temperature.</span></label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-3\"><div class=\"group-lead\"><p>Questions 9-13</p><p>Questions 9 – 13 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 9–13 on your answer sheet.</p></div><ol><li><div><strong>9</strong> According to the passage, who conducted research into the rate at which sound travels in water?</div><div class=\"choice-row\"><label><input name=\"q9\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">Leonardo da Vinci</span></label><label><input name=\"q9\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">Colladon and Sturm</span></label><label><input name=\"q9\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">Ewing and Worzel</span></label><label><input name=\"q9\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">Jeff Nystuen</span></label></div></li><li><div><strong>10</strong> According to the passage, who conducted research into the distances certain types of sound waves travel in water?</div><div class=\"choice-row\"><label><input name=\"q10\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">Leonardo da Vinci</span></label><label><input name=\"q10\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">Colladon and Sturm</span></label><label><input name=\"q10\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">Ewing and Worzel</span></label><label><input name=\"q10\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">Christopher Clark</span></label></div></li><li><div><strong>11</strong> SOSUS allows whale researchers to</div><div class=\"choice-row\"><label><input name=\"q11\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">follow a number of whales at the same time.</span></label><label><input name=\"q11\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">protect whales as they migrate.</span></label><label><input name=\"q11\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">imitate whale calls of different species.</span></label><label><input name=\"q11\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">change the whales’ direction of travel.</span></label></div></li><li><div><strong>12</strong> Finback whale calls change</div><div class=\"choice-row\"><label><input name=\"q12\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">when scientists track them.</span></label><label><input name=\"q12\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">at different tim es of year.</span></label><label><input name=\"q12\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">when whales communicate with other species.</span></label><label><input name=\"q12\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">when whales come to the surface.</span></label></div></li><li><div><strong>13</strong> SOSUS allows scientists to</div><div class=\"choice-row\"><label><input name=\"q13\" type=\"radio\" value=\"A\"> <span class=\"choice-label\">A</span> <span class=\"choice-text\">make accurate maps of the ocean floor.</span></label><label><input name=\"q13\" type=\"radio\" value=\"B\"> <span class=\"choice-label\">B</span> <span class=\"choice-text\">measure water-level changes.</span></label><label><input name=\"q13\" type=\"radio\" value=\"C\"> <span class=\"choice-label\">C</span> <span class=\"choice-text\">investigate ocean currents.</span></label><label><input name=\"q13\" type=\"radio\" value=\"D\"> <span class=\"choice-label\">D</span> <span class=\"choice-text\">measure variations in temperature.</span></label></div></li></ol></section>",
           "groupId": "group-3",
           "kind": "single_choice",
           "leadHtml": "<p>Questions 9-13</p><p>Questions 9 – 13 Choose the correct letter, A, B, C or D. Write the correct letter in boxes 9–13 on your answer sheet.</p>",
@@ -3424,12 +3610,8 @@
             "b021",
             "b022",
             "b023",
-            "b025",
-            "b050",
-            "b052",
-            "b053",
-            "b057",
-            "b058"
+            "b024",
+            "b025"
           ],
           "title": "Passage 1 below."
         }
@@ -3559,7 +3741,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1 – 4"
             },
             {
@@ -3579,7 +3761,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "passage",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
             },
@@ -3685,7 +3867,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "ocean."
             },
             {
@@ -3727,7 +3909,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "other methods."
             },
             {
@@ -3748,7 +3930,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "4 Hydrophones can distinguish different kinds of rain."
             }
           ]
@@ -3914,7 +4096,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Which paragraph contains the following information?"
             },
@@ -3935,7 +4117,7 @@
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter, A–G, in boxes 5–8 on your answer sheet."
             },
@@ -4053,10 +4235,15 @@
             "b047",
             "b048",
             "b049",
+            "b050",
             "b051",
+            "b052",
+            "b053",
             "b054",
             "b055",
             "b056",
+            "b057",
+            "b058",
             "b059",
             "b060"
           ],
@@ -4068,10 +4255,15 @@
               "b047",
               "b048",
               "b049",
+              "b050",
               "b051",
+              "b052",
+              "b053",
               "b054",
               "b055",
               "b056",
+              "b057",
+              "b058",
               "b059",
               "b060"
             ],
@@ -4120,11 +4312,29 @@
               "confidence": 0.72,
               "fromBlockId": "b049",
               "reason": "same-section-continuation",
+              "toBlockId": "b050"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b050",
+              "reason": "same-section-continuation",
               "toBlockId": "b051"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b051",
+              "reason": "same-section-continuation",
+              "toBlockId": "b052"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b052",
+              "reason": "same-section-continuation",
+              "toBlockId": "b053"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b053",
               "reason": "same-section-continuation",
               "toBlockId": "b054"
             },
@@ -4143,6 +4353,18 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b056",
+              "reason": "same-section-continuation",
+              "toBlockId": "b057"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b057",
+              "reason": "same-section-continuation",
+              "toBlockId": "b058"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b058",
               "reason": "same-section-continuation",
               "toBlockId": "b059"
             },
@@ -4201,7 +4423,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose the correct letter, A, B, C or D."
             },
@@ -4222,7 +4444,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write the correct letter in boxes 9–13 on your answer sheet."
             },
@@ -4265,8 +4487,29 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "in water?"
+            },
+            {
+              "bbox": [
+                96,
+                579,
+                213.06961059570312,
+                634.2000122070312
+              ],
+              "blockId": "b050",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                579,
+                213.06961059570312,
+                634.2000122070312
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A Leonardo da Vinci B Colladon and Sturm C Ewing and Worzel D Jeff Nystuen"
             },
             {
               "bbox": [
@@ -4288,6 +4531,48 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "10 According to the passage, who conducted research into the distances certain types of"
+            },
+            {
+              "bbox": [
+                75,
+                532.2000122070312,
+                223.07760620117188,
+                540.6000366210938
+              ],
+              "blockId": "b052",
+              "column": 0,
+              "normalizedBbox": [
+                75,
+                532.2000122070312,
+                223.07760620117188,
+                540.6000366210938
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "sound waves travel in water?"
+            },
+            {
+              "bbox": [
+                96,
+                461.8800048828125,
+                213.06961059570312,
+                517.0800170898438
+              ],
+              "blockId": "b053",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                461.8800048828125,
+                213.06961059570312,
+                517.0800170898438
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A Leonardo da Vinci B Colladon and Sturm C Ewing and Worzel D Christopher Clark"
             },
             {
               "bbox": [
@@ -4351,6 +4636,48 @@
               "role": "",
               "sectionColumnCount": 1,
               "textPreview": "12 Finback whale calls change"
+            },
+            {
+              "bbox": [
+                96,
+                282.6000061035156,
+                257.7215881347656,
+                306.60003662109375
+              ],
+              "blockId": "b057",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                282.6000061035156,
+                257.7215881347656,
+                306.60003662109375
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "A when scientists track them. B at different tim es of year."
+            },
+            {
+              "bbox": [
+                96,
+                251.40003967285156,
+                360.4607849121094,
+                275.4000244140625
+              ],
+              "blockId": "b058",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                251.40003967285156,
+                360.4607849121094,
+                275.4000244140625
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "C when whales communicate with other species. D when whales come to the surface."
             },
             {
               "bbox": [

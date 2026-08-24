@@ -140,7 +140,7 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "The source statement describes a synthetic test condition. A B C D",
+              "prompt": "The source statement describes a synthetic test condition. A B C D 2. The source statement describes a synthetic test condition. A B C D 3. The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b003",
@@ -163,7 +163,7 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "The source statement describes a synthetic test condition. A B C D",
+              "prompt": "The source statement describes a synthetic test condition. A B C D 3. The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b003",
@@ -263,7 +263,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -305,7 +305,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -347,7 +347,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ],
@@ -367,7 +367,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic repeating header - should not become passage text</p>\n<p>Passage body on page 1; repeated footer is a page decoration.</p>\n<p>Synthetic footer page 1</p>\n<p>Synthetic footer page 2</p>"
+            "html": "<p>Synthetic repeating header-should not become passage text</p>\n<p>Passage body on page 1; repeated footer is a page decoration.</p>\n<p>Synthetic footer page 1</p>\n<p>Synthetic footer page 2</p>"
           }
         ],
         "questionUmbrellaRanges": [],
@@ -377,7 +377,7 @@
           "b010",
           "b013"
         ],
-        "title": "Synthetic repeating header - should not become passage text"
+        "title": "Synthetic repeating header-should not become passage text"
       },
       "questionDisplayMap": {
         "q1": "1",
@@ -410,7 +410,7 @@
               "blockId": "b001",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Synthetic repeating header - should not become passage text</p>",
+              "html": "<p>Synthetic repeating header-should not become passage text</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
@@ -421,7 +421,7 @@
                 }
               },
               "pageIndex": 1,
-              "text": "Synthetic repeating header - should not become passage text"
+              "text": "Synthetic repeating header-should not become passage text"
             },
             {
               "_epic8ColumnIndex": 0,
@@ -481,7 +481,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -500,7 +500,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -508,9 +508,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 66,
                 594.7999877929688,
@@ -524,10 +524,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -535,7 +535,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -554,7 +554,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -562,9 +562,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 66,
                 555.7999877929688,
@@ -578,10 +578,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -589,7 +589,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -608,7 +608,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -616,9 +616,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 66,
                 516.7999877929688,
@@ -632,10 +632,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -643,7 +643,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -662,7 +662,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -677,8 +677,8 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -690,23 +690,23 @@
               "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Synthetic repeating header - should not become passage text</p>",
+              "html": "<p>Synthetic repeating header-should not become passage text</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "Synthetic repeating header - should not become passage text"
+              "text": "Synthetic repeating header-should not become passage text"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -725,7 +725,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -734,8 +734,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -754,7 +754,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -798,7 +798,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<p>Synthetic repeating header - should not become passage text</p>\n<p>Passage body on page 1; repeated footer is a page decoration.</p>\n<p>Synthetic footer page 1</p>\n<p>Synthetic footer page 2</p>",
+            "html": "<p>Synthetic repeating header-should not become passage text</p>\n<p>Passage body on page 1; repeated footer is a page decoration.</p>\n<p>Synthetic footer page 1</p>\n<p>Synthetic footer page 2</p>",
             "kind": "html"
           }
         ]
@@ -811,7 +811,7 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-3</p><p>Questions 1-3 Complete the summary.</p></div><ol><li><label><strong>1</strong> The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q1_input\" name=\"q1\"></label></li><li><label><strong>2</strong> The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q2_input\" name=\"q2\"></label></li><li><label><strong>3</strong> The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q3_input\" name=\"q3\"></label></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-3</p><p>Questions 1-3 Complete the summary.</p></div><ol><li><label><strong>1</strong> The source statement describes a synthetic test condition. A B C D 2. The source statement describes a synthetic test condition. A B C D 3. The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q1_input\" name=\"q1\"></label></li><li><label><strong>2</strong> The source statement describes a synthetic test condition. A B C D 3. The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q2_input\" name=\"q2\"></label></li><li><label><strong>3</strong> The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q3_input\" name=\"q3\"></label></li></ol></section>",
           "groupId": "group-1",
           "kind": "summary_completion",
           "leadHtml": "<p>Questions 1-3</p><p>Questions 1-3 Complete the summary.</p>",
@@ -852,7 +852,7 @@
             "b010",
             "b013"
           ],
-          "title": "Synthetic repeating header - should not become passage text"
+          "title": "Synthetic repeating header-should not become passage text"
         }
       ],
       "questionGroupCandidates": [
@@ -994,7 +994,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -1036,7 +1036,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -1078,7 +1078,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ]

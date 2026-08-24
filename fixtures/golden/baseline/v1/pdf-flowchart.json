@@ -155,7 +155,7 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "The source statement describes a synthetic test condition. A B C D",
+              "prompt": "The source statement describes a synthetic test condition. A B C D 2. The source statement describes a synthetic test condition. A B C D 3. The source statement describes a synthetic test condition. A B C D 4. The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b006",
@@ -180,7 +180,7 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "The source statement describes a synthetic test condition. A B C D",
+              "prompt": "The source statement describes a synthetic test condition. A B C D 3. The source statement describes a synthetic test condition. A B C D 4. The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b006",
@@ -205,7 +205,7 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "The source statement describes a synthetic test condition. A B C D",
+              "prompt": "The source statement describes a synthetic test condition. A B C D 4. The source statement describes a synthetic test condition. A B C D",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
                 "b006",
@@ -267,7 +267,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1-4 Complete the flow-chart."
             },
             {
@@ -309,7 +309,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -351,7 +351,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -393,7 +393,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 2,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -435,7 +435,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 2,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ],
@@ -626,9 +626,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 260.79998779296875,
@@ -642,10 +642,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -654,7 +654,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -673,7 +673,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -681,9 +681,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 224.8000030517578,
@@ -697,10 +697,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -708,7 +708,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -727,7 +727,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -735,9 +735,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 185.8000030517578,
@@ -751,10 +751,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -762,7 +762,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -781,7 +781,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -789,9 +789,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
-              "_epic8SectionColumns": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 146.8000030517578,
@@ -805,10 +805,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 2,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -816,7 +816,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 8,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -835,7 +835,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 8
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -843,9 +843,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 9,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
-              "_epic8SectionColumns": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 72,
                 107.80000305175781,
@@ -859,10 +859,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 2,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 9
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -920,7 +920,7 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-4</p><p>Questions 1-4 Complete the flow-chart.</p></div><ol><li><label><strong>1</strong> The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q1_input\" name=\"q1\"></label></li><li><label><strong>2</strong> The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q2_input\" name=\"q2\"></label></li><li><label><strong>3</strong> The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q3_input\" name=\"q3\"></label></li><li><label><strong>4</strong> The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q4_input\" name=\"q4\"></label></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-4</p><p>Questions 1-4 Complete the flow-chart.</p></div><ol><li><label><strong>1</strong> The source statement describes a synthetic test condition. A B C D 2. The source statement describes a synthetic test condition. A B C D 3. The source statement describes a synthetic test condition. A B C D 4. The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q1_input\" name=\"q1\"></label></li><li><label><strong>2</strong> The source statement describes a synthetic test condition. A B C D 3. The source statement describes a synthetic test condition. A B C D 4. The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q2_input\" name=\"q2\"></label></li><li><label><strong>3</strong> The source statement describes a synthetic test condition. A B C D 4. The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q3_input\" name=\"q3\"></label></li><li><label><strong>4</strong> The source statement describes a synthetic test condition. A B C D <input type=\"text\" id=\"q4_input\" name=\"q4\"></label></li></ol></section>",
           "groupId": "group-1",
           "kind": "diagram_completion",
           "leadHtml": "<p>Questions 1-4</p><p>Questions 1-4 Complete the flow-chart.</p>",
@@ -1080,7 +1080,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1-4 Complete the flow-chart."
             },
             {
@@ -1122,7 +1122,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -1164,7 +1164,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -1206,7 +1206,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 2,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             },
             {
@@ -1248,7 +1248,7 @@
               "pageIndex": 1,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 2,
+              "sectionColumnCount": 1,
               "textPreview": "A B C D"
             }
           ]

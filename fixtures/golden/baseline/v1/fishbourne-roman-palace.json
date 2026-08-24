@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 5,
-    "blockCount": 48,
+    "blockCount": 50,
     "groupCount": 2,
     "slotCount": 13,
     "assetCount": 0,
@@ -87,6 +87,7 @@
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
+            "b017",
             "b018",
             "b019",
             "b020",
@@ -97,20 +98,28 @@
             "b025",
             "b026",
             "b027",
-            "b028"
+            "b028",
+            "b029",
+            "b030"
           ],
           "confidence": 0.82,
           "continuationEdges": [
             {
               "confidence": 0.72,
-              "fromBlockId": "b018",
+              "fromBlockId": "b017",
               "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "cross-column-continuation",
               "toBlockId": "b019"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b019",
-              "reason": "same-section-continuation",
+              "reason": "cross-column-continuation",
               "toBlockId": "b020"
             },
             {
@@ -122,13 +131,13 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b021",
-              "reason": "same-section-continuation",
+              "reason": "cross-column-continuation",
               "toBlockId": "b022"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b022",
-              "reason": "same-section-continuation",
+              "reason": "cross-column-continuation",
               "toBlockId": "b023"
             },
             {
@@ -160,12 +169,24 @@
               "fromBlockId": "b027",
               "reason": "same-section-continuation",
               "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
             }
           ],
           "groupId": "group-1",
           "instruction": [
             "Questions 1-6",
-            "Questions 1–6 Do the following statements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this"
+            "Questions 1–6 Do the following stat ements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE FALSE if the statement agrees with the information if the statement contradicts the information NOT GIVEN if there is no information on this"
           ],
           "isUmbrellaRange": false,
           "kind": "true_false_not_given",
@@ -195,6 +216,7 @@
               "prompt": "Fishbourne Palace was the first structure to be built on its site.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b017",
                 "b018",
                 "b019",
                 "b020",
@@ -205,7 +227,9 @@
                 "b025",
                 "b026",
                 "b027",
-                "b028"
+                "b028",
+                "b029",
+                "b030"
               ],
               "verified": false
             },
@@ -226,6 +250,7 @@
               "prompt": "Fishbourne Palace was renovated more than once.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b017",
                 "b018",
                 "b019",
                 "b020",
@@ -236,7 +261,9 @@
                 "b025",
                 "b026",
                 "b027",
-                "b028"
+                "b028",
+                "b029",
+                "b030"
               ],
               "verified": false
             },
@@ -257,6 +284,7 @@
               "prompt": "Fishbourne Palace was large in comparison with Roman palaces in Italy.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b017",
                 "b018",
                 "b019",
                 "b020",
@@ -267,7 +295,9 @@
                 "b025",
                 "b026",
                 "b027",
-                "b028"
+                "b028",
+                "b029",
+                "b030"
               ],
               "verified": false
             },
@@ -288,6 +318,7 @@
               "prompt": "Research is continuing in the area close to Fishbourne Palace.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b017",
                 "b018",
                 "b019",
                 "b020",
@@ -298,7 +329,9 @@
                 "b025",
                 "b026",
                 "b027",
-                "b028"
+                "b028",
+                "b029",
+                "b030"
               ],
               "verified": false
             },
@@ -319,6 +352,7 @@
               "prompt": "Researchers agree on the identity of the person for whom Fishbourne Palace was constructed.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b017",
                 "b018",
                 "b019",
                 "b020",
@@ -329,7 +363,9 @@
                 "b025",
                 "b026",
                 "b027",
-                "b028"
+                "b028",
+                "b029",
+                "b030"
               ],
               "verified": false
             },
@@ -350,6 +386,7 @@
               "prompt": "Fishbourne Palace was burnt down by local people.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b017",
                 "b018",
                 "b019",
                 "b020",
@@ -360,7 +397,9 @@
                 "b025",
                 "b026",
                 "b027",
-                "b028"
+                "b028",
+                "b029",
+                "b030"
               ],
               "verified": false
             }
@@ -375,7 +414,7 @@
                 124.7109375,
                 761.8800048828125
               ],
-              "blockId": "b018",
+              "blockId": "b017",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -386,20 +425,41 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 2,
               "textPreview": "Questions 1–6"
             },
             {
               "bbox": [
                 54,
                 723.9600219726562,
+                158.72879028320312,
+                732.3600463867188
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                723.9600219726562,
+                158.72879028320312,
+                732.3600463867188
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "Do the following stat"
+            },
+            {
+              "bbox": [
+                162.0623779296875,
+                723.9600219726562,
                 495.6094970703125,
                 732.3600463867188
               ],
               "blockId": "b019",
-              "column": 0,
+              "column": 1,
               "normalizedBbox": [
-                54,
+                162.0623779296875,
                 723.9600219726562,
                 495.6094970703125,
                 732.3600463867188
@@ -407,8 +467,8 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "passage",
-              "sectionColumnCount": 1,
-              "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
+              "sectionColumnCount": 2,
+              "textPreview": "ements agree with the information given in Reading Passage 1?"
             },
             {
               "bbox": [
@@ -434,23 +494,65 @@
             {
               "bbox": [
                 96,
-                633.47998046875,
-                402.7848205566406,
+                649.0800170898438,
+                127.9966049194336,
                 673.0800170898438
               ],
               "blockId": "b021",
               "column": 0,
               "normalizedBbox": [
                 96,
-                633.47998046875,
+                649.0800170898438,
+                127.9966049194336,
+                673.0800170898438
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "TRUE FALSE"
+            },
+            {
+              "bbox": [
+                180,
+                649.0800170898438,
+                402.7848205566406,
+                673.0800170898438
+              ],
+              "blockId": "b022",
+              "column": 1,
+              "normalizedBbox": [
+                180,
+                649.0800170898438,
                 402.7848205566406,
                 673.0800170898438
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "if the statement agrees with the information if the statement contradicts the information"
+            },
+            {
+              "bbox": [
+                96,
+                633.47998046875,
+                340.75677490234375,
+                641.8800048828125
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                633.47998046875,
+                340.75677490234375,
+                641.8800048828125
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
               "sectionColumnCount": 1,
-              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there "
+              "textPreview": "NOT GIVEN if there is no information on this"
             },
             {
               "bbox": [
@@ -459,7 +561,7 @@
                 401.8319396972656,
                 612.3600463867188
               ],
-              "blockId": "b022",
+              "blockId": "b024",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -480,7 +582,7 @@
                 343.1711730957031,
                 582.6000366210938
               ],
-              "blockId": "b023",
+              "blockId": "b025",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -501,7 +603,7 @@
                 457.20477294921875,
                 553.0800170898438
               ],
-              "blockId": "b024",
+              "blockId": "b026",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -522,7 +624,7 @@
                 404.5391845703125,
                 523.56005859375
               ],
-              "blockId": "b025",
+              "blockId": "b027",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -543,7 +645,7 @@
                 509.25347900390625,
                 493.800048828125
               ],
-              "blockId": "b026",
+              "blockId": "b028",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -564,7 +666,7 @@
                 137.0352020263672,
                 478.20001220703125
               ],
-              "blockId": "b027",
+              "blockId": "b029",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -575,7 +677,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "constructed."
             },
             {
@@ -585,7 +687,7 @@
                 345.84478759765625,
                 448.6800537109375
               ],
-              "blockId": "b028",
+              "blockId": "b030",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -601,6 +703,7 @@
             }
           ],
           "sourceBlockIds": [
+            "b017",
             "b018",
             "b019",
             "b020",
@@ -611,15 +714,15 @@
             "b025",
             "b026",
             "b027",
-            "b028"
+            "b028",
+            "b029",
+            "b030"
           ],
           "verified": false
         },
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
-            "b029",
-            "b030",
             "b031",
             "b032",
             "b033",
@@ -630,25 +733,18 @@
             "b038",
             "b039",
             "b040",
+            "b041",
+            "b042",
             "b043",
+            "b044",
             "b045",
             "b046",
-            "b047"
+            "b047",
+            "b048",
+            "b049"
           ],
           "confidence": 0.82,
           "continuationEdges": [
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b029",
-              "reason": "same-section-continuation",
-              "toBlockId": "b030"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b030",
-              "reason": "same-section-continuation",
-              "toBlockId": "b031"
-            },
             {
               "confidence": 0.72,
               "fromBlockId": "b031",
@@ -707,11 +803,29 @@
               "confidence": 0.72,
               "fromBlockId": "b040",
               "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
               "toBlockId": "b043"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
               "reason": "same-section-continuation",
               "toBlockId": "b045"
             },
@@ -726,6 +840,18 @@
               "fromBlockId": "b046",
               "reason": "same-section-continuation",
               "toBlockId": "b047"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b047",
+              "reason": "same-section-continuation",
+              "toBlockId": "b048"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b048",
+              "reason": "same-section-continuation",
+              "toBlockId": "b049"
             }
           ],
           "groupId": "group-2",
@@ -737,7 +863,7 @@
           "kind": "sentence_completion",
           "layout": {
             "layoutHint": "inline_completion",
-            "notes": "Questions 7–13\nComplete the notes below.\nChoose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each\nanswer.\nWrite your answers in boxes 7–13 on your answer sheet.\nFishbourne Palace\nConstruction\n• The first buildings on the site contained food for the 7 __________\n• The palace building surrounded 8 __________\n• In the 2nd and 3rd centuries colour was added to the 9 __________of the palace.\nDiscovery\n• The first part of the palace to be found was part of a 10 __________\n• Sallustius Lucullus - he may have lived there until approximately 11 __________AD.\n• Catuarus - his 12 __________was found there.\nPresent Day\n• A 13 __________has been built on the site to help protect it.",
+            "notes": "Questions 7–13\nComplete the notes below.\nChoose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each\nanswer.\nWrite your answers in boxes 7–13 on your answer sheet.\nFishbourne Palace\nConstruction\n• The first buildings on the site contained food for the 7 __________\n• The palace building surrounded 8 __________\n• In the 2nd and 3rd centuries colour was added to the 9 __________of the palace.\nDiscovery\n• The first part of the palace to be found was part of a 10 __________\nPossible inhabitants\n• Cogidubnus-he is named in several writings.\n• Sallustius Lucullus-he may have lived there until approximately 11 __________AD.\n• Verica-a British king.\n• Catuarus-his 12 __________was found there.\nPresent Day\n• A 13 __________has been built on the site to help protect it.",
             "template": "inline_text_completion"
           },
           "questionRange": [
@@ -758,8 +884,6 @@
               "prompt": "__________ • The palace building surrounded",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b029",
-                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -770,10 +894,15 @@
                 "b038",
                 "b039",
                 "b040",
+                "b041",
+                "b042",
                 "b043",
+                "b044",
                 "b045",
                 "b046",
-                "b047"
+                "b047",
+                "b048",
+                "b049"
               ],
               "verified": false
             },
@@ -790,8 +919,6 @@
               "prompt": "__________ • In the 2nd and 3rd centuries colour was added to the",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b029",
-                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -802,10 +929,15 @@
                 "b038",
                 "b039",
                 "b040",
+                "b041",
+                "b042",
                 "b043",
+                "b044",
                 "b045",
                 "b046",
-                "b047"
+                "b047",
+                "b048",
+                "b049"
               ],
               "verified": false
             },
@@ -822,8 +954,6 @@
               "prompt": "__________of the palace. Discovery • The first part of the palace to be found was part of a",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b029",
-                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -834,10 +964,15 @@
                 "b038",
                 "b039",
                 "b040",
+                "b041",
+                "b042",
                 "b043",
+                "b044",
                 "b045",
                 "b046",
-                "b047"
+                "b047",
+                "b048",
+                "b049"
               ],
               "verified": false
             },
@@ -851,11 +986,9 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "__________ • Sallustius Lucullus - he may have lived there until approximately",
+              "prompt": "__________ Possible inhabitants • Cogidubnus-he is named in several writings. • Sallustius Lucullus-he may have lived there until approximately",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b029",
-                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -866,10 +999,15 @@
                 "b038",
                 "b039",
                 "b040",
+                "b041",
+                "b042",
                 "b043",
+                "b044",
                 "b045",
                 "b046",
-                "b047"
+                "b047",
+                "b048",
+                "b049"
               ],
               "verified": false
             },
@@ -883,11 +1021,9 @@
                 "options": [],
                 "type": "text"
               },
-              "prompt": "__________AD. • Catuarus - his",
+              "prompt": "__________AD. • Verica-a British king. • Catuarus-his",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b029",
-                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -898,10 +1034,15 @@
                 "b038",
                 "b039",
                 "b040",
+                "b041",
+                "b042",
                 "b043",
+                "b044",
                 "b045",
                 "b046",
-                "b047"
+                "b047",
+                "b048",
+                "b049"
               ],
               "verified": false
             },
@@ -918,8 +1059,6 @@
               "prompt": "__________was found there. Present Day • A",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b029",
-                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -930,10 +1069,15 @@
                 "b038",
                 "b039",
                 "b040",
+                "b041",
+                "b042",
                 "b043",
+                "b044",
                 "b045",
                 "b046",
-                "b047"
+                "b047",
+                "b048",
+                "b049"
               ],
               "verified": false
             },
@@ -950,8 +1094,6 @@
               "prompt": "__________has been built on the site to help protect it.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
-                "b029",
-                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -962,10 +1104,15 @@
                 "b038",
                 "b039",
                 "b040",
+                "b041",
+                "b042",
                 "b043",
+                "b044",
                 "b045",
                 "b046",
-                "b047"
+                "b047",
+                "b048",
+                "b049"
               ],
               "verified": false
             }
@@ -980,7 +1127,7 @@
                 131.3853302001953,
                 761.8800048828125
               ],
-              "blockId": "b029",
+              "blockId": "b031",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1001,7 +1148,7 @@
                 192.75599670410156,
                 732.3600463867188
               ],
-              "blockId": "b030",
+              "blockId": "b032",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1022,7 +1169,7 @@
                 534.7598266601562,
                 702.6000366210938
               ],
-              "blockId": "b031",
+              "blockId": "b033",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1032,7 +1179,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each"
             },
@@ -1043,7 +1190,7 @@
                 92.68560028076172,
                 687
               ],
-              "blockId": "b032",
+              "blockId": "b034",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1064,7 +1211,7 @@
                 352.821533203125,
                 657.4800415039062
               ],
-              "blockId": "b033",
+              "blockId": "b035",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1074,7 +1221,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 7–13 on your answer sheet."
             },
@@ -1085,7 +1232,7 @@
                 350.4205322265625,
                 607.56005859375
               ],
-              "blockId": "b034",
+              "blockId": "b036",
               "column": 0,
               "normalizedBbox": [
                 233.7236328125,
@@ -1106,7 +1253,7 @@
                 128.76956176757812,
                 570.8400268554688
               ],
-              "blockId": "b035",
+              "blockId": "b037",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1117,7 +1264,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Construction"
             },
             {
@@ -1127,7 +1274,7 @@
                 429.1195068359375,
                 550.6800537109375
               ],
-              "blockId": "b036",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1148,7 +1295,7 @@
                 325.0687255859375,
                 529.5599975585938
               ],
-              "blockId": "b037",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1169,7 +1316,7 @@
                 512.5313110351562,
                 508.4400329589844
               ],
-              "blockId": "b038",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1190,7 +1337,7 @@
                 112.14715576171875,
                 469.08001708984375
               ],
-              "blockId": "b039",
+              "blockId": "b041",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1201,7 +1348,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Discovery"
             },
             {
@@ -1211,7 +1358,7 @@
                 438.453369140625,
                 448.4400329589844
               ],
-              "blockId": "b040",
+              "blockId": "b042",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1228,11 +1375,53 @@
             {
               "bbox": [
                 61.4399528503418,
+                400.67999267578125,
+                171.4535675048828,
+                409.08001708984375
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                400.67999267578125,
+                171.4535675048828,
+                409.08001708984375
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Possible inhabitants"
+            },
+            {
+              "bbox": [
+                61.4399528503418,
+                380.280029296875,
+                322.333740234375,
+                388.6800537109375
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                380.280029296875,
+                322.333740234375,
+                388.6800537109375
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• Cogidubnus-he is named in several writings."
+            },
+            {
+              "bbox": [
+                61.4399528503418,
                 359.1600036621094,
                 527.13623046875,
                 367.5600280761719
               ],
-              "blockId": "b043",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1244,40 +1433,61 @@
               "pageRotation": 0,
               "role": "",
               "sectionColumnCount": 1,
-              "textPreview": "• Sallustius Lucullus - he may have lived there until approximately 11 __________AD."
+              "textPreview": "• Sallustius Lucullus-he may have lived there until approximately 11 __________AD."
             },
             {
               "bbox": [
                 61.4399528503418,
-                317.1600036621094,
-                330.38134765625,
-                325.5600280761719
-              ],
-              "blockId": "b045",
-              "column": 0,
-              "normalizedBbox": [
-                61.4399528503418,
-                317.1600036621094,
-                330.38134765625,
-                325.5600280761719
-              ],
-              "pageIndex": 4,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 3,
-              "textPreview": "• Catuarus - his 12 __________was found there."
-            },
-            {
-              "bbox": [
-                61.4399528503418,
-                277.5600280761719,
-                124.13754272460938,
-                285.9600524902344
+                338.2799987792969,
+                196.91537475585938,
+                346.6800231933594
               ],
               "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
+                338.2799987792969,
+                196.91537475585938,
+                346.6800231933594
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• Verica-a British king."
+            },
+            {
+              "bbox": [
+                61.4399528503418,
+                317.1600036621094,
+                330.38134765625,
+                325.5600280761719
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                317.1600036621094,
+                330.38134765625,
+                325.5600280761719
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• Catuarus-his 12 __________was found there."
+            },
+            {
+              "bbox": [
+                61.4399528503418,
+                277.5600280761719,
+                124.13754272460938,
+                285.9600524902344
+              ],
+              "blockId": "b048",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
                 277.5600280761719,
                 124.13754272460938,
                 285.9600524902344
@@ -1285,7 +1495,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Present Day"
             },
             {
@@ -1295,7 +1505,7 @@
                 400.451416015625,
                 265.5600280761719
               ],
-              "blockId": "b047",
+              "blockId": "b049",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1311,8 +1521,6 @@
             }
           ],
           "sourceBlockIds": [
-            "b029",
-            "b030",
             "b031",
             "b032",
             "b033",
@@ -1323,10 +1531,15 @@
             "b038",
             "b039",
             "b040",
+            "b041",
+            "b042",
             "b043",
+            "b044",
             "b045",
             "b046",
-            "b047"
+            "b047",
+            "b048",
+            "b049"
           ],
           "verified": false
         }
@@ -1335,7 +1548,7 @@
         "htmlBlocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Fishbourne Roman Palace</p>\n<p>Fishbourne Roman Palace is in the village of Fishbourne in West Sussex, England. This large palace was built in the 1st century AD, around thirty years after the Roman conquest of Britain, on the site of Roman army grain stores that had been established after the invasion during the reign of the Roman Emperor Claudius in 43 AD. The rectangular palace was built around formal gardens, the northern half of which has been reconstructed. There were extensive alterations in the 2nd and 3rd centuries AD, with many of the original black\u0002 and-white mosaic floors being overlaid with more sophisticated coloured ones, including a perfectly preserved mosaic of a dolphin in the north wing. More alterations were in progress when the palace burnt down in around 270 AD, after which it was abandoned.</p>\n<p>Local people had long believed that a Roman palace once existed in the area. However, it was not until 1960 that the archaeologist Barry Cunliffe of Oxford University first systematically excavated the site, after workmen had accidentally uncovered a wall while they were laying a water main. The Roman villa excavated by Cunliffe’s team was so grand that it became known as Fishbourne Roman Palace, and a museum was erected to preserve some of the remains. This is administered by the Sussex Archaeological Society.</p>\n<p>In its day, the completed palace would have comprised four large wings with colonnaded fronts. The north and east wings consisted of suites of private rooms built around courtyards, with a monumental entrance in the middle of the east wing. In the north-east corner there was an assembly hall. The west wing contained state rooms, a large ceremonial reception room and a gallery. The south wing contained the owner’s private apartments. The palace included as many as fifty mosaic floors, under-floor central heating and a bathhouse. In size, Fishbourne Palace would have been approximately equivalent to some of the great Roman palaces of Italy, and was by far the largest known Roman residence north of the European Alps, at about 500 feet (150 m) square. A team of volunteers and professional archaeologists is involved in an ongoing archaeological</p>\n<p>excavation on the site of nearby, possibly military, buildings.</p>\n<p>The first buildings to be erected on the site were constructed in the early part of the conquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar floors and plaster walls, which appears to have been a house of some comfort. These buildings were demolished in the 60s AD and replaced by a substantial stone house, which included colonnades and a bath suite. It has been suggested that the palace itself, incorporating the previous house in its south-east corner, was constructed around 73–75 AD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan and the collection of objects found, and has suggested that, given the extremely close</p>\n<p>parallels with the imperial palace of Domitian in Rome, its construction may more plausibly</p>\n<p>date to after 92 AD.</p>\n<p>With regard to who lived in Fishbourne Palace, there are a number of theories. For example, one proposed by Professor Cunliffe is that, in its early phase, the palace was the residence of Tiberius Claudius Cogidubnus, a local chieftain who supported the Romans and who may have been installed as king of a number of territories following the first stage of the conquest. Cogidubnus is known from a reference to his loyalty in Agricola, a work by the Roman writer Tacitus, and from an inscription commemorating a temple dedicated to the gods Neptune and Minerva found in the nearby city of Chichester. Another theory is that it was built for Sallustius Lucullus, a Roman governor of Britain in the late 1st century, who may have been the son of the British prince Adminius. Two inscriptions recording the presence of Lucullus have been found in Chichester, and the redating by Miles Russell suggests that, if the palace was designed for Lucullus, then it may have been in use for only a few years, as the Roman historian Suetonius records that Lucullus was executed by the</p>\n<p>Emperor Domitian in or shortly after 93 AD.</p>\n<p>Additional theories suggest that either Verica, a British king of the Roman Empire in the years preceding the Claudian invasion, was the owner of the palace, or Tiberius Claudius Catuarus, following the recent discovery of a gold ring belonging to him. The palace outlasted the original owner, whoever he was, and was extensively re-planned early in the 2nd century AD and subdivided into a series of smaller apartments. Further redevelopment was begun in the late 3rd century AD, but these alterations were incomplete when the north wing was destroyed in a fire in around 270 AD. The damage was too great to repair, and</p>\n<p>the palace was abandoned and later dismantled.</p>\n<p>A modern museum has been built by the Sussex Archaeological Society, incorporating most of the visible remains, including one wing of the palace. The gardens have been</p>\n<p>replanted using authentic plants from the Roman period.</p>\n<p>Possible inhabitants</p>\n<p>•  Cogidubnus - he is named in several writings.</p>\n<p>•  Verica - a British king.</p>"
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Fishbourne Roman Palace</p>\n<p>Fishbourne Roman Palace is in the village of Fishbourne in West Sussex, England. This large palace was built in the 1st century AD, around thirty years after the Roman conquest of Britain, on the site of Roman army grain stores that had been established after the invasion during the reign of the Roman Emperor Claudius in 43 AD. The rectangular palace was built around formal gardens, the northern half of which has been reconstructed. There were extensive alterations in the 2nd and 3rd centuries AD, with many of the original black\u0002 and-white mosaic floors being overlaid with more sophisticated coloured ones, including a perfectly preserved mosaic of a dolphin in the north wing. More alterations were in progress when the palace burnt down in around 270 AD, after which it was abandoned.</p>\n<p>Local people had long believed that a Roman palace once existed in the area. However, it was not until 1960 that the archaeologist Barry Cunliffe of Oxford University first systematically excavated the site, after workmen had accidentally uncovered a wall while they were laying a water main. The Roman villa excavated by Cunliffe’s team was so grand that it became known as Fishbourne Roman Palace, and a museum was erected to preserve some of the remains. This is administered by the Sussex Archaeological Society.</p>\n<p>In its day, the completed palace would have comprised four large wings with colonnaded fronts. The north and east wings consisted of suites of private rooms built around courtyards, with a monumental entrance in the middle of the east wing. In the north-east corner there was an assembly hall. The west wing contained state rooms, a large ceremonial reception room and a gallery. The south wing contained the owner’s private apartments. The palace included as many as fifty mosaic floors, under-floor central heating and a bathhouse. In size, Fishbourne Palace would have been approximately equivalent to some of the great Roman palaces of Italy, and was by far the largest known Roman residence north of the European Alps, at about 500 feet (150 m) square. A team of volunteers and professional archaeologists is involved in an ongoing archaeological</p>\n<p>excavation on the site of nearby, possibly military, buildings.</p>\n<p>The first buildings to be erected on the site were constructed in the early part of the conquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar floors and plaster walls, which appears to have been a house of some comfort. These buildings were demolished in the 60s AD and replaced by a substantial stone house, which included colonnades and a bath suite. It has been suggested that the palace itself, incorporating the previous house in its south-east corner, was constructed around 73–75 AD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan and the collection of objects found, and has suggested that, given the extremely close parallels with the imperial palace of Domitian in Rome, its construction may more plausibly</p>\n<p>date to after 92 AD.</p>\n<p>With regard to who lived in Fishbourne Palace, there are a number of theories. For example, one proposed by Professor Cunliffe is that, in its early phase, the palace was the residence of Tiberius Claudius Cogidubnus, a local chieftain who supported the Romans and who may have been installed as king of a number of territories following the first stage of the conquest. Cogidubnus is known from a reference to his loyalty in Agricola, a work by the Roman writer Tacitus, and from an inscription commemorating a temple dedicated to the gods Neptune and Minerva found in the nearby city of Chichester. Another theory is that it was built for Sallustius Lucullus, a Roman governor of Britain in the late 1st century, who may have been the son of the British prince Adminius. Two inscriptions recording the presence of Lucullus have been found in Chichester, and the redating by Miles Russell suggests that, if the palace was designed for Lucullus, then it may have been in use for only a few years, as the Roman historian Suetonius records that Lucullus was executed by the</p>\n<p>Emperor Domitian in or shortly after 93 AD.</p>\n<p>Additional theories suggest that either Verica, a British king of the Roman Empire in the years preceding the Claudian invasion, was the owner of the palace, or Tiberius Claudius Catuarus, following the recent discovery of a gold ring belonging to him. The palace outlasted the original owner, whoever he was, and was extensively re-planned early in the 2nd century AD and subdivided into a series of smaller apartments. Further redevelopment was begun in the late 3rd century AD, but these alterations were incomplete when the north wing was destroyed in a fire in around 270 AD. The damage was too great to repair, and</p>\n<p>the palace was abandoned and later dismantled.</p>\n<p>A modern museum has been built by the Sussex Archaeological Society, incorporating most of the visible remains, including one wing of the palace. The gardens have been</p>\n<p>replanted using authentic plants from the Roman period.</p>"
           }
         ],
         "questionUmbrellaRanges": [
@@ -1364,11 +1577,7 @@
           "b013",
           "b014",
           "b015",
-          "b016",
-          "b017",
-          "b041",
-          "b042",
-          "b044"
+          "b016"
         ],
         "title": "Passage 1 below."
       },
@@ -1413,7 +1622,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 744.8400268554688,
@@ -1427,7 +1636,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -1439,7 +1648,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1458,18 +1667,17 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 1,
-              "roleHint": "question",
               "text": "You should spend about 20 minutes on Questions 1–13, which are based on Reading"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 706.6799926757812,
@@ -1483,10 +1691,10 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1495,7 +1703,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1514,7 +1722,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1522,7 +1730,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1541,7 +1749,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1549,7 +1757,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1568,7 +1776,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1576,7 +1784,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1595,7 +1803,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1603,7 +1811,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -1622,7 +1830,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 1,
@@ -1637,83 +1845,55 @@
           "blocks": [
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 1,
-              "_epic8LayoutSection": 1,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
-                644.280029296875,
+                628.6799926757812,
                 536.3182373046875,
                 761.8800048828125
               ],
               "blockId": "b009",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>The first buildings to be erected on the site were constructed in the early part of the conquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar floors and plaster walls, which appears to have been a house of some comfort. These buildings were demolished in the 60s AD and replaced by a substantial stone house, which included colonnades and a bath suite. It has been suggested that the palace itself, incorporating the previous house in its south-east corner, was constructed around 73–75 AD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan and the collection of objects found, and has suggested that, given the extremely close</p>",
+              "html": "<p>The first buildings to be erected on the site were constructed in the early part of the conquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar floors and plaster walls, which appears to have been a house of some comfort. These buildings were demolished in the 60s AD and replaced by a substantial stone house, which included colonnades and a bath suite. It has been suggested that the palace itself, incorporating the previous house in its south-east corner, was constructed around 73–75 AD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan and the collection of objects found, and has suggested that, given the extremely close parallels with the imperial palace of Domitian in Rome, its construction may more plausibly</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 2,
-              "text": "The first buildings to be erected on the site were constructed in the early part of the conquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar floors and plaster walls, which appears to have been a house of some comfort. These buildings were demolished in the 60s AD and replaced by a substantial stone house, which included colonnades and a bath suite. It has been suggested that the palace itself, incorporating the previous house in its south-east corner, was constructed around 73–75 AD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan and the collection of objects found, and has suggested that, given the extremely close"
+              "text": "The first buildings to be erected on the site were constructed in the early part of the conquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar floors and plaster walls, which appears to have been a house of some comfort. These buildings were demolished in the 60s AD and replaced by a substantial stone house, which included colonnades and a bath suite. It has been suggested that the palace itself, incorporating the previous house in its south-east corner, was constructed around 73–75 AD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan and the collection of objects found, and has suggested that, given the extremely close parallels with the imperial palace of Domitian in Rome, its construction may more plausibly"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 2,
-              "_epic8LayoutSection": 2,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
               "_epic8SectionColumns": 1,
-              "bbox": [
-                54,
-                628.6799926757812,
-                532.8734130859375,
-                637.0800170898438
-              ],
-              "blockId": "b010",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>parallels with the imperial palace of Domitian in Rome, its construction may more plausibly</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 1,
-                    "current": 0
-                  },
-                  "index": 2
-                }
-              },
-              "pageIndex": 2,
-              "text": "parallels with the imperial palace of Domitian in Rome, its construction may more plausibly"
-            },
-            {
-              "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 3,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 3,
               "bbox": [
                 54,
                 613.0800170898438,
                 154.73040771484375,
                 621.4800415039062
               ],
-              "blockId": "b011",
+              "blockId": "b010",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>date to after 92 AD.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1721,9 +1901,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 3,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1731,7 +1911,7 @@
                 540.9765625,
                 591.9600219726562
               ],
-              "blockId": "b012",
+              "blockId": "b011",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>With regard to who lived in Fishbourne Palace, there are a number of theories. For example, one proposed by Professor Cunliffe is that, in its early phase, the palace was the residence of Tiberius Claudius Cogidubnus, a local chieftain who supported the Romans and who may have been installed as king of a number of territories following the first stage of the conquest. Cogidubnus is known from a reference to his loyalty in Agricola, a work by the Roman writer Tacitus, and from an inscription commemorating a temple dedicated to the gods Neptune and Minerva found in the nearby city of Chichester. Another theory is that it was built for Sallustius Lucullus, a Roman governor of Britain in the late 1st century, who may have been the son of the British prince Adminius. Two inscriptions recording the presence of Lucullus have been found in Chichester, and the redating by Miles Russell suggests that, if the palace was designed for Lucullus, then it may have been in use for only a few years, as the Roman historian Suetonius records that Lucullus was executed by the</p>",
@@ -1741,7 +1921,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1749,9 +1929,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 4,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1759,7 +1939,7 @@
                 280.089599609375,
                 404.7600402832031
               ],
-              "blockId": "b013",
+              "blockId": "b012",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Emperor Domitian in or shortly after 93 AD.</p>",
@@ -1769,7 +1949,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1777,9 +1957,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 5,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 4,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1787,7 +1967,7 @@
                 538.9557495117188,
                 375.0000305175781
               ],
-              "blockId": "b014",
+              "blockId": "b013",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Additional theories suggest that either Verica, a British king of the Roman Empire in the years preceding the Claudian invasion, was the owner of the palace, or Tiberius Claudius Catuarus, following the recent discovery of a gold ring belonging to him. The palace outlasted the original owner, whoever he was, and was extensively re-planned early in the 2nd century AD and subdivided into a series of smaller apartments. Further redevelopment was begun in the late 3rd century AD, but these alterations were incomplete when the north wing was destroyed in a fire in around 270 AD. The damage was too great to repair, and</p>",
@@ -1797,7 +1977,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1805,9 +1985,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 6,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 5,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1815,7 +1995,7 @@
                 308.86077880859375,
                 265.800048828125
               ],
-              "blockId": "b015",
+              "blockId": "b014",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>the palace was abandoned and later dismantled.</p>",
@@ -1825,7 +2005,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1833,9 +2013,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 7,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1843,7 +2023,7 @@
                 512.93505859375,
                 236.28001403808594
               ],
-              "blockId": "b016",
+              "blockId": "b015",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>A modern museum has been built by the Sussex Archaeological Society, incorporating most of the visible remains, including one wing of the palace. The gardens have been</p>",
@@ -1853,7 +2033,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1861,9 +2041,9 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8GlobalSection": 4,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 8,
+              "_epic8GlobalSection": 0,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1871,7 +2051,7 @@
                 349.5239562988281,
                 205.0800323486328
               ],
-              "blockId": "b017",
+              "blockId": "b016",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>replanted using authentic plants from the Roman period.</p>",
@@ -1881,7 +2061,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 2,
@@ -1898,21 +2078,21 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 2,
               "bbox": [
                 54,
                 753.47998046875,
                 124.7109375,
                 761.8800048828125
               ],
-              "blockId": "b018",
+              "blockId": "b017",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 1–6</h3>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 2,
                     "current": 0
                   },
                   "index": 0
@@ -1924,11 +2104,38 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
-              "_epic8SectionColumns": 1,
+              "_epic8SectionColumns": 2,
               "bbox": [
                 54,
+                723.9600219726562,
+                158.72879028320312,
+                732.3600463867188
+              ],
+              "blockId": "b018",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>Do the following stat</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 2,
+                    "current": 0
+                  },
+                  "index": 0
+                }
+              },
+              "pageIndex": 3,
+              "text": "Do the following stat"
+            },
+            {
+              "_epic8ColumnIndex": 1,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 2,
+              "_epic8SectionColumns": 2,
+              "bbox": [
+                162.0623779296875,
                 723.9600219726562,
                 495.6094970703125,
                 732.3600463867188
@@ -1936,24 +2143,24 @@
               "blockId": "b019",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Do the following statements agree with the information given in Reading Passage 1?</p>",
+              "html": "<p>ements agree with the information given in Reading Passage 1?</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 1,
-                    "current": 0
+                    "count": 2,
+                    "current": 1
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
               "roleHint": "passage",
-              "text": "Do the following statements agree with the information given in Reading Passage 1?"
+              "text": "ements agree with the information given in Reading Passage 1?"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 2,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -1971,7 +2178,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 1
                 }
               },
               "pageIndex": 3,
@@ -1980,35 +2187,88 @@
             {
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 3,
-              "_epic8SectionColumns": 1,
+              "_epic8Ordinal": 4,
+              "_epic8SectionColumns": 2,
               "bbox": [
                 96,
-                633.47998046875,
-                402.7848205566406,
+                649.0800170898438,
+                127.9966049194336,
                 673.0800170898438
               ],
               "blockId": "b021",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>TRUE  if the statement agrees with the information FALSE  if the statement contradicts the information NOT GIVEN  if there is no information on this</p>",
+              "html": "<p>TRUE FALSE</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 1,
+                    "count": 2,
                     "current": 0
                   },
                   "index": 2
                 }
               },
               "pageIndex": 3,
-              "roleHint": "question",
-              "text": "TRUE  if the statement agrees with the information FALSE  if the statement contradicts the information NOT GIVEN  if there is no information on this"
+              "text": "TRUE FALSE"
+            },
+            {
+              "_epic8ColumnIndex": 1,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 2,
+              "bbox": [
+                180,
+                649.0800170898438,
+                402.7848205566406,
+                673.0800170898438
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>if the statement agrees with the information if the statement contradicts the information</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 2,
+                    "current": 1
+                  },
+                  "index": 2
+                }
+              },
+              "pageIndex": 3,
+              "text": "if the statement agrees with the information if the statement contradicts the information"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 4,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 6,
+              "_epic8SectionColumns": 1,
+              "bbox": [
+                96,
+                633.47998046875,
+                340.75677490234375,
+                641.8800048828125
+              ],
+              "blockId": "b023",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>NOT GIVEN if there is no information on this</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 1,
+                    "current": 0
+                  },
+                  "index": 3
+                }
+              },
+              "pageIndex": 3,
+              "text": "NOT GIVEN if there is no information on this"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2016,26 +2276,26 @@
                 401.8319396972656,
                 612.3600463867188
               ],
-              "blockId": "b022",
+              "blockId": "b024",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>1  Fishbourne Palace was the first structure to be built on its site.</p>",
+              "html": "<p>1 Fishbourne Palace was the first structure to be built on its site.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 3
                 }
               },
               "pageIndex": 3,
-              "text": "1  Fishbourne Palace was the first structure to be built on its site."
+              "text": "1 Fishbourne Palace was the first structure to be built on its site."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 5,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2043,26 +2303,26 @@
                 343.1711730957031,
                 582.6000366210938
               ],
-              "blockId": "b023",
+              "blockId": "b025",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>2  Fishbourne Palace was renovated more than once.</p>",
+              "html": "<p>2 Fishbourne Palace was renovated more than once.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 3
                 }
               },
               "pageIndex": 3,
-              "text": "2  Fishbourne Palace was renovated more than once."
+              "text": "2 Fishbourne Palace was renovated more than once."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 6,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2070,26 +2330,26 @@
                 457.20477294921875,
                 553.0800170898438
               ],
-              "blockId": "b024",
+              "blockId": "b026",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>3  Fishbourne Palace was large in comparison with Roman palaces in Italy.</p>",
+              "html": "<p>3 Fishbourne Palace was large in comparison with Roman palaces in Italy.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 3
                 }
               },
               "pageIndex": 3,
-              "text": "3  Fishbourne Palace was large in comparison with Roman palaces in Italy."
+              "text": "3 Fishbourne Palace was large in comparison with Roman palaces in Italy."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 7,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2097,26 +2357,26 @@
                 404.5391845703125,
                 523.56005859375
               ],
-              "blockId": "b025",
+              "blockId": "b027",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>4  Research is continuing in the area close to Fishbourne Palace.</p>",
+              "html": "<p>4 Research is continuing in the area close to Fishbourne Palace.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 3
                 }
               },
               "pageIndex": 3,
-              "text": "4  Research is continuing in the area close to Fishbourne Palace."
+              "text": "4 Research is continuing in the area close to Fishbourne Palace."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 8,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2124,41 +2384,41 @@
                 509.25347900390625,
                 493.800048828125
               ],
-              "blockId": "b026",
+              "blockId": "b028",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>5  Researchers agree on the identity of the person for whom Fishbourne Palace was</p>",
+              "html": "<p>5 Researchers agree on the identity of the person for whom Fishbourne Palace was</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 3
                 }
               },
               "pageIndex": 3,
-              "text": "5  Researchers agree on the identity of the person for whom Fishbourne Palace was"
+              "text": "5 Researchers agree on the identity of the person for whom Fishbourne Palace was"
             },
             {
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 9,
-              "_epic8SectionColumns": 3,
+              "_epic8Ordinal": 12,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 75,
                 469.79998779296875,
                 137.0352020263672,
                 478.20001220703125
               ],
-              "blockId": "b027",
+              "blockId": "b029",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>constructed.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 3
@@ -2169,8 +2429,8 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
-              "_epic8Ordinal": 10,
+              "_epic8LayoutSection": 3,
+              "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2178,21 +2438,21 @@
                 345.84478759765625,
                 448.6800537109375
               ],
-              "blockId": "b028",
+              "blockId": "b030",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>6  Fishbourne Palace was burnt down by local people.</p>",
+              "html": "<p>6 Fishbourne Palace was burnt down by local people.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 3
                 }
               },
               "pageIndex": 3,
-              "text": "6  Fishbourne Palace was burnt down by local people."
+              "text": "6 Fishbourne Palace was burnt down by local people."
             }
           ],
           "height": 841.9199829101562,
@@ -2212,7 +2472,7 @@
                 131.3853302001953,
                 761.8800048828125
               ],
-              "blockId": "b029",
+              "blockId": "b031",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 7–13</h3>",
@@ -2240,7 +2500,7 @@
                 192.75599670410156,
                 732.3600463867188
               ],
-              "blockId": "b030",
+              "blockId": "b032",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Complete the notes below.</p>",
@@ -2268,7 +2528,7 @@
                 534.7598266601562,
                 702.6000366210938
               ],
-              "blockId": "b031",
+              "blockId": "b033",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each</p>",
@@ -2282,6 +2542,7 @@
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each"
             },
             {
@@ -2295,7 +2556,7 @@
                 92.68560028076172,
                 687
               ],
-              "blockId": "b032",
+              "blockId": "b034",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>answer.</p>",
@@ -2322,7 +2583,7 @@
                 352.821533203125,
                 657.4800415039062
               ],
-              "blockId": "b033",
+              "blockId": "b035",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Write your answers in boxes 7–13 on your answer sheet.</p>",
@@ -2336,6 +2597,7 @@
                 }
               },
               "pageIndex": 4,
+              "roleHint": "question",
               "text": "Write your answers in boxes 7–13 on your answer sheet."
             },
             {
@@ -2349,7 +2611,7 @@
                 350.4205322265625,
                 607.56005859375
               ],
-              "blockId": "b034",
+              "blockId": "b036",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Fishbourne Palace</p>",
@@ -2367,26 +2629,26 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 6,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 61.4399528503418,
                 562.4400024414062,
                 128.76956176757812,
                 570.8400268554688
               ],
-              "blockId": "b035",
+              "blockId": "b037",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Construction</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2394,7 +2656,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2403,25 +2665,25 @@
                 429.1195068359375,
                 550.6800537109375
               ],
-              "blockId": "b036",
+              "blockId": "b038",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  The first buildings on the site contained food for the 7 __________</p>",
+              "html": "<p>• The first buildings on the site contained food for the 7 __________</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 2
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  The first buildings on the site contained food for the 7 __________"
+              "text": "• The first buildings on the site contained food for the 7 __________"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2430,25 +2692,25 @@
                 325.0687255859375,
                 529.5599975585938
               ],
-              "blockId": "b037",
+              "blockId": "b039",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  The palace building surrounded 8 __________</p>",
+              "html": "<p>• The palace building surrounded 8 __________</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  The palace building surrounded 8 __________"
+              "text": "• The palace building surrounded 8 __________"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2457,44 +2719,44 @@
                 512.5313110351562,
                 508.4400329589844
               ],
-              "blockId": "b038",
+              "blockId": "b040",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  In the 2nd and 3rd centuries colour was added to the 9 __________of the palace.</p>",
+              "html": "<p>• In the 2nd and 3rd centuries colour was added to the 9 __________of the palace.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  In the 2nd and 3rd centuries colour was added to the 9 __________of the palace."
+              "text": "• In the 2nd and 3rd centuries colour was added to the 9 __________of the palace."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 4,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 10,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 61.4399528503418,
                 460.67999267578125,
                 112.14715576171875,
                 469.08001708984375
               ],
-              "blockId": "b039",
+              "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Discovery</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 4
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2502,7 +2764,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 5,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2511,25 +2773,25 @@
                 438.453369140625,
                 448.4400329589844
               ],
-              "blockId": "b040",
+              "blockId": "b042",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  The first part of the palace to be found was part of a 10 __________</p>",
+              "html": "<p>• The first part of the palace to be found was part of a 10 __________</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 5
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  The first part of the palace to be found was part of a 10 __________"
+              "text": "• The first part of the palace to be found was part of a 10 __________"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2538,7 +2800,7 @@
                 171.4535675048828,
                 409.08001708984375
               ],
-              "blockId": "b041",
+              "blockId": "b043",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Possible inhabitants</p>",
@@ -2548,7 +2810,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2556,7 +2818,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 6,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 13,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2565,25 +2827,25 @@
                 322.333740234375,
                 388.6800537109375
               ],
-              "blockId": "b042",
+              "blockId": "b044",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  Cogidubnus - he is named in several writings.</p>",
+              "html": "<p>• Cogidubnus-he is named in several writings.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 6
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  Cogidubnus - he is named in several writings."
+              "text": "• Cogidubnus-he is named in several writings."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 7,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 14,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2592,98 +2854,98 @@
                 527.13623046875,
                 367.5600280761719
               ],
-              "blockId": "b043",
+              "blockId": "b045",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  Sallustius Lucullus - he may have lived there until approximately 11 __________AD.</p>",
+              "html": "<p>• Sallustius Lucullus-he may have lived there until approximately 11 __________AD.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 7
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  Sallustius Lucullus - he may have lived there until approximately 11 __________AD."
+              "text": "• Sallustius Lucullus-he may have lived there until approximately 11 __________AD."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 8,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 15,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 61.4399528503418,
                 338.2799987792969,
                 196.91537475585938,
                 346.6800231933594
               ],
-              "blockId": "b044",
+              "blockId": "b046",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  Verica - a British king.</p>",
+              "html": "<p>• Verica-a British king.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 8
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  Verica - a British king."
+              "text": "• Verica-a British king."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 8,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 16,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 61.4399528503418,
                 317.1600036621094,
                 330.38134765625,
                 325.5600280761719
               ],
-              "blockId": "b045",
+              "blockId": "b047",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  Catuarus - his 12 __________was found there.</p>",
+              "html": "<p>• Catuarus-his 12 __________was found there.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 8
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  Catuarus - his 12 __________was found there."
+              "text": "• Catuarus-his 12 __________was found there."
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 9,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 17,
-              "_epic8SectionColumns": 3,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 61.4399528503418,
                 277.5600280761719,
                 124.13754272460938,
                 285.9600524902344
               ],
-              "blockId": "b046",
+              "blockId": "b048",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Present Day</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 3,
+                    "count": 1,
                     "current": 0
                   },
-                  "index": 9
+                  "index": 0
                 }
               },
               "pageIndex": 4,
@@ -2691,7 +2953,7 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 10,
+              "_epic8LayoutSection": 0,
               "_epic8Ordinal": 18,
               "_epic8SectionColumns": 1,
               "bbox": [
@@ -2700,21 +2962,21 @@
                 400.451416015625,
                 265.5600280761719
               ],
-              "blockId": "b047",
+              "blockId": "b049",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>•  A 13 __________has been built on the site to help protect it.</p>",
+              "html": "<p>• A 13 __________has been built on the site to help protect it.</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 10
+                  "index": 0
                 }
               },
               "pageIndex": 4,
-              "text": "•  A 13 __________has been built on the site to help protect it."
+              "text": "• A 13 __________has been built on the site to help protect it."
             }
           ],
           "height": 841.9199829101562,
@@ -2731,7 +2993,7 @@
                 520,
                 108
               ],
-              "blockId": "b048",
+              "blockId": "b050",
               "blockType": "paragraph",
               "confidence": 0.2,
               "html": "<p>[No extractable text on page 5]</p>",
@@ -2788,7 +3050,7 @@
         "blocks": [
           {
             "blockId": "passage-main",
-            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Fishbourne Roman Palace</p>\n<p>Fishbourne Roman Palace is in the village of Fishbourne in West Sussex, England. This large palace was built in the 1st century AD, around thirty years after the Roman conquest of Britain, on the site of Roman army grain stores that had been established after the invasion during the reign of the Roman Emperor Claudius in 43 AD. The rectangular palace was built around formal gardens, the northern half of which has been reconstructed. There were extensive alterations in the 2nd and 3rd centuries AD, with many of the original black\u0002 and-white mosaic floors being overlaid with more sophisticated coloured ones, including a perfectly preserved mosaic of a dolphin in the north wing. More alterations were in progress when the palace burnt down in around 270 AD, after which it was abandoned.</p>\n<p>Local people had long believed that a Roman palace once existed in the area. However, it was not until 1960 that the archaeologist Barry Cunliffe of Oxford University first systematically excavated the site, after workmen had accidentally uncovered a wall while they were laying a water main. The Roman villa excavated by Cunliffe’s team was so grand that it became known as Fishbourne Roman Palace, and a museum was erected to preserve some of the remains. This is administered by the Sussex Archaeological Society.</p>\n<p>In its day, the completed palace would have comprised four large wings with colonnaded fronts. The north and east wings consisted of suites of private rooms built around courtyards, with a monumental entrance in the middle of the east wing. In the north-east corner there was an assembly hall. The west wing contained state rooms, a large ceremonial reception room and a gallery. The south wing contained the owner’s private apartments. The palace included as many as fifty mosaic floors, under-floor central heating and a bathhouse. In size, Fishbourne Palace would have been approximately equivalent to some of the great Roman palaces of Italy, and was by far the largest known Roman residence north of the European Alps, at about 500 feet (150 m) square. A team of volunteers and professional archaeologists is involved in an ongoing archaeological</p>\n<p>excavation on the site of nearby, possibly military, buildings.</p>\n<p>The first buildings to be erected on the site were constructed in the early part of the conquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar floors and plaster walls, which appears to have been a house of some comfort. These buildings were demolished in the 60s AD and replaced by a substantial stone house, which included colonnades and a bath suite. It has been suggested that the palace itself, incorporating the previous house in its south-east corner, was constructed around 73–75 AD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan and the collection of objects found, and has suggested that, given the extremely close</p>\n<p>parallels with the imperial palace of Domitian in Rome, its construction may more plausibly</p>\n<p>date to after 92 AD.</p>\n<p>With regard to who lived in Fishbourne Palace, there are a number of theories. For example, one proposed by Professor Cunliffe is that, in its early phase, the palace was the residence of Tiberius Claudius Cogidubnus, a local chieftain who supported the Romans and who may have been installed as king of a number of territories following the first stage of the conquest. Cogidubnus is known from a reference to his loyalty in Agricola, a work by the Roman writer Tacitus, and from an inscription commemorating a temple dedicated to the gods Neptune and Minerva found in the nearby city of Chichester. Another theory is that it was built for Sallustius Lucullus, a Roman governor of Britain in the late 1st century, who may have been the son of the British prince Adminius. Two inscriptions recording the presence of Lucullus have been found in Chichester, and the redating by Miles Russell suggests that, if the palace was designed for Lucullus, then it may have been in use for only a few years, as the Roman historian Suetonius records that Lucullus was executed by the</p>\n<p>Emperor Domitian in or shortly after 93 AD.</p>\n<p>Additional theories suggest that either Verica, a British king of the Roman Empire in the years preceding the Claudian invasion, was the owner of the palace, or Tiberius Claudius Catuarus, following the recent discovery of a gold ring belonging to him. The palace outlasted the original owner, whoever he was, and was extensively re-planned early in the 2nd century AD and subdivided into a series of smaller apartments. Further redevelopment was begun in the late 3rd century AD, but these alterations were incomplete when the north wing was destroyed in a fire in around 270 AD. The damage was too great to repair, and</p>\n<p>the palace was abandoned and later dismantled.</p>\n<p>A modern museum has been built by the Sussex Archaeological Society, incorporating most of the visible remains, including one wing of the palace. The gardens have been</p>\n<p>replanted using authentic plants from the Roman period.</p>\n<p>Possible inhabitants</p>\n<p>•  Cogidubnus - he is named in several writings.</p>\n<p>•  Verica - a British king.</p>",
+            "html": "<h3>READING PASSAGE 1</h3>\n<p>Passage 1 below.</p>\n<p>Fishbourne Roman Palace</p>\n<p>Fishbourne Roman Palace is in the village of Fishbourne in West Sussex, England. This large palace was built in the 1st century AD, around thirty years after the Roman conquest of Britain, on the site of Roman army grain stores that had been established after the invasion during the reign of the Roman Emperor Claudius in 43 AD. The rectangular palace was built around formal gardens, the northern half of which has been reconstructed. There were extensive alterations in the 2nd and 3rd centuries AD, with many of the original black\u0002 and-white mosaic floors being overlaid with more sophisticated coloured ones, including a perfectly preserved mosaic of a dolphin in the north wing. More alterations were in progress when the palace burnt down in around 270 AD, after which it was abandoned.</p>\n<p>Local people had long believed that a Roman palace once existed in the area. However, it was not until 1960 that the archaeologist Barry Cunliffe of Oxford University first systematically excavated the site, after workmen had accidentally uncovered a wall while they were laying a water main. The Roman villa excavated by Cunliffe’s team was so grand that it became known as Fishbourne Roman Palace, and a museum was erected to preserve some of the remains. This is administered by the Sussex Archaeological Society.</p>\n<p>In its day, the completed palace would have comprised four large wings with colonnaded fronts. The north and east wings consisted of suites of private rooms built around courtyards, with a monumental entrance in the middle of the east wing. In the north-east corner there was an assembly hall. The west wing contained state rooms, a large ceremonial reception room and a gallery. The south wing contained the owner’s private apartments. The palace included as many as fifty mosaic floors, under-floor central heating and a bathhouse. In size, Fishbourne Palace would have been approximately equivalent to some of the great Roman palaces of Italy, and was by far the largest known Roman residence north of the European Alps, at about 500 feet (150 m) square. A team of volunteers and professional archaeologists is involved in an ongoing archaeological</p>\n<p>excavation on the site of nearby, possibly military, buildings.</p>\n<p>The first buildings to be erected on the site were constructed in the early part of the conquest in 43 AD. Later, two timber buildings were constructed, one with clay-and-mortar floors and plaster walls, which appears to have been a house of some comfort. These buildings were demolished in the 60s AD and replaced by a substantial stone house, which included colonnades and a bath suite. It has been suggested that the palace itself, incorporating the previous house in its south-east corner, was constructed around 73–75 AD. However, Dr Miles Russell of Bournemouth University re-interpreted the ground plan and the collection of objects found, and has suggested that, given the extremely close parallels with the imperial palace of Domitian in Rome, its construction may more plausibly</p>\n<p>date to after 92 AD.</p>\n<p>With regard to who lived in Fishbourne Palace, there are a number of theories. For example, one proposed by Professor Cunliffe is that, in its early phase, the palace was the residence of Tiberius Claudius Cogidubnus, a local chieftain who supported the Romans and who may have been installed as king of a number of territories following the first stage of the conquest. Cogidubnus is known from a reference to his loyalty in Agricola, a work by the Roman writer Tacitus, and from an inscription commemorating a temple dedicated to the gods Neptune and Minerva found in the nearby city of Chichester. Another theory is that it was built for Sallustius Lucullus, a Roman governor of Britain in the late 1st century, who may have been the son of the British prince Adminius. Two inscriptions recording the presence of Lucullus have been found in Chichester, and the redating by Miles Russell suggests that, if the palace was designed for Lucullus, then it may have been in use for only a few years, as the Roman historian Suetonius records that Lucullus was executed by the</p>\n<p>Emperor Domitian in or shortly after 93 AD.</p>\n<p>Additional theories suggest that either Verica, a British king of the Roman Empire in the years preceding the Claudian invasion, was the owner of the palace, or Tiberius Claudius Catuarus, following the recent discovery of a gold ring belonging to him. The palace outlasted the original owner, whoever he was, and was extensively re-planned early in the 2nd century AD and subdivided into a series of smaller apartments. Further redevelopment was begun in the late 3rd century AD, but these alterations were incomplete when the north wing was destroyed in a fire in around 270 AD. The damage was too great to repair, and</p>\n<p>the palace was abandoned and later dismantled.</p>\n<p>A modern museum has been built by the Sussex Archaeological Society, incorporating most of the visible remains, including one wing of the palace. The gardens have been</p>\n<p>replanted using authentic plants from the Roman period.</p>",
             "kind": "html"
           }
         ]
@@ -2811,10 +3073,10 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-6</p><p>Questions 1–6 Do the following statements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this</p></div><ol><li><div><strong>1</strong> Fishbourne Palace was the first structure to be built on its site.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> Fishbourne Palace was renovated more than once.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> Fishbourne Palace was large in comparison with Roman palaces in Italy.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>4</strong> Research is continuing in the area close to Fishbourne Palace.</div><div class=\"choice-row\"><label><input name=\"q4\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q4\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q4\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>5</strong> Researchers agree on the identity of the person for whom Fishbourne Palace was constructed.</div><div class=\"choice-row\"><label><input name=\"q5\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q5\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q5\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>6</strong> Fishbourne Palace was burnt down by local people.</div><div class=\"choice-row\"><label><input name=\"q6\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q6\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q6\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-6</p><p>Questions 1–6 Do the following stat ements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE FALSE if the statement agrees with the information if the statement contradicts the information NOT GIVEN if there is no information on this</p></div><ol><li><div><strong>1</strong> Fishbourne Palace was the first structure to be built on its site.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> Fishbourne Palace was renovated more than once.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> Fishbourne Palace was large in comparison with Roman palaces in Italy.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>4</strong> Research is continuing in the area close to Fishbourne Palace.</div><div class=\"choice-row\"><label><input name=\"q4\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q4\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q4\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>5</strong> Researchers agree on the identity of the person for whom Fishbourne Palace was constructed.</div><div class=\"choice-row\"><label><input name=\"q5\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q5\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q5\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>6</strong> Fishbourne Palace was burnt down by local people.</div><div class=\"choice-row\"><label><input name=\"q6\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q6\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q6\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
           "groupId": "group-1",
           "kind": "true_false_not_given",
-          "leadHtml": "<p>Questions 1-6</p><p>Questions 1–6 Do the following statements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this</p>",
+          "leadHtml": "<p>Questions 1-6</p><p>Questions 1–6 Do the following stat ements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE FALSE if the statement agrees with the information if the statement contradicts the information NOT GIVEN if there is no information on this</p>",
           "questionIds": [
             "q1",
             "q2",
@@ -2826,7 +3088,7 @@
         },
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 7-13</p><p>Questions 7–13</p></div><div class=\"notes-completion\">Questions 7–13\nComplete the notes below.\nChoose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each\nanswer.\nWrite your answers in boxes 7–13 on your answer sheet.\nFishbourne Palace\nConstruction\n• The first buildings on the site contained food for the <span class=\"inline-completion\" data-question-id=\"q7\"><strong>7</strong> <input type=\"text\" id=\"q7_input\" name=\"q7\" placeholder=\"answer\"></span>\n• The palace building surrounded <span class=\"inline-completion\" data-question-id=\"q8\"><strong>8</strong> <input type=\"text\" id=\"q8_input\" name=\"q8\" placeholder=\"answer\"></span>\n• In the 2nd and 3rd centuries colour was added to the <span class=\"inline-completion\" data-question-id=\"q9\"><strong>9</strong> <input type=\"text\" id=\"q9_input\" name=\"q9\" placeholder=\"answer\"></span>of the palace.\nDiscovery\n• The first part of the palace to be found was part of a <span class=\"inline-completion\" data-question-id=\"q10\"><strong>10</strong> <input type=\"text\" id=\"q10_input\" name=\"q10\" placeholder=\"answer\"></span>\n• Sallustius Lucullus - he may have lived there until approximately <span class=\"inline-completion\" data-question-id=\"q11\"><strong>11</strong> <input type=\"text\" id=\"q11_input\" name=\"q11\" placeholder=\"answer\"></span>AD.\n• Catuarus - his <span class=\"inline-completion\" data-question-id=\"q12\"><strong>12</strong> <input type=\"text\" id=\"q12_input\" name=\"q12\" placeholder=\"answer\"></span>was found there.\nPresent Day\n• A <span class=\"inline-completion\" data-question-id=\"q13\"><strong>13</strong> <input type=\"text\" id=\"q13_input\" name=\"q13\" placeholder=\"answer\"></span>has been built on the site to help protect it.</div></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-2\"><div class=\"group-lead\"><p>Questions 7-13</p><p>Questions 7–13</p></div><div class=\"notes-completion\">Questions 7–13\nComplete the notes below.\nChoose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each\nanswer.\nWrite your answers in boxes 7–13 on your answer sheet.\nFishbourne Palace\nConstruction\n• The first buildings on the site contained food for the <span class=\"inline-completion\" data-question-id=\"q7\"><strong>7</strong> <input type=\"text\" id=\"q7_input\" name=\"q7\" placeholder=\"answer\"></span>\n• The palace building surrounded <span class=\"inline-completion\" data-question-id=\"q8\"><strong>8</strong> <input type=\"text\" id=\"q8_input\" name=\"q8\" placeholder=\"answer\"></span>\n• In the 2nd and 3rd centuries colour was added to the <span class=\"inline-completion\" data-question-id=\"q9\"><strong>9</strong> <input type=\"text\" id=\"q9_input\" name=\"q9\" placeholder=\"answer\"></span>of the palace.\nDiscovery\n• The first part of the palace to be found was part of a <span class=\"inline-completion\" data-question-id=\"q10\"><strong>10</strong> <input type=\"text\" id=\"q10_input\" name=\"q10\" placeholder=\"answer\"></span>\nPossible inhabitants\n• Cogidubnus-he is named in several writings.\n• Sallustius Lucullus-he may have lived there until approximately <span class=\"inline-completion\" data-question-id=\"q11\"><strong>11</strong> <input type=\"text\" id=\"q11_input\" name=\"q11\" placeholder=\"answer\"></span>AD.\n• Verica-a British king.\n• Catuarus-his <span class=\"inline-completion\" data-question-id=\"q12\"><strong>12</strong> <input type=\"text\" id=\"q12_input\" name=\"q12\" placeholder=\"answer\"></span>was found there.\nPresent Day\n• A <span class=\"inline-completion\" data-question-id=\"q13\"><strong>13</strong> <input type=\"text\" id=\"q13_input\" name=\"q13\" placeholder=\"answer\"></span>has been built on the site to help protect it.</div></section>",
           "groupId": "group-2",
           "kind": "sentence_completion",
           "leadHtml": "<p>Questions 7-13</p><p>Questions 7–13</p>",
@@ -2890,11 +3152,7 @@
             "b013",
             "b014",
             "b015",
-            "b016",
-            "b017",
-            "b041",
-            "b042",
-            "b044"
+            "b016"
           ],
           "title": "Passage 1 below."
         }
@@ -2902,6 +3160,7 @@
       "questionGroupCandidates": [
         {
           "blockIds": [
+            "b017",
             "b018",
             "b019",
             "b020",
@@ -2912,11 +3171,14 @@
             "b025",
             "b026",
             "b027",
-            "b028"
+            "b028",
+            "b029",
+            "b030"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
+              "b017",
               "b018",
               "b019",
               "b020",
@@ -2927,7 +3189,9 @@
               "b025",
               "b026",
               "b027",
-              "b028"
+              "b028",
+              "b029",
+              "b030"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -2945,14 +3209,20 @@
           "continuationEdges": [
             {
               "confidence": 0.72,
-              "fromBlockId": "b018",
+              "fromBlockId": "b017",
               "reason": "same-section-continuation",
+              "toBlockId": "b018"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b018",
+              "reason": "cross-column-continuation",
               "toBlockId": "b019"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b019",
-              "reason": "same-section-continuation",
+              "reason": "cross-column-continuation",
               "toBlockId": "b020"
             },
             {
@@ -2964,13 +3234,13 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b021",
-              "reason": "same-section-continuation",
+              "reason": "cross-column-continuation",
               "toBlockId": "b022"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b022",
-              "reason": "same-section-continuation",
+              "reason": "cross-column-continuation",
               "toBlockId": "b023"
             },
             {
@@ -3002,11 +3272,23 @@
               "fromBlockId": "b027",
               "reason": "same-section-continuation",
               "toBlockId": "b028"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b028",
+              "reason": "same-section-continuation",
+              "toBlockId": "b029"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b029",
+              "reason": "same-section-continuation",
+              "toBlockId": "b030"
             }
           ],
           "groupId": "group-1",
           "heading": "Questions 1-6",
-          "instructionText": "Questions 1–6 Do the following statements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there is no information on this",
+          "instructionText": "Questions 1–6 Do the following stat ements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE FALSE if the statement agrees with the information if the statement contradicts the information NOT GIVEN if there is no information on this",
           "kindHint": "true_false_not_given",
           "layoutHint": "list",
           "questionRange": [
@@ -3021,7 +3303,7 @@
                 124.7109375,
                 761.8800048828125
               ],
-              "blockId": "b018",
+              "blockId": "b017",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3032,20 +3314,41 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 2,
               "textPreview": "Questions 1–6"
             },
             {
               "bbox": [
                 54,
                 723.9600219726562,
+                158.72879028320312,
+                732.3600463867188
+              ],
+              "blockId": "b018",
+              "column": 0,
+              "normalizedBbox": [
+                54,
+                723.9600219726562,
+                158.72879028320312,
+                732.3600463867188
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "Do the following stat"
+            },
+            {
+              "bbox": [
+                162.0623779296875,
+                723.9600219726562,
                 495.6094970703125,
                 732.3600463867188
               ],
               "blockId": "b019",
-              "column": 0,
+              "column": 1,
               "normalizedBbox": [
-                54,
+                162.0623779296875,
                 723.9600219726562,
                 495.6094970703125,
                 732.3600463867188
@@ -3053,8 +3356,8 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "passage",
-              "sectionColumnCount": 1,
-              "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
+              "sectionColumnCount": 2,
+              "textPreview": "ements agree with the information given in Reading Passage 1?"
             },
             {
               "bbox": [
@@ -3080,23 +3383,65 @@
             {
               "bbox": [
                 96,
-                633.47998046875,
-                402.7848205566406,
+                649.0800170898438,
+                127.9966049194336,
                 673.0800170898438
               ],
               "blockId": "b021",
               "column": 0,
               "normalizedBbox": [
                 96,
-                633.47998046875,
+                649.0800170898438,
+                127.9966049194336,
+                673.0800170898438
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "TRUE FALSE"
+            },
+            {
+              "bbox": [
+                180,
+                649.0800170898438,
+                402.7848205566406,
+                673.0800170898438
+              ],
+              "blockId": "b022",
+              "column": 1,
+              "normalizedBbox": [
+                180,
+                649.0800170898438,
                 402.7848205566406,
                 673.0800170898438
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "question",
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "if the statement agrees with the information if the statement contradicts the information"
+            },
+            {
+              "bbox": [
+                96,
+                633.47998046875,
+                340.75677490234375,
+                641.8800048828125
+              ],
+              "blockId": "b023",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                633.47998046875,
+                340.75677490234375,
+                641.8800048828125
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
               "sectionColumnCount": 1,
-              "textPreview": "TRUE if the statement agrees with the information FALSE if the statement contradicts the information NOT GIVEN if there "
+              "textPreview": "NOT GIVEN if there is no information on this"
             },
             {
               "bbox": [
@@ -3105,7 +3450,7 @@
                 401.8319396972656,
                 612.3600463867188
               ],
-              "blockId": "b022",
+              "blockId": "b024",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3126,7 +3471,7 @@
                 343.1711730957031,
                 582.6000366210938
               ],
-              "blockId": "b023",
+              "blockId": "b025",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3147,7 +3492,7 @@
                 457.20477294921875,
                 553.0800170898438
               ],
-              "blockId": "b024",
+              "blockId": "b026",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3168,7 +3513,7 @@
                 404.5391845703125,
                 523.56005859375
               ],
-              "blockId": "b025",
+              "blockId": "b027",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3189,7 +3534,7 @@
                 509.25347900390625,
                 493.800048828125
               ],
-              "blockId": "b026",
+              "blockId": "b028",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3210,7 +3555,7 @@
                 137.0352020263672,
                 478.20001220703125
               ],
-              "blockId": "b027",
+              "blockId": "b029",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -3221,7 +3566,7 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "constructed."
             },
             {
@@ -3231,7 +3576,7 @@
                 345.84478759765625,
                 448.6800537109375
               ],
-              "blockId": "b028",
+              "blockId": "b030",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3249,8 +3594,6 @@
         },
         {
           "blockIds": [
-            "b029",
-            "b030",
             "b031",
             "b032",
             "b033",
@@ -3261,16 +3604,19 @@
             "b038",
             "b039",
             "b040",
+            "b041",
+            "b042",
             "b043",
+            "b044",
             "b045",
             "b046",
-            "b047"
+            "b047",
+            "b048",
+            "b049"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
-              "b029",
-              "b030",
               "b031",
               "b032",
               "b033",
@@ -3281,10 +3627,15 @@
               "b038",
               "b039",
               "b040",
+              "b041",
+              "b042",
               "b043",
+              "b044",
               "b045",
               "b046",
-              "b047"
+              "b047",
+              "b048",
+              "b049"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -3296,18 +3647,6 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b029",
-              "reason": "same-section-continuation",
-              "toBlockId": "b030"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b030",
-              "reason": "same-section-continuation",
-              "toBlockId": "b031"
-            },
             {
               "confidence": 0.72,
               "fromBlockId": "b031",
@@ -3366,11 +3705,29 @@
               "confidence": 0.72,
               "fromBlockId": "b040",
               "reason": "same-section-continuation",
+              "toBlockId": "b041"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b041",
+              "reason": "same-section-continuation",
+              "toBlockId": "b042"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b042",
+              "reason": "same-section-continuation",
               "toBlockId": "b043"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b043",
+              "reason": "same-section-continuation",
+              "toBlockId": "b044"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b044",
               "reason": "same-section-continuation",
               "toBlockId": "b045"
             },
@@ -3385,6 +3742,18 @@
               "fromBlockId": "b046",
               "reason": "same-section-continuation",
               "toBlockId": "b047"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b047",
+              "reason": "same-section-continuation",
+              "toBlockId": "b048"
+            },
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b048",
+              "reason": "same-section-continuation",
+              "toBlockId": "b049"
             }
           ],
           "groupId": "group-2",
@@ -3404,7 +3773,7 @@
                 131.3853302001953,
                 761.8800048828125
               ],
-              "blockId": "b029",
+              "blockId": "b031",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3425,7 +3794,7 @@
                 192.75599670410156,
                 732.3600463867188
               ],
-              "blockId": "b030",
+              "blockId": "b032",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3446,7 +3815,7 @@
                 534.7598266601562,
                 702.6000366210938
               ],
-              "blockId": "b031",
+              "blockId": "b033",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3456,7 +3825,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each"
             },
@@ -3467,7 +3836,7 @@
                 92.68560028076172,
                 687
               ],
-              "blockId": "b032",
+              "blockId": "b034",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3488,7 +3857,7 @@
                 352.821533203125,
                 657.4800415039062
               ],
-              "blockId": "b033",
+              "blockId": "b035",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3498,7 +3867,7 @@
               ],
               "pageIndex": 4,
               "pageRotation": 0,
-              "role": "",
+              "role": "question",
               "sectionColumnCount": 1,
               "textPreview": "Write your answers in boxes 7–13 on your answer sheet."
             },
@@ -3509,7 +3878,7 @@
                 350.4205322265625,
                 607.56005859375
               ],
-              "blockId": "b034",
+              "blockId": "b036",
               "column": 0,
               "normalizedBbox": [
                 233.7236328125,
@@ -3530,7 +3899,7 @@
                 128.76956176757812,
                 570.8400268554688
               ],
-              "blockId": "b035",
+              "blockId": "b037",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3541,7 +3910,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Construction"
             },
             {
@@ -3551,7 +3920,7 @@
                 429.1195068359375,
                 550.6800537109375
               ],
-              "blockId": "b036",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3572,7 +3941,7 @@
                 325.0687255859375,
                 529.5599975585938
               ],
-              "blockId": "b037",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3593,7 +3962,7 @@
                 512.5313110351562,
                 508.4400329589844
               ],
-              "blockId": "b038",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3614,7 +3983,7 @@
                 112.14715576171875,
                 469.08001708984375
               ],
-              "blockId": "b039",
+              "blockId": "b041",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3625,7 +3994,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Discovery"
             },
             {
@@ -3635,7 +4004,7 @@
                 438.453369140625,
                 448.4400329589844
               ],
-              "blockId": "b040",
+              "blockId": "b042",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3652,11 +4021,53 @@
             {
               "bbox": [
                 61.4399528503418,
+                400.67999267578125,
+                171.4535675048828,
+                409.08001708984375
+              ],
+              "blockId": "b043",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                400.67999267578125,
+                171.4535675048828,
+                409.08001708984375
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "Possible inhabitants"
+            },
+            {
+              "bbox": [
+                61.4399528503418,
+                380.280029296875,
+                322.333740234375,
+                388.6800537109375
+              ],
+              "blockId": "b044",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                380.280029296875,
+                322.333740234375,
+                388.6800537109375
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• Cogidubnus-he is named in several writings."
+            },
+            {
+              "bbox": [
+                61.4399528503418,
                 359.1600036621094,
                 527.13623046875,
                 367.5600280761719
               ],
-              "blockId": "b043",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3668,40 +4079,61 @@
               "pageRotation": 0,
               "role": "",
               "sectionColumnCount": 1,
-              "textPreview": "• Sallustius Lucullus - he may have lived there until approximately 11 __________AD."
+              "textPreview": "• Sallustius Lucullus-he may have lived there until approximately 11 __________AD."
             },
             {
               "bbox": [
                 61.4399528503418,
-                317.1600036621094,
-                330.38134765625,
-                325.5600280761719
-              ],
-              "blockId": "b045",
-              "column": 0,
-              "normalizedBbox": [
-                61.4399528503418,
-                317.1600036621094,
-                330.38134765625,
-                325.5600280761719
-              ],
-              "pageIndex": 4,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 3,
-              "textPreview": "• Catuarus - his 12 __________was found there."
-            },
-            {
-              "bbox": [
-                61.4399528503418,
-                277.5600280761719,
-                124.13754272460938,
-                285.9600524902344
+                338.2799987792969,
+                196.91537475585938,
+                346.6800231933594
               ],
               "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
+                338.2799987792969,
+                196.91537475585938,
+                346.6800231933594
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• Verica-a British king."
+            },
+            {
+              "bbox": [
+                61.4399528503418,
+                317.1600036621094,
+                330.38134765625,
+                325.5600280761719
+              ],
+              "blockId": "b047",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
+                317.1600036621094,
+                330.38134765625,
+                325.5600280761719
+              ],
+              "pageIndex": 4,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 1,
+              "textPreview": "• Catuarus-his 12 __________was found there."
+            },
+            {
+              "bbox": [
+                61.4399528503418,
+                277.5600280761719,
+                124.13754272460938,
+                285.9600524902344
+              ],
+              "blockId": "b048",
+              "column": 0,
+              "normalizedBbox": [
+                61.4399528503418,
                 277.5600280761719,
                 124.13754272460938,
                 285.9600524902344
@@ -3709,7 +4141,7 @@
               "pageIndex": 4,
               "pageRotation": 0,
               "role": "",
-              "sectionColumnCount": 3,
+              "sectionColumnCount": 1,
               "textPreview": "Present Day"
             },
             {
@@ -3719,7 +4151,7 @@
                 400.451416015625,
                 265.5600280761719
               ],
-              "blockId": "b047",
+              "blockId": "b049",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
