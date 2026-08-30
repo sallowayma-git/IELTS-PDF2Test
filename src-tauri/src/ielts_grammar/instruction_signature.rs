@@ -57,6 +57,18 @@ pub(crate) fn infer_instruction_signature(
     if is_completion_task(&task_type) && word_limit.is_none() {
         warnings.push("completion_word_limit_not_found".to_string());
     }
+    if let (Some(instruction_type), Some(structure_type)) = (
+        infer_task_type_from_cues(&lower),
+        task_type_from_kind_hint(kind_hint),
+    ) {
+        if !task_types_structurally_compatible(&instruction_type, &structure_type) {
+            warnings.push(format!(
+                "task_type_conflict:instruction={};structure_hint={}",
+                task_type_label(&instruction_type),
+                task_type_label(&structure_type)
+            ));
+        }
+    }
     let confidence = signature_confidence(&lower, &task_type, &warnings);
     let evidence_anchors = evidence_anchors
         .into_iter()
@@ -78,6 +90,29 @@ pub(crate) fn infer_instruction_signature(
         },
         warnings,
     }
+}
+
+fn task_types_structurally_compatible(left: &TaskTypeV2, right: &TaskTypeV2) -> bool {
+    if left == right {
+        return true;
+    }
+    let both_completion = is_completion_task(left) && is_completion_task(right);
+    let both_matching = matches!(
+        left,
+        TaskTypeV2::MatchingInformation
+            | TaskTypeV2::MatchingHeadings
+            | TaskTypeV2::MatchingFeatures
+            | TaskTypeV2::MatchingSentenceEndings
+            | TaskTypeV2::Classification
+    ) && matches!(
+        right,
+        TaskTypeV2::MatchingInformation
+            | TaskTypeV2::MatchingHeadings
+            | TaskTypeV2::MatchingFeatures
+            | TaskTypeV2::MatchingSentenceEndings
+            | TaskTypeV2::Classification
+    );
+    both_completion || both_matching
 }
 
 pub(crate) fn task_type_label(task_type: &TaskTypeV2) -> &'static str {
@@ -118,88 +153,104 @@ pub(crate) fn is_completion_task(task_type: &TaskTypeV2) -> bool {
 }
 
 fn infer_task_type(lower: &str, kind_hint: Option<&str>) -> TaskTypeV2 {
+    infer_task_type_from_cues(lower)
+        .or_else(|| task_type_from_kind_hint(kind_hint))
+        .unwrap_or(TaskTypeV2::ShortAnswer)
+}
+
+fn infer_task_type_from_cues(lower: &str) -> Option<TaskTypeV2> {
     if lower.contains("true") && lower.contains("false") && lower.contains("not given") {
-        return TaskTypeV2::TrueFalseNotGiven;
+        return Some(TaskTypeV2::TrueFalseNotGiven);
     }
     if lower.contains("yes") && lower.contains("no") && lower.contains("not given") {
-        return TaskTypeV2::YesNoNotGiven;
+        return Some(TaskTypeV2::YesNoNotGiven);
     }
     if lower.contains("list of headings") || lower.contains("correct heading for each paragraph") {
-        return TaskTypeV2::MatchingHeadings;
+        return Some(TaskTypeV2::MatchingHeadings);
     }
     if lower.contains("list of people")
         || lower.contains("list of features")
         || lower.contains("list of categories")
         || (lower.contains("match each statement") && lower.contains("list of"))
     {
-        return TaskTypeV2::MatchingFeatures;
+        return Some(TaskTypeV2::MatchingFeatures);
     }
     if lower.contains("sentence endings") || lower.contains("endings") && lower.contains("match") {
-        return TaskTypeV2::MatchingSentenceEndings;
+        return Some(TaskTypeV2::MatchingSentenceEndings);
     }
     if lower.contains("which paragraph")
         || lower.contains("which section")
         || lower.contains("match each statement with")
     {
-        return TaskTypeV2::MatchingInformation;
+        return Some(TaskTypeV2::MatchingInformation);
     }
     if lower.contains("complete the table") || lower.contains("complete the table below") {
-        return TaskTypeV2::TableCompletion;
+        return Some(TaskTypeV2::TableCompletion);
     }
     if lower.contains("complete the form") {
-        return TaskTypeV2::FormCompletion;
+        return Some(TaskTypeV2::FormCompletion);
     }
     if lower.contains("complete the flow") || lower.contains("flow-chart") {
-        return TaskTypeV2::FlowchartCompletion;
+        return Some(TaskTypeV2::FlowchartCompletion);
     }
     if lower.contains("summary") && lower.contains("complete") {
-        return TaskTypeV2::SummaryCompletion;
+        return Some(TaskTypeV2::SummaryCompletion);
     }
     if (lower.contains("note") || lower.contains("notes")) && lower.contains("complete") {
-        return TaskTypeV2::NoteCompletion;
+        return Some(TaskTypeV2::NoteCompletion);
     }
     if lower.contains("complete the sentences") || lower.contains("complete each sentence") {
-        return TaskTypeV2::SentenceCompletion;
+        return Some(TaskTypeV2::SentenceCompletion);
     }
     if lower.contains("diagram") && (lower.contains("label") || lower.contains("complete")) {
-        return TaskTypeV2::DiagramLabelCompletion;
+        return Some(TaskTypeV2::DiagramLabelCompletion);
     }
     let has_map_or_plan_word = lower
         .split(|ch: char| !ch.is_ascii_alphabetic())
         .any(|word| matches!(word, "map" | "plan"));
     if has_map_or_plan_word && (lower.contains("label") || lower.contains("complete")) {
-        return TaskTypeV2::PlanMapLabelCompletion;
+        return Some(TaskTypeV2::PlanMapLabelCompletion);
     }
     if lower.contains("choose")
         && (lower.contains("two") || lower.contains("three"))
         && (lower.contains("letter") || lower.contains("option"))
     {
-        return TaskTypeV2::MultipleChoice;
+        return Some(TaskTypeV2::MultipleChoice);
     }
     if lower.contains("choose the correct letter")
         || lower.contains("choose the correct answer")
         || lower.contains("select the correct")
     {
-        return TaskTypeV2::SingleChoice;
+        return Some(TaskTypeV2::SingleChoice);
     }
     if lower.contains("match") || lower.contains("matching") {
-        return TaskTypeV2::MatchingInformation;
+        return Some(TaskTypeV2::MatchingInformation);
     }
-    match kind_hint.unwrap_or_default().to_ascii_lowercase().as_str() {
-        "true_false_not_given" => TaskTypeV2::TrueFalseNotGiven,
-        "yes_no_not_given" => TaskTypeV2::YesNoNotGiven,
-        "single_choice" => TaskTypeV2::SingleChoice,
-        "multi_choice" | "multiple_choice" => TaskTypeV2::MultipleChoice,
-        "heading_matching" | "matching_headings" => TaskTypeV2::MatchingHeadings,
-        "classification" | "matching_features" => TaskTypeV2::MatchingFeatures,
-        "table_completion" => TaskTypeV2::TableCompletion,
-        "summary_completion" => TaskTypeV2::SummaryCompletion,
-        "note_completion" => TaskTypeV2::NoteCompletion,
-        "diagram_completion" => TaskTypeV2::DiagramLabelCompletion,
-        "flowchart_completion" => TaskTypeV2::FlowchartCompletion,
-        "sentence_completion" => TaskTypeV2::SentenceCompletion,
-        _ => TaskTypeV2::ShortAnswer,
-    }
+    None
+}
+
+fn task_type_from_kind_hint(kind_hint: Option<&str>) -> Option<TaskTypeV2> {
+    Some(
+        match kind_hint.unwrap_or_default().to_ascii_lowercase().as_str() {
+            "true_false_not_given" => TaskTypeV2::TrueFalseNotGiven,
+            "yes_no_not_given" => TaskTypeV2::YesNoNotGiven,
+            "single_choice" => TaskTypeV2::SingleChoice,
+            "multi_choice" | "multiple_choice" => TaskTypeV2::MultipleChoice,
+            "heading_matching" | "matching_headings" => TaskTypeV2::MatchingHeadings,
+            "matching_information" => TaskTypeV2::MatchingInformation,
+            "matching_features" => TaskTypeV2::MatchingFeatures,
+            "classification" => TaskTypeV2::Classification,
+            "table_completion" => TaskTypeV2::TableCompletion,
+            "form_completion" => TaskTypeV2::FormCompletion,
+            "summary_completion" => TaskTypeV2::SummaryCompletion,
+            "note_completion" => TaskTypeV2::NoteCompletion,
+            "diagram_completion" => TaskTypeV2::DiagramLabelCompletion,
+            "flowchart_completion" => TaskTypeV2::FlowchartCompletion,
+            "sentence_completion" => TaskTypeV2::SentenceCompletion,
+            "short_answer" => TaskTypeV2::ShortAnswer,
+            _ => return None,
+        },
+    )
 }
 
 fn selection_cardinality(lower: &str) -> Option<CardinalityV2> {
@@ -444,5 +495,35 @@ mod tests {
         );
         assert_eq!(result.signature.task_type, TaskTypeV2::MatchingFeatures);
         assert_eq!(result.signature.option_alphabet.as_deref(), Some("A-D"));
+    }
+
+    #[test]
+    fn incompatible_instruction_and_structure_hint_are_blocking_evidence() {
+        let result = infer_instruction_signature(
+            "Choose the correct letter, A, B or C.",
+            &range(),
+            Some("table_completion"),
+            Vec::new(),
+        );
+        assert_eq!(result.signature.task_type, TaskTypeV2::SingleChoice);
+        assert!(result
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("task_type_conflict:")));
+    }
+
+    #[test]
+    fn explicit_note_cue_can_refine_generic_completion_hint() {
+        let result = infer_instruction_signature(
+            "Complete the notes below. Write ONE WORD ONLY.",
+            &range(),
+            Some("sentence_completion"),
+            Vec::new(),
+        );
+        assert_eq!(result.signature.task_type, TaskTypeV2::NoteCompletion);
+        assert!(!result
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("task_type_conflict:")));
     }
 }

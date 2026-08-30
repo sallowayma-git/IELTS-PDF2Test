@@ -1191,19 +1191,11 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
     let x_max_global = chars.iter().map(|c| c.x).fold(f32::MIN, f32::max);
     let y_min = chars.iter().map(|c| c.y).fold(f32::MAX, f32::min);
     let y_max = chars.iter().map(|c| c.y).fold(f32::MIN, f32::max);
-    let y_span = (y_max - y_min).max(1.0);
     let page_x_span = (x_max_global - x_min_global).max(1.0);
-    let band_height = (y_span / 10.0).clamp(56.0, 88.0);
-    let band_count = ((y_span / band_height).ceil() as usize).max(1);
-    let mut bands = Vec::with_capacity(band_count);
+    let band_ranges = adaptive_horizontal_band_ranges(chars, y_min, y_max);
+    let mut bands = Vec::with_capacity(band_ranges.len());
 
-    for band_index in 0..band_count {
-        let y_top = y_max - band_index as f32 * band_height;
-        let y_bottom = if band_index + 1 == band_count {
-            y_min - 0.5
-        } else {
-            y_top - band_height
-        };
+    for (y_top, y_bottom) in band_ranges {
         let band_chars = chars
             .iter()
             .copied()
@@ -1428,6 +1420,71 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
         });
     }
     sections
+}
+
+/// Build analysis bands whose boundaries fall between physical text rows.
+///
+/// The previous fixed 56-88pt grid was stable, but a layout transition could
+/// land a few points either side of an arbitrary grid boundary. That mixed a
+/// full-width heading with the first two-column rows, or split the final row
+/// of an option bank into a different layout. Keep the same approximate band
+/// size while snapping every cut to the strongest nearby inter-row gap.
+fn adaptive_horizontal_band_ranges(
+    chars: &[CharWithOrigin],
+    y_min: f32,
+    y_max: f32,
+) -> Vec<(f32, f32)> {
+    let y_span = (y_max - y_min).max(1.0);
+    let target_height = (y_span / 10.0).clamp(56.0, 88.0);
+    let rows = build_raw_rows(chars, estimate_y_tolerance(chars));
+    let row_centers = rows
+        .iter()
+        .map(|row| row.iter().map(|ch| ch.y).sum::<f32>() / row.len().max(1) as f32)
+        .collect::<Vec<_>>();
+    if row_centers.len() < 3 {
+        return vec![(y_max, y_min - 0.5)];
+    }
+
+    let gaps = row_centers
+        .windows(2)
+        .map(|pair| {
+            let top = pair[0];
+            let bottom = pair[1];
+            ((top + bottom) * 0.5, (top - bottom).abs())
+        })
+        .collect::<Vec<_>>();
+    let mut cuts: Vec<f32> = Vec::new();
+    let mut band_top = y_max;
+    while band_top - target_height > y_min {
+        let target = band_top - target_height;
+        let min_cut = band_top - target_height * 1.4;
+        let max_cut = band_top - target_height * 0.6;
+        let cut = gaps
+            .iter()
+            .copied()
+            .filter(|(midpoint, _)| *midpoint >= min_cut && *midpoint <= max_cut)
+            .max_by(|(left_mid, left_gap), (right_mid, right_gap)| {
+                let left_score = *left_gap - (*left_mid - target).abs() * 0.12;
+                let right_score = *right_gap - (*right_mid - target).abs() * 0.12;
+                left_score.total_cmp(&right_score)
+            })
+            .map(|(midpoint, _)| midpoint)
+            .unwrap_or(target);
+        if band_top - cut < 1.0 || cuts.last().is_some_and(|last| (*last - cut).abs() < 1.0) {
+            break;
+        }
+        cuts.push(cut);
+        band_top = cut;
+    }
+
+    let mut ranges = Vec::with_capacity(cuts.len() + 1);
+    let mut top = y_max;
+    for cut in cuts {
+        ranges.push((top, cut));
+        top = cut;
+    }
+    ranges.push((top, y_min - 0.5));
+    ranges
 }
 
 /// Decide whether the current page's opening section continues the previous
@@ -2976,6 +3033,27 @@ mod tests {
                 .any(|block| block.column_count == 2 && block.column_index == 1),
             "right column should continue after the centered banner: {}",
             debug_blocks
+        );
+    }
+
+    #[test]
+    fn adaptive_bands_snap_to_large_inter_row_layout_gap() {
+        let mut chars = Vec::new();
+        for (index, y) in [760.0, 748.0, 736.0, 724.0, 712.0, 660.0, 648.0, 636.0]
+            .into_iter()
+            .enumerate()
+        {
+            push_text_line(&mut chars, &format!("ROW {index} HAS ENOUGH TEXT"), 72.0, y);
+        }
+        // Extend the page span so the nominal first cut is around y=704; the
+        // adaptive cut should instead use the strong 712->660 transition.
+        push_text_line(&mut chars, "LOWER PAGE TEXT", 72.0, 460.0);
+        let ranges = adaptive_horizontal_band_ranges(&chars, 460.0, 760.0);
+        assert!(
+            ranges
+                .iter()
+                .any(|(_, bottom)| (*bottom - 686.0).abs() < 1.0),
+            "expected a cut in the large inter-row gap, got {ranges:?}"
         );
     }
 

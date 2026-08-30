@@ -35,7 +35,10 @@ use std::path::Path;
 
 use anchors::{detect_question_anchors, QuestionAnchor};
 use answer_key::{answer_key_from_v1, answer_value_for_slot};
-use completion::{answer_slot_node, completion_host_type, completion_placeholder};
+use completion::{
+    answer_slot_node, completion_host_type, completion_placeholder, recover_completion_structure,
+    CompletionContainerKind,
+};
 use diagram::diagram_candidate;
 use evidence::{anchor_from_value, source_anchor_from_job};
 use instruction_signature::{infer_instruction_signature, is_completion_task, task_type_label};
@@ -279,6 +282,7 @@ pub(crate) fn build_authoring_v2_shadow(
             "taskType": task_type_name,
             "instructions": instructions,
             "instructionSignature": serde_json::to_value(&signature_result.signature).map_err(|error| error.to_string())?,
+            "recognitionWarnings": zone.warnings.iter().chain(signature_result.warnings.iter()).cloned().collect::<Vec<_>>(),
             "responseGroups": responses,
             "sourceAnchors": task_source_anchors,
             "quality": {"score": 0.0, "sourceCoverage": 0.0, "hardFailures": []},
@@ -942,7 +946,15 @@ fn build_responses_and_slots(
                     .or_else(|| Some(anchor.clone())),
             ));
         }
-        if is_completion_task(task_type) {
+        if is_completion_task(task_type)
+            && !matches!(
+                task_type,
+                TaskTypeV2::TableCompletion
+                    | TaskTypeV2::FlowchartCompletion
+                    | TaskTypeV2::DiagramLabelCompletion
+                    | TaskTypeV2::PlanMapLabelCompletion
+            )
+        {
             children.push(answer_slot_node(
                 &slot_id,
                 &number.to_string(),
@@ -1418,30 +1430,43 @@ fn build_stimulus(
     if !is_completion_task(task_type) {
         return None;
     }
-    let expected_text = expected_numbers
+    let structure =
+        recover_completion_structure(task_type, lines, &zone.line_ids, expected_numbers);
+    let mut nodes = structure
+        .context_lines
         .iter()
-        .map(|number| number.to_string())
-        .collect::<BTreeSet<_>>();
-    let mut nodes = lines
-        .iter()
-        .filter(|line| !zone.line_ids.contains(&line.id))
-        .filter(|line| {
-            !expected_text
-                .iter()
-                .any(|number| line.text.trim_start().starts_with(&format!("{number}.")))
-        })
-        .filter(|line| !line.text.trim().is_empty())
-        .take(8)
+        .take(12)
         .map(|line| {
-            paragraph_node(
-                &format!("stimulus-{}", line.id),
-                &line.text,
-                vec![line.source_anchor.clone()],
-                Vec::new(),
-            )
+            let id = format!("stimulus-{}", line.id);
+            let text = normalize_instruction_text(&line.text);
+            let looks_like_heading = matches!(
+                structure.container_kind,
+                CompletionContainerKind::Note | CompletionContainerKind::Form
+            ) && text.split_whitespace().count() <= 8
+                && !text.ends_with('.')
+                && !text.ends_with('?');
+            if looks_like_heading {
+                json!({
+                    "type":"heading",
+                    "id":id,
+                    "sourceAnchors":[line.source_anchor.clone()],
+                    "provenanceStatus":"source",
+                    "level":3,
+                    "children":[text_node(
+                        &format!("stimulus-{}-text", line.id),
+                        &text,
+                        Some(line.source_anchor.clone()),
+                    )]
+                })
+            } else {
+                paragraph_node(&id, &text, vec![line.source_anchor.clone()], Vec::new())
+            }
         })
         .collect::<Vec<_>>();
     if matches!(task_type, TaskTypeV2::TableCompletion) {
+        if !structure.closes_slots(expected_numbers) {
+            return (!nodes.is_empty()).then_some(nodes);
+        }
         return Some(vec![table_completion_node(
             task_id,
             lines,
@@ -1449,6 +1474,9 @@ fn build_stimulus(
         )]);
     }
     if matches!(task_type, TaskTypeV2::FlowchartCompletion) {
+        if !structure.closes_slots(expected_numbers) {
+            return (!nodes.is_empty()).then_some(nodes);
+        }
         return Some(vec![flowchart_completion_node(
             task_id,
             lines,

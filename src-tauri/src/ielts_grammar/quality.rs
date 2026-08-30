@@ -52,6 +52,7 @@ pub(crate) fn evaluate_quality(authoring: &Value, physical_shadow: Option<&Value
     validate_identifier_and_reference_closure(authoring, &mut issues, &mut hard_failures);
     validate_provenance(authoring, &mut issues, &mut hard_failures);
     validate_scoring_semantics(authoring, &mut issues, &mut hard_failures);
+    validate_source_ownership(authoring, physical_shadow, &mut issues, &mut hard_failures);
 
     if groups.is_empty() {
         push_issue(
@@ -1331,6 +1332,28 @@ fn evaluate_group(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    if group
+        .get("recognitionWarnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|warning| warning.starts_with("task_type_conflict:"))
+    {
+        push_issue(
+            issues,
+            hard_failures,
+            issue(
+                TASK_TYPE_CONFLICT,
+                "blocking",
+                "题型指令与恢复出的结构证据冲突，必须确认题型后才能发布。",
+                "task",
+                task_id,
+                anchors.clone(),
+                vec!["edit_text", "assign_role"],
+            ),
+        );
+    }
     expected_numbers.extend(expected.iter().copied());
     let group_slot_ids = group
         .get("responseGroups")
@@ -1926,11 +1949,46 @@ fn validate_completion_host(
                 "completion slot 没有可渲染的宿主节点。",
                 "task",
                 task_id,
+                anchors.clone(),
+                vec!["edit_text", "confirm_table"],
+            ),
+        );
+    }
+    let duplicated = slot_ids.iter().any(|slot_id| {
+        content_roots
+            .iter()
+            .map(|node| count_answer_slot_nodes(node, slot_id))
+            .sum::<usize>()
+            > 1
+    });
+    if duplicated {
+        push_issue(
+            issues,
+            hard_failures,
+            issue(
+                SLOT_HOST_DUPLICATE,
+                "blocking",
+                "同一个 completion slot 被渲染到多个内容节点中。",
+                "task",
+                task_id,
                 anchors,
                 vec!["edit_text", "confirm_table"],
             ),
         );
     }
+}
+
+fn count_answer_slot_nodes(node: &Value, slot_id: &str) -> usize {
+    let own = usize::from(
+        node.get("type").and_then(Value::as_str) == Some("answer_slot")
+            && node.get("slotId").and_then(Value::as_str) == Some(slot_id),
+    );
+    own + ["children", "items", "rows", "cells", "steps"]
+        .iter()
+        .filter_map(|key| node.get(*key).and_then(Value::as_array))
+        .flatten()
+        .map(|child| count_answer_slot_nodes(child, slot_id))
+        .sum::<usize>()
 }
 
 fn node_contains_slot_host(node: &Value, host_id: &str, host_type: &str, slot_id: &str) -> bool {
@@ -2728,6 +2786,127 @@ fn is_completion_type(value: &str) -> bool {
 
 fn calculate_source_coverage(authoring: &Value, physical_shadow: Option<&Value>) -> f64 {
     source_coverage_summary(authoring, physical_shadow).score
+}
+
+fn validate_source_ownership(
+    authoring: &Value,
+    physical_shadow: Option<&Value>,
+    issues: &mut Vec<Value>,
+    hard_failures: &mut Vec<String>,
+) {
+    let Some(physical) = physical_shadow.filter(|value| physical_shadow_is_usable(value)) else {
+        return;
+    };
+    let significant_ids = significant_physical_nodes(physical)
+        .into_keys()
+        .collect::<BTreeSet<_>>();
+    if significant_ids.is_empty() {
+        return;
+    }
+
+    let mut owners_by_node = BTreeMap::<String, BTreeSet<String>>::new();
+    if let Some(passage) = authoring.get("passage") {
+        let mut node_ids = BTreeSet::new();
+        collect_direct_anchor_node_ids(passage, &mut node_ids);
+        for node_id in node_ids.intersection(&significant_ids) {
+            owners_by_node
+                .entry(node_id.clone())
+                .or_default()
+                .insert("passage".to_string());
+        }
+    }
+    for group in authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let owner = group
+            .get("taskId")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown-task")
+            .to_string();
+        let mut node_ids = BTreeSet::new();
+        collect_direct_anchor_node_ids(group, &mut node_ids);
+        for node_id in node_ids.intersection(&significant_ids) {
+            owners_by_node
+                .entry(node_id.clone())
+                .or_default()
+                .insert(owner.clone());
+        }
+    }
+
+    let conflicts = owners_by_node
+        .into_iter()
+        .filter(|(_, owners)| owners.len() > 1)
+        .map(|(source_node_id, owners)| {
+            json!({
+                "sourceNodeId": source_node_id,
+                "owners": owners.into_iter().collect::<Vec<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+    if conflicts.is_empty() {
+        return;
+    }
+
+    let mut ownership_issue = issue(
+        SOURCE_OWNERSHIP_CONFLICT,
+        "blocking",
+        "同一显著源节点被 passage 或多个题组重复占有，题组边界尚未闭合。",
+        "document",
+        "document",
+        Vec::new(),
+        vec!["split_prompt", "assign_role"],
+    );
+    ownership_issue["details"] = json!({
+        "conflictCount": conflicts.len(),
+        "conflicts": conflicts.into_iter().take(50).collect::<Vec<_>>()
+    });
+    push_issue(issues, hard_failures, ownership_issue);
+}
+
+fn collect_direct_anchor_node_ids(value: &Value, out: &mut BTreeSet<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_direct_anchor_node_ids(item, out);
+            }
+        }
+        Value::Object(object) => {
+            for node_id in object
+                .get("sourceAnchors")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .flat_map(|anchor| anchor.get("nodeIds").and_then(Value::as_array))
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                out.insert(node_id.to_string());
+            }
+            for node_id in object
+                .get("sourceAnchor")
+                .and_then(Value::as_object)
+                .and_then(|anchor| anchor.get("nodeIds"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                out.insert(node_id.to_string());
+            }
+            for (key, child) in object {
+                if !matches!(
+                    key.as_str(),
+                    "quality" | "coverageLedger" | "coverageStatus"
+                ) {
+                    collect_direct_anchor_node_ids(child, out);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn source_text_key(text: &str) -> String {
@@ -3792,6 +3971,56 @@ mod tests {
             details.get("unassignedSourceNodeIds"),
             Some(&json!(["line-2"]))
         );
+    }
+
+    #[test]
+    fn source_ownership_blocks_the_same_physical_line_in_two_tasks() {
+        let authoring = json!({
+            "taskGroups": [
+                {"taskId":"task-1","sourceAnchors":[{"nodeIds":["line-shared"]}]},
+                {"taskId":"task-2","sourceAnchors":[{"nodeIds":["line-shared"]}]}
+            ]
+        });
+        let physical = json!({
+            "schemaVersion":"DocumentIRV2","documentId":"document-1","jobId":"job-1",
+            "sourceFiles":[{"sourceFileId":"source-1"}],
+            "pages":[{"lines":[{"id":"line-shared","text":"Question source"}],"regions":[]}]
+        });
+        let mut issues = Vec::new();
+        let mut hard_failures = Vec::new();
+        validate_source_ownership(&authoring, Some(&physical), &mut issues, &mut hard_failures);
+        assert!(hard_failures
+            .iter()
+            .any(|code| code == SOURCE_OWNERSHIP_CONFLICT));
+    }
+
+    #[test]
+    fn completion_duplicate_slot_nodes_are_blocking() {
+        let group = json!({
+            "taskId":"task-1",
+            "responseGroups":[{
+                "slotIds":["q1"],
+                "prompt":[
+                    {"type":"paragraph","id":"host-1","children":[{"type":"answer_slot","slotId":"q1"}]},
+                    {"type":"paragraph","id":"host-2","children":[{"type":"answer_slot","slotId":"q1"}]}
+                ]
+            }]
+        });
+        let slots = serde_json::from_value::<Map<String, Value>>(json!({
+            "q1":{"slotId":"q1","hostNodeId":"host-1","hostType":"paragraph"}
+        }))
+        .unwrap();
+        let mut issues = Vec::new();
+        let mut hard_failures = Vec::new();
+        validate_completion_host(
+            &group,
+            &slots,
+            "task-1",
+            Vec::new(),
+            &mut issues,
+            &mut hard_failures,
+        );
+        assert!(hard_failures.iter().any(|code| code == SLOT_HOST_DUPLICATE));
     }
 
     #[test]

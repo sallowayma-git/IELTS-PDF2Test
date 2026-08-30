@@ -245,6 +245,8 @@ pub struct TaskGroupV2 {
     pub task_type: TaskTypeV2,
     pub instructions: Vec<ContentNodeV2>,
     pub instruction_signature: InstructionSignatureV2,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recognition_warnings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stimulus: Option<Vec<ContentNodeV2>>,
     #[serde(skip_serializing_if = "Option::is_none")]

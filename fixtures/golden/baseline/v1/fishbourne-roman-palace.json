@@ -9,7 +9,7 @@
   "capturedAt": "2026-08-09",
   "observed": {
     "pageCount": 5,
-    "blockCount": 50,
+    "blockCount": 49,
     "groupCount": 2,
     "slotCount": 13,
     "assetCount": 0,
@@ -99,8 +99,7 @@
             "b026",
             "b027",
             "b028",
-            "b029",
-            "b030"
+            "b029"
           ],
           "confidence": 0.82,
           "continuationEdges": [
@@ -113,13 +112,13 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b018",
-              "reason": "cross-column-continuation",
+              "reason": "same-section-continuation",
               "toBlockId": "b019"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b019",
-              "reason": "cross-column-continuation",
+              "reason": "same-section-continuation",
               "toBlockId": "b020"
             },
             {
@@ -175,18 +174,12 @@
               "fromBlockId": "b028",
               "reason": "same-section-continuation",
               "toBlockId": "b029"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b029",
-              "reason": "same-section-continuation",
-              "toBlockId": "b030"
             }
           ],
           "groupId": "group-1",
           "instruction": [
             "Questions 1-6",
-            "Questions 1–6 Do the following stat ements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE FALSE if the statement agrees with the information if the statement contradicts the information NOT GIVEN if there is no information on this"
+            "Questions 1–6 Do the following statements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE if the statement agrees with the information FALSE NOT GIVEN if the statement contradicts the information if there is no inform ation on this"
           ],
           "isUmbrellaRange": false,
           "kind": "true_false_not_given",
@@ -228,8 +221,7 @@
                 "b026",
                 "b027",
                 "b028",
-                "b029",
-                "b030"
+                "b029"
               ],
               "verified": false
             },
@@ -262,8 +254,7 @@
                 "b026",
                 "b027",
                 "b028",
-                "b029",
-                "b030"
+                "b029"
               ],
               "verified": false
             },
@@ -296,8 +287,7 @@
                 "b026",
                 "b027",
                 "b028",
-                "b029",
-                "b030"
+                "b029"
               ],
               "verified": false
             },
@@ -330,8 +320,7 @@
                 "b026",
                 "b027",
                 "b028",
-                "b029",
-                "b030"
+                "b029"
               ],
               "verified": false
             },
@@ -364,8 +353,7 @@
                 "b026",
                 "b027",
                 "b028",
-                "b029",
-                "b030"
+                "b029"
               ],
               "verified": false
             },
@@ -398,8 +386,7 @@
                 "b026",
                 "b027",
                 "b028",
-                "b029",
-                "b030"
+                "b029"
               ],
               "verified": false
             }
@@ -425,14 +412,14 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 2,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1–6"
             },
             {
               "bbox": [
                 54,
                 723.9600219726562,
-                158.72879028320312,
+                495.6094970703125,
                 732.3600463867188
               ],
               "blockId": "b018",
@@ -440,35 +427,14 @@
               "normalizedBbox": [
                 54,
                 723.9600219726562,
-                158.72879028320312,
-                732.3600463867188
-              ],
-              "pageIndex": 3,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 2,
-              "textPreview": "Do the following stat"
-            },
-            {
-              "bbox": [
-                162.0623779296875,
-                723.9600219726562,
-                495.6094970703125,
-                732.3600463867188
-              ],
-              "blockId": "b019",
-              "column": 1,
-              "normalizedBbox": [
-                162.0623779296875,
-                723.9600219726562,
                 495.6094970703125,
                 732.3600463867188
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "passage",
-              "sectionColumnCount": 2,
-              "textPreview": "ements agree with the information given in Reading Passage 1?"
+              "role": "question",
+              "sectionColumnCount": 1,
+              "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
             },
             {
               "bbox": [
@@ -477,7 +443,7 @@
                 266.11932373046875,
                 702.6000366210938
               ],
-              "blockId": "b020",
+              "blockId": "b019",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -494,65 +460,65 @@
             {
               "bbox": [
                 96,
-                649.0800170898438,
-                127.9966049194336,
-                673.0800170898438
-              ],
-              "blockId": "b021",
-              "column": 0,
-              "normalizedBbox": [
-                96,
-                649.0800170898438,
-                127.9966049194336,
-                673.0800170898438
-              ],
-              "pageIndex": 3,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 2,
-              "textPreview": "TRUE FALSE"
-            },
-            {
-              "bbox": [
-                180,
-                649.0800170898438,
+                664.6799926757812,
                 402.7848205566406,
                 673.0800170898438
               ],
-              "blockId": "b022",
-              "column": 1,
-              "normalizedBbox": [
-                180,
-                649.0800170898438,
-                402.7848205566406,
-                673.0800170898438
-              ],
-              "pageIndex": 3,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 2,
-              "textPreview": "if the statement agrees with the information if the statement contradicts the information"
-            },
-            {
-              "bbox": [
-                96,
-                633.47998046875,
-                340.75677490234375,
-                641.8800048828125
-              ],
-              "blockId": "b023",
+              "blockId": "b020",
               "column": 0,
               "normalizedBbox": [
                 96,
-                633.47998046875,
-                340.75677490234375,
-                641.8800048828125
+                664.6799926757812,
+                402.7848205566406,
+                673.0800170898438
               ],
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
               "sectionColumnCount": 1,
-              "textPreview": "NOT GIVEN if there is no information on this"
+              "textPreview": "TRUE if the statement agrees with the information"
+            },
+            {
+              "bbox": [
+                96,
+                633.47998046875,
+                154.06040954589844,
+                657.4800415039062
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                633.47998046875,
+                154.06040954589844,
+                657.4800415039062
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "FALSE NOT GIVEN"
+            },
+            {
+              "bbox": [
+                180,
+                633.47998046875,
+                399.4440002441406,
+                657.4800415039062
+              ],
+              "blockId": "b022",
+              "column": 1,
+              "normalizedBbox": [
+                180,
+                633.47998046875,
+                399.4440002441406,
+                657.4800415039062
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "if the statement contradicts the information if there is no inform ation on this"
             },
             {
               "bbox": [
@@ -561,7 +527,7 @@
                 401.8319396972656,
                 612.3600463867188
               ],
-              "blockId": "b024",
+              "blockId": "b023",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -582,7 +548,7 @@
                 343.1711730957031,
                 582.6000366210938
               ],
-              "blockId": "b025",
+              "blockId": "b024",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -603,7 +569,7 @@
                 457.20477294921875,
                 553.0800170898438
               ],
-              "blockId": "b026",
+              "blockId": "b025",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -624,7 +590,7 @@
                 404.5391845703125,
                 523.56005859375
               ],
-              "blockId": "b027",
+              "blockId": "b026",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -645,7 +611,7 @@
                 509.25347900390625,
                 493.800048828125
               ],
-              "blockId": "b028",
+              "blockId": "b027",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -666,7 +632,7 @@
                 137.0352020263672,
                 478.20001220703125
               ],
-              "blockId": "b029",
+              "blockId": "b028",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -687,7 +653,7 @@
                 345.84478759765625,
                 448.6800537109375
               ],
-              "blockId": "b030",
+              "blockId": "b029",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -715,14 +681,14 @@
             "b026",
             "b027",
             "b028",
-            "b029",
-            "b030"
+            "b029"
           ],
           "verified": false
         },
         {
           "allowOptionReuse": false,
           "classificationEvidence": [
+            "b030",
             "b031",
             "b032",
             "b033",
@@ -740,11 +706,16 @@
             "b045",
             "b046",
             "b047",
-            "b048",
-            "b049"
+            "b048"
           ],
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b031",
@@ -846,12 +817,6 @@
               "fromBlockId": "b047",
               "reason": "same-section-continuation",
               "toBlockId": "b048"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b048",
-              "reason": "same-section-continuation",
-              "toBlockId": "b049"
             }
           ],
           "groupId": "group-2",
@@ -884,6 +849,7 @@
               "prompt": "__________ • The palace building surrounded",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -901,8 +867,7 @@
                 "b045",
                 "b046",
                 "b047",
-                "b048",
-                "b049"
+                "b048"
               ],
               "verified": false
             },
@@ -919,6 +884,7 @@
               "prompt": "__________ • In the 2nd and 3rd centuries colour was added to the",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -936,8 +902,7 @@
                 "b045",
                 "b046",
                 "b047",
-                "b048",
-                "b049"
+                "b048"
               ],
               "verified": false
             },
@@ -954,6 +919,7 @@
               "prompt": "__________of the palace. Discovery • The first part of the palace to be found was part of a",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -971,8 +937,7 @@
                 "b045",
                 "b046",
                 "b047",
-                "b048",
-                "b049"
+                "b048"
               ],
               "verified": false
             },
@@ -989,6 +954,7 @@
               "prompt": "__________ Possible inhabitants • Cogidubnus-he is named in several writings. • Sallustius Lucullus-he may have lived there until approximately",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -1006,8 +972,7 @@
                 "b045",
                 "b046",
                 "b047",
-                "b048",
-                "b049"
+                "b048"
               ],
               "verified": false
             },
@@ -1024,6 +989,7 @@
               "prompt": "__________AD. • Verica-a British king. • Catuarus-his",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -1041,8 +1007,7 @@
                 "b045",
                 "b046",
                 "b047",
-                "b048",
-                "b049"
+                "b048"
               ],
               "verified": false
             },
@@ -1059,6 +1024,7 @@
               "prompt": "__________was found there. Present Day • A",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -1076,8 +1042,7 @@
                 "b045",
                 "b046",
                 "b047",
-                "b048",
-                "b049"
+                "b048"
               ],
               "verified": false
             },
@@ -1094,6 +1059,7 @@
               "prompt": "__________has been built on the site to help protect it.",
               "requiresManualQuestionImport": false,
               "sourceBlockIds": [
+                "b030",
                 "b031",
                 "b032",
                 "b033",
@@ -1111,8 +1077,7 @@
                 "b045",
                 "b046",
                 "b047",
-                "b048",
-                "b049"
+                "b048"
               ],
               "verified": false
             }
@@ -1127,7 +1092,7 @@
                 131.3853302001953,
                 761.8800048828125
               ],
-              "blockId": "b031",
+              "blockId": "b030",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1148,7 +1113,7 @@
                 192.75599670410156,
                 732.3600463867188
               ],
-              "blockId": "b032",
+              "blockId": "b031",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1169,7 +1134,7 @@
                 534.7598266601562,
                 702.6000366210938
               ],
-              "blockId": "b033",
+              "blockId": "b032",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1190,7 +1155,7 @@
                 92.68560028076172,
                 687
               ],
-              "blockId": "b034",
+              "blockId": "b033",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1211,7 +1176,7 @@
                 352.821533203125,
                 657.4800415039062
               ],
-              "blockId": "b035",
+              "blockId": "b034",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -1232,7 +1197,7 @@
                 350.4205322265625,
                 607.56005859375
               ],
-              "blockId": "b036",
+              "blockId": "b035",
               "column": 0,
               "normalizedBbox": [
                 233.7236328125,
@@ -1253,7 +1218,7 @@
                 128.76956176757812,
                 570.8400268554688
               ],
-              "blockId": "b037",
+              "blockId": "b036",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1274,7 +1239,7 @@
                 429.1195068359375,
                 550.6800537109375
               ],
-              "blockId": "b038",
+              "blockId": "b037",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1295,7 +1260,7 @@
                 325.0687255859375,
                 529.5599975585938
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1316,7 +1281,7 @@
                 512.5313110351562,
                 508.4400329589844
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1337,7 +1302,7 @@
                 112.14715576171875,
                 469.08001708984375
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1358,7 +1323,7 @@
                 438.453369140625,
                 448.4400329589844
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1379,7 +1344,7 @@
                 171.4535675048828,
                 409.08001708984375
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1400,7 +1365,7 @@
                 322.333740234375,
                 388.6800537109375
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1421,7 +1386,7 @@
                 527.13623046875,
                 367.5600280761719
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1442,7 +1407,7 @@
                 196.91537475585938,
                 346.6800231933594
               ],
-              "blockId": "b046",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1463,7 +1428,7 @@
                 330.38134765625,
                 325.5600280761719
               ],
-              "blockId": "b047",
+              "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1484,7 +1449,7 @@
                 124.13754272460938,
                 285.9600524902344
               ],
-              "blockId": "b048",
+              "blockId": "b047",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1505,7 +1470,7 @@
                 400.451416015625,
                 265.5600280761719
               ],
-              "blockId": "b049",
+              "blockId": "b048",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -1521,6 +1486,7 @@
             }
           ],
           "sourceBlockIds": [
+            "b030",
             "b031",
             "b032",
             "b033",
@@ -1538,8 +1504,7 @@
             "b045",
             "b046",
             "b047",
-            "b048",
-            "b049"
+            "b048"
           ],
           "verified": false
         }
@@ -2078,7 +2043,7 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 0,
-              "_epic8SectionColumns": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 753.47998046875,
@@ -2092,7 +2057,7 @@
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 2,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
@@ -2106,61 +2071,34 @@
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 0,
               "_epic8Ordinal": 1,
-              "_epic8SectionColumns": 2,
+              "_epic8SectionColumns": 1,
               "bbox": [
                 54,
                 723.9600219726562,
-                158.72879028320312,
+                495.6094970703125,
                 732.3600463867188
               ],
               "blockId": "b018",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>Do the following stat</p>",
+              "html": "<p>Do the following statements agree with the information given in Reading Passage 1?</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
-                    "count": 2,
+                    "count": 1,
                     "current": 0
                   },
                   "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "Do the following stat"
-            },
-            {
-              "_epic8ColumnIndex": 1,
-              "_epic8LayoutSection": 0,
-              "_epic8Ordinal": 2,
-              "_epic8SectionColumns": 2,
-              "bbox": [
-                162.0623779296875,
-                723.9600219726562,
-                495.6094970703125,
-                732.3600463867188
-              ],
-              "blockId": "b019",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>ements agree with the information given in Reading Passage 1?</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 2,
-                    "current": 1
-                  },
-                  "index": 0
-                }
-              },
-              "pageIndex": 3,
-              "roleHint": "passage",
-              "text": "ements agree with the information given in Reading Passage 1?"
+              "roleHint": "question",
+              "text": "Do the following statements agree with the information given in Reading Passage 1?"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 1,
-              "_epic8Ordinal": 3,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 2,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2168,7 +2106,7 @@
                 266.11932373046875,
                 702.6000366210938
               ],
-              "blockId": "b020",
+              "blockId": "b019",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>In boxes 1–6 on your answer sheet, write</p>",
@@ -2178,7 +2116,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 1
+                  "index": 0
                 }
               },
               "pageIndex": 3,
@@ -2186,89 +2124,89 @@
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 4,
-              "_epic8SectionColumns": 2,
-              "bbox": [
-                96,
-                649.0800170898438,
-                127.9966049194336,
-                673.0800170898438
-              ],
-              "blockId": "b021",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>TRUE FALSE</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 2,
-                    "current": 0
-                  },
-                  "index": 2
-                }
-              },
-              "pageIndex": 3,
-              "text": "TRUE FALSE"
-            },
-            {
-              "_epic8ColumnIndex": 1,
-              "_epic8LayoutSection": 2,
-              "_epic8Ordinal": 5,
-              "_epic8SectionColumns": 2,
-              "bbox": [
-                180,
-                649.0800170898438,
-                402.7848205566406,
-                673.0800170898438
-              ],
-              "blockId": "b022",
-              "blockType": "paragraph",
-              "confidence": 0.98,
-              "html": "<p>if the statement agrees with the information if the statement contradicts the information</p>",
-              "layoutHints": {
-                "section": {
-                  "columns": {
-                    "count": 2,
-                    "current": 1
-                  },
-                  "index": 2
-                }
-              },
-              "pageIndex": 3,
-              "text": "if the statement agrees with the information if the statement contradicts the information"
-            },
-            {
-              "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 6,
+              "_epic8LayoutSection": 0,
+              "_epic8Ordinal": 3,
               "_epic8SectionColumns": 1,
               "bbox": [
                 96,
-                633.47998046875,
-                340.75677490234375,
-                641.8800048828125
+                664.6799926757812,
+                402.7848205566406,
+                673.0800170898438
               ],
-              "blockId": "b023",
+              "blockId": "b020",
               "blockType": "paragraph",
               "confidence": 0.98,
-              "html": "<p>NOT GIVEN if there is no information on this</p>",
+              "html": "<p>TRUE if the statement agrees with the information</p>",
               "layoutHints": {
                 "section": {
                   "columns": {
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 0
                 }
               },
               "pageIndex": 3,
-              "text": "NOT GIVEN if there is no information on this"
+              "text": "TRUE if the statement agrees with the information"
             },
             {
               "_epic8ColumnIndex": 0,
-              "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 7,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 4,
+              "_epic8SectionColumns": 2,
+              "bbox": [
+                96,
+                633.47998046875,
+                154.06040954589844,
+                657.4800415039062
+              ],
+              "blockId": "b021",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>FALSE NOT GIVEN</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 2,
+                    "current": 0
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 3,
+              "text": "FALSE NOT GIVEN"
+            },
+            {
+              "_epic8ColumnIndex": 1,
+              "_epic8LayoutSection": 1,
+              "_epic8Ordinal": 5,
+              "_epic8SectionColumns": 2,
+              "bbox": [
+                180,
+                633.47998046875,
+                399.4440002441406,
+                657.4800415039062
+              ],
+              "blockId": "b022",
+              "blockType": "paragraph",
+              "confidence": 0.98,
+              "html": "<p>if the statement contradicts the information if there is no inform ation on this</p>",
+              "layoutHints": {
+                "section": {
+                  "columns": {
+                    "count": 2,
+                    "current": 1
+                  },
+                  "index": 1
+                }
+              },
+              "pageIndex": 3,
+              "text": "if the statement contradicts the information if there is no inform ation on this"
+            },
+            {
+              "_epic8ColumnIndex": 0,
+              "_epic8LayoutSection": 2,
+              "_epic8Ordinal": 6,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2276,7 +2214,7 @@
                 401.8319396972656,
                 612.3600463867188
               ],
-              "blockId": "b024",
+              "blockId": "b023",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>1 Fishbourne Palace was the first structure to be built on its site.</p>",
@@ -2286,7 +2224,7 @@
                     "count": 1,
                     "current": 0
                   },
-                  "index": 3
+                  "index": 2
                 }
               },
               "pageIndex": 3,
@@ -2295,7 +2233,7 @@
             {
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 8,
+              "_epic8Ordinal": 7,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2303,7 +2241,7 @@
                 343.1711730957031,
                 582.6000366210938
               ],
-              "blockId": "b025",
+              "blockId": "b024",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>2 Fishbourne Palace was renovated more than once.</p>",
@@ -2322,7 +2260,7 @@
             {
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 9,
+              "_epic8Ordinal": 8,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2330,7 +2268,7 @@
                 457.20477294921875,
                 553.0800170898438
               ],
-              "blockId": "b026",
+              "blockId": "b025",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>3 Fishbourne Palace was large in comparison with Roman palaces in Italy.</p>",
@@ -2349,7 +2287,7 @@
             {
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 10,
+              "_epic8Ordinal": 9,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2357,7 +2295,7 @@
                 404.5391845703125,
                 523.56005859375
               ],
-              "blockId": "b027",
+              "blockId": "b026",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>4 Research is continuing in the area close to Fishbourne Palace.</p>",
@@ -2376,7 +2314,7 @@
             {
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 11,
+              "_epic8Ordinal": 10,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2384,7 +2322,7 @@
                 509.25347900390625,
                 493.800048828125
               ],
-              "blockId": "b028",
+              "blockId": "b027",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>5 Researchers agree on the identity of the person for whom Fishbourne Palace was</p>",
@@ -2403,7 +2341,7 @@
             {
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 12,
+              "_epic8Ordinal": 11,
               "_epic8SectionColumns": 1,
               "bbox": [
                 75,
@@ -2411,7 +2349,7 @@
                 137.0352020263672,
                 478.20001220703125
               ],
-              "blockId": "b029",
+              "blockId": "b028",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>constructed.</p>",
@@ -2430,7 +2368,7 @@
             {
               "_epic8ColumnIndex": 0,
               "_epic8LayoutSection": 3,
-              "_epic8Ordinal": 13,
+              "_epic8Ordinal": 12,
               "_epic8SectionColumns": 1,
               "bbox": [
                 54,
@@ -2438,7 +2376,7 @@
                 345.84478759765625,
                 448.6800537109375
               ],
-              "blockId": "b030",
+              "blockId": "b029",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>6 Fishbourne Palace was burnt down by local people.</p>",
@@ -2472,7 +2410,7 @@
                 131.3853302001953,
                 761.8800048828125
               ],
-              "blockId": "b031",
+              "blockId": "b030",
               "blockType": "header",
               "confidence": 0.98,
               "html": "<h3>Questions 7–13</h3>",
@@ -2500,7 +2438,7 @@
                 192.75599670410156,
                 732.3600463867188
               ],
-              "blockId": "b032",
+              "blockId": "b031",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Complete the notes below.</p>",
@@ -2528,7 +2466,7 @@
                 534.7598266601562,
                 702.6000366210938
               ],
-              "blockId": "b033",
+              "blockId": "b032",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Choose NO MORE THAN TWO WORDS AND/OR A NUMBER from the passage for each</p>",
@@ -2556,7 +2494,7 @@
                 92.68560028076172,
                 687
               ],
-              "blockId": "b034",
+              "blockId": "b033",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>answer.</p>",
@@ -2583,7 +2521,7 @@
                 352.821533203125,
                 657.4800415039062
               ],
-              "blockId": "b035",
+              "blockId": "b034",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Write your answers in boxes 7–13 on your answer sheet.</p>",
@@ -2611,7 +2549,7 @@
                 350.4205322265625,
                 607.56005859375
               ],
-              "blockId": "b036",
+              "blockId": "b035",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Fishbourne Palace</p>",
@@ -2638,7 +2576,7 @@
                 128.76956176757812,
                 570.8400268554688
               ],
-              "blockId": "b037",
+              "blockId": "b036",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Construction</p>",
@@ -2665,7 +2603,7 @@
                 429.1195068359375,
                 550.6800537109375
               ],
-              "blockId": "b038",
+              "blockId": "b037",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>• The first buildings on the site contained food for the 7 __________</p>",
@@ -2692,7 +2630,7 @@
                 325.0687255859375,
                 529.5599975585938
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>• The palace building surrounded 8 __________</p>",
@@ -2719,7 +2657,7 @@
                 512.5313110351562,
                 508.4400329589844
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>• In the 2nd and 3rd centuries colour was added to the 9 __________of the palace.</p>",
@@ -2746,7 +2684,7 @@
                 112.14715576171875,
                 469.08001708984375
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Discovery</p>",
@@ -2773,7 +2711,7 @@
                 438.453369140625,
                 448.4400329589844
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>• The first part of the palace to be found was part of a 10 __________</p>",
@@ -2800,7 +2738,7 @@
                 171.4535675048828,
                 409.08001708984375
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Possible inhabitants</p>",
@@ -2827,7 +2765,7 @@
                 322.333740234375,
                 388.6800537109375
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>• Cogidubnus-he is named in several writings.</p>",
@@ -2854,7 +2792,7 @@
                 527.13623046875,
                 367.5600280761719
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>• Sallustius Lucullus-he may have lived there until approximately 11 __________AD.</p>",
@@ -2881,7 +2819,7 @@
                 196.91537475585938,
                 346.6800231933594
               ],
-              "blockId": "b046",
+              "blockId": "b045",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>• Verica-a British king.</p>",
@@ -2908,7 +2846,7 @@
                 330.38134765625,
                 325.5600280761719
               ],
-              "blockId": "b047",
+              "blockId": "b046",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>• Catuarus-his 12 __________was found there.</p>",
@@ -2935,7 +2873,7 @@
                 124.13754272460938,
                 285.9600524902344
               ],
-              "blockId": "b048",
+              "blockId": "b047",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>Present Day</p>",
@@ -2962,7 +2900,7 @@
                 400.451416015625,
                 265.5600280761719
               ],
-              "blockId": "b049",
+              "blockId": "b048",
               "blockType": "paragraph",
               "confidence": 0.98,
               "html": "<p>• A 13 __________has been built on the site to help protect it.</p>",
@@ -2993,7 +2931,7 @@
                 520,
                 108
               ],
-              "blockId": "b050",
+              "blockId": "b049",
               "blockType": "paragraph",
               "confidence": 0.2,
               "html": "<p>[No extractable text on page 5]</p>",
@@ -3007,8 +2945,11 @@
         }
       ],
       "parser": {
+        "degradedFallback": false,
+        "geometryAuthoritative": true,
         "mode": "auto",
         "provider": "rust-parser:pdf:pdfium",
+        "recognitionPipeline": "geometry_structure_v2",
         "sourceFileId": "file-cli-main",
         "sourceStoredName": "fishbourne-roman-palace.pdf",
         "version": "0.1.0",
@@ -3073,10 +3014,10 @@
       "questionGroups": [
         {
           "allowOptionReuse": false,
-          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-6</p><p>Questions 1–6 Do the following stat ements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE FALSE if the statement agrees with the information if the statement contradicts the information NOT GIVEN if there is no information on this</p></div><ol><li><div><strong>1</strong> Fishbourne Palace was the first structure to be built on its site.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> Fishbourne Palace was renovated more than once.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> Fishbourne Palace was large in comparison with Roman palaces in Italy.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>4</strong> Research is continuing in the area close to Fishbourne Palace.</div><div class=\"choice-row\"><label><input name=\"q4\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q4\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q4\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>5</strong> Researchers agree on the identity of the person for whom Fishbourne Palace was constructed.</div><div class=\"choice-row\"><label><input name=\"q5\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q5\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q5\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>6</strong> Fishbourne Palace was burnt down by local people.</div><div class=\"choice-row\"><label><input name=\"q6\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q6\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q6\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
+          "bodyHtml": "<section class=\"reading-question-group\" id=\"group-1\"><div class=\"group-lead\"><p>Questions 1-6</p><p>Questions 1–6 Do the following statements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE if the statement agrees with the information FALSE NOT GIVEN if the statement contradicts the information if there is no inform ation on this</p></div><ol><li><div><strong>1</strong> Fishbourne Palace was the first structure to be built on its site.</div><div class=\"choice-row\"><label><input name=\"q1\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q1\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q1\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>2</strong> Fishbourne Palace was renovated more than once.</div><div class=\"choice-row\"><label><input name=\"q2\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q2\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q2\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>3</strong> Fishbourne Palace was large in comparison with Roman palaces in Italy.</div><div class=\"choice-row\"><label><input name=\"q3\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q3\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q3\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>4</strong> Research is continuing in the area close to Fishbourne Palace.</div><div class=\"choice-row\"><label><input name=\"q4\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q4\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q4\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>5</strong> Researchers agree on the identity of the person for whom Fishbourne Palace was constructed.</div><div class=\"choice-row\"><label><input name=\"q5\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q5\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q5\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li><li><div><strong>6</strong> Fishbourne Palace was burnt down by local people.</div><div class=\"choice-row\"><label><input name=\"q6\" type=\"radio\" value=\"TRUE\"> TRUE</label><label><input name=\"q6\" type=\"radio\" value=\"FALSE\"> FALSE</label><label><input name=\"q6\" type=\"radio\" value=\"NOT GIVEN\"> NOT GIVEN</label></div></li></ol></section>",
           "groupId": "group-1",
           "kind": "true_false_not_given",
-          "leadHtml": "<p>Questions 1-6</p><p>Questions 1–6 Do the following stat ements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE FALSE if the statement agrees with the information if the statement contradicts the information NOT GIVEN if there is no information on this</p>",
+          "leadHtml": "<p>Questions 1-6</p><p>Questions 1–6 Do the following statements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE if the statement agrees with the information FALSE NOT GIVEN if the statement contradicts the information if there is no inform ation on this</p>",
           "questionIds": [
             "q1",
             "q2",
@@ -3172,8 +3113,7 @@
             "b026",
             "b027",
             "b028",
-            "b029",
-            "b030"
+            "b029"
           ],
           "classification": {
             "confidence": 0.82,
@@ -3190,8 +3130,7 @@
               "b026",
               "b027",
               "b028",
-              "b029",
-              "b030"
+              "b029"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -3216,13 +3155,13 @@
             {
               "confidence": 0.72,
               "fromBlockId": "b018",
-              "reason": "cross-column-continuation",
+              "reason": "same-section-continuation",
               "toBlockId": "b019"
             },
             {
               "confidence": 0.72,
               "fromBlockId": "b019",
-              "reason": "cross-column-continuation",
+              "reason": "same-section-continuation",
               "toBlockId": "b020"
             },
             {
@@ -3278,17 +3217,11 @@
               "fromBlockId": "b028",
               "reason": "same-section-continuation",
               "toBlockId": "b029"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b029",
-              "reason": "same-section-continuation",
-              "toBlockId": "b030"
             }
           ],
           "groupId": "group-1",
           "heading": "Questions 1-6",
-          "instructionText": "Questions 1–6 Do the following stat ements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE FALSE if the statement agrees with the information if the statement contradicts the information NOT GIVEN if there is no information on this",
+          "instructionText": "Questions 1–6 Do the following statements agree with the information given in Reading Passage 1? In boxes 1–6 on your answer sheet, write TRUE if the statement agrees with the information FALSE NOT GIVEN if the statement contradicts the information if there is no inform ation on this",
           "kindHint": "true_false_not_given",
           "layoutHint": "list",
           "questionRange": [
@@ -3314,14 +3247,14 @@
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "question",
-              "sectionColumnCount": 2,
+              "sectionColumnCount": 1,
               "textPreview": "Questions 1–6"
             },
             {
               "bbox": [
                 54,
                 723.9600219726562,
-                158.72879028320312,
+                495.6094970703125,
                 732.3600463867188
               ],
               "blockId": "b018",
@@ -3329,35 +3262,14 @@
               "normalizedBbox": [
                 54,
                 723.9600219726562,
-                158.72879028320312,
-                732.3600463867188
-              ],
-              "pageIndex": 3,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 2,
-              "textPreview": "Do the following stat"
-            },
-            {
-              "bbox": [
-                162.0623779296875,
-                723.9600219726562,
-                495.6094970703125,
-                732.3600463867188
-              ],
-              "blockId": "b019",
-              "column": 1,
-              "normalizedBbox": [
-                162.0623779296875,
-                723.9600219726562,
                 495.6094970703125,
                 732.3600463867188
               ],
               "pageIndex": 3,
               "pageRotation": 0,
-              "role": "passage",
-              "sectionColumnCount": 2,
-              "textPreview": "ements agree with the information given in Reading Passage 1?"
+              "role": "question",
+              "sectionColumnCount": 1,
+              "textPreview": "Do the following statements agree with the information given in Reading Passage 1?"
             },
             {
               "bbox": [
@@ -3366,7 +3278,7 @@
                 266.11932373046875,
                 702.6000366210938
               ],
-              "blockId": "b020",
+              "blockId": "b019",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3383,65 +3295,65 @@
             {
               "bbox": [
                 96,
-                649.0800170898438,
-                127.9966049194336,
-                673.0800170898438
-              ],
-              "blockId": "b021",
-              "column": 0,
-              "normalizedBbox": [
-                96,
-                649.0800170898438,
-                127.9966049194336,
-                673.0800170898438
-              ],
-              "pageIndex": 3,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 2,
-              "textPreview": "TRUE FALSE"
-            },
-            {
-              "bbox": [
-                180,
-                649.0800170898438,
+                664.6799926757812,
                 402.7848205566406,
                 673.0800170898438
               ],
-              "blockId": "b022",
-              "column": 1,
-              "normalizedBbox": [
-                180,
-                649.0800170898438,
-                402.7848205566406,
-                673.0800170898438
-              ],
-              "pageIndex": 3,
-              "pageRotation": 0,
-              "role": "",
-              "sectionColumnCount": 2,
-              "textPreview": "if the statement agrees with the information if the statement contradicts the information"
-            },
-            {
-              "bbox": [
-                96,
-                633.47998046875,
-                340.75677490234375,
-                641.8800048828125
-              ],
-              "blockId": "b023",
+              "blockId": "b020",
               "column": 0,
               "normalizedBbox": [
                 96,
-                633.47998046875,
-                340.75677490234375,
-                641.8800048828125
+                664.6799926757812,
+                402.7848205566406,
+                673.0800170898438
               ],
               "pageIndex": 3,
               "pageRotation": 0,
               "role": "",
               "sectionColumnCount": 1,
-              "textPreview": "NOT GIVEN if there is no information on this"
+              "textPreview": "TRUE if the statement agrees with the information"
+            },
+            {
+              "bbox": [
+                96,
+                633.47998046875,
+                154.06040954589844,
+                657.4800415039062
+              ],
+              "blockId": "b021",
+              "column": 0,
+              "normalizedBbox": [
+                96,
+                633.47998046875,
+                154.06040954589844,
+                657.4800415039062
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "FALSE NOT GIVEN"
+            },
+            {
+              "bbox": [
+                180,
+                633.47998046875,
+                399.4440002441406,
+                657.4800415039062
+              ],
+              "blockId": "b022",
+              "column": 1,
+              "normalizedBbox": [
+                180,
+                633.47998046875,
+                399.4440002441406,
+                657.4800415039062
+              ],
+              "pageIndex": 3,
+              "pageRotation": 0,
+              "role": "",
+              "sectionColumnCount": 2,
+              "textPreview": "if the statement contradicts the information if there is no inform ation on this"
             },
             {
               "bbox": [
@@ -3450,7 +3362,7 @@
                 401.8319396972656,
                 612.3600463867188
               ],
-              "blockId": "b024",
+              "blockId": "b023",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3471,7 +3383,7 @@
                 343.1711730957031,
                 582.6000366210938
               ],
-              "blockId": "b025",
+              "blockId": "b024",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3492,7 +3404,7 @@
                 457.20477294921875,
                 553.0800170898438
               ],
-              "blockId": "b026",
+              "blockId": "b025",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3513,7 +3425,7 @@
                 404.5391845703125,
                 523.56005859375
               ],
-              "blockId": "b027",
+              "blockId": "b026",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3534,7 +3446,7 @@
                 509.25347900390625,
                 493.800048828125
               ],
-              "blockId": "b028",
+              "blockId": "b027",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3555,7 +3467,7 @@
                 137.0352020263672,
                 478.20001220703125
               ],
-              "blockId": "b029",
+              "blockId": "b028",
               "column": 0,
               "normalizedBbox": [
                 75,
@@ -3576,7 +3488,7 @@
                 345.84478759765625,
                 448.6800537109375
               ],
-              "blockId": "b030",
+              "blockId": "b029",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3594,6 +3506,7 @@
         },
         {
           "blockIds": [
+            "b030",
             "b031",
             "b032",
             "b033",
@@ -3611,12 +3524,12 @@
             "b045",
             "b046",
             "b047",
-            "b048",
-            "b049"
+            "b048"
           ],
           "classification": {
             "confidence": 0.82,
             "evidence": [
+              "b030",
               "b031",
               "b032",
               "b033",
@@ -3634,8 +3547,7 @@
               "b045",
               "b046",
               "b047",
-              "b048",
-              "b049"
+              "b048"
             ],
             "interaction": {
               "allowOptionReuse": false,
@@ -3647,6 +3559,12 @@
           },
           "confidence": 0.82,
           "continuationEdges": [
+            {
+              "confidence": 0.72,
+              "fromBlockId": "b030",
+              "reason": "same-section-continuation",
+              "toBlockId": "b031"
+            },
             {
               "confidence": 0.72,
               "fromBlockId": "b031",
@@ -3748,12 +3666,6 @@
               "fromBlockId": "b047",
               "reason": "same-section-continuation",
               "toBlockId": "b048"
-            },
-            {
-              "confidence": 0.72,
-              "fromBlockId": "b048",
-              "reason": "same-section-continuation",
-              "toBlockId": "b049"
             }
           ],
           "groupId": "group-2",
@@ -3773,7 +3685,7 @@
                 131.3853302001953,
                 761.8800048828125
               ],
-              "blockId": "b031",
+              "blockId": "b030",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3794,7 +3706,7 @@
                 192.75599670410156,
                 732.3600463867188
               ],
-              "blockId": "b032",
+              "blockId": "b031",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3815,7 +3727,7 @@
                 534.7598266601562,
                 702.6000366210938
               ],
-              "blockId": "b033",
+              "blockId": "b032",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3836,7 +3748,7 @@
                 92.68560028076172,
                 687
               ],
-              "blockId": "b034",
+              "blockId": "b033",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3857,7 +3769,7 @@
                 352.821533203125,
                 657.4800415039062
               ],
-              "blockId": "b035",
+              "blockId": "b034",
               "column": 0,
               "normalizedBbox": [
                 54,
@@ -3878,7 +3790,7 @@
                 350.4205322265625,
                 607.56005859375
               ],
-              "blockId": "b036",
+              "blockId": "b035",
               "column": 0,
               "normalizedBbox": [
                 233.7236328125,
@@ -3899,7 +3811,7 @@
                 128.76956176757812,
                 570.8400268554688
               ],
-              "blockId": "b037",
+              "blockId": "b036",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3920,7 +3832,7 @@
                 429.1195068359375,
                 550.6800537109375
               ],
-              "blockId": "b038",
+              "blockId": "b037",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3941,7 +3853,7 @@
                 325.0687255859375,
                 529.5599975585938
               ],
-              "blockId": "b039",
+              "blockId": "b038",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3962,7 +3874,7 @@
                 512.5313110351562,
                 508.4400329589844
               ],
-              "blockId": "b040",
+              "blockId": "b039",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -3983,7 +3895,7 @@
                 112.14715576171875,
                 469.08001708984375
               ],
-              "blockId": "b041",
+              "blockId": "b040",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -4004,7 +3916,7 @@
                 438.453369140625,
                 448.4400329589844
               ],
-              "blockId": "b042",
+              "blockId": "b041",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -4025,7 +3937,7 @@
                 171.4535675048828,
                 409.08001708984375
               ],
-              "blockId": "b043",
+              "blockId": "b042",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -4046,7 +3958,7 @@
                 322.333740234375,
                 388.6800537109375
               ],
-              "blockId": "b044",
+              "blockId": "b043",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -4067,7 +3979,7 @@
                 527.13623046875,
                 367.5600280761719
               ],
-              "blockId": "b045",
+              "blockId": "b044",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -4088,7 +4000,7 @@
                 196.91537475585938,
                 346.6800231933594
               ],
-              "blockId": "b046",
+              "blockId": "b045",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -4109,7 +4021,7 @@
                 330.38134765625,
                 325.5600280761719
               ],
-              "blockId": "b047",
+              "blockId": "b046",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -4130,7 +4042,7 @@
                 124.13754272460938,
                 285.9600524902344
               ],
-              "blockId": "b048",
+              "blockId": "b047",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,
@@ -4151,7 +4063,7 @@
                 400.451416015625,
                 265.5600280761719
               ],
-              "blockId": "b049",
+              "blockId": "b048",
               "column": 0,
               "normalizedBbox": [
                 61.4399528503418,

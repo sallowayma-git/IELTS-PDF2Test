@@ -137,6 +137,7 @@ export interface TaskGroupV2 {
   taskType: TaskTypeV2;
   instructions: ContentNodeV2[];
   instructionSignature: InstructionSignatureV2;
+  recognitionWarnings?: string[];
   stimulus?: ContentNodeV2[];
   optionBank?: OptionBankV2;
   responseGroups: ResponseGroupV2[];

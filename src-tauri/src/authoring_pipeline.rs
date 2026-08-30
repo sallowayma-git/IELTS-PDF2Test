@@ -2220,7 +2220,23 @@ fn dynamic_bank_candidate_labels(text: &str, terminal: char) -> Vec<char> {
 }
 
 fn dynamic_completion_bank_candidate_labels(text: &str, terminal: char) -> Vec<char> {
-    dynamic_bank_candidate_labels_with_prefix_limit(text, terminal, 3)
+    let normalized = collapse_whitespace(text);
+    ('A'..=terminal)
+        .filter_map(|label| {
+            let (start, content_start) = find_dynamic_option_marker(&normalized, label, 0)?;
+            if normalized[content_start..].trim().is_empty() {
+                return None;
+            }
+            let prefix = normalized[..start].trim();
+            let prefix_is_fragment = prefix.is_empty()
+                || (prefix.split_whitespace().count() <= 3
+                    && prefix.split_whitespace().all(|word| {
+                        word.chars().all(|ch| ch.is_ascii_lowercase())
+                            || word.chars().all(|ch| ch.is_ascii_digit())
+                    }));
+            prefix_is_fragment.then_some(label)
+        })
+        .collect()
 }
 
 /// Reattach a declared matching bank that geometry places above the next
@@ -5495,7 +5511,13 @@ fn dynamic_declared_bank_parts(
             .trim_end_matches([';', ','])
             .trim()
             .to_string();
-        if option_text.is_empty() {
+        // In a column-major PDF row the last label can be emitted at the end
+        // of the left column while its text starts in a later right-column
+        // block (`D ... E` followed by `68 seconds F ...`). Preserve that
+        // pending label so the geometry-aware continuation pass can fill it.
+        // Empty interior labels remain invalid because their ownership is
+        // ambiguous even under an explicit A-terminal declaration.
+        if option_text.is_empty() && index + 1 != markers.len() {
             return None;
         }
         options.push((label.to_string(), option_text));
@@ -7329,16 +7351,17 @@ fn dynamic_declared_completion_bank_span(kind: &str, blocks: &[Value]) -> Option
                 is_dynamic_completion_bank_hard_boundary(block).then_some(index)
             })
             .unwrap_or(blocks.len());
-        let mut terminal_seen = false;
+        let mut terminal_marker_seen = false;
         for end in start + 1..=boundary {
             let terminal_block = &blocks[end - 1];
-            terminal_seen |= is_dynamic_declared_completion_terminal_source(
-                terminal_block,
-                &declared_labels,
-                terminal,
-                &declaration_text,
-            );
-            if !terminal_seen {
+            terminal_marker_seen |=
+                find_dynamic_option_marker(&dynamic_block_text(terminal_block), terminal, 0)
+                    .is_some();
+            // The terminal label itself may be the final glyph in one column
+            // and acquire its text only from a later same-row block. Wait for
+            // the marker, then let full A-terminal source closure decide when
+            // the span is complete.
+            if !terminal_marker_seen {
                 continue;
             }
             let declaration = json!({
@@ -12525,6 +12548,37 @@ mod tests {
                 ("G".to_string(), "unconfident".to_string()),
                 ("H".to_string(), "unsurprising but satisfying".to_string()),
                 ("I".to_string(), "magical".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn completion_bank_rejoins_column_major_label_only_cells() {
+        let blocks = vec![
+            json!({"blockId":"instruction","text":"Complete the summary using the list of words and phrases A-K."}),
+            json!({"blockId":"a-c","text":"A form and function B long yawns C 3 seconds","pageIndex":3,"bbox":[108.84,398.76,451.55,407.16]}),
+            json!({"blockId":"d-e","text":"D fixed-action pattern E","pageIndex":3,"bbox":[108.84,369.0,256.51,377.4]}),
+            json!({"blockId":"g-h","text":"G reflex H","pageIndex":3,"bbox":[108.84,339.24,256.56,347.64]}),
+            json!({"blockId":"j-k","text":"J 6 seconds K","pageIndex":3,"bbox":[108.84,309.72,256.56,318.12]}),
+            json!({"blockId":"e-f","text":"68 seconds F short yawns","pageIndex":3,"bbox":[276.84,369.0,460.87,377.4]}),
+            json!({"blockId":"h-i","text":"sneeze I short duration","pageIndex":3,"bbox":[276.84,339.24,469.55,347.64]}),
+            json!({"blockId":"k-tail","text":"half-yawns","pageIndex":3,"bbox":[276.84,309.72,328.20,318.12]}),
+        ];
+
+        assert_eq!(
+            dynamic_group_option_bank(&blocks, "summary_completion"),
+            vec![
+                ("A".to_string(), "form and function".to_string()),
+                ("B".to_string(), "long yawns".to_string()),
+                ("C".to_string(), "3 seconds".to_string()),
+                ("D".to_string(), "fixed-action pattern".to_string()),
+                ("E".to_string(), "68 seconds".to_string()),
+                ("F".to_string(), "short yawns".to_string()),
+                ("G".to_string(), "reflex".to_string()),
+                ("H".to_string(), "sneeze".to_string()),
+                ("I".to_string(), "short duration".to_string()),
+                ("J".to_string(), "6 seconds".to_string()),
+                ("K".to_string(), "half-yawns".to_string()),
             ]
         );
     }
