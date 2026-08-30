@@ -491,22 +491,12 @@ fn parse_pdf_with_rust_text_extractor(
     output_path: &Path,
     mode: &str,
 ) -> CommandResult<Value> {
-    // Prefer the pdfium backend, which yields REAL per-character coordinates
-    // so multi-column detection and reading-order reconstruction actually
-    // work. Fall back to the text-layer extractor (no coordinates) only when
-    // the native pdfium library is unavailable or the PDF cannot be opened.
+    // The pdfium geometry pipeline is authoritative. The text-layer parser is
+    // retained solely as a degraded compatibility path when geometry cannot
+    // be produced; callers can distinguish that path from parser provenance.
     match crate::pdf_geometry::parse_pdf_with_pdfium(job, source, upload_path, output_path, mode) {
         Ok(ir) => return Ok(ir),
-        Err(failure) if failure.starts_with("pdfium_library_unavailable") => {
-            // Library missing: fall through silently to the text-layer path.
-        }
-        Err(failure) if failure.starts_with("pdfium_bind") => {
-            // Library binding failed: fall through silently to the text-layer path.
-        }
-        Err(other) => {
-            // pdfium was loadable but the specific PDF failed. Record a
-            // warning and fall back, so a single corrupt PDF doesn't block
-            // the whole pipeline.
+        Err(geometry_failure) => {
             let mut fallback =
                 parse_pdf_with_text_layer(job, source, upload_path, output_path, mode)?;
             if let Some(parser) = fallback.get_mut("parser").and_then(Value::as_object_mut) {
@@ -515,15 +505,15 @@ fn parse_pdf_with_rust_text_extractor(
                     .or_insert_with(|| json!([]));
                 if let Some(items) = warnings.as_array_mut() {
                     items.push(json!(format!(
-                        "pdfium_backend_fell_back_to_text_layer:{}",
-                        other
+                        "GEOMETRY_PIPELINE_UNAVAILABLE: legacy text-layer fallback used; structure requires review: {}",
+                        geometry_failure
                     )));
                 }
             }
+            write_json(output_path, &fallback)?;
             return Ok(fallback);
         }
     }
-    parse_pdf_with_text_layer(job, source, upload_path, output_path, mode)
 }
 
 /// Text-layer-only PDF parser (no real coordinates). Retained as the fallback
@@ -604,6 +594,9 @@ fn parse_pdf_with_text_layer(
             "provider": "rust-parser:pdf:pdf-extract",
             "version": "0.1.0",
             "mode": mode,
+            "recognitionPipeline": "legacy_text_layer_fallback",
+            "geometryAuthoritative": false,
+            "degradedFallback": true,
             "warnings": warnings,
             "sourceFileId": source.file_id,
             "sourceStoredName": source.stored_name
@@ -2480,7 +2473,7 @@ pub(crate) fn parse_source_document(
                         append_parser_warning(
                             &mut ir,
                             format!(
-                                "rust pdf-extract failed; used Python parser fallback: {}",
+                                "geometry-first PDF pipeline failed; used legacy Python text fallback: {}",
                                 error
                             ),
                         );

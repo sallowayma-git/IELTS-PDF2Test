@@ -158,7 +158,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
           );
         }
         setBusyStage("processing");
-        setBatchProgress(`正在生成 ${index + 1}/${sourceFiles.length}：${sourceFile.name}。当前先执行本地粗切，云复核稍后自动转后台。`);
+        setBatchProgress(`正在生成 ${index + 1}/${sourceFiles.length}：${sourceFile.name}。当前执行本地几何与结构识别，云复核稍后自动转后台。`);
         const report = await runAutoPipeline(job.jobId, { confidenceThreshold: 0.85, parseMode, executionMode: "localOnly", target: "editableDraft" });
         latestReport = report;
         const cloudReviewProfileId = backgroundCloudReviewProfileId(sourceFile, report);
@@ -187,8 +187,8 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
             await getAuthoringV2(firstJobId);
             destination = "authoring-v2";
           } catch {
-            // Keep the legacy preview as a safe fallback when the controlled
-            // V2 shadow rollout is not enabled for this packaged runtime.
+            // Existing jobs without a structured artifact remain readable in
+            // the legacy preview; all new successful imports create V2.
           }
         }
         go(`/jobs/${firstJobId}/${destination}`);

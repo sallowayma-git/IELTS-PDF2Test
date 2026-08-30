@@ -208,7 +208,9 @@ for (const token of ["normalizeReadingSource", "buildReadingRuntimeInteractionMo
   assert(runtimeService.includes(token), `Phase 6 runtime service is missing ${token}`);
 }
 const flags = readFileSync(join(repoRoot, "src/config/featureFlags.ts"), "utf8");
-assert(flags.includes("runtimeSourceV2: false") && flags.includes("nasPackageV2: false"), "Phase 6 rollout flags must remain disabled by default");
+assert(flags.includes("runtimeSourceV2: true") && flags.includes("nasPackageV2: true"), "Reading runtime and NAS V2 must be enabled by default");
+const structuredEditor = readFileSync(join(repoRoot, "src/pages/StructuredAuthoringEditorV2.tsx"), "utf8");
+assert(structuredEditor.includes("const NAS_PACKAGE_V2_ENABLED = true"), "The V2 NAS path must be the direct product path");
 const tauriLib = readFileSync(join(repoRoot, "src-tauri/src/lib.rs"), "utf8");
 assert(tauriLib.includes("async fn publish_nas_package_v2") && tauriLib.includes("publish_nas_package_v2,"), "Phase 6 Tauri NAS V2 command is not wired into generate_handler");
 const tauriApi = readFileSync(join(repoRoot, "src/api/tauriCommands.ts"), "utf8");

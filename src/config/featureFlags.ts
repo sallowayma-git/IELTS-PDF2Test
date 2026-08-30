@@ -8,10 +8,10 @@ export interface Phase0FeatureFlags {
 }
 
 export const DEFAULT_PHASE0_FEATURE_FLAGS: Readonly<Phase0FeatureFlags> = Object.freeze({
-  documentIrV2: false,
-  authoringV2: false,
-  runtimeSourceV2: false,
-  nasPackageV2: false,
+  documentIrV2: true,
+  authoringV2: true,
+  runtimeSourceV2: true,
+  nasPackageV2: true,
   listeningV1: false,
   pdfPerQuestionLlmRepair: false
 });
@@ -37,9 +37,9 @@ export interface Phase1FeatureFlags extends Phase0FeatureFlags {
 
 export const DEFAULT_PHASE1_FEATURE_FLAGS: Readonly<Phase1FeatureFlags> = Object.freeze({
   ...DEFAULT_PHASE0_FEATURE_FLAGS,
-  documentIrV2Shadow: false,
-  authoringV2Shadow: false,
-  qualityGateV2: false
+  documentIrV2Shadow: true,
+  authoringV2Shadow: true,
+  qualityGateV2: true
 });
 
 export type Phase1FeatureFlagName = keyof Phase1FeatureFlags;
@@ -61,7 +61,7 @@ export interface Phase5FeatureFlags extends Phase1FeatureFlags {
 
 export const DEFAULT_PHASE5_FEATURE_FLAGS: Readonly<Phase5FeatureFlags> = Object.freeze({
   ...DEFAULT_PHASE1_FEATURE_FLAGS,
-  authoringEditorV2: false
+  authoringEditorV2: true
 });
 
 export type Phase5FeatureFlagName = keyof Phase5FeatureFlags;
@@ -77,8 +77,5 @@ export function resolvePhase5FeatureFlags(
 }
 
 export function isPhase5EditorEnabled(): boolean {
-  const explicitBuildOptIn = import.meta.env.VITE_IELTS_AUTHORING_EDITOR_V2 === "1";
-  const explicitLocalOptIn = typeof window !== "undefined"
-    && window.localStorage.getItem("ielts-author-studio.feature.authoringEditorV2") === "1";
-  return explicitBuildOptIn || explicitLocalOptIn;
+  return true;
 }

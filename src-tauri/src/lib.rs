@@ -9967,6 +9967,10 @@ Answers
 
         let saved_doc: Value =
             read_json(&job_dir(&root, &job.job_id).join("document-ir.json")).unwrap();
+        let physical: Value =
+            read_json(&job_dir(&root, &job.job_id).join("document-ir-v2.shadow.json")).unwrap();
+        assert_eq!(physical["schemaVersion"], "DocumentIRV2");
+        assert_eq!(physical["jobId"], job.job_id);
         assert_eq!(
             saved_doc
                 .pointer("/parser/provider")

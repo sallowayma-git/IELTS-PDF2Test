@@ -292,7 +292,11 @@ fn find_first_question_item(text: &str, start: usize, expected_numbers: &[u32]) 
                 }
             }
         }
-        offset = end.saturating_add(1);
+        offset = text[end..]
+            .chars()
+            .next()
+            .map(|ch| end + ch.len_utf8())
+            .unwrap_or(text.len());
     }
     None
 }
@@ -409,6 +413,13 @@ mod tests {
         let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3]);
         assert!(zone.text.contains("TRUE FALSE NOT GIVEN"));
         assert!(!zone.text.contains("First statement"));
+    }
+
+    #[test]
+    fn instruction_scan_advances_across_multibyte_punctuation() {
+        let text = "Questions 1-3 Complete the notes … example 2005 … 1. First answer";
+        let index = find_first_question_item(text, "Questions 1-3".len(), &[1, 2, 3]);
+        assert_eq!(index, text.find("1. First answer"));
     }
 
     #[test]

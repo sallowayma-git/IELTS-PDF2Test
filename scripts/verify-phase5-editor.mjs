@@ -24,9 +24,9 @@ for (const file of requiredFiles) {
 }
 
 const flags = readFileSync("src/config/featureFlags.ts", "utf8");
-if (!flags.includes("authoringEditorV2: false")) throw new Error("authoringEditorV2 must remain disabled by default");
+if (!flags.includes("authoringEditorV2: true")) throw new Error("authoringEditorV2 must be the default authoring surface");
 if (!flags.includes("pdfPerQuestionLlmRepair: false")) throw new Error("PDF per-question LLM repair safety flag is missing");
-if (flags.includes("import.meta.env.DEV) return true")) throw new Error("Phase 5 editor must require an explicit rollout opt-in");
+if (!flags.includes("return true")) throw new Error("Phase 5 editor must always use the structured authoring surface");
 
 const editor = readFileSync("src/pages/StructuredAuthoringEditorV2.tsx", "utf8");
 for (const token of [
@@ -56,7 +56,7 @@ for (const token of [
   "scoringPolicy",
   "duplicatePolicy",
   "allowOptionReuse",
-  "VITE_IELTS_NAS_PACKAGE_V2"
+  "NAS_PACKAGE_V2_ENABLED = true"
 ]) {
   if (!editor.includes(token)) throw new Error("Phase 5 editor is missing " + token);
 }
@@ -71,7 +71,7 @@ if (!exportPage.includes("!NAS_PACKAGE_V2_ENABLED") || !exportPage.includes('dat
   throw new Error("V2 export must hide the unsupported force-publish action while preserving V1 force export");
 }
 const importWizard = readFileSync("src/pages/ImportWizard.tsx", "utf8");
-for (const token of ["getAuthoringV2", 'destination = "authoring-v2"', "legacy preview as a safe fallback"]) {
+for (const token of ["getAuthoringV2", 'destination = "authoring-v2"', "Existing jobs without a structured artifact remain readable"]) {
   if (!importWizard.includes(token)) throw new Error("Phase 5 import-to-editor routing is missing " + token);
 }
 
@@ -100,8 +100,8 @@ for (const token of ["AUTHORING_PATCH_ANSWER_SLOT_LOSS", "phase5-export.lock", "
 }
 
 const environment = readFileSync("src-tauri/src/environment.rs", "utf8");
-if (!environment.includes('env_flag_enabled("EPIC8_AUTHORING_V2_SHADOW", false)')) {
-  throw new Error("Phase 5 production shadow rollout flag is missing");
+if (!environment.includes("pub(crate) fn authoring_v2_shadow_enabled() -> bool {\n    true")) {
+  throw new Error("Structured authoring must always be enabled");
 }
 const fallback = readFileSync("src/services/devFallbackBackend.ts", "utf8");
 for (const token of ["staleDerivedQualityCodes", "RUNTIME_COMPILER_FAILED", "blockingIssues"]) {

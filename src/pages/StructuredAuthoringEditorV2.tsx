@@ -23,7 +23,7 @@ import type {
 } from "../types";
 
 const RECOVERY_KEY_PREFIX = "ielts-author-studio.phase5-recovery.";
-const NAS_PACKAGE_V2_ENABLED = import.meta.env.VITE_IELTS_NAS_PACKAGE_V2 === "1";
+const NAS_PACKAGE_V2_ENABLED = true;
 const TASK_TYPES: TaskTypeV2[] = [
   "multiple_choice",
   "single_choice",

@@ -11,7 +11,7 @@ type ExportMode = "nas-library" | "writing-library";
 const EXPORTABLE_STATUSES = new Set(["Working", "NeedsReview", "DraftSaved", "ExportReady", "Exported", "Cleaned"]);
 const DEFAULT_NAS_STATUSES = new Set(["DraftSaved", "ExportReady", "Exported", "Cleaned"]);
 const NAS_EXPORT_DIR_KEY = "ielts-author-studio.confirmed-nas-export-dir.v1";
-const NAS_PACKAGE_V2_ENABLED = import.meta.env.VITE_IELTS_NAS_PACKAGE_V2 === "1";
+const NAS_PACKAGE_V2_ENABLED = true;
 
 function isLocalPlaceholder(path: string): boolean {
   return path.trim().toLowerCase().startsWith("local://");

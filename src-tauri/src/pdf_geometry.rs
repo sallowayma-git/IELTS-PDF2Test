@@ -322,6 +322,9 @@ pub(crate) fn parse_pdf_with_pdfium(
             "provider": "rust-parser:pdf:pdfium",
             "version": "0.1.0",
             "mode": mode,
+            "recognitionPipeline": "geometry_structure_v2",
+            "geometryAuthoritative": true,
+            "degradedFallback": false,
             "warnings": warnings,
             "sourceFileId": source.file_id,
             "sourceStoredName": source.stored_name

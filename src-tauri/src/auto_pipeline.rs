@@ -25,7 +25,10 @@ use crate::{
         extract_pdf_images_for_vision, image_count_from_extraction, missing_source_document_ir,
         parse_source_document, vision_transcription_document_ir,
     },
-    pdf_facts_shadow::SHADOW_ARTIFACT_FILE as DOCUMENT_V2_SHADOW_ARTIFACT_FILE,
+    pdf_facts_shadow::{
+        write_pdf_facts_shadow_with_v1, SHADOW_ARTIFACT_FILE as DOCUMENT_V2_SHADOW_ARTIFACT_FILE,
+        SHADOW_ERROR_FILE as DOCUMENT_V2_SHADOW_ERROR_FILE,
+    },
     reading_source::{
         answer_key_from_authoring, display_map_from_authoring, question_order_from_authoring,
     },
@@ -1229,6 +1232,46 @@ where
             item.current_step = WorkflowStep::DocumentReview;
             item.issue_counts.needs_review = source_review_issues(&review).len() as u32;
         })?;
+    }
+
+    // Auto import is the main product path. Materialize the physical V2
+    // structure here as well as in the manual parse command so authoring,
+    // source overlays and quality evaluation receive the same glyph/line/
+    // region evidence.
+    if current_physical_shadow(&dir, &job).is_none() {
+        if let (Some(source), Some(document)) = (
+            main_source_file(&job).filter(|source| source.file_type == "pdf"),
+            read_json_opt(&dir.join("document-ir.json"))?,
+        ) {
+            let upload_path = dir.join("uploads").join(&source.stored_name);
+            if upload_path.exists() {
+                let shadow_path = dir.join(DOCUMENT_V2_SHADOW_ARTIFACT_FILE);
+                let error_path = dir.join(DOCUMENT_V2_SHADOW_ERROR_FILE);
+                match write_pdf_facts_shadow_with_v1(
+                    &job,
+                    source,
+                    &upload_path,
+                    &shadow_path,
+                    Some(&document),
+                ) {
+                    Ok(_) => {
+                        let _ = fs::remove_file(error_path);
+                    }
+                    Err(error) => {
+                        write_json(
+                            &error_path,
+                            &json!({
+                                "schemaVersion": "DocumentIRV2StructureErrorV1",
+                                "jobId": job.job_id,
+                                "sourceFileId": source.file_id,
+                                "error": error,
+                                "recordedAt": Utc::now().to_rfc3339()
+                            }),
+                        )?;
+                    }
+                }
+            }
+        }
     }
 
     let profile_id = cloud_diagnostics_opted_in
