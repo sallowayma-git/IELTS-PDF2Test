@@ -199,6 +199,27 @@ assertRuntimeErrorCode(
   "RUNTIME_ANSWER_REQUIRED"
 );
 
+const matchingReuseRuntime = structuredClone(runtime);
+const matchingReuseTask = matchingReuseRuntime.taskGroups[0];
+matchingReuseTask.optionBank.allowReuse = true;
+matchingReuseTask.responseGroups[0] = {
+  ...matchingReuseTask.responseGroups[0],
+  kind: "matching",
+  assignment: "per_slot",
+  cardinality: { min: 2, max: 2, exact: 2 },
+  allowOptionReuse: true
+};
+for (const slotId of matchingReuseTask.responseGroups[0].slotIds) matchingReuseRuntime.answerSlots[slotId].interaction = "select";
+const matchingReuseAttempt = {
+  ...runtimeApi.createReadingAttempt(matchingReuseRuntime),
+  answers: {
+    q14: { kind: "option", labels: ["A"], assignment: "per_slot" },
+    q15: { kind: "option", labels: ["A"], assignment: "per_slot" }
+  }
+};
+const submittedMatchingReuseAttempt = runtimeApi.submitReadingAttempt(matchingReuseRuntime, matchingReuseAttempt);
+assert(submittedMatchingReuseAttempt.state === "submitted", "Matching response groups with allowOptionReuse must accept repeated option labels.");
+
 const runtimeTypes = readFileSync(join(repoRoot, "src/types/reading-runtime-v2.ts"), "utf8");
 for (const token of ["ReadingExamSourceV2", "ReadingAttemptV2", "ReadingInteractionModelV2", "ExamAssetManifestV2", "slotId"]) {
   assert(runtimeTypes.includes(token), `Phase 6 runtime type contract is missing ${token}`);

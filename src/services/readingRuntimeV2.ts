@@ -317,7 +317,7 @@ export function validateReadingAttempt(
     const selectedLabels = group.slotIds.flatMap((slotId) => answerLabels(attempt.answers[slotId]));
     const selected = group.assignment === "per_slot" ? answeredSlotIds.length : selectedLabels.length;
     const exact = group.cardinality.exact;
-    if (group.duplicatePolicy === "reject_submission" && new Set(selectedLabels).size !== selectedLabels.length) {
+    if (group.duplicatePolicy === "reject_submission" && !group.allowOptionReuse && new Set(selectedLabels).size !== selectedLabels.length) {
       issues.push(issue("RUNTIME_DUPLICATE_SELECTION", group.responseGroupId, "This response group rejects duplicate option selections."));
     }
     if (exact !== undefined && selected > exact) issues.push(issue("RUNTIME_CARDINALITY_EXCEEDED", group.responseGroupId, `Response group accepts exactly ${exact} selections.`));

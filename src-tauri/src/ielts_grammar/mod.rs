@@ -36,8 +36,9 @@ use std::path::Path;
 use anchors::{detect_question_anchors, QuestionAnchor};
 use answer_key::{answer_key_from_v1, answer_value_for_slot};
 use completion::{
-    answer_slot_node, completion_context_nodes_with_slots, completion_host_type,
-    completion_placeholder, recover_completion_structure, CompletionStructureCandidate,
+    answer_slot_node, completion_context_nodes_with_slots, completion_flowchart_node,
+    completion_host_type, completion_placeholder, completion_table_node,
+    recover_completion_structure, CompletionStructureCandidate,
 };
 use diagram::diagram_candidate;
 use evidence::{anchor_from_value, source_anchor_from_job};
@@ -46,7 +47,7 @@ use instruction_zone::{
     collect_instruction_zone, normalize_instruction_text, semantic_lines_from_v1_document,
     semantic_lines_from_v2_shadow, SemanticLine,
 };
-use option_bank::{detect_option_bank, option_bank_value};
+use option_bank::{detect_completion_option_bank, detect_option_bank, option_bank_value};
 use option_run::{detect_option_runs, option_run_value, run_matches_alphabet, OptionRun};
 use prompt_assembler::assemble_prompt;
 use question_number::{expand_expression, parse_question_expression};
@@ -216,7 +217,17 @@ pub(crate) fn build_authoring_v2_shadow(
                     | TaskTypeV2::MatchingSentenceEndings
                     | TaskTypeV2::Classification
             ),
-        );
+        )
+        .or_else(|| {
+            is_completion_task(&task_type).then(|| {
+                detect_completion_option_bank(
+                    &group_lines,
+                    &zone_text,
+                    signature_result.signature.allow_option_reuse,
+                    expected_numbers.len(),
+                )
+            })?
+        });
         let task_source_anchors = group_source_anchors(
             &zone.source_anchors,
             &question_anchors,
@@ -244,6 +255,21 @@ pub(crate) fn build_authoring_v2_shadow(
             .as_ref()
             .and_then(|bank| bank.get("optionBankId"))
             .and_then(Value::as_str);
+        // Keep the response-level reuse contract in lockstep with the
+        // resolved bank.  Completion banks can infer reuse from cardinality
+        // (more slots than choices), even when the instruction omitted an
+        // explicit reuse sentence; leaving this at the signature default
+        // would make the runtime reject a valid repeated selection.
+        let option_bank_allow_reuse = option_bank_value
+            .as_ref()
+            .and_then(|bank| bank.get("allowReuse"))
+            .and_then(Value::as_bool)
+            .unwrap_or_else(|| {
+                signature_result
+                    .signature
+                    .allow_option_reuse
+                    .unwrap_or(false)
+            });
         let completion_structure = is_completion_task(&task_type).then(|| {
             recover_completion_structure(
                 &task_type,
@@ -265,6 +291,7 @@ pub(crate) fn build_authoring_v2_shadow(
             candidate,
             v1_group,
             option_bank_ref,
+            option_bank_allow_reuse,
             &option_runs,
             &answer_key_v1,
             &task_source_anchors,
@@ -807,6 +834,7 @@ fn build_responses_and_slots(
     candidate: &Value,
     v1_group: Option<&Value>,
     option_bank_ref: Option<&str>,
+    option_bank_allow_reuse: bool,
     option_runs: &[OptionRun],
     answer_key: &Map<String, Value>,
     task_anchors: &[Value],
@@ -864,6 +892,7 @@ fn build_responses_and_slots(
                 &format!("{task_id}-shared-prompt"),
                 anchor,
                 signature,
+                option_bank_ref.is_some(),
             );
             if let Some(value) = answer_value_for_slot(answer_key, &slot_id, *number).as_object() {
                 used_answers.insert(slot_id.clone(), Value::Object(value.clone()));
@@ -881,6 +910,7 @@ fn build_responses_and_slots(
                 Some(shared_option_values)
             },
             option_bank_ref,
+            option_bank_allow_reuse,
             signature,
             task_type,
             task_anchors,
@@ -960,6 +990,17 @@ fn build_responses_and_slots(
             .as_ref()
             .map(|(_, anchors)| anchors.clone())
             .unwrap_or_else(|| prompt_result.source_anchors.clone());
+        // Table/flowchart completion is rendered from the recovered source
+        // structure as a whole.  Even when one or more physical rows are
+        // missing, do not synthesize a detached `qN` prompt from the question
+        // number; that loses the table/flow geometry and makes a blocked task
+        // look like a usable generic form.  The quality gate will keep the
+        // incomplete structural task blocked until the source row is repaired.
+        let suppress_structural_completion_prompt = structured_completion_slots
+            || matches!(
+                task_type,
+                TaskTypeV2::TableCompletion | TaskTypeV2::FlowchartCompletion
+            );
         let embed_completion_slot_in_prompt = is_completion_task(task_type)
             && !structured_completion_slots
             && !matches!(
@@ -996,7 +1037,7 @@ fn build_responses_and_slots(
                 completion_placeholder(task_type),
             ));
         }
-        let prompt = if structured_completion_slots && is_completion_task(task_type) {
+        let prompt = if suppress_structural_completion_prompt && is_completion_task(task_type) {
             Vec::new()
         } else {
             vec![paragraph_node(
@@ -1010,11 +1051,19 @@ fn build_responses_and_slots(
                 children,
             )]
         };
-        let slot = slot_value(&slot_id, *number, task_type, &host_id, anchor, signature);
+        let slot = slot_value(
+            &slot_id,
+            *number,
+            task_type,
+            &host_id,
+            anchor,
+            signature,
+            option_bank_ref.is_some(),
+        );
         let answer = answer_value_for_slot(answer_key, &slot_id, *number);
         used_answers.insert(slot_id.clone(), answer);
         slots.insert(slot_id.clone(), slot);
-        let group_kind = response_kind(task_type);
+        let group_kind = response_kind(task_type, option_bank_ref.is_some());
         if aggregate_per_slot {
             aggregate_prompt.extend(prompt);
             aggregate_slot_ids.push(slot_id);
@@ -1036,6 +1085,7 @@ fn build_responses_and_slots(
                     Some(option_values)
                 },
                 option_bank_ref.clone(),
+                option_bank_allow_reuse,
                 signature,
                 task_type,
                 task_anchors,
@@ -1045,7 +1095,7 @@ fn build_responses_and_slots(
     if aggregate_per_slot && !aggregate_slot_ids.is_empty() {
         responses.push(response_value(
             &format!("{task_id}-responses"),
-            response_kind(task_type),
+            response_kind(task_type, option_bank_ref.is_some()),
             aggregate_prompt,
             aggregate_slot_ids,
             if option_bank_ref.is_some() {
@@ -1054,6 +1104,7 @@ fn build_responses_and_slots(
                 aggregate_options
             },
             option_bank_ref,
+            option_bank_allow_reuse,
             signature,
             task_type,
             task_anchors,
@@ -1069,6 +1120,7 @@ fn response_value(
     slot_ids: Vec<String>,
     options: Option<Vec<Value>>,
     option_bank_ref: Option<String>,
+    option_bank_allow_reuse: bool,
     signature: &crate::schema::ielts_authoring_v2::InstructionSignatureV2,
     task_type: &TaskTypeV2,
     anchors: &[Value],
@@ -1101,7 +1153,11 @@ fn response_value(
         "assignment": assignment,
         "scoringPolicy": if assignment == "unordered_set" || is_completion_task(task_type) { "per_slot_ielts_normalized" } else { "per_slot_binary" },
         "duplicatePolicy": "reject_submission",
-        "allowOptionReuse": signature.allow_option_reuse.unwrap_or(false),
+        "allowOptionReuse": if option_bank_ref.is_some() {
+            option_bank_allow_reuse
+        } else {
+            signature.allow_option_reuse.unwrap_or(false)
+        },
         "sourceAnchors": anchors
     });
     let object = response
@@ -1123,22 +1179,27 @@ fn slot_value(
     host_node_id: &str,
     source_anchor: Value,
     signature: &crate::schema::ielts_authoring_v2::InstructionSignatureV2,
+    option_bank_bound: bool,
 ) -> Value {
-    let interaction = match task_type {
-        TaskTypeV2::SingleChoice | TaskTypeV2::TrueFalseNotGiven | TaskTypeV2::YesNoNotGiven => {
-            "radio"
+    let interaction = if option_bank_bound && completion_bank_uses_select(task_type) {
+        "select"
+    } else {
+        match task_type {
+            TaskTypeV2::SingleChoice
+            | TaskTypeV2::TrueFalseNotGiven
+            | TaskTypeV2::YesNoNotGiven => "radio",
+            TaskTypeV2::MultipleChoice => "checkbox",
+            TaskTypeV2::MatchingHeadings
+            | TaskTypeV2::MatchingInformation
+            | TaskTypeV2::MatchingFeatures
+            | TaskTypeV2::MatchingSentenceEndings
+            | TaskTypeV2::Classification => "select",
+            TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => "hotspot",
+            _ if is_completion_task(task_type) || matches!(task_type, TaskTypeV2::ShortAnswer) => {
+                "text"
+            }
+            _ => "text",
         }
-        TaskTypeV2::MultipleChoice => "checkbox",
-        TaskTypeV2::MatchingHeadings
-        | TaskTypeV2::MatchingInformation
-        | TaskTypeV2::MatchingFeatures
-        | TaskTypeV2::MatchingSentenceEndings
-        | TaskTypeV2::Classification => "select",
-        TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion => "hotspot",
-        _ if is_completion_task(task_type) || matches!(task_type, TaskTypeV2::ShortAnswer) => {
-            "text"
-        }
-        _ => "text",
     };
     let host_type = completion_host_type(task_type);
     let mut slot = json!({
@@ -1478,24 +1539,34 @@ fn build_stimulus(
         completion_placeholder(task_type),
     );
     if matches!(task_type, TaskTypeV2::TableCompletion) {
-        if !structure.closes_slots(expected_numbers) {
-            return (!nodes.is_empty()).then_some(nodes);
+        if structure.closes_slots(expected_numbers) {
+            if let Some(table) = completion_table_node(
+                task_id,
+                structure,
+                expected_numbers,
+                completion_placeholder(task_type),
+            ) {
+                return Some(vec![table]);
+            }
         }
-        return Some(vec![table_completion_node(
-            task_id,
-            lines,
-            expected_numbers,
-        )]);
+        // A table is only promoted when the physical source exposes answer
+        // markers.  Keep the source-backed rows for manual repair otherwise;
+        // the structured quality gate will block the task instead of showing
+        // a fabricated table with guessed prompts.
+        return (!nodes.is_empty()).then_some(nodes);
     }
     if matches!(task_type, TaskTypeV2::FlowchartCompletion) {
-        if !structure.closes_slots(expected_numbers) {
-            return (!nodes.is_empty()).then_some(nodes);
+        if structure.closes_slots(expected_numbers) {
+            if let Some(flowchart) = completion_flowchart_node(
+                task_id,
+                structure,
+                expected_numbers,
+                completion_placeholder(task_type),
+            ) {
+                return Some(vec![flowchart]);
+            }
         }
-        return Some(vec![flowchart_completion_node(
-            task_id,
-            lines,
-            expected_numbers,
-        )]);
+        return (!nodes.is_empty()).then_some(nodes);
     }
     let diagram_asset_id = assets.iter().find_map(|asset| {
         asset
@@ -1635,104 +1706,6 @@ fn node_contains_inline_slot(node: &Value, slot_id: &str) -> bool {
         .filter_map(|key| node.get(*key).and_then(Value::as_array))
         .flatten()
         .any(|child| node_contains_inline_slot(child, slot_id))
-}
-
-fn table_completion_node(task_id: &str, lines: &[SemanticLine], numbers: &[u32]) -> Value {
-    let rows = numbers
-        .iter()
-        .map(|number| {
-            let slot_id = format!("q{number}");
-            let anchor = source_anchor_for_number(lines, *number);
-            let cell_id = format!("{task_id}-table-cell-{slot_id}");
-            json!({
-                "type": "table_row",
-                "id": format!("{task_id}-table-row-{slot_id}"),
-                "sourceAnchors": [anchor.clone()],
-                "provenanceStatus": "derived",
-                "cells": [{
-                    "type": "table_cell",
-                    "id": cell_id,
-                    "sourceAnchors": [anchor.clone()],
-                    "provenanceStatus": "derived",
-                    "rowSpan": 1,
-                    "colSpan": 1,
-                    "headerScope": "none",
-                    "children": [paragraph_node(
-                        &format!("{task_id}-table-prompt-{slot_id}"),
-                        &prompt_for_number(lines, *number),
-                        vec![anchor.clone()],
-                        vec![answer_slot_node(
-                            &slot_id,
-                            &number.to_string(),
-                            anchor,
-                            completion_placeholder(&TaskTypeV2::TableCompletion),
-                        )],
-                    )]
-                }]
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({
-        "type": "table",
-        "id": format!("{task_id}-table"),
-        "sourceAnchors": lines.iter().map(|line| line.source_anchor.clone()).collect::<Vec<_>>(),
-        "provenanceStatus": "derived",
-        "rows": rows
-    })
-}
-
-fn flowchart_completion_node(task_id: &str, lines: &[SemanticLine], numbers: &[u32]) -> Value {
-    let steps = numbers
-        .iter()
-        .map(|number| {
-            let slot_id = format!("q{number}");
-            let anchor = source_anchor_for_number(lines, *number);
-            json!({
-                "type": "flow_step",
-                "id": format!("{task_id}-flow-step-{slot_id}"),
-                "sourceAnchors": [anchor.clone()],
-                "provenanceStatus": "derived",
-                "label": number.to_string(),
-                "children": [paragraph_node(
-                    &format!("{task_id}-flow-prompt-{slot_id}"),
-                    &prompt_for_number(lines, *number),
-                    vec![anchor.clone()],
-                    vec![answer_slot_node(
-                        &slot_id,
-                        &number.to_string(),
-                        anchor,
-                        completion_placeholder(&TaskTypeV2::FlowchartCompletion),
-                    )],
-                )],
-                "slotIds": [slot_id]
-            })
-        })
-        .collect::<Vec<_>>();
-    json!({
-        "type": "flowchart",
-        "id": format!("{task_id}-flowchart"),
-        "sourceAnchors": lines.iter().map(|line| line.source_anchor.clone()).collect::<Vec<_>>(),
-        "provenanceStatus": "derived",
-        "steps": steps
-    })
-}
-
-fn source_anchor_for_number(lines: &[SemanticLine], number: u32) -> Value {
-    lines
-        .iter()
-        .find(|line| line.text.trim_start().starts_with(&number.to_string()))
-        .or_else(|| lines.first())
-        .map(|line| line.source_anchor.clone())
-        .unwrap_or_else(empty_anchor)
-}
-
-fn prompt_for_number(lines: &[SemanticLine], number: u32) -> String {
-    lines
-        .iter()
-        .find(|line| line.text.trim_start().starts_with(&number.to_string()))
-        .map(|line| normalize_instruction_text(&line.text))
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| format!("Answer {number}"))
 }
 
 fn paragraph_node(id: &str, text: &str, source_anchors: Vec<Value>, children: Vec<Value>) -> Value {
@@ -2005,7 +1978,10 @@ fn expression_from_candidate(candidate: &Value) -> Option<QuestionNumberExpressi
     }
 }
 
-fn response_kind(task_type: &TaskTypeV2) -> &'static str {
+fn response_kind(task_type: &TaskTypeV2, option_bank_bound: bool) -> &'static str {
+    if option_bank_bound && completion_bank_uses_select(task_type) {
+        return "matching";
+    }
     match task_type {
         TaskTypeV2::SingleChoice
         | TaskTypeV2::MultipleChoice
@@ -2021,6 +1997,17 @@ fn response_kind(task_type: &TaskTypeV2) -> &'static str {
         }
         _ => "text_entry",
     }
+}
+
+/// A word/phrase bank turns textual completion into a selectable matching
+/// response. Diagram/plan/map tasks are different: their answer slot remains
+/// a figure hotspot even when the labels are supplied from a shared bank.
+fn completion_bank_uses_select(task_type: &TaskTypeV2) -> bool {
+    is_completion_task(task_type)
+        && !matches!(
+            task_type,
+            TaskTypeV2::DiagramLabelCompletion | TaskTypeV2::PlanMapLabelCompletion
+        )
 }
 
 fn assignment_label(value: &crate::schema::ielts_authoring_v2::AssignmentV2) -> &'static str {
@@ -2559,6 +2546,10 @@ mod tests {
             group.pointer("/responseGroups/0/optionBankRef"),
             Some(&json!("group-1-option-bank"))
         );
+        assert_eq!(
+            group.pointer("/responseGroups/0/allowOptionReuse"),
+            Some(&json!(true))
+        );
         assert!(group.pointer("/responseGroups/0/options").is_none());
     }
 
@@ -2606,6 +2597,142 @@ mod tests {
         assert_eq!(response["slotIds"], json!(["q24", "q25", "q26"]));
         assert!(response.get("options").is_none());
         assert!(response.get("optionBankRef").is_none());
+        assert_eq!(response["prompt"], json!([]));
+        assert_eq!(response["kind"], json!("text_entry"));
+        assert_eq!(value["answerSlots"]["q24"]["interaction"], json!("text"));
+        let stimulus = value["taskGroups"][0]["stimulus"].as_array().unwrap();
+        let stimulus_slot_ids = stimulus
+            .iter()
+            .flat_map(|node| node.get("children").and_then(Value::as_array))
+            .flatten()
+            .filter(|node| node.get("type") == Some(&json!("answer_slot")))
+            .filter_map(|node| node.get("slotId").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(stimulus_slot_ids, vec!["q24", "q25", "q26"]);
+    }
+
+    #[test]
+    fn completion_word_bank_is_bound_to_response_and_removed_from_stimulus() {
+        let v1 = json!({
+            "schemaVersion":"ReadingAuthoringIRV1",
+            "groups":[{"groupId":"group-1","questionRange":[36,37],"questions":[
+                {"id":"q36","displayNumber":"36","prompt":"One method would ______ asteroids at the planet.","interaction":{"options":["A","B","C","D","E","F","G","H","I"]}},
+                {"id":"q37","displayNumber":"37","prompt":"The rockets would take years to ______ the distance.","interaction":{"options":["A","B","C","D","E","F","G","H","I"]}}
+            ]}],
+            "answerKey":{"q36":"C","q37":"E"},
+            "passage":{"htmlBlocks":[]}
+        });
+        let split = json!({
+            "questionGroupCandidates":[{
+                "groupId":"group-1",
+                "heading":"Questions 36-37",
+                "instructionText":"Questions 36-37 Complete the summary using a word A-I from the box.",
+                "questionRange":[36,37],
+                "kindHint":"summary_completion",
+                "sectionEvidence":[
+                    {"blockId":"h","textPreview":"Questions 36-37","pageIndex":5},
+                    {"blockId":"instruction","textPreview":"Complete the summary using a word A-I from the box.","pageIndex":5},
+                    {"blockId":"q36","textPreview":"One method would 36 ______ asteroids at the planet.","pageIndex":5},
+                    {"blockId":"q37","textPreview":"The rockets would take years to 37 ______ the distance.","pageIndex":5},
+                    {"blockId":"bank-title","textPreview":"List of words","pageIndex":5},
+                    {"blockId":"bank-a","textPreview":"A cover","pageIndex":5},
+                    {"blockId":"bank-g","textPreview":"G power","pageIndex":5},
+                    {"blockId":"bank-d","textPreview":"D increase","pageIndex":5},
+                    {"blockId":"bank-b","textPreview":"B create","pageIndex":5},
+                    {"blockId":"bank-e","textPreview":"E land","pageIndex":5},
+                    {"blockId":"bank-h","textPreview":"H rise","pageIndex":5},
+                    {"blockId":"bank-c","textPreview":"C hit","pageIndex":5},
+                    {"blockId":"bank-f","textPreview":"F drive","pageIndex":5},
+                    {"blockId":"bank-i","textPreview":"I shoot","pageIndex":5}
+                ]
+            }],
+            "passageCandidates":[]
+        });
+        let value = build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap();
+        let group = &value["taskGroups"][0];
+        assert_eq!(
+            group["optionBank"]["options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|option| option.get("label").and_then(Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+        );
+        assert_eq!(
+            group.pointer("/responseGroups/0/optionBankRef"),
+            Some(&json!("group-1-option-bank"))
+        );
+        assert_eq!(group["responseGroups"][0]["kind"], json!("matching"));
+        assert_eq!(group["responseGroups"][0]["allowOptionReuse"], json!(false));
+        assert_eq!(value["answerSlots"]["q36"]["interaction"], json!("select"));
+        let stimulus_json = serde_json::to_string(&group["stimulus"]).unwrap();
+        assert!(!stimulus_json.contains("cover"));
+        assert!(!stimulus_json.contains("shoot"));
+    }
+
+    #[test]
+    fn resolved_completion_bank_reuse_reaches_response_contract() {
+        let expression = QuestionNumberExpressionV2::Range { start: 1, end: 4 };
+        let signature = infer_instruction_signature(
+            "Complete the notes using a word A-C from the box.",
+            &expression,
+            Some("note_completion"),
+            Vec::new(),
+        )
+        .signature;
+        let response = response_value(
+            "task-responses",
+            "matching",
+            Vec::new(),
+            vec!["q1".to_string(), "q2".to_string()],
+            None,
+            Some("task-option-bank".to_string()),
+            true,
+            &signature,
+            &TaskTypeV2::NoteCompletion,
+            &[],
+        );
+        assert_eq!(response["allowOptionReuse"], json!(true));
+    }
+
+    #[test]
+    fn incomplete_table_does_not_fabricate_per_question_prompts() {
+        let v1 = json!({
+            "schemaVersion":"ReadingAuthoringIRV1",
+            "groups":[{"groupId":"group-1","questionRange":[1,2],"questions":[
+                {"id":"q1","displayNumber":"1","prompt":"First table row","interaction":{"options":[]}},
+                {"id":"q2","displayNumber":"2","prompt":"Second table row","interaction":{"options":[]}}
+            ]}],
+            "answerKey":{"q1":"alpha","q2":"beta"},
+            "passage":{"htmlBlocks":[]}
+        });
+        let split = json!({
+            "questionGroupCandidates":[{
+                "groupId":"group-1",
+                "heading":"Questions 1-2",
+                "instructionText":"Questions 1-2 Complete the table below. Write NO MORE THAN TWO WORDS for each answer.",
+                "questionRange":[1,2],
+                "kindHint":"table_completion",
+                "sectionEvidence":[
+                    {"blockId":"h","textPreview":"Questions 1-2","pageIndex":1},
+                    {"blockId":"instruction","textPreview":"Complete the table below. Write NO MORE THAN TWO WORDS for each answer.","pageIndex":1},
+                    {"blockId":"q1","textPreview":"1 First table row","pageIndex":1},
+                    {"blockId":"q2","textPreview":"2 Second table row","pageIndex":1}
+                ]
+            }],
+            "passageCandidates":[]
+        });
+        let value = build_authoring_v2_shadow(&job(), &v1, &split, None, None).unwrap();
+        let group = &value["taskGroups"][0];
+        assert_eq!(group["taskType"], json!("table_completion"));
+        assert!(!group
+            .get("stimulus")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|node| node.get("type").and_then(Value::as_str) == Some("table")));
+        assert_eq!(group["responseGroups"][0]["prompt"], json!([]));
     }
 
     #[test]

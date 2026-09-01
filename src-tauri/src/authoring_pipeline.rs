@@ -2153,6 +2153,48 @@ fn extend_dynamic_choice_option_blocks(groups: &mut [SplitGroupCandidateV1], blo
                     previous_index = continuation_index;
                     continuation_index += 1;
                 }
+            } else if let Some((previous_index, last_label)) =
+                (group_start..scan_end).rev().find_map(|index| {
+                    if !is_owned(index, &recovered_indices) {
+                        return None;
+                    }
+                    let text = dynamic_block_text(&blocks[index]);
+                    let (label, _) = dynamic_leading_option_label_and_text(&text)?;
+                    let first_label = label.chars().next().filter(|_| label.len() == 1)?;
+                    dynamic_inline_option_labels(&text, first_label)
+                        .last()
+                        .copied()
+                        .map(|last_label| (index, last_label))
+                })
+            {
+                // The terminal label can be embedded in the next physical
+                // block after the preceding option's wrapped tail (for
+                // example `... scientists` followed by `and psychologists
+                // ... D ...`).  Recover that block only when the expected
+                // label is declared and the boundary is sentence-terminated;
+                // this deliberately rejects ordinary prose such as
+                // `vitamin D deficiency`.
+                let expected_label = ((last_label as u8).saturating_add(1)) as char;
+                let candidate_index = previous_index + 1;
+                if expected_label <= terminal
+                    && candidate_index < scan_end
+                    && !is_owned(candidate_index, &recovered_indices)
+                    && (is_dynamic_same_row_option_continuation(
+                        &blocks[previous_index],
+                        &blocks[candidate_index],
+                    ) || is_dynamic_wrapped_option_continuation(
+                        &blocks[previous_index],
+                        &blocks[candidate_index],
+                    ))
+                    && dynamic_split_wrapped_option_tail(
+                        &dynamic_block_text(&blocks[candidate_index]),
+                        expected_label,
+                        terminal,
+                    )
+                    .is_some()
+                {
+                    recovered_indices.insert(candidate_index);
+                }
             }
         }
         for index in recovered_indices {
@@ -7681,6 +7723,15 @@ fn dynamic_group_option_bank_start_index(blocks: &[Value], kind: &str) -> Option
             dynamic_table_option_rows(block)
                 .iter()
                 .any(|(label, text)| label == &declared_labels[0] && !text.trim().is_empty())
+                || dynamic_leading_option_label_and_text(&dynamic_block_text(block)).is_some_and(
+                    |(label, text)| {
+                        // Heading banks are commonly emitted as ordinary
+                        // paragraph rows (`i ...`, `ii ...`) rather than a
+                        // table. The exact declared roman label keeps a
+                        // leading prose line such as `I believe ...` out.
+                        label == declared_labels[0] && !text.trim().is_empty()
+                    },
+                )
         } else {
             dynamic_table_option_rows(block)
                 .iter()
@@ -7807,6 +7858,16 @@ fn dynamic_source_option_block_matches_text(block: &Value, label: &str, target: 
     }
 
     let source = collapse_whitespace(&dynamic_block_text(block));
+    // Roman heading labels are multi-character tokens.  The generic marker
+    // scanner below works for A-D style labels, but searching only for the
+    // first `i` would reject `ii ...`/`iii ...` because the second `i` is not
+    // itself a valid boundary.  Prefer the already boundary-aware leading
+    // label parser for ordinary one-row heading blocks.
+    if let Some((row_label, row_text)) = dynamic_leading_option_label_and_text(&source) {
+        if row_label == label {
+            candidates.push(row_text);
+        }
+    }
     let Some(letter) = label.chars().next() else {
         return false;
     };
@@ -7838,6 +7899,46 @@ fn dynamic_source_option_block_matches_text(block: &Value, label: &str, target: 
                     || target.starts_with(&candidate)
                     || candidate.contains(&target)))
     })
+}
+
+/// Return the first physical boundary after a recovered shared option bank.
+///
+/// A group may be followed by passage prose (and the final question often has
+/// no following question number).  Scanning every block for an option's text
+/// therefore gives provenance to unrelated passage lines when they happen to
+/// share a two-word window with an option.  Keep the bank source lookup inside
+/// the smallest span that contains every recovered label instead.  The bank
+/// may cross a later question heading because PDF column order can interleave
+/// that heading with the last bank row; only label-aware matches contribute to
+/// the span.
+fn dynamic_source_option_bank_end_index(
+    blocks: &[Value],
+    bank_start: usize,
+    expected: &[(String, String)],
+) -> Option<usize> {
+    if expected.is_empty() || bank_start >= blocks.len() {
+        return None;
+    }
+    let expected_labels = expected
+        .iter()
+        .map(|(label, _)| label.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    if expected_labels.is_empty() {
+        return None;
+    }
+    let mut seen = std::collections::BTreeSet::<String>::new();
+    for index in bank_start..blocks.len() {
+        let block = &blocks[index];
+        for (label, option_text) in expected {
+            if dynamic_source_option_block_matches_text(block, label, option_text) {
+                seen.insert(label.clone());
+            }
+        }
+        if seen.len() == expected_labels.len() {
+            return Some(index + 1);
+        }
+    }
+    None
 }
 
 fn dynamic_question_source_anchor_index(
@@ -7879,6 +7980,8 @@ fn dynamic_question_source_block_ids(
     group_option_bank: &[(String, String)],
 ) -> Vec<String> {
     let bank_start = dynamic_group_option_bank_start_index(blocks, kind);
+    let bank_end = bank_start
+        .and_then(|start| dynamic_source_option_bank_end_index(blocks, start, group_option_bank));
     let anchor = dynamic_question_source_anchor_index(blocks, number, kind);
     let local_start = anchor.unwrap_or(0);
     let mut local_end = blocks.len();
@@ -7902,28 +8005,29 @@ fn dynamic_question_source_block_ids(
         }
     }
 
-    let mut targets = Vec::<String>::new();
-    if !prompt.trim().is_empty() {
-        targets.push(prompt.to_string());
-    }
-    for (_, option_text) in question_options.iter().chain(group_option_bank.iter()) {
-        if !option_text.trim().is_empty() && !targets.iter().any(|item| item == option_text) {
-            targets.push(option_text.clone());
-        }
-    }
-
     let mut included = std::collections::BTreeSet::<usize>::new();
     for index in local_start..local_end {
         let block = &blocks[index];
         let is_anchor = Some(index) == anchor;
-        let matches_output = targets
-            .iter()
-            .any(|target| dynamic_source_block_matches_text(block, target))
-            || question_options.iter().chain(group_option_bank.iter()).any(
-                |(label, option_text)| {
-                    dynamic_source_option_block_matches_text(block, label, option_text)
-                },
-            );
+        // Prompt text is allowed to span a few adjacent physical blocks, but
+        // do not match it against a later passage page.  This matters most for
+        // a final heading-matching item such as `Paragraph G`: that short
+        // prompt is not evidence for any body paragraph.  Direct options use
+        // their labels and remain valid across pages/columns.
+        let prompt_matches = if prompt.trim().is_empty() {
+            false
+        } else {
+            let near_anchor = anchor.is_some_and(|anchor_index| {
+                index <= anchor_index.saturating_add(4)
+                    || dynamic_block_page_index(block)
+                        == dynamic_block_page_index(&blocks[anchor_index])
+            });
+            near_anchor && dynamic_source_block_matches_text(block, prompt)
+        };
+        let matches_output = prompt_matches
+            || question_options.iter().any(|(label, option_text)| {
+                dynamic_source_option_block_matches_text(block, label, option_text)
+            });
         if !is_anchor && !matches_output {
             continue;
         }
@@ -7946,7 +8050,8 @@ fn dynamic_question_source_block_ids(
             if bank_start < blocks.len() {
                 included.insert(bank_start);
             }
-            for index in bank_start.saturating_add(1)..blocks.len() {
+            let bank_end = bank_end.unwrap_or(blocks.len());
+            for index in bank_start.saturating_add(1)..bank_end.min(blocks.len()) {
                 let block = &blocks[index];
                 if group_option_bank.iter().any(|(label, option_text)| {
                     dynamic_source_option_block_matches_text(block, label, option_text)
@@ -8990,6 +9095,46 @@ mod tests {
                 .pointer("/optionTexts/x")
                 .and_then(Value::as_str),
             Some("Difficulties in importing tea")
+        );
+    }
+
+    #[test]
+    fn heading_matching_source_ids_scope_bank_and_not_passage_text_overlap() {
+        let blocks = vec![
+            json!({
+                "blockId": "instruction",
+                "blockType": "paragraph",
+                "text": "Questions 1-1 Choose the correct heading for the paragraph from the list of headings below. Write the correct number, i-iii, in the box. List of Headings"
+            }),
+            json!({"blockId":"bank-heading","blockType":"paragraph","text":"List of Headings"}),
+            json!({"blockId":"bank-i","blockType":"paragraph","text":"i The original definition of celebrity"}),
+            json!({"blockId":"bank-ii","blockType":"paragraph","text":"ii A result of hardship"}),
+            json!({"blockId":"bank-iii","blockType":"paragraph","text":"iii Literacy and widespread celebrity"}),
+            json!({"blockId":"q1","blockType":"paragraph","text":"1 Paragraph A"}),
+            // This is passage text, not a heading-bank row. Its exact phrase
+            // intentionally overlaps option i to catch unbounded text scans.
+            json!({"blockId":"passage","blockType":"paragraph","text":"The original definition of celebrity changed as the article developed","pageIndex":2}),
+        ];
+        let options = dynamic_group_option_bank(&blocks, "heading_matching");
+        assert_eq!(options.len(), 3);
+        let source_ids = dynamic_question_source_block_ids(
+            &blocks,
+            "",
+            1,
+            1,
+            "heading_matching",
+            "Paragraph A",
+            &[],
+            &options,
+        );
+        assert!(source_ids.contains(&"q1".to_string()));
+        assert!(source_ids.contains(&"bank-heading".to_string()));
+        assert!(source_ids.contains(&"bank-i".to_string()));
+        assert!(source_ids.contains(&"bank-ii".to_string()));
+        assert!(source_ids.contains(&"bank-iii".to_string()));
+        assert!(
+            !source_ids.contains(&"passage".to_string()),
+            "passage text must not be claimed as option-bank provenance: {source_ids:?}"
         );
     }
 
@@ -12943,6 +13088,97 @@ mod tests {
     }
 
     #[test]
+    fn choice_group_extension_recovers_embedded_terminal_label_continuation() {
+        // pdfium can emit A-C in one physical block and the wrapped C tail plus
+        // D in the next block. The normal option-run detector stops at C, so
+        // the group extension must retain the second source block for the
+        // prompt/option recovery pass to split it safely.
+        let blocks = vec![
+            json!({
+                "blockId":"q29",
+                "text":"29 What does the author want to express in the second paragraph?",
+                "pageIndex":3,
+                "_epic8LayoutSection":0,
+                "_epic8SectionColumns":1,
+                "_epic8ColumnIndex":0,
+                "bbox":[36.0,590.0,412.9,600.0]
+            }),
+            json!({
+                "blockId":"abc",
+                "text":"A Video games are widely considered harmful for children’s brains. B Most violent video games are the direct cause of juvenile delinquency. C Even though there is a certain proportion of violence in most video games, scientists",
+                "pageIndex":3,
+                "_epic8LayoutSection":0,
+                "_epic8SectionColumns":1,
+                "_epic8ColumnIndex":0,
+                "bbox":[78.0,543.0,545.9,582.6]
+            }),
+            json!({
+                "blockId":"c-wrap-d",
+                "text":"and psychologists see their benefits to children’s intellectual abilities. D Many parents regard video games as time-wasters that rot children’s brains.",
+                "pageIndex":3,
+                "_epic8LayoutSection":0,
+                "_epic8SectionColumns":1,
+                "_epic8ColumnIndex":0,
+                "bbox":[78.0,511.8,499.2,535.8]
+            }),
+        ];
+        let classification = classify_dynamic_group(
+            "Choose the correct letter, A, B, C or D.",
+            &["q29".to_string(), "abc".to_string()],
+        );
+        let mut groups = vec![SplitGroupCandidateV1 {
+            group_id: "group-1".to_string(),
+            heading: "Questions 29-29".to_string(),
+            question_range: [29, 29],
+            instruction_text: "Choose the correct letter, A, B, C or D.".to_string(),
+            block_ids: vec!["q29".to_string(), "abc".to_string()],
+            kind_hint: "single_choice".to_string(),
+            layout_hint: Some("list".to_string()),
+            confidence: classification.confidence,
+            classification: Some(classification),
+            section_evidence: Vec::new(),
+            continuation_edges: Vec::new(),
+            is_umbrella_range: None,
+            requires_manual_question_import: None,
+        }];
+
+        extend_dynamic_choice_option_blocks(&mut groups, &blocks);
+
+        assert!(
+            groups[0].block_ids.contains(&"c-wrap-d".to_string()),
+            "embedded D continuation must remain in the owning choice group: {:?}",
+            groups[0].block_ids
+        );
+        let owned = groups[0]
+            .block_ids
+            .iter()
+            .filter_map(|id| blocks.iter().find(|block| dynamic_block_id(block) == *id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let (prompt, options) = dynamic_question_prompt_and_options(
+            &owned,
+            &groups[0].instruction_text,
+            29,
+            "Questions 29-29",
+            29,
+            "single_choice",
+        );
+        assert_eq!(
+            prompt,
+            "What does the author want to express in the second paragraph?"
+        );
+        assert_eq!(
+            options
+                .iter()
+                .map(|(label, _)| label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A", "B", "C", "D"]
+        );
+        assert!(options[2].1.ends_with("children’s intellectual abilities."));
+        assert!(options[3].1.contains("Many parents regard video games"));
+    }
+
+    #[test]
     fn choice_option_does_not_absorb_unlabelled_text_from_another_layout_column() {
         let blocks = vec![
             json!({"blockId":"q21","text":"21 Which statement is correct?","pageIndex":3,"_epic8LayoutSection":2,"_epic8SectionColumns":2,"_epic8ColumnIndex":0,"bbox":[40.0,500.0,260.0,510.0]}),
@@ -13153,6 +13389,70 @@ mod tests {
         );
         assert_eq!(
             dynamic_group_option_bank(&blocks, "matching"),
+            vec![
+                ("A".to_string(), "Fisher and Lorie".to_string()),
+                ("B".to_string(), "Myron Scholes".to_string()),
+                ("C".to_string(), "Eugene Fama".to_string()),
+                ("D".to_string(), "Robert Shiller".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn matching_group_extension_grafts_generic_list_of_x_bank() {
+        // A parser split can stop at the final numbered stem and leave a
+        // generic `List of Economists` heading plus its bank outside the
+        // candidate. The heading is structural only when the complete
+        // declared A-D sequence follows it.
+        let blocks = vec![
+            json!({"blockId":"instruction","text":"Match each statement with the correct economist, A-D.","pageIndex":2}),
+            json!({"blockId":"q21","text":"21 The first statement.","pageIndex":2}),
+            json!({"blockId":"q22","text":"22 The second statement.","pageIndex":2}),
+            json!({"blockId":"q23","text":"23 It may be possible to forecast prices only in the short term.","pageIndex":2}),
+            json!({"blockId":"bank-heading","text":"List of Economists","pageIndex":2}),
+            json!({"blockId":"bank-a","text":"A Fisher and Lorie","pageIndex":2}),
+            json!({"blockId":"bank-b","text":"B Myron Scholes","pageIndex":2}),
+            json!({"blockId":"bank-c","text":"C Eugene Fama","pageIndex":2}),
+            json!({"blockId":"bank-d","text":"D Robert Shiller","pageIndex":2}),
+        ];
+        let classification = classify_dynamic_group(
+            "Match each statement with the correct economist, A-D.",
+            &["instruction".to_string()],
+        );
+        assert_eq!(classification.kind, "matching");
+        let mut groups = vec![SplitGroupCandidateV1 {
+            group_id: "group-1".to_string(),
+            heading: "Questions 21-23".to_string(),
+            question_range: [21, 23],
+            instruction_text: "Match each statement with the correct economist, A-D.".to_string(),
+            block_ids: vec![
+                "instruction".to_string(),
+                "q21".to_string(),
+                "q22".to_string(),
+                "q23".to_string(),
+            ],
+            kind_hint: "matching".to_string(),
+            layout_hint: Some("list".to_string()),
+            confidence: classification.confidence,
+            classification: Some(classification),
+            section_evidence: Vec::new(),
+            continuation_edges: Vec::new(),
+            is_umbrella_range: None,
+            requires_manual_question_import: None,
+        }];
+
+        extend_dynamic_matching_option_blocks(&mut groups, &blocks);
+
+        assert!(groups[0].block_ids.contains(&"bank-heading".to_string()));
+        assert!(groups[0].block_ids.contains(&"bank-d".to_string()));
+        let owned = groups[0]
+            .block_ids
+            .iter()
+            .filter_map(|id| blocks.iter().find(|block| dynamic_block_id(block) == *id))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            dynamic_group_option_bank(&owned, "matching"),
             vec![
                 ("A".to_string(), "Fisher and Lorie".to_string()),
                 ("B".to_string(), "Myron Scholes".to_string()),
