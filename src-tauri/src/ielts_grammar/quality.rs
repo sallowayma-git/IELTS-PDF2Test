@@ -1922,6 +1922,61 @@ fn validate_completion_host(
             .flatten()
             .cloned(),
     );
+
+    // Textual completion is a single visible document, not a collection of
+    // detached question prompts.  Once the geometry pass has recovered the
+    // numbered rows, every expected slot must be hosted exactly once by the
+    // canonical stimulus tree.  Accepting a slot that only exists in a
+    // response prompt makes a fragmented/empty stimulus look publishable and
+    // is the source of the previous false-green completion reports.  Table,
+    // flowchart and figure tasks have their own structural host checks below,
+    // so this closure applies to paragraph-like completion only.
+    let task_type = group
+        .get("instructionSignature")
+        .and_then(|signature| signature.get("taskType"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let inline_completion = matches!(
+        task_type,
+        "sentence_completion" | "summary_completion" | "note_completion" | "form_completion"
+    );
+    if inline_completion {
+        let stimulus = group
+            .get("stimulus")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let expected_numbers = group
+            .get("instructionSignature")
+            .and_then(|signature| signature.get("expectedQuestionNumbers"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_u64)
+            .map(|number| format!("q{number}"))
+            .collect::<Vec<_>>();
+        let missing_inline_slots = expected_numbers
+            .iter()
+            .filter(|slot_id| count_slot_nodes_in_roots(stimulus, slot_id) != 1)
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing_inline_slots.is_empty() {
+            let mut closure_issue = issue(
+                SLOT_HOST_MISSING,
+                "blocking",
+                "文本 completion 的 canonical stimulus 必须为每个题号提供唯一的 inline answer slot。",
+                "task",
+                task_id,
+                anchors.clone(),
+                vec!["edit_text", "split_prompt"],
+            );
+            closure_issue["details"] = json!({
+                "missingInlineSlotIds": missing_inline_slots,
+                "expectedInlineSlotCount": expected_numbers.len()
+            });
+            push_issue(issues, hard_failures, closure_issue);
+        }
+    }
     let invalid = slot_ids.iter().any(|slot_id| {
         let Some(slot) = slots.get(slot_id) else {
             return true;
@@ -1976,6 +2031,13 @@ fn validate_completion_host(
             ),
         );
     }
+}
+
+fn count_slot_nodes_in_roots(nodes: &[Value], slot_id: &str) -> usize {
+    nodes
+        .iter()
+        .map(|node| count_answer_slot_nodes(node, slot_id))
+        .sum()
 }
 
 fn count_answer_slot_nodes(node: &Value, slot_id: &str) -> usize {
@@ -4021,6 +4083,44 @@ mod tests {
             &mut hard_failures,
         );
         assert!(hard_failures.iter().any(|code| code == SLOT_HOST_DUPLICATE));
+    }
+
+    #[test]
+    fn completion_requires_inline_slot_closure_in_canonical_stimulus() {
+        let group = json!({
+            "taskId":"task-closure",
+            "instructionSignature": {
+                "taskType":"summary_completion",
+                "expectedQuestionNumbers":[1,2],
+                "wordLimit":{"maxWords":1},
+                "confidence":0.95
+            },
+            "stimulus":[{"type":"paragraph","id":"stimulus-1","children":[{"type":"text","text":"A summary without its gaps."}]}],
+            "responseGroups":[{"responseGroupId":"response-closure","slotIds":["q1","q2"],"prompt":[]}]
+        });
+        let slots = serde_json::from_value::<Map<String, Value>>(json!({
+            "q1":{"slotId":"q1","hostNodeId":"stimulus-1","hostType":"paragraph"},
+            "q2":{"slotId":"q2","hostNodeId":"stimulus-1","hostType":"paragraph"}
+        }))
+        .unwrap();
+        let mut issues = Vec::new();
+        let mut hard_failures = Vec::new();
+        validate_completion_host(
+            &group,
+            &slots,
+            "task-closure",
+            Vec::new(),
+            &mut issues,
+            &mut hard_failures,
+        );
+        assert!(hard_failures.iter().any(|code| code == SLOT_HOST_MISSING));
+        assert!(issues.iter().any(|value| {
+            value
+                .get("details")
+                .and_then(|details| details.get("missingInlineSlotIds"))
+                .and_then(Value::as_array)
+                .is_some_and(|ids| ids.len() == 2)
+        }));
     }
 
     #[test]

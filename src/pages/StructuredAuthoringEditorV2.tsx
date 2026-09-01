@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { applyAuthoringV2Patches, exportAuthoringV2, exportNasPackageV2, getAuthoringV2 } from "../api/tauriCommands";
 import { go } from "../app/router";
 import { chooseExportDirectory } from "../api/desktopDialogs";
 import { answerValueForSelection, applyAuthoringV2Patches as applyLocalPatches, inverseAuthoringPatch, locateContentNode, taskTypeLabel } from "../services/authoringV2Patches";
 import { AuthoringTiptapEditor } from "../editor/authoringTiptap";
-import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
+import { ExamCanvasV2, type ExamCanvasStructureActionV2 } from "../components/ExamCanvasV2";
 import type {
   AnswerSlotV2,
   AnswerValueV2,
@@ -128,115 +128,8 @@ function answerText(value: AnswerValueV2 | undefined): string {
   return value?.kind === "text" ? value.values.join(", ") : "";
 }
 
-function contentNodeEditor(
-  nodes: ContentNodeV2[] | undefined,
-  selectedId: string | undefined,
-  onSelect: (id: string) => void,
-  onTextChange: (node: Extract<ContentNodeV2, { type: "text" }>) => void,
-  readOnly = false
-): ReactNode {
-  if (!nodes?.length) return <span className="structured-empty-inline">暂无内容</span>;
-  return nodes.map((node) => {
-    const selected = node.id === selectedId;
-    const className = ["structured-node", "structured-node-" + node.type, selected ? "selected" : ""].join(" ");
-    switch (node.type) {
-      case "text":
-        return readOnly
-          ? <span key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)}>{node.text}</span>
-          : <textarea key={node.id} data-editor-id={node.id} className={className} aria-label={"编辑文本 " + node.id} value={node.text} rows={Math.max(1, Math.min(4, Math.ceil(node.text.length / 70)))} onClick={() => onSelect(node.id)} onChange={(event) => onTextChange({ ...node, text: event.target.value })} />;
-      case "paragraph":
-        return <p key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)}>{contentNodeEditor(node.children, selectedId, onSelect, onTextChange, readOnly)}</p>;
-      case "heading":
-        return <div key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)}><strong>{contentNodeEditor(node.children, selectedId, onSelect, onTextChange, readOnly)}</strong></div>;
-      case "hard_break":
-        return <br key={node.id} />;
-      case "answer_slot":
-        return <span key={node.id} data-editor-id={node.id} className={className + " structured-slot-chip"} onClick={() => onSelect(node.id)}>{node.displayLabel}</span>;
-      case "bullet_list":
-      case "ordered_list":
-        return <ul key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)}>{node.items.map((item) => <li key={item.id}>{contentNodeEditor(item.children, selectedId, onSelect, onTextChange, readOnly)}</li>)}</ul>;
-      case "table":
-        return <table key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)}><tbody>{node.rows.map((row) => <tr key={row.id}>{row.cells.map((cell) => { const Cell = cell.headerScope && cell.headerScope !== "none" ? "th" : "td"; return <Cell key={cell.id} scope={Cell === "th" ? cell.headerScope : undefined} colSpan={cell.colSpan} rowSpan={cell.rowSpan}>{contentNodeEditor(cell.children, selectedId, onSelect, onTextChange, readOnly)}</Cell>; })}</tr>)}</tbody></table>;
-      case "figure":
-      case "image":
-      case "diagram":
-        return <div key={node.id} data-editor-id={node.id} className={className + " structured-asset-placeholder"} onClick={() => onSelect(node.id)}><span>视觉资源</span><small>{node.assetId}</small></div>;
-      case "flowchart":
-        return <div key={node.id} data-editor-id={node.id} className={className + " structured-flowchart"} onClick={() => onSelect(node.id)}>{node.steps.map((step) => <div key={step.id} className="structured-flow-step">{step.label ? <strong>{step.label}</strong> : null}{contentNodeEditor(step.children, selectedId, onSelect, onTextChange, readOnly)}</div>)}</div>;
-      case "flow_step":
-      case "list_item":
-      case "figcaption":
-      case "doc":
-        return <div key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)}>{"children" in node ? contentNodeEditor(node.children, selectedId, onSelect, onTextChange, readOnly) : null}</div>;
-      case "option_bank":
-      case "horizontal_rule":
-        return <div key={node.id} data-editor-id={node.id} className={className} onClick={() => onSelect(node.id)} />;
-    }
-  });
-}
-
 function optionText(option: OptionV2): string {
   return nodeText(option.content);
-}
-
-function RuntimeAnswerControl({ interaction, name, options }: { interaction: AnswerSlotV2["interaction"]; name: string; options: string[] }) {
-  if (interaction === "text" || interaction === "select") return <input className="student-control" type="text" name={name} placeholder="填写答案" />;
-  const inputType = interaction === "checkbox" || interaction === "dragdrop" ? "checkbox" : "radio";
-  return <span className="student-control-group">{options.map((option) => <label key={option}><input type={inputType} name={name} value={option} />{option}</label>)}</span>;
-}
-
-function SharedRuntimeChoiceControl({ name, options, exact }: { name: string; options: string[]; exact: number }) {
-  const [selected, setSelected] = useState<string[]>([]);
-  const atLimit = selected.length >= exact;
-  return <fieldset className="student-control-group" data-response-budget={exact}>
-    <legend>选择 {exact} 项（已选 {selected.length}/{exact}）</legend>
-    {options.map((option) => {
-      const checked = selected.includes(option);
-      return <label key={option}><input
-        type="checkbox"
-        name={name}
-        value={option}
-        checked={checked}
-        disabled={!checked && atLimit}
-        onChange={() => setSelected((current) => checked ? current.filter((label) => label !== option) : [...current, option])}
-      />{option}</label>;
-    })}
-  </fieldset>;
-}
-
-function RuntimeResponseControl({
-  group,
-  interactionModel,
-  questionDisplayMap
-}: {
-  group: ResponseGroupV2;
-  interactionModel: ReturnType<typeof buildReadingInteractionModelV2>;
-  questionDisplayMap: Record<string, string>;
-}) {
-  const interaction = interactionModel.responseGroups[group.responseGroupId];
-  if (!interaction) return null;
-  const options = interaction.options.map((option) => option.label);
-  const exact = interaction.cardinality.exact;
-  if (interaction.assignment === "unordered_set" && exact !== undefined && exact > 1) {
-    return <div className="student-answer-row student-shared-answer-row">
-      <strong>{group.slotIds.map((slotId) => questionDisplayMap[slotId]).join("、")}</strong>
-      <SharedRuntimeChoiceControl name={group.responseGroupId} options={options} exact={exact} />
-    </div>;
-  }
-  return <>{group.slotIds.map((slotId) => {
-    const slot = interactionModel.slots[slotId];
-    if (!slot) return null;
-    return <div key={slotId} className="student-answer-row"><strong>{questionDisplayMap[slotId]}</strong><RuntimeAnswerControl interaction={slot.slot.interaction} name={slotId} options={options.length ? options : slot.slot.constraints?.acceptedOptionLabels ?? []} /></div>;
-  })}</>;
-}
-
-function StudentPreview({ authoring }: { authoring: IeltsAuthoringIRV2 }) {
-  const runtime = buildRuntimeViewModelV2(authoring);
-  const interactionModel = buildReadingInteractionModelV2(runtime);
-  return <div className="student-parity-grid">
-    <article className="student-sheet"><p className="student-sheet-label">Passage · RuntimeViewModelV2</p><h3>{runtime.title}</h3>{contentNodeEditor(runtime.passage, undefined, () => undefined, () => undefined, true)}</article>
-    <article className="student-sheet"><p className="student-sheet-label">Questions · ReadingInteractionModelV2</p>{runtime.taskGroups.map((task) => <section key={task.taskId} className="student-task">{contentNodeEditor(task.instructions, undefined, () => undefined, () => undefined, true)}{task.stimulus?.length ? <div className="student-stimulus">{contentNodeEditor(task.stimulus, undefined, () => undefined, () => undefined, true)}</div> : null}{task.responseGroups.map((group) => <div key={group.responseGroupId} className="student-response">{contentNodeEditor(group.prompt, undefined, () => undefined, () => undefined, true)}<RuntimeResponseControl group={group} interactionModel={interactionModel} questionDisplayMap={runtime.questionDisplayMap} /></div>)}</section>)}</article>
-  </div>;
 }
 
 function SourceOverlay({ authoring, selectedId, anchorsOverride }: { authoring: IeltsAuthoringIRV2; selectedId?: string; anchorsOverride?: SourceAnchorV2[] }) {
@@ -500,6 +393,121 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
     };
   }
 
+  function manualTextNodes(prefix: string, text = "新内容"): ContentNodeV2[] {
+    return [{
+      type: "paragraph",
+      id: `${prefix}-paragraph`,
+      sourceAnchors: [],
+      provenanceStatus: "manual",
+      children: [{ type: "text", id: `${prefix}-text`, sourceAnchors: [], provenanceStatus: "manual", text }]
+    }];
+  }
+
+  function expressionFromNumbers(numbers: number[]): QuestionNumberExpressionV2 {
+    const values = Array.from(new Set(numbers)).sort((a, b) => a - b);
+    if (values.length > 1 && values.every((value, index) => index === 0 || value === values[index - 1] + 1)) {
+      return { kind: "range", start: values[0], end: values.at(-1)! };
+    }
+    return { kind: "set", values };
+  }
+
+  function nodeContainsSlot(node: ContentNodeV2): boolean {
+    if (node.type === "answer_slot") return true;
+    if ("children" in node && node.children.some(nodeContainsSlot)) return true;
+    if (node.type === "table") return node.rows.some(nodeContainsSlot);
+    if (node.type === "table_row") return node.cells.some(nodeContainsSlot);
+    if (node.type === "bullet_list" || node.type === "ordered_list") return node.items.some(nodeContainsSlot);
+    if (node.type === "flowchart") return node.steps.some(nodeContainsSlot);
+    if (node.type === "figure" && node.caption) return node.caption.some(nodeContainsSlot);
+    if (node.type === "option_bank") return node.options.some((option) => option.children.some(nodeContainsSlot));
+    return false;
+  }
+
+  function handleCanvasStructureAction(action: ExamCanvasStructureActionV2) {
+    const current = draftRef.current;
+    if (!current) return;
+    const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    if (action.type === "option.add" || action.type === "option.move" || action.type === "option.delete") {
+      const task = current.taskGroups.find((candidate) => candidate.taskId === action.taskId);
+      const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === action.responseGroupId);
+      if (!task || !group) return;
+      const shared = task.optionBank && (!group.options?.length || group.optionBankRef === task.optionBank.optionBankId);
+      const options = structuredClone(shared ? task.optionBank!.options : group.options ?? []);
+      if (action.type === "option.add") {
+        const used = new Set(options.map((option) => option.label));
+        const label = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").find((candidate) => !used.has(candidate)) ?? String(options.length + 1);
+        const index = action.afterOptionId ? Math.max(0, options.findIndex((option) => option.optionId === action.afterOptionId) + 1) : options.length;
+        options.splice(index, 0, { optionId: `manual-option-${stamp}`, label, content: manualTextNodes(`manual-option-${stamp}`), sourceAnchors: [], provenanceStatus: "manual" });
+      } else {
+        const index = options.findIndex((option) => option.optionId === action.optionId);
+        if (index < 0) return;
+        if (action.type === "option.delete") {
+          const label = options[index].label;
+          const inAnswerKey = Object.values(current.answerKey).some((value) => value.kind === "option" && value.labels.includes(label));
+          if (inAnswerKey) { setError(`选项 ${label} 正在答案键中使用，请先修改正确答案。`); return; }
+          options.splice(index, 1);
+        } else {
+          const target = action.direction === "up" ? index - 1 : index + 1;
+          if (target < 0 || target >= options.length) return;
+          [options[index], options[target]] = [options[target], options[index]];
+        }
+      }
+      if (shared) queuePatch({ op: "setOptionBank", taskId: task.taskId, optionBank: { ...task.optionBank!, options } });
+      else queuePatch({ op: "setResponseGroup", taskId: task.taskId, responseGroup: { ...group, options } });
+      return;
+    }
+    if (action.type === "table.row.add" || action.type === "table.row.delete" || action.type === "table.column.add" || action.type === "table.column.delete") {
+      const table = locateContentNode(current, action.tableId)?.node;
+      if (!table || table.type !== "table") return;
+      if (table.rows.some((row) => row.cells.some((cell) => cell.rowSpan !== 1 || cell.colSpan !== 1))) {
+        setError("合并单元格表格暂不支持直接增删行列；可继续原位编辑文字，结构调整请使用高级编辑器。");
+        return;
+      }
+      const rows = structuredClone(table.rows);
+      if (action.type === "table.row.add") {
+        const template = rows.at(-1);
+        const cells = (template?.cells ?? []).map((cell, index) => ({ ...cell, id: `manual-cell-${stamp}-${index}`, sourceAnchors: [], provenanceStatus: "manual" as const, headerScope: "none" as const, children: manualTextNodes(`manual-cell-${stamp}-${index}`, "") }));
+        rows.push({ type: "table_row", id: `manual-row-${stamp}`, sourceAnchors: [], provenanceStatus: "manual", cells });
+      } else if (action.type === "table.row.delete") {
+        const index = rows.findIndex((row) => row.id === action.rowId);
+        if (index < 0 || rows.length <= 1) return;
+        if (nodeContainsSlot(rows[index])) { setError("该行包含答案位，请先移动或删除对应答案位。"); return; }
+        rows.splice(index, 1);
+      } else if (action.type === "table.column.add") {
+        rows.forEach((row, rowIndex) => row.cells.push({ type: "table_cell", id: `manual-cell-${stamp}-${rowIndex}`, sourceAnchors: [], provenanceStatus: "manual", rowSpan: 1, colSpan: 1, headerScope: rowIndex === 0 ? "column" : "none", children: manualTextNodes(`manual-cell-${stamp}-${rowIndex}`, "") }));
+      } else {
+        if (rows.some((row) => row.cells[action.columnIndex] ? nodeContainsSlot(row.cells[action.columnIndex]) : false)) { setError("该列包含答案位，请先移动或删除对应答案位。"); return; }
+        rows.forEach((row) => row.cells.splice(action.columnIndex, 1));
+      }
+      queuePatch({ op: "replaceContent", target: { kind: "node", nodeId: table.id }, content: rows });
+      return;
+    }
+    if (action.type === "answer-slot.insert") {
+      const location = locateContentNode(current, action.afterNodeId);
+      if (!location || location.node.type !== "answer_slot") return;
+      const existing = current.answerSlots[location.node.slotId];
+      const task = current.taskGroups.find((candidate) => candidate.responseGroups.some((group) => group.slotIds.includes(existing.slotId)));
+      const group = task?.responseGroups.find((candidate) => candidate.slotIds.includes(existing.slotId));
+      if (!task || !group) return;
+      const questionNumber = Math.max(0, ...Object.values(current.answerSlots).map((slot) => slot.questionNumber)) + 1;
+      const slotId = `q${questionNumber}-${stamp}`;
+      const nodeId = `manual-answer-slot-${stamp}`;
+      const taskNumbers = task.responseGroups.flatMap((response) => response.slotIds.map((slotId) => current.answerSlots[slotId]?.questionNumber).filter((value): value is number => Boolean(value)));
+      const slot: AnswerSlotV2 = { ...existing, slotId, questionNumber, displayLabel: String(questionNumber), hostNodeId: location.parentId ?? existing.hostNodeId, sourceAnchors: [], provenanceStatus: "manual", confidence: 1 };
+      queuePatch({ op: "insertAnswerSlot", taskId: task.taskId, responseGroupId: group.responseGroupId, target: location.target, parentId: location.parentId, index: location.index + 1, slotIndex: group.slotIds.indexOf(existing.slotId) + 1, node: { ...location.node, id: nodeId, slotId, displayLabel: String(questionNumber), sourceAnchors: [], provenanceStatus: "manual" }, slot, value: { kind: "unresolved" }, expression: expressionFromNumbers([...taskNumbers, questionNumber]) });
+      setSelectedId(nodeId);
+      return;
+    }
+    if (action.type !== "answer-slot.delete") return;
+    const slot = current.answerSlots[action.slotId];
+    const task = current.taskGroups.find((candidate) => candidate.responseGroups.some((group) => group.slotIds.includes(action.slotId)));
+    const group = task?.responseGroups.find((candidate) => candidate.slotIds.includes(action.slotId));
+    if (!slot || !task || !group || group.slotIds.length <= 1) { setError("每个 response group 至少保留一个答案位。"); return; }
+    const remainingNumbers = task.responseGroups.flatMap((response) => response.slotIds.filter((slotId) => slotId !== action.slotId).map((slotId) => current.answerSlots[slotId]?.questionNumber).filter((value): value is number => Boolean(value)));
+    queuePatch({ op: "deleteAnswerSlot", taskId: task.taskId, responseGroupId: group.responseGroupId, nodeId: action.nodeId, slotId: action.slotId, expression: expressionFromNumbers(remainingNumbers) });
+    setSelectedId(undefined);
+  }
+
   function insertAfterSelected() {
     if (!draft || !selectedId) return;
     const location = locateContentNode(draft, selectedId);
@@ -713,9 +721,9 @@ export function StructuredAuthoringEditorV2({ jobId, refresh }: { jobId: string;
     {error && status !== "conflict" ? <div className="warning-box phase5-recovery-banner"><strong>编辑器提示</strong><p>{error}</p></div> : null}
     <div className={"phase5-export-blockers " + (exportBlocked ? "blocked" : "ready")} data-testid="phase5-export-blockers"><strong>{exportBlocked ? "导出已阻断" : "导出检查通过"}</strong>{exportBlocked ? <ul>{exportBlockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul> : <p>答案位、质量硬失败和阻断 issue 均满足 V2 发布门槛。</p>}</div>
     <div className="phase5-editor-toolbar"><div className="phase5-stat"><span>Task groups</span><strong>{draft.taskGroups.length}</strong></div><div className="phase5-stat"><span>Answer slots</span><strong>{Object.keys(draft.answerSlots).length}</strong></div><div className="phase5-stat"><span>Issues</span><strong>{issues.length}</strong></div><div className="phase5-stat"><span>Source coverage</span><strong>{Math.round(draft.quality.sourceCoverage * 100)}%</strong></div><small>来源：{session.source} · V1 文件保持可读</small></div>
-    {viewMode === "preview" ? <StudentPreview authoring={draft} /> : <div className="phase5-editor-grid">
+    {viewMode === "preview" ? <ExamCanvasV2 authoring={draft} mode="student" /> : <div className="phase5-editor-grid">
       <aside className="phase5-outline"><div className="inspector-section-heading"><span>文档结构</span><small>点击定位</small></div><button className={"outline-row " + (selectedId === draft.passage?.content[0]?.id ? "active" : "")} onClick={() => setSelectedId(draft.passage?.content[0]?.id)}><strong>Passage</strong><small>{draft.passage?.content.length ?? 0} 个内容节点</small></button>{draft.taskGroups.map((task) => <div key={task.taskId} className="outline-group"><button className={"outline-row " + (selectedId === task.taskId ? "active" : "")} onClick={() => setSelectedId(task.taskId)}><strong>{expressionLabel(task)}</strong><small>{taskTypeLabel(task.taskType)}</small></button>{task.responseGroups.map((group) => <button key={group.responseGroupId} className={"outline-row nested " + (selectedId === group.responseGroupId ? "active" : "")} onClick={() => setSelectedId(group.responseGroupId)}>共享 response group <small>{group.slotIds.map((slotId) => draft.answerSlots[slotId]?.displayLabel).join("、")}</small></button>)}{task.optionBank ? <button className={"outline-row nested " + (selectedId === task.optionBank.optionBankId ? "active" : "")} onClick={() => setSelectedId(task.optionBank?.optionBankId)}>公共选项池 <small>{task.optionBank.options.length} 项</small></button> : null}</div>)}<div className="issue-rail"><div className="inspector-section-heading"><span>需要确认</span><small>{issues.length} 项</small></div>{issues.map((issue) => <button key={issue.issueId} className={"issue-rail-item " + issue.severity} onClick={() => selectIssue(issue)}><strong>{issue.code}</strong><span>{issue.message}</span></button>)}</div></aside>
-      <main className="phase5-editor-canvas"><article className="structured-paper" data-editor-id={draft.passage?.content[0]?.id}><div className="structured-paper-label">PASSAGE · 可编辑节点树 · Tiptap schema</div><h3>{draft.passage?.title}</h3><AuthoringTiptapEditor nodes={draft.passage?.content ?? []} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "passage" }, nodes)} ariaLabel="阅读文章编辑器" /></article>{activeTasks.length ? activeTasks.map((task) => renderTaskEditor(task)) : <div className="empty">暂无题组。</div>}</main>
+      <main className="phase5-editor-canvas"><div className="author-canvas-heading"><div><span className="node-kicker">ExamCanvas · Author mode</span><h3>直接编辑学生题面</h3></div><small>点击文字原位修改；悬停表格、选项库或答案位可直接调整结构</small></div><ExamCanvasV2 authoring={draft} mode="author" selectedId={selectedId} onSelect={setSelectedId} onTextChange={editText} onAnswerChange={(slotId, value) => queuePatch({ op: "setAnswer", slotId, value })} onStructureAction={handleCanvasStructureAction} />{activeTasks.length ? <details className="author-advanced-structure"><summary>高级结构与评分设置</summary><p>仅在需要修改题型、题号、cardinality 或节点结构时展开；日常内容修订直接在上方学生题面完成。</p><article className="structured-paper" data-editor-id={draft.passage?.content[0]?.id}><div className="structured-paper-label">Passage structure · Tiptap</div><AuthoringTiptapEditor nodes={draft.passage?.content ?? []} onSelect={setSelectedId} onChange={(nodes) => replaceContent({ kind: "passage" }, nodes)} ariaLabel="阅读文章结构编辑器" /></article>{activeTasks.map((task) => renderTaskEditor(task))}</details> : <div className="empty">暂无题组。</div>}</main>
       <aside className="phase5-inspector"><div className="inspector-section-heading"><span>节点检查器</span><small>{selectedId ?? "未选择"}</small></div>{selectedId ? <><p className="selected-node-name">{String(findEntity(draft, selectedId)?.type ?? "semantic entity")}</p><p className="source-summary">{sourceSummary(selectedAnchors)}</p><dl className="phase5-detail-list"><dt>节点 / 实体</dt><dd>{selectedId}</dd><dt>来源模式</dt><dd>{selectedAnchors[0]?.extractionMode ?? "unknown"}</dd><dt>来源节点</dt><dd>{selectedAnchors.flatMap((anchor) => anchor.nodeIds).join("、") || "—"}</dd></dl>{renderSelectedContentInspector()}</> : <p className="empty">从左侧结构、题干或选项开始。</p>}<SourceOverlay authoring={draft} selectedId={selectedId} anchorsOverride={selectedAnchors} /><div className="inspector-section-heading"><span>编辑协议</span><small>V2 patch</small></div><p className="inspector-note">Tiptap 事务会映射成 replaceContent；节点操作、表格、资源裁剪和热点均以 append-only revision 保存。服务器按 base revision 拒绝并发覆盖。</p></aside>
     </div>}
   </section>;

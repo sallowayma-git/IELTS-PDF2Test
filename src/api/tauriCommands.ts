@@ -143,6 +143,19 @@ export async function getAuthoringV2(jobId: string): Promise<AuthoringEditorSess
   return command("get_authoring_v2", { jobId });
 }
 
+export interface AuthoringAssetPreview {
+  assetId: string;
+  mime: string;
+  widthPx?: number;
+  heightPx?: number;
+  resourceUri: string;
+}
+
+export async function resolveAuthoringAssetPreview(jobId: string, assetId: string): Promise<AuthoringAssetPreview | undefined> {
+  if (!isTauriRuntime()) return undefined;
+  return command("resolve_authoring_asset_preview", { jobId, assetId });
+}
+
 export async function applyAuthoringV2Patches(input: ApplyAuthoringV2PatchesInput): Promise<AuthoringEditorSessionV2> {
   return command("apply_authoring_v2_patches", { input });
 }

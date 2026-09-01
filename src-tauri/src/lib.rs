@@ -6,6 +6,7 @@ use authoring_commands::{
 };
 use authoring_v2_commands::{
     apply_authoring_v2_patches_core, export_authoring_v2_core, get_authoring_v2_core,
+    resolve_authoring_asset_preview_core,
 };
 use auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
 use chrono::{DateTime, Utc};
@@ -1007,6 +1008,16 @@ async fn get_authoring_v2(job_id: String, app: AppHandle) -> CommandResult<Value
 }
 
 #[tauri::command]
+async fn resolve_authoring_asset_preview(
+    job_id: String,
+    asset_id: String,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    resolve_authoring_asset_preview_core(&root, &job_id, &asset_id)
+}
+
+#[tauri::command]
 async fn apply_authoring_v2_patches(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
     apply_authoring_v2_patches_core(&root, input)
@@ -1395,6 +1406,7 @@ pub fn run() {
             build_authoring_ir,
             update_authoring_ir,
             get_authoring_v2,
+            resolve_authoring_asset_preview,
             apply_authoring_v2_patches,
             export_authoring_v2,
             render_group_html,

@@ -1,6 +1,8 @@
 import type {
   AnswerValueV2,
   IeltsAuthoringIRV2,
+  AnswerSlotV2,
+  OptionBankV2,
   QuestionNumberExpressionV2,
   ResponseGroupV2,
   TaskTypeV2
@@ -60,6 +62,9 @@ export type AuthoringPatchV2 =
   | { op: "setQuestionExpression"; taskId: string; expression: QuestionNumberExpressionV2; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "setResponseCardinality"; taskId: string; responseGroupId: string; cardinality: ResponseGroupV2["cardinality"]; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "setResponseGroup"; taskId: string; responseGroup: ResponseGroupV2; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
+  | { op: "setOptionBank"; taskId: string; optionBank: OptionBankV2 | null; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
+  | { op: "insertAnswerSlot"; taskId: string; responseGroupId: string; target: AuthoringContentTargetV2; parentId?: string; index: number; slotIndex: number; node: Extract<ContentNodeV2, { type: "answer_slot" }>; slot: AnswerSlotV2; value: AnswerValueV2; expression: QuestionNumberExpressionV2 }
+  | { op: "deleteAnswerSlot"; taskId: string; responseGroupId: string; nodeId: string; slotId: string; expression: QuestionNumberExpressionV2 }
   | { op: "setAnswer"; slotId: string; value: AnswerValueV2 }
   | { op: "bindSource"; entityId: string; anchors: SourceAnchorV2[]; preserveProvenance?: boolean; restoreProvenanceStatus?: ProvenanceStatus }
   | { op: "resolveIssue"; issueId: string; resolution: "resolved" | "ignored"; note?: string };

@@ -117,7 +117,7 @@ fn bind_pdfium() -> Result<Pdfium, String> {
 
 /// A character extracted from a pdfium text page, with its origin coordinates
 /// in PDF user-space (origin bottom-left, y increases upward).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct CharWithOrigin {
     ch: char,
     x: f32,
@@ -150,6 +150,16 @@ struct BlockWithLayout {
     section_index: usize,
     column_index: u8,
     column_count: u8,
+    /// Atomic columns occupied by this block. A row may span adjacent columns
+    /// (for example a table in columns 0-1 beside prose in column 2) without
+    /// being a full-width banner.
+    column_span: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct RowFragment {
+    chars: Vec<CharWithOrigin>,
+    column_span: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -249,6 +259,7 @@ pub(crate) fn parse_pdf_with_pdfium(
                     adjusted_section,
                     layout_block.column_index,
                     layout_block.column_count,
+                    &layout_block.column_span,
                     global_section,
                 );
                 block_counter += 1;
@@ -501,6 +512,135 @@ fn line_split_gap(line: &[CharWithOrigin], split_x: f32) -> Option<f32> {
     Some((right.x - left.x).max(0.0))
 }
 
+/// Split one physical text row into independent horizontal runs.  PDF text
+/// extraction keeps every glyph on its own baseline, so a row can contain a
+/// table spanning columns 0-1 and a separate column-2 paragraph at the same
+/// y-coordinate.  Treating the row as one string silently interleaves those
+/// streams.  A run boundary must be materially wider than ordinary word
+/// spacing; the floor keeps wide letter spacing (and synthetic fixtures) from
+/// splitting every word.
+fn split_row_into_fragments(row: &[CharWithOrigin]) -> Vec<RowFragment> {
+    if row.is_empty() {
+        return Vec::new();
+    }
+    let mut sorted = row.to_vec();
+    sorted.sort_by(|left, right| {
+        left.x
+            .total_cmp(&right.x)
+            .then_with(|| left.y.total_cmp(&right.y))
+    });
+    // The widest normal word gap in the source corpus is still below ~18pt;
+    // column gutters are generally 24pt or wider. Cap the adaptive threshold
+    // so a row with a 30--40pt table/prose separation is split even when its
+    // median advance is inflated by justified text or cell spacing.
+    let gap_threshold = (line_word_gap_threshold(&sorted) * 1.35)
+        .max(16.0)
+        .min(24.0);
+    let mut fragments = Vec::<Vec<CharWithOrigin>>::new();
+    let mut current: Vec<CharWithOrigin> = Vec::new();
+    for ch in sorted {
+        if let Some(previous) = current.last() {
+            let gap = ch.x - previous.x;
+            // A question/option marker is frequently separated from its stem
+            // by a deliberate 18--22pt hanging indent (`1  Fishbourne...`,
+            // `A  changing...`). It is still one physical run. Keep this
+            // short marker prefix together; independent columns are wider and
+            // have a non-marker left fragment, so they continue to split.
+            let keep_inline_marker = gap <= 24.0 && fragment_is_inline_marker(&current);
+            if gap > gap_threshold && !keep_inline_marker {
+                fragments.push(std::mem::take(&mut current));
+            }
+        }
+        current.push(ch);
+    }
+    if !current.is_empty() {
+        fragments.push(current);
+    }
+    fragments
+        .into_iter()
+        .map(|chars| RowFragment {
+            chars,
+            column_span: Vec::new(),
+        })
+        .collect()
+}
+
+fn fragment_is_inline_marker(chars: &[CharWithOrigin]) -> bool {
+    let raw_text = chars.iter().map(|ch| ch.ch).collect::<String>();
+    let text = raw_text.trim().trim_end_matches(['.', ')', ':']).trim();
+    (!text.is_empty() && text.len() <= 4)
+        && (text.chars().all(|ch| ch.is_ascii_digit())
+            || text.chars().count() == 1 && text.chars().all(|ch| ch.is_ascii_alphabetic()))
+}
+
+/// Infer the atomic columns occupied by a horizontal run.  Crossing a gutter
+/// is sufficient to mark a partial span; no run is promoted to full-width just
+/// because the surrounding section has three columns.  Full-width banners are
+/// handled by the caller's stronger row-level continuity predicate.
+fn row_fragment_column_span(fragment: &[CharWithOrigin], gutters: &[f32]) -> Vec<u8> {
+    if fragment.is_empty() {
+        return Vec::new();
+    }
+    let x_min = fragment.iter().map(|ch| ch.x).fold(f32::MAX, f32::min);
+    let x_max = fragment.iter().map(|ch| ch.x).fold(f32::MIN, f32::max);
+    let first = gutters.iter().filter(|gutter| x_max >= **gutter).count();
+    let last = gutters.iter().filter(|gutter| x_min >= **gutter).count();
+    if gutters.is_empty() {
+        return vec![0];
+    }
+    let start = last.min(gutters.len());
+    let end = first.min(gutters.len());
+    if start <= end {
+        (start..=end).map(|column| column as u8).collect()
+    } else {
+        vec![start.min(gutters.len()) as u8]
+    }
+}
+
+/// A row containing a partial span and an independent run must never be
+/// classified as a full-width banner.  For example, the first page of a
+/// two-column article can place a table across the left/middle area while a
+/// prose column starts to its right on the same baseline.  The old banner
+/// predicate only measured the aggregate row gap and consequently consumed
+/// both streams into one single-column block.
+fn row_has_partial_span_with_independent_run(row: &[CharWithOrigin], gutters: &[f32]) -> bool {
+    if gutters.is_empty() {
+        return false;
+    }
+    let fragments = split_row_into_fragments(row);
+    if fragments.len() < 2 {
+        return false;
+    }
+    let spans = fragments
+        .iter()
+        .map(|fragment| row_fragment_column_span(&fragment.chars, gutters))
+        .collect::<Vec<_>>();
+    spans.iter().any(|span| span.len() > 1) && spans.iter().any(|span| span.len() == 1)
+}
+
+/// Detect a band that is genuinely one continuous full-width stream. This is
+/// used only while propagating a stable multi-column gutter into sparse bands;
+/// unlike the aggregate banner heuristic it cannot be fooled by a partial
+/// table run plus a right-column paragraph on the same baseline.
+fn band_is_predominantly_full_width_stream(chars: &[CharWithOrigin], gutters: &[f32]) -> bool {
+    if gutters.is_empty() {
+        return false;
+    }
+    let rows = build_raw_rows(chars, estimate_y_tolerance(chars));
+    if rows.is_empty() {
+        return false;
+    }
+    let full_rows = rows
+        .iter()
+        .filter(|row| {
+            let fragments = split_row_into_fragments(row);
+            fragments.len() == 1
+                && row_fragment_column_span(&fragments[0].chars, gutters).len() == gutters.len() + 1
+        })
+        .count();
+    full_rows * 2 >= rows.len()
+}
+
 fn is_full_width_banner_row(
     line: &[CharWithOrigin],
     split_x: f32,
@@ -603,6 +743,48 @@ fn is_full_width_banner_row(
         && width <= page_x_span * 0.42
         && bbox[0] >= split_x - page_x_span * 0.24
         && bbox[2] <= split_x + page_x_span * 0.24
+}
+
+/// Three-column variant of [`is_full_width_banner_row`]. The two-column
+/// predicate intentionally treats a line whose right run starts immediately
+/// after the gutter as two independent columns. That is correct for a narrow
+/// two-column question layout, but rejects a genuinely continuous banner when
+/// the same rule is applied independently to both gutters. For an N-column
+/// section, require continuity across every gutter instead: a partial table
+/// spanning columns 0-1 beside an unrelated run in column 2 has a large break
+/// at the second gutter and therefore does not become a full-width block.
+fn is_full_width_banner_row_across_gutters(
+    line: &[CharWithOrigin],
+    gutters: &[f32],
+    x_min_global: f32,
+    x_max_global: f32,
+) -> bool {
+    if line.len() < 4 || gutters.is_empty() {
+        return false;
+    }
+    let page_x_span = (x_max_global - x_min_global).max(1.0);
+    let line_x_min = line.iter().map(|ch| ch.x).fold(f32::MAX, f32::min);
+    let line_x_max = line.iter().map(|ch| ch.x).fold(f32::MIN, f32::max);
+    // A line that reaches every gutter but occupies only a tiny fragment of
+    // the page is an ordinary column line, not a page-spanning banner. Keep
+    // this lower bound looser than the centered two-column heuristic because
+    // headings are often inset from the page margins.
+    if line_x_max - line_x_min < page_x_span * 0.30 {
+        return false;
+    }
+    gutters.iter().all(|&split_x| {
+        let left_count = line.iter().filter(|ch| ch.x < split_x).count();
+        let right_count = line.iter().filter(|ch| ch.x >= split_x).count();
+        if left_count == 0 || right_count == 0 {
+            return false;
+        }
+        // At a real continuous line, the physical gap at the gutter is no
+        // larger than an ordinary word gap. An independent column opening (or
+        // a partial span followed by a right-side paragraph) leaves a much
+        // larger gap and is kept in separate column buckets.
+        let gap = line_split_gap(line, split_x).unwrap_or(f32::MAX);
+        gap <= line_word_gap_threshold(line).max(14.0).min(18.0)
+    })
 }
 
 /// Repair a word that was physically split at a narrow column boundary.
@@ -853,6 +1035,52 @@ fn band_looks_like_full_width_banner(
         .filter(|row| is_full_width_banner_row(row, split_x, x_min_global, x_max_global))
         .count();
     banner_rows * 2 >= rows.len()
+}
+
+/// Return whether a gutter is backed by repeated independent text runs. This
+/// is deliberately row-based rather than histogram-based: a table spanning
+/// adjacent columns may fill the horizontal valley even though a separate
+/// article column repeatedly begins after the same physical gutter.
+fn gutter_has_repeated_independent_runs(chars: &[CharWithOrigin], split_x: f32) -> bool {
+    let rows = build_raw_rows(chars, estimate_y_tolerance(chars));
+    let mut right_starts = Vec::<f32>::new();
+    let mut left_supported_rows = 0usize;
+    for row in rows {
+        let left_count = row.iter().filter(|ch| ch.x < split_x).count();
+        let right_count = row.len().saturating_sub(left_count);
+        if left_count >= 4 {
+            left_supported_rows += 1;
+        }
+        if right_count < 4 {
+            continue;
+        }
+        // A genuine adjacent column has a repeatable left edge a little to
+        // the right of the gutter. This remains valid when the left stream
+        // is a table with irregular cell widths, where the gap at the split
+        // itself is not stable enough to use as the sole signal.
+        if let Some(right_start) = row
+            .iter()
+            .filter(|ch| !ch.ch.is_whitespace() && ch.x >= split_x)
+            .map(|ch| ch.x)
+            .min_by(|left, right| left.total_cmp(right))
+        {
+            if right_start - split_x >= 10.0 {
+                right_starts.push(right_start);
+            }
+        }
+    }
+    if left_supported_rows < 2 || right_starts.len() < 2 {
+        return false;
+    }
+    right_starts.sort_by(|left, right| left.total_cmp(right));
+    let proven = right_starts.iter().enumerate().any(|(index, start)| {
+        right_starts[index..]
+            .iter()
+            .filter(|candidate| (**candidate - *start).abs() <= 12.0)
+            .count()
+            >= 2
+    });
+    proven
 }
 
 fn detect_column_split_x(
@@ -1207,6 +1435,64 @@ fn detect_layout_sections(chars: &[CharWithOrigin]) -> Vec<LayoutSection> {
             gutters: detect_column_gutters(&band_chars, x_min_global, x_max_global),
             char_count: band_chars.len(),
         });
+    }
+
+    // A partial-width table/caption can erase one histogram valley for
+    // several consecutive bands even though the surrounding page keeps the
+    // same three atomic columns. Establish a three-column seed only when two
+    // independently detected bands agree, then restore a missing gutter band
+    // by band when repeated row gaps prove the independent runs. A genuine
+    // wide two-column region crosses the missing gutter with ordinary word
+    // spacing and therefore does not satisfy this proof.
+    let gutter_tolerance = (page_x_span * 0.08).clamp(18.0, 44.0);
+    let stable_three_column_gutters = bands
+        .iter()
+        .enumerate()
+        .filter(|(_, band)| band.gutters.len() == 2)
+        .filter(|(index, band)| {
+            bands.iter().enumerate().any(|(other_index, other)| {
+                other_index != *index
+                    && other.gutters.len() == 2
+                    && band
+                        .gutters
+                        .iter()
+                        .zip(other.gutters.iter())
+                        .all(|(left, right)| (left - right).abs() <= gutter_tolerance)
+            })
+        })
+        .max_by_key(|(_, band)| band.char_count)
+        .map(|(_, band)| band.gutters.clone());
+
+    if let Some(stable_gutters) = stable_three_column_gutters {
+        for band in &mut bands {
+            if band.gutters.len() >= stable_gutters.len() {
+                continue;
+            }
+            let band_chars = chars
+                .iter()
+                .copied()
+                .filter(|ch| ch.y <= band.y_top && ch.y > band.y_bottom)
+                .collect::<Vec<_>>();
+            let existing_gutters_are_compatible = band.gutters.iter().all(|existing| {
+                stable_gutters
+                    .iter()
+                    .any(|stable| (existing - stable).abs() <= gutter_tolerance)
+            });
+            if !existing_gutters_are_compatible
+                || band_is_predominantly_full_width_stream(&band_chars, &stable_gutters)
+            {
+                continue;
+            }
+            let all_missing_gutters_are_proven = stable_gutters.iter().all(|stable| {
+                band.gutters
+                    .iter()
+                    .any(|existing| (existing - stable).abs() <= gutter_tolerance)
+                    || gutter_has_repeated_independent_runs(&band_chars, *stable)
+            });
+            if all_missing_gutters_are_proven {
+                band.gutters = stable_gutters.clone();
+            }
+        }
     }
 
     // Fill empty bands between two bands that agree on their gutters, so a
@@ -1573,20 +1859,35 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
                 section_index: emitted_section_index,
                 column_index: 0,
                 column_count: 1,
+                column_span: vec![0],
             }));
             emitted_section_index += 1;
             continue;
         }
-        // Multi-column section. Use the first gutter for the banner heuristic
-        // (a full-width banner crosses every gutter, so checking the leftmost
-        // one is sufficient and keeps backward-compatible behaviour).
-        let split_x = section.split_x();
+        // Multi-column section. A true full-width banner must cross every
+        // gutter. In three-column material, crossing only the first gutter can
+        // be a table/caption spanning columns 0-1 beside independent column-2
+        // prose, which must remain isolated.
         let section_x_min = section_chars.iter().map(|c| c.x).fold(f32::MAX, f32::min);
         let section_x_max = section_chars.iter().map(|c| c.x).fold(f32::MIN, f32::max);
         let rows = build_raw_rows(&section_chars, y_tol);
         let mut segments: Vec<(bool, Vec<CharWithOrigin>)> = Vec::new();
         for row in rows {
-            let is_banner = is_full_width_banner_row(&row, split_x, section_x_min, section_x_max);
+            let is_partial_span = row_has_partial_span_with_independent_run(&row, &section.gutters);
+            let is_banner = if is_partial_span {
+                false
+            } else if section.gutters.len() > 1 {
+                is_full_width_banner_row_across_gutters(
+                    &row,
+                    &section.gutters,
+                    section_x_min,
+                    section_x_max,
+                )
+            } else {
+                section.gutters.iter().all(|&split_x| {
+                    is_full_width_banner_row(&row, split_x, section_x_min, section_x_max)
+                })
+            };
             match segments.last_mut() {
                 Some((current_banner, segment_chars)) if *current_banner == is_banner => {
                     segment_chars.extend(row);
@@ -1605,6 +1906,7 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
                     section_index: emitted_section_index,
                     column_index: 0,
                     column_count: 1,
+                    column_span: vec![0],
                 }));
                 emitted_section_index += 1;
                 continue;
@@ -1614,13 +1916,100 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
             // For a 2-column section this is equivalent to the old left/right
             // hard-coded split; for 3 columns it yields left/middle/right.
             let column_count = section.column_count;
+            let segment_rows = build_raw_rows(&segment_chars, y_tol);
+            // Build row fragments up front.  A three-column row can contain a
+            // left/middle table run and an independent right-column run at
+            // the same y; assigning glyphs one-by-one to buckets loses that
+            // relationship and merges the two strings later in
+            // `group_lines_into_blocks`.
+            let mut row_fragments = segment_rows
+                .iter()
+                .map(|row| {
+                    split_row_into_fragments(row)
+                        .into_iter()
+                        .map(|mut fragment| {
+                            fragment.column_span =
+                                row_fragment_column_span(&fragment.chars, &section.gutters);
+                            fragment
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            // A two-column page normally benefits from the legacy word-tail
+            // repair. Switch to span-aware rows only when there is proof of a
+            // partial run crossing the gutter beside another run; otherwise
+            // preserve the established repair path for ordinary prose.
+            let span_mode = section.gutters.len() > 1
+                || row_fragments.iter().any(|fragments| {
+                    fragments.len() > 1
+                        && fragments
+                            .iter()
+                            .any(|fragment| fragment.column_span.len() > 1)
+                });
+            if span_mode {
+                // Keep independent runs with the same atomic span separate.
+                // A table's right-aligned numeric cell and the prose column
+                // beside it can both map to column 1 when the section has one
+                // detected gutter; grouping by span alone would concatenate
+                // them on every shared baseline.  Cluster by a stable x-start
+                // as well, tolerating normal paragraph indents.
+                let mut buckets = Vec::<(Vec<u8>, f32, Vec<CharWithOrigin>)>::new();
+                for fragments in row_fragments.drain(..) {
+                    for fragment in fragments {
+                        if fragment.chars.is_empty() || fragment.column_span.is_empty() {
+                            continue;
+                        }
+                        let x_start = fragment
+                            .chars
+                            .iter()
+                            .filter(|ch| !ch.ch.is_whitespace())
+                            .map(|ch| ch.x)
+                            .fold(f32::MAX, f32::min);
+                        let matching = buckets.iter_mut().find(|(span, start, _)| {
+                            *span == fragment.column_span && (*start - x_start).abs() <= 24.0
+                        });
+                        if let Some((_, start, chars)) = matching {
+                            // Smooth small indentation changes so a later row
+                            // can still join the same paragraph stream.
+                            *start = (*start + x_start) * 0.5;
+                            chars.extend(fragment.chars);
+                        } else {
+                            buckets.push((fragment.column_span, x_start, fragment.chars));
+                        }
+                    }
+                }
+                buckets.sort_by(|left, right| {
+                    left.0
+                        .first()
+                        .cmp(&right.0.first())
+                        .then_with(|| left.1.total_cmp(&right.1))
+                });
+                for (column_span, _, column_chars) in buckets {
+                    if column_chars.is_empty() {
+                        continue;
+                    }
+                    let lines = build_lines_within_column_refined(&column_chars, y_tol);
+                    let grouped = group_lines_into_blocks(&lines);
+                    let column_index = column_span.first().copied().unwrap_or(0);
+                    result.extend(grouped.into_iter().map(|(text, bbox)| BlockWithLayout {
+                        text,
+                        bbox,
+                        section_index: emitted_section_index,
+                        column_index,
+                        column_count,
+                        column_span: column_span.clone(),
+                    }));
+                }
+                emitted_section_index += 1;
+                continue;
+            }
+
             let mut columns: Vec<Vec<CharWithOrigin>> =
                 (0..column_count).map(|_| Vec::new()).collect();
             // Keep row boundaries while assigning characters so a narrow
             // gutter cannot strand the tail of a word in the next column.
             // This only changes text ownership for the conservative lowercase
             // prefix pattern handled by `repair_cross_column_word_prefix`.
-            let segment_rows = build_raw_rows(&segment_chars, y_tol);
             let dominant_right_edge = if column_count == 2 {
                 dominant_right_column_edge(&segment_rows, section.split_x())
             } else {
@@ -1674,6 +2063,7 @@ fn build_blocks_from_chars(chars: &[CharWithOrigin]) -> Vec<BlockWithLayout> {
                     section_index: emitted_section_index,
                     column_index: column_index as u8,
                     column_count,
+                    column_span: vec![column_index as u8],
                 }));
             }
             emitted_section_index += 1;
@@ -1947,6 +2337,7 @@ fn document_block_with_layout(
     section_index: usize,
     column_index: u8,
     column_count: u8,
+    column_span: &[u8],
     global_section: Option<usize>,
 ) -> Value {
     let mut block = document_block_with_bbox(block_id, text, page_index, ordinal, confidence, bbox);
@@ -1954,6 +2345,9 @@ fn document_block_with_layout(
         obj.insert("_epic8LayoutSection".to_string(), json!(section_index));
         obj.insert("_epic8ColumnIndex".to_string(), json!(column_index));
         obj.insert("_epic8SectionColumns".to_string(), json!(column_count));
+        if !column_span.is_empty() {
+            obj.insert("_epic8ColumnSpan".to_string(), json!(column_span));
+        }
         if let Some(global) = global_section {
             obj.insert("_epic8GlobalSection".to_string(), json!(global));
         }
@@ -1967,7 +2361,8 @@ fn document_block_with_layout(
                     "index": section_index,
                     "columns": {
                         "count": column_count,
-                        "current": column_index
+                        "current": column_index,
+                        "span": column_span
                     }
                 }),
             );
@@ -3148,6 +3543,90 @@ mod tests {
     }
 
     #[test]
+    fn partial_two_of_three_column_span_does_not_absorb_right_column() {
+        let mut chars = Vec::new();
+        for (index, y) in [760.0, 751.0, 742.0, 733.0, 715.0, 706.0, 697.0]
+            .iter()
+            .enumerate()
+        {
+            push_fixed_glyph_line(
+                &mut chars,
+                &format!("LEFT_FLOW_{index}_"),
+                'L',
+                22,
+                60.0,
+                *y,
+            );
+            push_fixed_glyph_line(
+                &mut chars,
+                &format!("MIDDLE_FLOW_{index}_"),
+                'M',
+                22,
+                240.0,
+                *y,
+            );
+            push_fixed_glyph_line(
+                &mut chars,
+                &format!("RIGHT_FLOW_{index}_"),
+                'R',
+                22,
+                420.0,
+                *y,
+            );
+        }
+        // This title crosses the left/middle gutter but ends well before the
+        // right column. Independent right-column prose shares its baseline.
+        push_text_line(
+            &mut chars,
+            "PARTIAL TABLE TITLE SPANS LEFT AND MIDDLE",
+            60.0,
+            724.0,
+        );
+        push_text_line(&mut chars, "RIGHT_SIDE_PROSE_STAYS_SEPARATE", 420.0, 724.0);
+
+        let blocks = build_blocks_from_chars(&chars);
+        assert!(
+            blocks
+                .iter()
+                .any(|block| block.text.contains("RIGHT_SIDE_PROSE_STAYS_SEPARATE")),
+            "right-side prose must survive as source-backed text: {blocks:?}"
+        );
+        assert!(
+            blocks.iter().all(|block| {
+                !(block.text.contains("PARTIAL")
+                    && block.text.contains("RIGHT_SIDE_PROSE_STAYS_SEPARATE"))
+            }),
+            "a partial [0,1] span must not absorb independent column 2: {blocks:?}"
+        );
+    }
+
+    #[test]
+    fn true_full_width_banner_across_three_columns_remains_single_block() {
+        let mut chars = Vec::new();
+        for (index, y) in [760.0, 751.0, 742.0, 715.0, 706.0, 697.0]
+            .iter()
+            .enumerate()
+        {
+            push_fixed_glyph_line(&mut chars, &format!("LEFT_{index}_"), 'L', 22, 60.0, *y);
+            push_fixed_glyph_line(&mut chars, &format!("MIDDLE_{index}_"), 'M', 22, 240.0, *y);
+            push_fixed_glyph_line(&mut chars, &format!("RIGHT_{index}_"), 'R', 22, 420.0, *y);
+        }
+        let banner = "FULL WIDTH BANNER CONTINUES ACROSS ALL THREE COLUMNS WITHOUT A COLUMN BREAK";
+        push_text_line(&mut chars, banner, 90.0, 730.0);
+
+        let blocks = build_blocks_from_chars(&chars);
+        let banner_block = blocks
+            .iter()
+            .find(|block| block.text == banner)
+            .expect("true full-width banner should remain source-exact");
+        assert_eq!(banner_block.column_count, 1);
+        assert!(
+            blocks.iter().any(|block| block.column_count == 3),
+            "surrounding uniform three-column flow must remain intact: {blocks:?}"
+        );
+    }
+
+    #[test]
     fn build_blocks_from_chars_preserves_single_column_then_two_column_layout() {
         // Top: single-column full-width paragraph. Bottom: two-column flow.
         // This is the reverse of the existing mixed-column test and guards
@@ -3960,5 +4439,90 @@ mod tests {
             dominant_edge,
         );
         assert_eq!(right.iter().map(|ch| ch.ch).collect::<String>(), "map");
+    }
+
+    /// The Geodiversity article is a real mixed-layout page: its table spans
+    /// the left and middle columns while prose continues independently in the
+    /// right column. Keep this as an opt-in corpus regression because the
+    /// fixture lives outside the repository. A block crossing the table/right
+    /// boundary is evidence that two physical streams were silently merged.
+    #[test]
+    #[ignore = "requires the local ReadingPractice corpus"]
+    fn real_geodiversity_pages_keep_table_and_right_column_blocks_separate() {
+        let input = Path::new(
+            r"C:\Users\lenovo\Desktop\working space\0.3.1 working\ReadingPractice\PDF\26. P2 - Geodiversity 地质多样性.pdf",
+        );
+        if !input.exists() {
+            return;
+        }
+        let output = std::env::temp_dir().join("pdf2test-geodiversity-layout-regression.json");
+        let mut job = crate::job_store::make_job(crate::CreateJobInput {
+            title: Some("Geodiversity layout regression".to_string()),
+            ..Default::default()
+        });
+        let source = SourceFile {
+            file_id: "geodiversity-layout-regression".to_string(),
+            original_name: input
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("geodiversity.pdf")
+                .to_string(),
+            stored_name: "geodiversity.pdf".to_string(),
+            file_type: "pdf".to_string(),
+            sha256: "fixture".to_string(),
+            size_bytes: fs::metadata(input).map(|meta| meta.len()).unwrap_or(0),
+            role: "MainQuestion".to_string(),
+            imported_at: chrono::Utc::now(),
+        };
+        job.source_files = vec![source.clone()];
+        let ir = parse_pdf_with_pdfium(&job, &source, input, &output, "auto")
+            .expect("Geodiversity fixture should parse through the product pdfium path");
+
+        for (page_number, expected_text) in [(4_u64, "Physical Restraint"), (5, "Mobile Rangers")] {
+            let page = ir
+                .get("pages")
+                .and_then(Value::as_array)
+                .and_then(|pages| {
+                    pages.iter().find(|page| {
+                        page.get("pageIndex").and_then(Value::as_u64) == Some(page_number)
+                    })
+                })
+                .expect("fixture page should be present");
+            let blocks = page
+                .get("blocks")
+                .and_then(Value::as_array)
+                .expect("fixture page blocks should be present");
+            assert!(
+                blocks.iter().any(|block| {
+                    block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| text.contains(expected_text))
+                }),
+                "expected independent right-column text on page {page_number}: {blocks:?}"
+            );
+            let cross_column = blocks
+                .iter()
+                .filter(|block| {
+                    // Page headers intentionally place independent metadata
+                    // runs near the right edge; the content assertion below
+                    // starts after that header section.
+                    if block.get("_epic8LayoutSection").and_then(Value::as_u64) == Some(0) {
+                        return false;
+                    }
+                    let Some(bbox) = block.get("bbox").and_then(Value::as_array) else {
+                        return false;
+                    };
+                    let left = bbox.first().and_then(Value::as_f64).unwrap_or(0.0);
+                    let right = bbox.get(2).and_then(Value::as_f64).unwrap_or(0.0);
+                    left < 400.0 && right > 405.0
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                cross_column.is_empty(),
+                "page {page_number} merged left/middle table content with right prose: {cross_column:?}"
+            );
+        }
+        let _ = fs::remove_file(&output);
     }
 }

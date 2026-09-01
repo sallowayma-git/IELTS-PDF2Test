@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 
 const requiredFiles = [
   "src/pages/StructuredAuthoringEditorV2.tsx",
+  "src/components/ExamCanvasV2.tsx",
   "src/editor/authoringTiptap.tsx",
   "src/types/runtime-view-model-v2.ts",
   "src/services/runtimeViewModelV2.ts",
@@ -29,6 +30,7 @@ if (!flags.includes("pdfPerQuestionLlmRepair: false")) throw new Error("PDF per-
 if (!flags.includes("return true")) throw new Error("Phase 5 editor must always use the structured authoring surface");
 
 const editor = readFileSync("src/pages/StructuredAuthoringEditorV2.tsx", "utf8");
+const examCanvas = readFileSync("src/components/ExamCanvasV2.tsx", "utf8");
 for (const token of [
   "ContentNodeV2",
   "responseGroups",
@@ -90,12 +92,15 @@ for (const token of ["RuntimeViewModelV2", "questionOrder", "answerSlots", "asse
   if (!runtimeModel.includes(token)) throw new Error("Phase 5 runtime projection is missing " + token);
 }
 
-for (const token of ["phase5-export-blockers", "exportBlocked", "recoveryCandidate.baseRevision", "anchorsOverride", "sourceAnchorStyle", "selectIssue", "ReadingInteractionModelV2", "RuntimeViewModelV2"]) {
+for (const token of ["phase5-export-blockers", "exportBlocked", "recoveryCandidate.baseRevision", "anchorsOverride", "sourceAnchorStyle", "selectIssue", "ExamCanvasV2", 'mode="author"', 'mode="student"']) {
   if (!editor.includes(token)) throw new Error("Phase 5 editor audit boundary is missing " + token);
+}
+for (const token of ["buildReadingInteractionModelV2", "buildRuntimeViewModelV2", "exam-canvas-v2", "v2-passage-pane", "v2-question-pane", "v2-response-group", "v2-slot-question", "contentEditable", "onTextChange", "onAnswerChange", "onStructureAction", "resolveAuthoringAssetPreview", "table.row.add", "option.add", "answer-slot.insert"]) {
+  if (!examCanvas.includes(token)) throw new Error("Phase 5 shared ExamCanvas contract is missing " + token);
 }
 
 const rustAuthoring = readFileSync("src-tauri/src/authoring_v2_commands.rs", "utf8");
-for (const token of ["AUTHORING_PATCH_ANSWER_SLOT_LOSS", "phase5-export.lock", "AuthoringV2ExportJournalV1", "remove_dir_all", "preserve_provenance"]) {
+for (const token of ["AUTHORING_PATCH_ANSWER_SLOT_LOSS", "phase5-export.lock", "AuthoringV2ExportJournalV1", "remove_dir_all", "preserve_provenance", "setOptionBank", "insertAnswerSlot", "deleteAnswerSlot", "resolve_authoring_asset_preview_core"]) {
   if (!rustAuthoring.includes(token)) throw new Error("Phase 5 backend safety contract is missing " + token);
 }
 

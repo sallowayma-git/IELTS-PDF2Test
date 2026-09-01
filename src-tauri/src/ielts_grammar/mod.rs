@@ -36,8 +36,8 @@ use std::path::Path;
 use anchors::{detect_question_anchors, QuestionAnchor};
 use answer_key::{answer_key_from_v1, answer_value_for_slot};
 use completion::{
-    answer_slot_node, completion_host_type, completion_placeholder, recover_completion_structure,
-    CompletionContainerKind,
+    answer_slot_node, completion_context_nodes_with_slots, completion_host_type,
+    completion_placeholder, recover_completion_structure, CompletionStructureCandidate,
 };
 use diagram::diagram_candidate;
 use evidence::{anchor_from_value, source_anchor_from_job};
@@ -244,6 +244,17 @@ pub(crate) fn build_authoring_v2_shadow(
             .as_ref()
             .and_then(|bank| bank.get("optionBankId"))
             .and_then(Value::as_str);
+        let completion_structure = is_completion_task(&task_type).then(|| {
+            recover_completion_structure(
+                &task_type,
+                &group_lines,
+                &zone.line_ids,
+                &expected_numbers,
+            )
+        });
+        let structured_completion_slots = completion_structure
+            .as_ref()
+            .is_some_and(|structure| structure.closes_slots(&expected_numbers));
         let (responses, mut slots, used_answers) = build_responses_and_slots(
             &task_id,
             &task_type,
@@ -257,6 +268,10 @@ pub(crate) fn build_authoring_v2_shadow(
             &option_runs,
             &answer_key_v1,
             &task_source_anchors,
+            structured_completion_slots,
+            completion_structure
+                .as_ref()
+                .map(|structure| &structure.slot_line_ids),
         );
         let instructions = vec![paragraph_node(
             &format!("{task_id}-instructions"),
@@ -264,18 +279,18 @@ pub(crate) fn build_authoring_v2_shadow(
             task_source_anchors.clone(),
             Vec::new(),
         )];
-        let stimulus = build_stimulus(
-            &task_id,
-            &task_type,
-            &group_lines,
-            &zone,
-            &expected_numbers,
-            &assets,
-        );
+        let stimulus = completion_structure.as_ref().and_then(|structure| {
+            build_stimulus(
+                &task_id,
+                &task_type,
+                &group_lines,
+                &zone,
+                &expected_numbers,
+                &assets,
+                structure,
+            )
+        });
         rehost_structured_slots(&task_id, &task_type, &mut slots);
-        for (slot_id, slot) in slots {
-            answer_slots.insert(slot_id, slot);
-        }
         let mut group = json!({
             "taskId": task_id,
             "displayRange": expression,
@@ -293,6 +308,15 @@ pub(crate) fn build_authoring_v2_shadow(
         }
         if let Some(bank) = option_bank_value {
             group["optionBank"] = bank;
+        }
+        // A continuation row may be folded into the preceding paragraph or
+        // list item by the geometry-backed completion renderer. Resolve the
+        // final paragraph host from the canonical stimulus tree after it has
+        // been built, so the answer-slot contract remains valid even when a
+        // physical row no longer has a one-to-one node id.
+        align_inline_completion_slot_hosts(&group, &mut slots);
+        for (slot_id, slot) in slots {
+            answer_slots.insert(slot_id, slot);
         }
         let _ = used_answers;
         task_groups.push(group);
@@ -786,6 +810,8 @@ fn build_responses_and_slots(
     option_runs: &[OptionRun],
     answer_key: &Map<String, Value>,
     task_anchors: &[Value],
+    structured_completion_slots: bool,
+    completion_slot_line_ids: Option<&std::collections::BTreeMap<u32, String>>,
 ) -> (Vec<Value>, Map<String, Value>, Map<String, Value>) {
     let mut responses = Vec::new();
     let mut slots = Map::new();
@@ -934,7 +960,23 @@ fn build_responses_and_slots(
             .as_ref()
             .map(|(_, anchors)| anchors.clone())
             .unwrap_or_else(|| prompt_result.source_anchors.clone());
-        let host_id = format!("{task_id}-prompt-{number}");
+        let embed_completion_slot_in_prompt = is_completion_task(task_type)
+            && !structured_completion_slots
+            && !matches!(
+                task_type,
+                TaskTypeV2::TableCompletion
+                    | TaskTypeV2::FlowchartCompletion
+                    | TaskTypeV2::DiagramLabelCompletion
+                    | TaskTypeV2::PlanMapLabelCompletion
+            );
+        let host_id = if structured_completion_slots && is_completion_task(task_type) {
+            completion_slot_line_ids
+                .and_then(|line_ids| line_ids.get(number))
+                .map(|line_id| format!("{task_id}-stimulus-{line_id}"))
+                .unwrap_or_else(|| format!("{task_id}-prompt-{number}"))
+        } else {
+            format!("{task_id}-prompt-{number}")
+        };
         let mut children = Vec::new();
         if !prompt_text.is_empty() {
             children.push(text_node(
@@ -946,15 +988,7 @@ fn build_responses_and_slots(
                     .or_else(|| Some(anchor.clone())),
             ));
         }
-        if is_completion_task(task_type)
-            && !matches!(
-                task_type,
-                TaskTypeV2::TableCompletion
-                    | TaskTypeV2::FlowchartCompletion
-                    | TaskTypeV2::DiagramLabelCompletion
-                    | TaskTypeV2::PlanMapLabelCompletion
-            )
-        {
+        if embed_completion_slot_in_prompt {
             children.push(answer_slot_node(
                 &slot_id,
                 &number.to_string(),
@@ -962,16 +996,20 @@ fn build_responses_and_slots(
                 completion_placeholder(task_type),
             ));
         }
-        let prompt = vec![paragraph_node(
-            &host_id,
-            if prompt_text.is_empty() {
-                "[prompt pending review]"
-            } else {
-                &prompt_text
-            },
-            prompt_anchors,
-            children,
-        )];
+        let prompt = if structured_completion_slots && is_completion_task(task_type) {
+            Vec::new()
+        } else {
+            vec![paragraph_node(
+                &host_id,
+                if prompt_text.is_empty() {
+                    "[prompt pending review]"
+                } else {
+                    &prompt_text
+                },
+                prompt_anchors,
+                children,
+            )]
+        };
         let slot = slot_value(&slot_id, *number, task_type, &host_id, anchor, signature);
         let answer = answer_value_for_slot(answer_key, &slot_id, *number);
         used_answers.insert(slot_id.clone(), answer);
@@ -1423,46 +1461,22 @@ fn build_stimulus(
     task_id: &str,
     task_type: &TaskTypeV2,
     lines: &[SemanticLine],
-    zone: &instruction_zone::InstructionZone,
+    _zone: &instruction_zone::InstructionZone,
     expected_numbers: &[u32],
     assets: &[Value],
+    structure: &CompletionStructureCandidate,
 ) -> Option<Vec<Value>> {
     if !is_completion_task(task_type) {
         return None;
     }
-    let structure =
-        recover_completion_structure(task_type, lines, &zone.line_ids, expected_numbers);
-    let mut nodes = structure
-        .context_lines
-        .iter()
-        .take(12)
-        .map(|line| {
-            let id = format!("stimulus-{}", line.id);
-            let text = normalize_instruction_text(&line.text);
-            let looks_like_heading = matches!(
-                structure.container_kind,
-                CompletionContainerKind::Note | CompletionContainerKind::Form
-            ) && text.split_whitespace().count() <= 8
-                && !text.ends_with('.')
-                && !text.ends_with('?');
-            if looks_like_heading {
-                json!({
-                    "type":"heading",
-                    "id":id,
-                    "sourceAnchors":[line.source_anchor.clone()],
-                    "provenanceStatus":"source",
-                    "level":3,
-                    "children":[text_node(
-                        &format!("stimulus-{}-text", line.id),
-                        &text,
-                        Some(line.source_anchor.clone()),
-                    )]
-                })
-            } else {
-                paragraph_node(&id, &text, vec![line.source_anchor.clone()], Vec::new())
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut nodes = completion_context_nodes_with_slots(
+        task_id,
+        structure.container_kind,
+        &structure.context_lines,
+        &structure.slot_lines,
+        expected_numbers,
+        completion_placeholder(task_type),
+    );
     if matches!(task_type, TaskTypeV2::TableCompletion) {
         if !structure.closes_slots(expected_numbers) {
             return (!nodes.is_empty()).then_some(nodes);
@@ -1557,6 +1571,70 @@ fn rehost_structured_slots(task_id: &str, task_type: &TaskTypeV2, slots: &mut Ma
             _ => {}
         }
     }
+}
+
+fn align_inline_completion_slot_hosts(group: &Value, slots: &mut Map<String, Value>) {
+    let task_type = group
+        .get("taskType")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !matches!(
+        task_type,
+        "sentence_completion" | "summary_completion" | "note_completion" | "form_completion"
+    ) {
+        return;
+    }
+    let Some(stimulus) = group.get("stimulus").and_then(Value::as_array) else {
+        return;
+    };
+    let slot_ids = group
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|response| response.get("slotIds").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str);
+    for slot_id in slot_ids {
+        let Some(host_id) = stimulus
+            .iter()
+            .find_map(|node| inline_slot_paragraph_host_id(node, slot_id))
+        else {
+            continue;
+        };
+        if let Some(slot) = slots.get_mut(slot_id) {
+            slot["hostNodeId"] = Value::String(host_id);
+            slot["hostType"] = Value::String("paragraph".to_string());
+        }
+    }
+}
+
+fn inline_slot_paragraph_host_id(node: &Value, slot_id: &str) -> Option<String> {
+    let has_slot = node_contains_inline_slot(node, slot_id);
+    if has_slot && node.get("type").and_then(Value::as_str) == Some("paragraph") {
+        return node
+            .get("id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+    }
+    ["children", "items", "rows", "cells", "steps"]
+        .iter()
+        .filter_map(|key| node.get(*key).and_then(Value::as_array))
+        .flatten()
+        .find_map(|child| inline_slot_paragraph_host_id(child, slot_id))
+}
+
+fn node_contains_inline_slot(node: &Value, slot_id: &str) -> bool {
+    if node.get("type").and_then(Value::as_str) == Some("answer_slot")
+        && node.get("slotId").and_then(Value::as_str) == Some(slot_id)
+    {
+        return true;
+    }
+    ["children", "items", "rows", "cells", "steps"]
+        .iter()
+        .filter_map(|key| node.get(*key).and_then(Value::as_array))
+        .flatten()
+        .any(|child| node_contains_inline_slot(child, slot_id))
 }
 
 fn table_completion_node(task_id: &str, lines: &[SemanticLine], numbers: &[u32]) -> Value {

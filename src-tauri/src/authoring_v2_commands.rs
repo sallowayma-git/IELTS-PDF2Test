@@ -19,6 +19,7 @@ use crate::util::{
     is_safe_path_segment, job_dir, read_json_opt, safe_job_dir, stage_file_with_hash,
 };
 use crate::CommandResult;
+use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use fs2::FileExt;
 use serde::Deserialize;
@@ -51,6 +52,70 @@ pub(crate) struct ExportAuthoringV2Input {
 pub(crate) fn get_authoring_v2_core(root: &Path, job_id: &str) -> CommandResult<Value> {
     safe_job_dir(root, job_id)?;
     build_editor_session(root, job_id)
+}
+
+pub(crate) fn resolve_authoring_asset_preview_core(
+    root: &Path,
+    job_id: &str,
+    asset_id: &str,
+) -> CommandResult<Value> {
+    let job_root = fs::canonicalize(safe_job_dir(root, job_id)?)
+        .map_err(|error| format!("authoring_asset_root_unavailable:{error}"))?;
+    let (authoring_value, _) = load_current_authoring(root, job_id)?;
+    let authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value)
+        .map_err(|error| format!("AUTHORING_SCHEMA_INVALID:{error}"))?;
+    let descriptor = authoring
+        .assets
+        .iter()
+        .find(|asset| asset.asset_id == asset_id)
+        .ok_or_else(|| format!("authoring_asset_missing:{asset_id}"))?;
+    if !descriptor.mime.starts_with("image/") {
+        return Err(format!(
+            "authoring_asset_preview_mime_unsupported:{}:{}",
+            descriptor.asset_id, descriptor.mime
+        ));
+    }
+    let relative = safe_asset_relative_path(&descriptor.relative_path)?;
+    let asset_path = fs::canonicalize(job_root.join(relative)).map_err(|error| {
+        format!(
+            "authoring_asset_source_missing:{}:{error}",
+            descriptor.asset_id
+        )
+    })?;
+    if !asset_path.starts_with(&job_root) {
+        return Err(format!(
+            "authoring_asset_source_escape:{}",
+            descriptor.asset_id
+        ));
+    }
+    let bytes = fs::read(&asset_path)
+        .map_err(|error| format!("authoring_asset_read:{}:{error}", descriptor.asset_id))?;
+    if bytes.len() as u64 != descriptor.byte_length {
+        return Err(format!(
+            "authoring_asset_size_mismatch:{}:expected={}:actual={}",
+            descriptor.asset_id,
+            descriptor.byte_length,
+            bytes.len()
+        ));
+    }
+    let actual_hash = crate::hash_bytes(&bytes);
+    if !actual_hash.eq_ignore_ascii_case(&descriptor.sha256) {
+        return Err(format!(
+            "authoring_asset_hash_mismatch:{}:expected={}:actual={actual_hash}",
+            descriptor.asset_id, descriptor.sha256
+        ));
+    }
+    Ok(json!({
+        "assetId": descriptor.asset_id,
+        "mime": descriptor.mime,
+        "widthPx": descriptor.width_px,
+        "heightPx": descriptor.height_px,
+        "resourceUri": format!(
+            "data:{};base64,{}",
+            descriptor.mime,
+            general_purpose::STANDARD.encode(bytes)
+        )
+    }))
 }
 
 pub(crate) fn apply_authoring_v2_patches_core(root: &Path, input: Value) -> CommandResult<Value> {
@@ -562,6 +627,9 @@ fn apply_patch(document: &mut Value, patch: &Value) -> CommandResult<()> {
         "setQuestionExpression" => set_question_expression(document, object),
         "setResponseCardinality" => set_response_cardinality(document, object),
         "setResponseGroup" => set_response_group(document, object),
+        "setOptionBank" => set_option_bank(document, object),
+        "insertAnswerSlot" => insert_answer_slot(document, object),
+        "deleteAnswerSlot" => delete_answer_slot(document, object),
         "setAnswer" => set_answer(document, object),
         "bindSource" => bind_source(document, object),
         "resolveIssue" => resolve_issue(document, object),
@@ -974,6 +1042,161 @@ fn set_response_group(document: &mut Value, patch: &Map<String, Value>) -> Comma
         restore_provenance_status(patch),
     );
     Ok(())
+}
+
+fn set_option_bank(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
+    let task_id = required_string(patch, "taskId")?;
+    let option_bank = patch
+        .get("optionBank")
+        .ok_or_else(|| "AUTHORING_PATCH_OPTION_BANK_REQUIRED".to_string())?;
+    if !option_bank.is_null() && !option_bank.is_object() {
+        return Err("AUTHORING_PATCH_OPTION_BANK_INVALID".to_string());
+    }
+    let task = find_object_by_field_mut(document, "taskId", task_id)
+        .ok_or_else(|| format!("AUTHORING_PATCH_TASK_NOT_FOUND:{task_id}"))?;
+    if option_bank.is_null() {
+        task.remove("optionBank");
+    } else {
+        task.insert("optionBank".to_string(), option_bank.clone());
+    }
+    mark_user_edited(
+        task,
+        preserve_provenance(patch),
+        restore_provenance_status(patch),
+    );
+    Ok(())
+}
+
+fn insert_answer_slot(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
+    let task_id = required_string(patch, "taskId")?;
+    let response_id = required_string(patch, "responseGroupId")?;
+    let slot_index = required_u64(patch, "slotIndex")? as usize;
+    let node = patch
+        .get("node")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "AUTHORING_PATCH_SLOT_NODE_REQUIRED".to_string())?;
+    let slot = patch
+        .get("slot")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "AUTHORING_PATCH_SLOT_REQUIRED".to_string())?;
+    let value = patch
+        .get("value")
+        .ok_or_else(|| "AUTHORING_PATCH_ANSWER_REQUIRED".to_string())?;
+    let slot_id = slot
+        .get("slotId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "AUTHORING_PATCH_SLOT_ID_REQUIRED".to_string())?;
+    if node.get("type").and_then(Value::as_str) != Some("answer_slot")
+        || node.get("slotId").and_then(Value::as_str) != Some(slot_id)
+    {
+        return Err("AUTHORING_PATCH_SLOT_NODE_MISMATCH".to_string());
+    }
+    let expression = patch
+        .get("expression")
+        .ok_or_else(|| "AUTHORING_PATCH_EXPRESSION_REQUIRED".to_string())?;
+    expand_question_expression(expression)?;
+    if document
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .is_some_and(|slots| slots.contains_key(slot_id))
+    {
+        return Err(format!("AUTHORING_PATCH_SLOT_ALREADY_EXISTS:{slot_id}"));
+    }
+    let backup = document.clone();
+    let result = (|| {
+        insert_node(document, patch)?;
+        document
+            .get_mut("answerSlots")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "AUTHORING_PATCH_ANSWER_SLOTS_MISSING".to_string())?
+            .insert(slot_id.to_string(), Value::Object(slot.clone()));
+        document
+            .get_mut("answerKey")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "AUTHORING_PATCH_ANSWER_KEY_MISSING".to_string())?
+            .insert(slot_id.to_string(), value.clone());
+        let task = find_object_by_field_mut(document, "taskId", task_id)
+            .ok_or_else(|| format!("AUTHORING_PATCH_TASK_NOT_FOUND:{task_id}"))?;
+        let group = task
+            .get_mut("responseGroups")
+            .and_then(Value::as_array_mut)
+            .and_then(|groups| {
+                groups.iter_mut().find(|item| {
+                    item.get("responseGroupId").and_then(Value::as_str) == Some(response_id)
+                })
+            })
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| format!("AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:{response_id}"))?;
+        let slot_ids = group
+            .get_mut("slotIds")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "AUTHORING_PATCH_SLOT_IDS_MISSING".to_string())?;
+        if slot_index > slot_ids.len() {
+            return Err(format!("AUTHORING_PATCH_INDEX_INVALID:{slot_index}"));
+        }
+        slot_ids.insert(slot_index, Value::String(slot_id.to_string()));
+        set_question_expression(document, patch)
+    })();
+    if result.is_err() {
+        *document = backup;
+    }
+    result
+}
+
+fn delete_answer_slot(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
+    let task_id = required_string(patch, "taskId")?;
+    let response_id = required_string(patch, "responseGroupId")?;
+    let node_id = required_string(patch, "nodeId")?;
+    let slot_id = required_string(patch, "slotId")?;
+    let expression = patch
+        .get("expression")
+        .ok_or_else(|| "AUTHORING_PATCH_EXPRESSION_REQUIRED".to_string())?;
+    expand_question_expression(expression)?;
+    let node = find_object_mut_by_id(document, node_id)
+        .ok_or_else(|| format!("AUTHORING_PATCH_SLOT_NODE_NOT_FOUND:{slot_id}"))?;
+    if node.get("type").and_then(Value::as_str) != Some("answer_slot")
+        || node.get("slotId").and_then(Value::as_str) != Some(slot_id)
+    {
+        return Err(format!("AUTHORING_PATCH_SLOT_NODE_NOT_FOUND:{slot_id}"));
+    }
+    let backup = document.clone();
+    let result = (|| {
+        remove_content_node(document, node_id)
+            .ok_or_else(|| format!("AUTHORING_PATCH_SLOT_NODE_NOT_FOUND:{slot_id}"))?;
+        document
+            .get_mut("answerSlots")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "AUTHORING_PATCH_ANSWER_SLOTS_MISSING".to_string())?
+            .remove(slot_id)
+            .ok_or_else(|| format!("AUTHORING_PATCH_SLOT_NOT_FOUND:{slot_id}"))?;
+        document
+            .get_mut("answerKey")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "AUTHORING_PATCH_ANSWER_KEY_MISSING".to_string())?
+            .remove(slot_id);
+        let task = find_object_by_field_mut(document, "taskId", task_id)
+            .ok_or_else(|| format!("AUTHORING_PATCH_TASK_NOT_FOUND:{task_id}"))?;
+        let group = task
+            .get_mut("responseGroups")
+            .and_then(Value::as_array_mut)
+            .and_then(|groups| {
+                groups.iter_mut().find(|item| {
+                    item.get("responseGroupId").and_then(Value::as_str) == Some(response_id)
+                })
+            })
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| format!("AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:{response_id}"))?;
+        let slot_ids = group
+            .get_mut("slotIds")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "AUTHORING_PATCH_SLOT_IDS_MISSING".to_string())?;
+        slot_ids.retain(|value| value.as_str() != Some(slot_id));
+        set_question_expression(document, patch)
+    })();
+    if result.is_err() {
+        *document = backup;
+    }
+    result
 }
 
 fn set_answer(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
@@ -1545,7 +1768,7 @@ mod tests {
     use super::{
         apply_patch, expand_question_expression, export_authoring_v2_core,
         materialize_authoring_assets, physical_shadow_matches_authoring,
-        preserve_issue_resolutions, AUTHORING_V2_SHADOW_FILE,
+        preserve_issue_resolutions, resolve_authoring_asset_preview_core, AUTHORING_V2_SHADOW_FILE,
     };
     use crate::schema::common::{AssetDescriptorV2, AssetExtractionModeV2, AssetKindV2};
     use serde_json::json;
@@ -1793,6 +2016,63 @@ mod tests {
     }
 
     #[test]
+    fn semantic_option_bank_and_answer_slot_patches_keep_registries_in_sync() {
+        let mut document = json!({
+            "passage":{"content":[]},
+            "taskGroups":[{
+                "taskId":"task-1",
+                "displayRange":{"kind":"set","values":[1]},
+                "instructionSignature":{"expectedQuestionNumbers":[1],"expectedSlotCount":1},
+                "instructions":[],
+                "optionBank":{"optionBankId":"bank-1","scope":"task_group","options":[],"allowReuse":false,"sourceAnchors":[]},
+                "responseGroups":[{
+                    "responseGroupId":"response-1",
+                    "prompt":[{"type":"paragraph","id":"prompt-1","sourceAnchors":[],"provenanceStatus":"source","children":[{"type":"answer_slot","id":"slot-node-1","slotId":"slot-1","displayLabel":"1","inline":true,"sourceAnchors":[],"provenanceStatus":"source"}]}],
+                    "slotIds":["slot-1"]
+                }]
+            }],
+            "answerSlots":{"slot-1":{"slotId":"slot-1","questionNumber":1}},
+            "answerKey":{"slot-1":{"kind":"unresolved"}}
+        });
+        apply_patch(&mut document, &json!({
+            "op":"setOptionBank","taskId":"task-1",
+            "optionBank":{"optionBankId":"bank-1","scope":"task_group","options":[{"optionId":"option-a","label":"A","content":[],"sourceAnchors":[]}],"allowReuse":false,"sourceAnchors":[]}
+        })).unwrap();
+        assert_eq!(
+            document["taskGroups"][0]["optionBank"]["options"][0]["label"],
+            "A"
+        );
+
+        apply_patch(&mut document, &json!({
+            "op":"insertAnswerSlot","taskId":"task-1","responseGroupId":"response-1",
+            "target":{"kind":"responsePrompt","responseGroupId":"response-1"},"parentId":"prompt-1","index":1,"slotIndex":1,
+            "node":{"type":"answer_slot","id":"slot-node-2","slotId":"slot-2","displayLabel":"2","inline":true,"sourceAnchors":[],"provenanceStatus":"manual"},
+            "slot":{"slotId":"slot-2","questionNumber":2},"value":{"kind":"unresolved"},
+            "expression":{"kind":"range","start":1,"end":2}
+        })).unwrap();
+        assert_eq!(
+            document["taskGroups"][0]["responseGroups"][0]["slotIds"],
+            json!(["slot-1", "slot-2"])
+        );
+        assert!(document["answerSlots"]["slot-2"].is_object());
+        assert_eq!(
+            document["taskGroups"][0]["instructionSignature"]["expectedSlotCount"],
+            2
+        );
+
+        apply_patch(&mut document, &json!({
+            "op":"deleteAnswerSlot","taskId":"task-1","responseGroupId":"response-1","nodeId":"slot-node-2","slotId":"slot-2",
+            "expression":{"kind":"set","values":[1]}
+        })).unwrap();
+        assert_eq!(
+            document["taskGroups"][0]["responseGroups"][0]["slotIds"],
+            json!(["slot-1"])
+        );
+        assert!(document["answerSlots"].get("slot-2").is_none());
+        assert!(document["answerKey"].get("slot-2").is_none());
+    }
+
+    #[test]
     fn undo_patch_can_restore_provenance_without_marking_user_edited() {
         let mut document = text_document();
         apply_patch(
@@ -1853,6 +2133,52 @@ mod tests {
             .expect_err("asset hash mismatch must fail closed");
         assert!(error.contains("authoring_v2_asset_hash_mismatch"));
         let _ = fs::remove_dir_all(source_root);
+    }
+
+    #[test]
+    fn authoring_asset_preview_resolves_only_manifest_backed_image_bytes() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ielts-authoring-v2-preview-{suffix}"));
+        let job_id = "asset-preview";
+        let job_dir = root.join("jobs").join(job_id);
+        fs::create_dir_all(job_dir.join("assets")).unwrap();
+        let bytes = b"not-a-real-png-but-manifest-closed";
+        fs::write(job_dir.join("assets/diagram.png"), bytes).unwrap();
+        let mut authoring: serde_json::Value = serde_json::from_str(include_str!(
+            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        authoring["jobId"] = json!(job_id);
+        authoring["assets"] = json!([{
+            "assetId": "diagram-1",
+            "kind": "raster_image",
+            "mime": "image/png",
+            "relativePath": "assets/diagram.png",
+            "sha256": crate::hash_bytes(bytes),
+            "byteLength": bytes.len(),
+            "widthPx": 20,
+            "heightPx": 10,
+            "extractionMode": "embedded"
+        }]);
+        fs::write(
+            job_dir.join(AUTHORING_V2_SHADOW_FILE),
+            serde_json::to_vec(&authoring).unwrap(),
+        )
+        .unwrap();
+
+        let preview = resolve_authoring_asset_preview_core(&root, job_id, "diagram-1").unwrap();
+        assert_eq!(preview["mime"], "image/png");
+        assert_eq!(preview["widthPx"], 20);
+        assert!(preview["resourceUri"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        assert!(resolve_authoring_asset_preview_core(&root, job_id, "missing").is_err());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

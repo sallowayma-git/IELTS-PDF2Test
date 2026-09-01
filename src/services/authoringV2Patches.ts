@@ -327,6 +327,44 @@ function patchResponseGroup(document: IeltsAuthoringIRV2, patch: Extract<Authori
   markUserEdited(task, patch.preserveProvenance, patch.restoreProvenanceStatus);
 }
 
+function patchOptionBank(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "setOptionBank" }>): void {
+  const task = document.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
+  if (!task) throw new Error(`AUTHORING_PATCH_TASK_NOT_FOUND:${patch.taskId}`);
+  task.optionBank = patch.optionBank ? structuredClone(patch.optionBank) : undefined;
+  markUserEdited(task as unknown as JsonObject, patch.preserveProvenance, patch.restoreProvenanceStatus);
+}
+
+function patchInsertAnswerSlot(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "insertAnswerSlot" }>): void {
+  if (document.answerSlots[patch.slot.slotId] || findObjectById(document, patch.node.id)) throw new Error(`AUTHORING_PATCH_SLOT_ALREADY_EXISTS:${patch.slot.slotId}`);
+  if (patch.node.slotId !== patch.slot.slotId) throw new Error("AUTHORING_PATCH_SLOT_NODE_MISMATCH");
+  const task = document.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
+  const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === patch.responseGroupId);
+  if (!task || !group) throw new Error(`AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:${patch.responseGroupId}`);
+  const root = patch.parentId ? rootForTarget(document, { kind: "node", nodeId: patch.parentId }) : rootForTarget(document, patch.target);
+  validateIndex(patch.index, root.nodes.length);
+  validateIndex(patch.slotIndex, group.slotIds.length);
+  root.nodes.splice(patch.index, 0, structuredClone(patch.node));
+  group.slotIds.splice(patch.slotIndex, 0, patch.slot.slotId);
+  document.answerSlots[patch.slot.slotId] = structuredClone(patch.slot);
+  document.answerKey[patch.slot.slotId] = structuredClone(patch.value);
+  patchExpression(document, { op: "setQuestionExpression", taskId: patch.taskId, expression: patch.expression });
+}
+
+function patchDeleteAnswerSlot(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "deleteAnswerSlot" }>): void {
+  const task = document.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
+  const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === patch.responseGroupId);
+  if (!task || !group) throw new Error(`AUTHORING_PATCH_RESPONSE_GROUP_NOT_FOUND:${patch.responseGroupId}`);
+  const location = locateContentNode(document, patch.nodeId);
+  if (!location || location.node.type !== "answer_slot" || location.node.slotId !== patch.slotId) throw new Error(`AUTHORING_PATCH_SLOT_NODE_NOT_FOUND:${patch.slotId}`);
+  for (const root of everyContentRoot(document)) {
+    if (removeNode(root, patch.nodeId)) break;
+  }
+  group.slotIds = group.slotIds.filter((slotId) => slotId !== patch.slotId);
+  delete document.answerSlots[patch.slotId];
+  delete document.answerKey[patch.slotId];
+  patchExpression(document, { op: "setQuestionExpression", taskId: patch.taskId, expression: patch.expression });
+}
+
 function patchAnswer(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "setAnswer" }>): void {
   if (!document.answerSlots[patch.slotId]) throw new Error(`AUTHORING_PATCH_SLOT_NOT_FOUND:${patch.slotId}`);
   document.answerKey[patch.slotId] = patch.value;
@@ -362,6 +400,9 @@ export function applyAuthoringV2Patches(authoring: IeltsAuthoringIRV2, patches: 
       case "setQuestionExpression": patchExpression(document, patch); break;
       case "setResponseCardinality": patchResponseCardinality(document, patch); break;
       case "setResponseGroup": patchResponseGroup(document, patch); break;
+      case "setOptionBank": patchOptionBank(document, patch); break;
+      case "insertAnswerSlot": patchInsertAnswerSlot(document, patch); break;
+      case "deleteAnswerSlot": patchDeleteAnswerSlot(document, patch); break;
       case "setAnswer": patchAnswer(document, patch); break;
       case "bindSource": patchSource(document, patch); break;
       case "resolveIssue": patchResolveIssue(document, patch); break;
@@ -482,6 +523,21 @@ export function inverseAuthoringPatch(authoring: IeltsAuthoringIRV2, patch: Auth
     case "setResponseGroup": {
       const group = responseGroup(authoring, patch.taskId, patch.responseGroup.responseGroupId);
       return group ? { op: "setResponseGroup", taskId: patch.taskId, responseGroup: clone(group), preserveProvenance: true, restoreProvenanceStatus: typeof (group as unknown as JsonObject).provenanceStatus === "string" ? (group as unknown as JsonObject).provenanceStatus as "source" | "derived" | "user_edited" | "manual" : undefined } : undefined;
+    }
+    case "setOptionBank": {
+      const task = authoring.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
+      return task ? { op: "setOptionBank", taskId: patch.taskId, optionBank: clone(task.optionBank ?? null), preserveProvenance: true, restoreProvenanceStatus: typeof (task as unknown as JsonObject).provenanceStatus === "string" ? (task as unknown as JsonObject).provenanceStatus as "source" | "derived" | "user_edited" | "manual" : undefined } : undefined;
+    }
+    case "insertAnswerSlot":
+      return { op: "deleteAnswerSlot", taskId: patch.taskId, responseGroupId: patch.responseGroupId, nodeId: patch.node.id, slotId: patch.slot.slotId, expression: clone(authoring.taskGroups.find((task) => task.taskId === patch.taskId)?.displayRange ?? patch.expression) };
+    case "deleteAnswerSlot": {
+      const location = locateContentNode(authoring, patch.nodeId);
+      const task = authoring.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
+      const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === patch.responseGroupId);
+      const slot = authoring.answerSlots[patch.slotId];
+      const value = authoring.answerKey[patch.slotId];
+      if (!location || location.node.type !== "answer_slot" || !task || !group || !slot || !value) return undefined;
+      return { op: "insertAnswerSlot", taskId: patch.taskId, responseGroupId: patch.responseGroupId, target: clone(location.target), parentId: location.parentId, index: location.index, slotIndex: Math.max(0, group.slotIds.indexOf(patch.slotId)), node: clone(location.node), slot: clone(slot), value: clone(value), expression: clone(task.displayRange) };
     }
     case "setAnswer":
       return { op: "setAnswer", slotId: patch.slotId, value: clone(authoring.answerKey[patch.slotId] ?? { kind: "unresolved" }) };

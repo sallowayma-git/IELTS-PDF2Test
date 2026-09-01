@@ -4993,7 +4993,18 @@ fn is_dynamic_prompt_option_bank_heading(text: &str) -> bool {
                     .filter(|ch| ch.is_ascii_alphanumeric())
                     .collect::<String>(),
             )
-    })
+    }) || is_dynamic_structural_option_bank_heading(text)
+}
+
+fn is_dynamic_structural_option_bank_heading(text: &str) -> bool {
+    let normalized = collapse_whitespace(text);
+    let lower = normalized.to_ascii_lowercase();
+    let Some(title) = lower.strip_prefix("list of ") else {
+        return false;
+    };
+    !title.trim().is_empty()
+        && normalized.split_whitespace().count() <= 8
+        && !normalized.ends_with(['.', '?', '!', ';'])
 }
 
 fn has_dynamic_prompt_option_bank_context(group_kind: &str, group_text: &str) -> bool {
@@ -5369,7 +5380,12 @@ fn dynamic_inline_choice_parts_from_label_with_minimum(
         markers.push((label, start, content_start));
         from = content_start;
     }
-    if markers.len() < minimum_marker_count.max(2)
+    // The ordinary parser passes a minimum of three (or two for a proven
+    // partial run).  A geometry-closed continuation can legitimately contain
+    // only the final expected label, e.g. a wrapped `D` after an A-C block.
+    // Keep the floor at one here and let callers choose the evidence level;
+    // `dynamic_inline_choice_parts` still supplies the normal three-label gate.
+    if markers.len() < minimum_marker_count.max(1)
         || markers.first().map(|item| item.0) != Some(first_label)
     {
         return None;
@@ -5681,7 +5697,18 @@ fn dynamic_question_prompt_and_options(
     // closure as an additional physical boundary.  This is deliberately not
     // inferred from a bare leading `A`: the helper requires the complete
     // declared A-terminal bank and selects its right-most valid A source.
-    let group_option_bank_start = dynamic_group_option_bank_start_index(group_blocks, kind);
+    // Completion tasks use the same shared option-bank concept as matching,
+    // but their bank is often laid out after the final numbered sentence. If
+    // we only stop at a following question number, Q{range_end} consumes the
+    // A-I/A-J bank into its prompt. The declared A-terminal span is a
+    // geometry-backed hard boundary and must be applied before prompt
+    // extraction; the bank remains available through `group_option_bank` for
+    // the response interaction.
+    let group_option_bank_start = if is_dynamic_completion_kind(kind) {
+        dynamic_declared_completion_bank_span(kind, group_blocks).map(|(start, _)| start)
+    } else {
+        dynamic_group_option_bank_start_index(group_blocks, kind)
+    };
     if matches!(kind, "single_choice" | "multi_choice")
         && !group_blocks.iter().any(|block| {
             dynamic_leading_question_number(&dynamic_block_text(block)) == Some(number)
@@ -6015,14 +6042,52 @@ fn dynamic_question_prompt_and_options(
             && !is_dynamic_prompt_terminal_heading(&text)
             && dynamic_leading_question_number(&text).is_none()
         {
-            if let (Some(previous_index), Some((_, option_text))) =
-                (last_option_block_index, options.last_mut())
-            {
+            if let Some(previous_index) = last_option_block_index {
                 let previous = &group_blocks[previous_index];
                 if is_dynamic_same_row_option_continuation(previous, block)
                     || is_dynamic_wrapped_option_continuation(previous, block)
                 {
-                    append_dynamic_option_continuation(option_text, &text);
+                    // Read the previous label without holding a mutable borrow
+                    // across the recovery pass.  The pass may append a new
+                    // option, so keeping `options.last_mut()` alive here
+                    // triggers an E0502 borrow conflict and obscures the
+                    // intended ownership: first recover the boundary, then
+                    // mutate the prior option and the option vector.
+                    let expected_label = options
+                        .last()
+                        .and_then(|(label, _)| label.chars().next())
+                        .map(|label| ((label as u8).saturating_add(1)) as char);
+                    let terminal_label = dynamic_letter_options_for_text(group_text)
+                        .last()
+                        .and_then(|label| label.chars().next());
+                    if let (Some(expected_label), Some(terminal_label)) =
+                        (expected_label, terminal_label)
+                    {
+                        if let Some((continuation, recovered)) =
+                            dynamic_split_wrapped_option_tail(&text, expected_label, terminal_label)
+                        {
+                            if let Some((_, option_text)) = options.last_mut() {
+                                append_dynamic_option_continuation(option_text, &continuation);
+                            }
+                            for option in recovered {
+                                if !options
+                                    .iter()
+                                    .any(|(existing_label, _)| existing_label == &option.0)
+                                {
+                                    options.push(option);
+                                }
+                            }
+                            last_option_block_index = Some(absolute_index);
+                            if stop_after_block {
+                                break;
+                            }
+                            absolute_index += 1;
+                            continue;
+                        }
+                    }
+                    if let Some((_, option_text)) = options.last_mut() {
+                        append_dynamic_option_continuation(option_text, &text);
+                    }
                     last_option_block_index = Some(absolute_index);
                     if stop_after_block {
                         break;
@@ -6737,6 +6802,52 @@ fn append_dynamic_option_continuation(option_text: &mut String, continuation: &s
     } else {
         *option_text = collapse_whitespace(&format!("{} {}", option_text, continuation));
     }
+}
+
+fn dynamic_split_wrapped_option_tail(
+    text: &str,
+    expected_label: char,
+    terminal_label: char,
+) -> Option<(String, Vec<(String, String)>)> {
+    if expected_label > terminal_label {
+        return None;
+    }
+    let normalized = collapse_whitespace(text);
+    let (marker_start, _) = find_dynamic_option_marker(&normalized, expected_label, 0)?;
+    let continuation = normalized[..marker_start].trim();
+    // A declared next label is still ambiguous inside prose (`vitamin D`).
+    // On a wrapped option row the preceding option normally closes a clause
+    // before the following label. Require that source boundary instead of
+    // promoting any expected capital in ordinary continuation text.
+    if continuation.is_empty()
+        || !continuation
+            .chars()
+            .next_back()
+            .is_some_and(|ch| matches!(ch, '.' | '?' | '!' | ';'))
+    {
+        return None;
+    }
+    let (_, recovered) = dynamic_inline_choice_parts_from_label_with_minimum(
+        &normalized[marker_start..],
+        expected_label,
+        1,
+    )?;
+    if recovered.is_empty()
+        || recovered
+            .first()
+            .and_then(|(label, _)| label.chars().next())
+            != Some(expected_label)
+        || recovered.iter().any(|(label, option_text)| {
+            option_text.trim().is_empty()
+                || label
+                    .chars()
+                    .next()
+                    .is_none_or(|label| label > terminal_label)
+        })
+    {
+        return None;
+    }
+    Some((continuation.to_string(), recovered))
 }
 
 fn dynamic_group_option_bank_unbounded(blocks: &[Value], kind: &str) -> Vec<(String, String)> {
@@ -7519,6 +7630,23 @@ fn dynamic_group_option_bank(blocks: &[Value], kind: &str) -> Vec<(String, Strin
 /// recovered for the group.  Trying candidates from right to left ensures an
 /// earlier prose `A ...` cannot shadow the genuine bank.
 fn dynamic_group_option_bank_start_index(blocks: &[Value], kind: &str) -> Option<usize> {
+    // Completion groups can also carry a declared A-terminal word/phrase
+    // bank.  Keeping its physical start available here gives prompt recovery
+    // and the renderer one shared boundary, instead of letting the final
+    // question consume the bank as ordinary stimulus text.
+    if is_dynamic_completion_kind(kind) {
+        let (start, _) = dynamic_declared_completion_bank_span(kind, blocks)?;
+        return Some(
+            start
+                .checked_sub(1)
+                .filter(|heading_index| {
+                    is_dynamic_structural_option_bank_heading(&dynamic_block_text(
+                        &blocks[*heading_index],
+                    ))
+                })
+                .unwrap_or(start),
+        );
+    }
     if !matches!(
         kind,
         "heading_matching" | "matching" | "matching_information" | "classification"
@@ -7565,8 +7693,352 @@ fn dynamic_group_option_bank_start_index(blocks: &[Value], kind: &str) -> Option
             return None;
         }
         let recovered = dynamic_group_option_bank_unbounded(&blocks[index..], kind);
-        (recovered == expected).then_some(index)
+        if recovered != expected {
+            return None;
+        }
+        Some(
+            index
+                .checked_sub(1)
+                .filter(|heading_index| {
+                    is_dynamic_structural_option_bank_heading(&dynamic_block_text(
+                        &blocks[*heading_index],
+                    ))
+                })
+                .unwrap_or(index),
+        )
     })
+}
+
+fn dynamic_source_text_tokens(text: &str) -> Vec<String> {
+    collapse_whitespace(text)
+        .split_whitespace()
+        .map(|token| {
+            token
+                .trim_matches(|ch: char| !ch.is_alphanumeric())
+                .to_ascii_lowercase()
+        })
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+/// Match a recovered prompt/option fragment to a physical source block.
+///
+/// Source blocks are often split in the middle of a word by a narrow PDF
+/// column (`transa` / `ctions`) or in the middle of a sentence.  Requiring a
+/// whole-string match would therefore lose legitimate provenance.  Two-word
+/// windows plus bounded five-character fragments retain those continuations
+/// while avoiding the old group-wide source-id fallback.
+fn dynamic_source_block_matches_text(block: &Value, target: &str) -> bool {
+    let target = collapse_whitespace(target);
+    if target.is_empty() {
+        return false;
+    }
+    let mut source = dynamic_block_text(block);
+    for (_, option_text) in dynamic_table_option_rows(block) {
+        if !source.is_empty() {
+            source.push(' ');
+        }
+        source.push_str(&option_text);
+    }
+    let source = collapse_whitespace(&source);
+    if source.is_empty() {
+        return false;
+    }
+    let source_lower = source.to_ascii_lowercase();
+    let target_lower = target.to_ascii_lowercase();
+    if target_lower.len() >= 8 && source_lower.contains(&target_lower) {
+        return true;
+    }
+
+    let source_tokens = dynamic_source_text_tokens(&source);
+    let target_tokens = dynamic_source_text_tokens(&target);
+    if target_tokens.len() >= 2
+        && target_tokens.windows(2).any(|window| {
+            window.iter().any(|token| token.len() >= 5)
+                && source_tokens
+                    .windows(2)
+                    .any(|candidate| candidate == window)
+        })
+    {
+        return true;
+    }
+
+    // A geometry split can leave only a bounded suffix/prefix of a word in a
+    // block.  Do not use one/two character fragments: they are too common in
+    // prose and only accept fragments at a physical block edge.  Internal
+    // morphology (`garments` vs `garment`) is ordinary prose overlap, not a
+    // geometry continuation and must not claim a passage block as question
+    // provenance.
+    let edge_tokens = [source_tokens.first(), source_tokens.last()]
+        .into_iter()
+        .flatten()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    edge_tokens.iter().any(|source_token| {
+        source_token.len() >= 5
+            && target_tokens.iter().any(|target_token| {
+                let target_token = target_token.as_str();
+                target_token.len() >= 5
+                    && *source_token != target_token
+                    && ((target_token.starts_with(source_token)
+                        || target_token.ends_with(source_token))
+                        || (source_token.starts_with(target_token)
+                            || source_token.ends_with(target_token)))
+                    && source_token.len().abs_diff(target_token.len()) <= 8
+            })
+    })
+}
+
+/// Match an option's physical label and value to a source block.  Short
+/// values such as `one` are valid IELTS choices but are too common to match
+/// by text alone.  Requiring the expected label to delimit the value keeps
+/// those choices source-backed without making ordinary prose claim the block.
+fn dynamic_source_option_block_matches_text(block: &Value, label: &str, target: &str) -> bool {
+    let target = collapse_whitespace(target).to_ascii_lowercase();
+    if target.is_empty() {
+        return false;
+    }
+
+    let mut candidates = Vec::<String>::new();
+    for (row_label, row_text) in dynamic_table_option_rows(block) {
+        if row_label == label {
+            candidates.push(row_text);
+        }
+    }
+
+    let source = collapse_whitespace(&dynamic_block_text(block));
+    let Some(letter) = label.chars().next() else {
+        return false;
+    };
+    if let Some((start, content_start)) = find_dynamic_option_marker(&source, letter, 0) {
+        let end = ('A'..=DYNAMIC_MAX_OPTION_LABEL)
+            .filter(|candidate| *candidate > letter)
+            .filter_map(|candidate| {
+                find_dynamic_option_marker(&source, candidate, content_start)
+                    .map(|(next_start, _)| next_start)
+            })
+            .min()
+            .unwrap_or(source.len());
+        // Only accept a marker embedded in the source when its preceding
+        // token is a valid option boundary. `find_dynamic_option_marker`
+        // already enforces this; retaining the start check documents that
+        // this slice is the option value, not arbitrary prose after a letter.
+        if start < end {
+            candidates.push(source[content_start..end].trim().to_string());
+        }
+    }
+
+    candidates.into_iter().any(|candidate| {
+        let candidate = collapse_whitespace(&candidate)
+            .trim_matches(|ch: char| !ch.is_alphanumeric())
+            .to_ascii_lowercase();
+        candidate == target
+            || (target.len() >= 3
+                && (candidate.starts_with(&target)
+                    || target.starts_with(&candidate)
+                    || candidate.contains(&target)))
+    })
+}
+
+fn dynamic_question_source_anchor_index(
+    blocks: &[Value],
+    number: u32,
+    kind: &str,
+) -> Option<usize> {
+    blocks
+        .iter()
+        .enumerate()
+        .find_map(|(index, block)| {
+            (dynamic_leading_question_number(&dynamic_block_text(block)) == Some(number))
+                .then_some(index)
+        })
+        .or_else(|| {
+            blocks.iter().enumerate().find_map(|(index, block)| {
+                let text = dynamic_block_text(block);
+                if is_dynamic_completion_kind(kind) {
+                    find_dynamic_numbered_blank_marker(&text, number, 0).or_else(|| {
+                        find_dynamic_completion_display_question_boundary(&text, number, 0)
+                            .map(|start| (start, start))
+                    })
+                } else {
+                    find_dynamic_number_marker(&text, number, 0)
+                }
+                .map(|_| index)
+            })
+        })
+}
+
+fn dynamic_question_source_block_ids(
+    blocks: &[Value],
+    _group_text: &str,
+    number: u32,
+    range_end: u32,
+    kind: &str,
+    prompt: &str,
+    question_options: &[(String, String)],
+    group_option_bank: &[(String, String)],
+) -> Vec<String> {
+    let bank_start = dynamic_group_option_bank_start_index(blocks, kind);
+    let anchor = dynamic_question_source_anchor_index(blocks, number, kind);
+    let local_start = anchor.unwrap_or(0);
+    let mut local_end = blocks.len();
+    if let Some(bank_start) = bank_start.filter(|index| *index > local_start) {
+        local_end = local_end.min(bank_start);
+    }
+
+    // A question's direct source is the stem plus its local option run.  For
+    // matching/completion groups the option bank is a separate shared source
+    // span and is added below, not by claiming every group block.
+    for index in local_start.saturating_add(1)..local_end {
+        let text = dynamic_block_text(&blocks[index]);
+        let is_next_question = (number.saturating_add(1)..=range_end).any(|candidate| {
+            dynamic_leading_question_number(&text) == Some(candidate)
+                || (is_dynamic_completion_kind(kind)
+                    && find_dynamic_numbered_blank_marker(&text, candidate, 0).is_some())
+        });
+        if is_next_question {
+            local_end = index;
+            break;
+        }
+    }
+
+    let mut targets = Vec::<String>::new();
+    if !prompt.trim().is_empty() {
+        targets.push(prompt.to_string());
+    }
+    for (_, option_text) in question_options.iter().chain(group_option_bank.iter()) {
+        if !option_text.trim().is_empty() && !targets.iter().any(|item| item == option_text) {
+            targets.push(option_text.clone());
+        }
+    }
+
+    let mut included = std::collections::BTreeSet::<usize>::new();
+    for index in local_start..local_end {
+        let block = &blocks[index];
+        let is_anchor = Some(index) == anchor;
+        let matches_output = targets
+            .iter()
+            .any(|target| dynamic_source_block_matches_text(block, target))
+            || question_options.iter().chain(group_option_bank.iter()).any(
+                |(label, option_text)| {
+                    dynamic_source_option_block_matches_text(block, label, option_text)
+                },
+            );
+        if !is_anchor && !matches_output {
+            continue;
+        }
+        included.insert(index);
+        // Preserve a label-only source cell/line when the following block
+        // supplied its option text (`A` then `changing the bed linen`).
+        if index > local_start
+            && dynamic_leading_option_label_and_text(&dynamic_block_text(&blocks[index - 1]))
+                .is_some_and(|(_, text)| text.is_empty())
+        {
+            included.insert(index - 1);
+        }
+    }
+
+    if !group_option_bank.is_empty() {
+        if let Some(bank_start) = bank_start {
+            // The heading/first bank row is itself useful provenance for the
+            // shared selector.  Option text rows are added only when their
+            // recovered text matches this question's actual option set.
+            if bank_start < blocks.len() {
+                included.insert(bank_start);
+            }
+            for index in bank_start.saturating_add(1)..blocks.len() {
+                let block = &blocks[index];
+                if group_option_bank.iter().any(|(label, option_text)| {
+                    dynamic_source_option_block_matches_text(block, label, option_text)
+                }) {
+                    included.insert(index);
+                    if index > bank_start
+                        && dynamic_leading_option_label_and_text(&dynamic_block_text(
+                            &blocks[index - 1],
+                        ))
+                        .is_some_and(|(_, text)| text.is_empty())
+                    {
+                        included.insert(index - 1);
+                    }
+                }
+            }
+        }
+    }
+
+    included
+        .into_iter()
+        .filter_map(|index| {
+            let id = dynamic_block_id(&blocks[index]);
+            (!id.is_empty()).then_some(id)
+        })
+        .collect()
+}
+
+fn dynamic_completion_stimulus_text(blocks: &[Value], group_text: &str, kind: &str) -> String {
+    let Some(bank_start) = dynamic_group_option_bank_start_index(blocks, kind) else {
+        return group_text.to_string();
+    };
+    let stimulus = blocks[..bank_start.min(blocks.len())]
+        .iter()
+        .map(dynamic_block_text)
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if stimulus.trim().is_empty() {
+        group_text.to_string()
+    } else {
+        stimulus
+    }
+}
+
+/// Remove a bank that slipped into a fallback prompt.  Normal geometry paths
+/// stop at `dynamic_group_option_bank_start_index`; this final guard covers a
+/// question whose number was emitted after the bank because of column-major
+/// PDF ordering without changing a valid prompt that merely contains one
+/// option-like word.
+fn dynamic_strip_completion_option_bank_from_text(
+    text: &str,
+    blocks: &[Value],
+    kind: &str,
+) -> String {
+    if !is_dynamic_completion_kind(kind) || text.trim().is_empty() {
+        return text.to_string();
+    }
+    let Some(bank_start) = dynamic_group_option_bank_start_index(blocks, kind) else {
+        return text.to_string();
+    };
+    let normalized = collapse_whitespace(text);
+    let bank_heading = blocks
+        .get(bank_start)
+        .map(dynamic_block_text)
+        .filter(|value| is_dynamic_prompt_option_bank_heading(value));
+    if let Some(heading) = bank_heading {
+        if let Some(index) = normalized
+            .to_ascii_lowercase()
+            .find(&heading.to_ascii_lowercase())
+        {
+            return normalized[..index].trim().to_string();
+        }
+    }
+    let bank = dynamic_group_option_bank(blocks, kind);
+    let hits = bank
+        .iter()
+        .filter(|(_, option_text)| {
+            option_text.trim().len() >= 8 && normalized.contains(option_text.trim())
+        })
+        .count();
+    if hits < 2 {
+        return normalized;
+    }
+    let boundary = bank.iter().find_map(|(label, option_text)| {
+        if option_text.trim().len() < 8 || !normalized.contains(option_text.trim()) {
+            return None;
+        }
+        find_dynamic_option_marker(&normalized, label.chars().next()?, 0).map(|(start, _)| start)
+    });
+    boundary
+        .map(|index| normalized[..index].trim().to_string())
+        .unwrap_or(normalized)
 }
 
 fn dynamic_interaction_with_option_texts(
@@ -7598,6 +8070,16 @@ fn dynamic_interaction_with_option_texts(
         object.insert("optionTexts".to_string(), Value::Object(texts));
     }
     interaction
+}
+
+fn dynamic_shared_bank_cardinality_requires_reuse(
+    kind: &str,
+    question_count: usize,
+    option_count: usize,
+) -> bool {
+    matches!(kind, "matching" | "matching_information" | "classification")
+        && option_count > 0
+        && question_count > option_count
 }
 
 fn dynamic_block_html(block: &Value) -> String {
@@ -7892,7 +8374,7 @@ pub(crate) fn make_dynamic_authoring_ir(
                 .unwrap_or_else(|| dynamic_layout_hint_for_group(kind, &group_text));
             let group_option_bank = dynamic_group_option_bank(&group_blocks, kind);
             let table_row_mapping_inferred = std::cell::Cell::new(false);
-            let questions = (start..=end)
+            let mut questions = (start..=end)
                 .map(|number| {
                     let display = number.to_string();
                     let qid = format!("q{}", display);
@@ -7902,7 +8384,11 @@ pub(crate) fn make_dynamic_authoring_ir(
                             && is_dynamic_umbrella_question_range(
                                 &dynamic_block_text(group_blocks.first().unwrap_or(&Value::Null)),
                             ));
-                    let mut question_source_block_ids = block_ids.clone();
+                    // Do not use the candidate's complete block list as a
+                    // per-question provenance claim.  `block_ids` is the
+                    // group envelope (instructions, every question, and
+                    // often a shared bank); source ownership is rebuilt from
+                    // the recovered prompt/option text below.
                     let completion_recovery = !manual_import && is_dynamic_completion_kind(kind);
                     let (mut prompt, mut question_options) = if manual_import {
                         (String::new(), Vec::new())
@@ -7957,21 +8443,11 @@ pub(crate) fn make_dynamic_authoring_ir(
                                 {
                                     prompt = recovered_prompt;
                                 }
-                                for block in &recovery_blocks {
-                                    let source_id = dynamic_block_id(block);
-                                    if !source_id.is_empty()
-                                        && !question_source_block_ids
-                                            .iter()
-                                            .any(|id| id == &source_id)
-                                    {
-                                        question_source_block_ids.push(source_id);
-                                    }
-                                }
                             }
                         }
                     }
                     if completion_recovery && layout_hint == "inline_completion" {
-                        if let Some((recovered, source_ids)) = dynamic_note_row_prompt_for_number(
+                        if let Some((recovered, _source_ids)) = dynamic_note_row_prompt_for_number(
                             &group_blocks,
                             number,
                             start,
@@ -7982,11 +8458,6 @@ pub(crate) fn make_dynamic_authoring_ir(
                             // the numeric marker and can therefore discard the
                             // row prefix or run into the following section.
                             prompt = recovered;
-                            for source_id in source_ids {
-                                if !question_source_block_ids.iter().any(|id| id == &source_id) {
-                                    question_source_block_ids.push(source_id);
-                                }
-                            }
                         }
                     }
                     if completion_recovery && prompt.trim().is_empty() {
@@ -7997,23 +8468,13 @@ pub(crate) fn make_dynamic_authoring_ir(
                             if inferred {
                                 table_row_mapping_inferred.set(true);
                             }
-                            if !block_id.is_empty()
-                                && !question_source_block_ids.iter().any(|id| id == &block_id)
-                            {
-                                question_source_block_ids.push(block_id);
-                            }
+                            let _ = block_id;
                         }
                         if prompt.trim().is_empty() {
-                            if let Some((recovered, source_ids)) =
+                            if let Some((recovered, _source_ids)) =
                                 dynamic_gap_sentence_prompt_from_blocks(&recovery_blocks, number)
                             {
                                 prompt = recovered;
-                                for source_id in source_ids {
-                                    if !question_source_block_ids.iter().any(|id| id == &source_id)
-                                    {
-                                        question_source_block_ids.push(source_id);
-                                    }
-                                }
                             }
                         }
                     }
@@ -8029,12 +8490,19 @@ pub(crate) fn make_dynamic_authoring_ir(
                             )
                         {
                             prompt = localized;
-                            if !source_id.is_empty()
-                                && !question_source_block_ids.iter().any(|id| id == &source_id)
-                            {
-                                question_source_block_ids.push(source_id);
-                            }
+                            let _ = source_id;
                         }
+                    }
+                    if completion_recovery {
+                        // A column-major bank can be emitted after a final
+                        // question marker, making a generic fallback see the
+                        // bank as ordinary stimulus.  Keep prompt recovery
+                        // and the notes/body renderer on one boundary.
+                        prompt = dynamic_strip_completion_option_bank_from_text(
+                            &prompt,
+                            &group_blocks,
+                            kind,
+                        );
                     }
                     if completion_recovery
                         && !dynamic_completion_foreign_slots(&prompt, number, start, end).is_empty()
@@ -8057,6 +8525,21 @@ pub(crate) fn make_dynamic_authoring_ir(
                     } else {
                         question_options.as_slice()
                     };
+                    let source_blocks = if recovery_blocks.len() > group_blocks.len() {
+                        recovery_blocks.as_slice()
+                    } else {
+                        group_blocks.as_slice()
+                    };
+                    let question_source_block_ids = dynamic_question_source_block_ids(
+                        source_blocks,
+                        &group_text,
+                        number,
+                        end,
+                        kind,
+                        &prompt,
+                        &question_options,
+                        group_option_bank.as_slice(),
+                    );
                     QuestionDraftV1 {
                         id: qid,
                         display_number: display.clone(),
@@ -8099,16 +8582,52 @@ pub(crate) fn make_dynamic_authoring_ir(
                 || questions
                     .iter()
                     .any(|question| question.requires_manual_question_import);
+            let completion_stimulus = if is_dynamic_completion_kind(kind) {
+                dynamic_completion_stimulus_text(&group_blocks, &group_text, kind)
+            } else {
+                group_text.clone()
+            };
             let layout = if kind == "table_completion" {
                 json!({"template": dynamic_template_for_kind(kind), "layoutHint": layout_hint, "tableHeaders": ["Question", "Prompt", "Answer"]})
             } else if layout_hint == "inline_completion" {
-                json!({"template": dynamic_template_for_kind(kind), "layoutHint": layout_hint, "notes": group_text})
+                json!({"template": dynamic_template_for_kind(kind), "layoutHint": layout_hint, "notes": completion_stimulus})
             } else {
                 json!({"template": dynamic_template_for_kind(kind), "layoutHint": layout_hint})
             };
-            let allow_option_reuse = candidate
+            let mut allow_option_reuse = candidate
                 .pointer("/classification/interaction/allowOptionReuse")
                 .and_then(Value::as_bool);
+            // Count only a source-backed shared bank.  The classification
+            // interaction may contain a synthetic A-D label list even when
+            // the PDF never yielded the option texts; that is not evidence
+            // strong enough to infer reuse.
+            let shared_option_count = group_option_bank
+                .iter()
+                .filter(|(_, text)| !text.trim().is_empty())
+                .count();
+            if dynamic_shared_bank_cardinality_requires_reuse(
+                kind,
+                questions.len(),
+                shared_option_count,
+            ) {
+                // A shared bank with fewer choices than response slots is
+                // mathematically impossible to complete without reuse. This
+                // source-backed cardinality is stronger than an omitted or
+                // mis-extracted "may use more than once" instruction.
+                allow_option_reuse = Some(true);
+            }
+            if allow_option_reuse == Some(true)
+                && matches!(kind, "matching" | "matching_information" | "classification")
+            {
+                // Keep the per-question interaction contract aligned with the
+                // group policy. Consumers that render a question directly do
+                // not necessarily consult the enclosing group first.
+                for question in &mut questions {
+                    if let Some(interaction) = question.interaction.as_object_mut() {
+                        interaction.insert("allowOptionReuse".to_string(), Value::Bool(true));
+                    }
+                }
+            }
             QuestionGroupDraftV1 {
                 group_id: candidate
                     .get("groupId")
@@ -8928,9 +9447,29 @@ mod tests {
             .unwrap()
             .contains(&json!("q2-bcd")));
         let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let q1 = &authoring["groups"][0]["questions"][0];
         let q2 = &authoring["groups"][0]["questions"][1];
         assert_eq!(q2["prompt"], json!("What is the second answer?"));
         assert_eq!(q2["interaction"]["options"], json!(["A", "B", "C", "D"]));
+        let q1_source_ids = q1["sourceBlockIds"].as_array().unwrap();
+        assert!(q1_source_ids.contains(&json!("q1")));
+        assert!(q1_source_ids.contains(&json!("q1-options")));
+        assert!(!q1_source_ids.iter().any(|id| {
+            matches!(
+                id.as_str(),
+                Some("q2" | "q2-a" | "q2-bcd" | "heading" | "instruction")
+            )
+        }));
+        let q2_source_ids = q2["sourceBlockIds"].as_array().unwrap();
+        assert!(q2_source_ids.contains(&json!("q2")));
+        assert!(q2_source_ids.contains(&json!("q2-a")));
+        assert!(q2_source_ids.contains(&json!("q2-bcd")));
+        assert!(!q2_source_ids.iter().any(|id| {
+            matches!(
+                id.as_str(),
+                Some("q1" | "q1-options" | "heading" | "instruction")
+            )
+        }));
         assert!(q2["sourceBlockIds"]
             .as_array()
             .unwrap()
@@ -8970,12 +9509,14 @@ mod tests {
         assert!(first_ids.contains(&json!("bank-c-tail")));
         let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
         let first = &authoring["groups"][0];
+        assert_eq!(first["allowOptionReuse"], json!(true));
         for question in first["questions"].as_array().unwrap() {
             assert_eq!(question["interaction"]["options"], json!(["A", "B", "C"]));
             assert_eq!(
                 question["interaction"]["optionTexts"]["C"],
                 json!("Todd Blackledge")
             );
+            assert_eq!(question["interaction"]["allowOptionReuse"], json!(true));
         }
     }
 
@@ -10572,7 +11113,7 @@ mod tests {
         let job = test_job();
         let doc = json!({
             "schemaVersion": "DocumentIRV1",
-            "jobId": job.job_id,
+            "jobId": job.job_id.clone(),
             "pages": [{
                 "pageIndex": 1,
                 "width": 595.0,
@@ -12151,6 +12692,40 @@ mod tests {
         );
         assert_eq!(interaction["optionTexts"]["C"], json!("transactions"));
         assert_eq!(interaction["optionTexts"]["D"], json!("assumption"));
+
+        let group = &authoring["groups"][0];
+        let notes = group["layout"]["notes"]
+            .as_str()
+            .expect("summary completion should preserve a structured stimulus");
+        for bank_text in [
+            "gestures",
+            "clients",
+            "transactions",
+            "assumption",
+            "body language",
+            "long-term",
+        ] {
+            assert!(
+                !notes.contains(bank_text),
+                "completion option-bank text leaked into layout notes: {bank_text}: {notes}"
+            );
+        }
+        let body_html = crate::reading_source::render_group_body_html(group);
+        for bank_text in ["gestures", "clients", "transactions", "assumption"] {
+            assert!(
+                body_html.matches(bank_text).count() == 6,
+                "completion option-bank text leaked outside the six choice controls: {bank_text}: {body_html}"
+            );
+        }
+        for question in authoring["groups"][0]["questions"].as_array().unwrap() {
+            let prompt = question["prompt"].as_str().unwrap_or_default();
+            for bank_text in ["gestures", "clients", "transactions", "assumption"] {
+                assert!(
+                    !prompt.contains(bank_text),
+                    "completion option-bank text leaked into question prompt: {bank_text}: {prompt}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -12280,6 +12855,90 @@ mod tests {
                 "A".to_string(),
                 "Greater emphasis will benefit both patients and practitioners in their daily work and during later training.".to_string()
             )
+        );
+    }
+
+    #[test]
+    fn wrapped_choice_continuation_splits_declared_terminal_option() {
+        let blocks = vec![
+            json!({"blockId":"q29","text":"29 What does the author want to express in the second paragraph?","pageIndex":3,"_epic8LayoutSection":0,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[36.0,590.0,412.9,600.0]}),
+            json!({"blockId":"abc","text":"A Video games are widely considered harmful for children’s brains. B Most violent video games are the direct cause of juvenile delinquency. C Even though there is a certain proportion of violence in most video games, scientists","pageIndex":3,"_epic8LayoutSection":0,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[78.0,543.0,545.9,582.6]}),
+            json!({"blockId":"c-wrap-d","text":"and psychologists see their benefits to children’s intellectual abilities. D Many parents regard video games as time-wasters that rot children’s brains.","pageIndex":3,"_epic8LayoutSection":0,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[78.0,511.8,499.2,535.8]}),
+        ];
+        let group_text = format!(
+            "Choose the correct letter, A, B, C or D.\n{}",
+            blocks
+                .iter()
+                .map(dynamic_block_text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let (prompt, options) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            29,
+            "Questions 29-29",
+            29,
+            "single_choice",
+        );
+
+        assert_eq!(
+            prompt,
+            "What does the author want to express in the second paragraph?"
+        );
+        assert_eq!(
+            options,
+            vec![
+                (
+                    "A".to_string(),
+                    "Video games are widely considered harmful for children’s brains.".to_string()
+                ),
+                (
+                    "B".to_string(),
+                    "Most violent video games are the direct cause of juvenile delinquency."
+                        .to_string()
+                ),
+                (
+                    "C".to_string(),
+                    "Even though there is a certain proportion of violence in most video games, scientists and psychologists see their benefits to children’s intellectual abilities.".to_string()
+                ),
+                (
+                    "D".to_string(),
+                    "Many parents regard video games as time-wasters that rot children’s brains."
+                        .to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn wrapped_choice_continuation_does_not_split_vitamin_d_prose() {
+        let blocks = vec![
+            json!({"blockId":"q29","text":"29 Which statement is correct?","pageIndex":3,"_epic8LayoutSection":0,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[36.0,590.0,300.0,600.0]}),
+            json!({"blockId":"abc","text":"A first answer. B second answer. C The condition is associated with","pageIndex":3,"_epic8LayoutSection":0,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[78.0,543.0,545.0,582.6]}),
+            json!({"blockId":"c-wrap","text":"vitamin D deficiency in children.","pageIndex":3,"_epic8LayoutSection":0,"_epic8SectionColumns":1,"_epic8ColumnIndex":0,"bbox":[78.0,511.8,300.0,535.8]}),
+        ];
+        let group_text = format!(
+            "Choose the correct letter, A, B, C or D.\n{}",
+            blocks
+                .iter()
+                .map(dynamic_block_text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let (_, options) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            29,
+            "Questions 29-29",
+            29,
+            "single_choice",
+        );
+
+        assert_eq!(options.len(), 3);
+        assert_eq!(
+            options[2].1,
+            "The condition is associated with vitamin D deficiency in children."
         );
     }
 
@@ -12454,6 +13113,185 @@ mod tests {
         assert_eq!(
             dynamic_group_option_bank_start_index(&blocks, "matching"),
             Some(5)
+        );
+    }
+
+    #[test]
+    fn final_matching_stem_stops_before_arbitrary_source_backed_list_heading() {
+        let blocks = vec![
+            json!({"blockId":"instruction","text":"Match each statement with the correct economist, A-D."}),
+            json!({"blockId":"q21","text":"21 The first statement."}),
+            json!({"blockId":"q22","text":"22 The second statement."}),
+            json!({"blockId":"q23","text":"23 It may be possible to forecast prices only in the short term."}),
+            json!({"blockId":"bank-heading","text":"List of Economists"}),
+            json!({"blockId":"bank-a","text":"A Fisher and Lorie"}),
+            json!({"blockId":"bank-b","text":"B Myron Scholes"}),
+            json!({"blockId":"bank-c","text":"C Eugene Fama"}),
+            json!({"blockId":"bank-d","text":"D Robert Shiller"}),
+        ];
+        let group_text = blocks
+            .iter()
+            .map(dynamic_block_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (prompt, _) = dynamic_question_prompt_and_options(
+            &blocks,
+            &group_text,
+            23,
+            "Questions 21-23",
+            23,
+            "matching",
+        );
+
+        assert_eq!(
+            prompt,
+            "It may be possible to forecast prices only in the short term."
+        );
+        assert_eq!(
+            dynamic_group_option_bank_start_index(&blocks, "matching"),
+            Some(4)
+        );
+        assert_eq!(
+            dynamic_group_option_bank(&blocks, "matching"),
+            vec![
+                ("A".to_string(), "Fisher and Lorie".to_string()),
+                ("B".to_string(), "Myron Scholes".to_string()),
+                ("C".to_string(), "Eugene Fama".to_string()),
+                ("D".to_string(), "Robert Shiller".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn structural_list_heading_accepts_colon_and_rejects_sentence_prose() {
+        assert!(is_dynamic_structural_option_bank_heading(
+            "List of Economists:"
+        ));
+        assert!(is_dynamic_prompt_option_bank_heading("List of Economists:"));
+        assert!(!is_dynamic_structural_option_bank_heading(
+            "List of economists appears in the appendix."
+        ));
+    }
+
+    #[test]
+    fn arbitrary_list_heading_requires_a_complete_declared_bank() {
+        let blocks = vec![
+            json!({"blockId":"instruction","text":"Match each statement with the correct sub-family, A-D."}),
+            json!({"blockId":"q8","text":"8 does not defend a particular area of land"}),
+            json!({"blockId":"bank-heading","text":"List of sub-fam ilies"}),
+            json!({"blockId":"bank-a","text":"A Antilopinae"}),
+            json!({"blockId":"bank-b","text":"B Bovinae"}),
+        ];
+
+        assert_eq!(
+            dynamic_group_option_bank_start_index(&blocks, "matching"),
+            None
+        );
+    }
+
+    #[test]
+    fn shared_matching_bank_forces_reuse_when_slots_outnumber_options() {
+        assert!(dynamic_shared_bank_cardinality_requires_reuse(
+            "matching", 5, 4
+        ));
+        assert!(dynamic_shared_bank_cardinality_requires_reuse(
+            "matching_information",
+            5,
+            4
+        ));
+        assert!(dynamic_shared_bank_cardinality_requires_reuse(
+            "classification",
+            5,
+            4
+        ));
+        assert!(!dynamic_shared_bank_cardinality_requires_reuse(
+            "heading_matching",
+            5,
+            4
+        ));
+        assert!(!dynamic_shared_bank_cardinality_requires_reuse(
+            "matching", 4, 4
+        ));
+        assert!(!dynamic_shared_bank_cardinality_requires_reuse(
+            "matching", 5, 0
+        ));
+    }
+
+    #[test]
+    fn authoring_ir_propagates_shared_reuse_to_group_and_question_interactions() {
+        let job = test_job();
+        let block_specs = [
+            ("heading", "Questions 27-31"),
+            (
+                "instruction",
+                "Match each statement with the correct economist, A-D.",
+            ),
+            ("q27", "27 First statement"),
+            ("q28", "28 Second statement"),
+            ("q29", "29 Third statement"),
+            ("q30", "30 Fourth statement"),
+            ("q31", "31 Fifth statement"),
+            ("bank-heading", "List of Economists"),
+            ("bank-a", "A Fisher and Lorie"),
+            ("bank-b", "B Myron Scholes"),
+            ("bank-c", "C Eugene Fama"),
+            ("bank-d", "D Robert Shiller"),
+        ];
+        let blocks = block_specs
+            .iter()
+            .enumerate()
+            .map(|(index, (block_id, text))| {
+                json!({
+                    "blockId": block_id,
+                    "blockType": if *block_id == "heading" { "header" } else { "paragraph" },
+                    "text": text,
+                    "pageIndex": 1,
+                    "bbox": [54.0, 760.0 - index as f64 * 24.0, 520.0, 770.0 - index as f64 * 24.0]
+                })
+            })
+            .collect::<Vec<_>>();
+        let doc = json!({
+            "schemaVersion": "DocumentIRV1",
+            "pages": [{"pageIndex": 1, "blocks": blocks}],
+            "assets": []
+        });
+        let split = json!({
+            "jobId": job.job_id,
+            "passageCandidates": [],
+            "questionGroupCandidates": [{
+                "groupId": "group-1",
+                "heading": "Questions 27-31",
+                "questionRange": [27, 31],
+                "instructionText": "Match each statement with the correct economist, A-D.",
+                "blockIds": block_specs.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                "kindHint": "matching",
+                "layoutHint": "list",
+                "confidence": 0.82,
+                "classification": {
+                    "kind": "matching",
+                    "interaction": {"type": "matching", "options": ["A", "B", "C", "D"], "allowOptionReuse": false},
+                    "confidence": 0.82,
+                    "warnings": [],
+                    "evidence": ["instruction"]
+                },
+                "sectionEvidence": [],
+                "continuationEdges": []
+            }],
+            "answerKeyCandidates": [],
+            "issues": []
+        });
+
+        let authoring = make_dynamic_authoring_ir(&job, &split, Some(&doc));
+        let group = &authoring["groups"][0];
+        assert_eq!(group["allowOptionReuse"], json!(true));
+        assert_eq!(
+            group["questions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|question| question["interaction"]["allowOptionReuse"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!(true); 5]
         );
     }
 
