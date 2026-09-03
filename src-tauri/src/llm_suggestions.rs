@@ -379,6 +379,75 @@ fn group_by_suggestion<'a>(ir: &'a Value, suggestion: &Value) -> Option<&'a Valu
         .find(|group| group.get("groupId").and_then(Value::as_str) == Some(group_id))
 }
 
+fn normalized_quote_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Hyphen-tolerant variant used as a fallback match: model quotes often
+/// reproduce line-broken words as "stencil- ling" while the source block has
+/// "stencilling". Removing hyphens on both sides tolerates that drift.
+fn normalized_quote_text_without_hyphens(value: &str) -> String {
+    normalized_quote_text(&value.replace('-', "")).replace(' ', "")
+}
+
+/// Verify that suggestion evidence quotes actually appear in the referenced
+/// source blocks. `block_texts` maps blockId -> block text. Blocks missing
+/// from the map are skipped (the source may already be minimized); a quote
+/// whose normalized text is not contained in its block is reported so the
+/// suggestion cannot auto-apply on fabricated evidence.
+pub(crate) fn llm_suggestion_quote_mismatches(
+    suggestion: &Value,
+    block_texts: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut issues = Vec::<String>::new();
+    let quotes = suggestion
+        .get("evidence")
+        .unwrap_or(&Value::Null)
+        .get("quotes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    for quote in quotes {
+        let block_id = quote
+            .get("blockId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let text = quote
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if text.trim().is_empty() || block_id.is_empty() {
+            continue;
+        }
+        let Some(source_text) = block_texts.get(block_id) else {
+            // With a non-empty source map a missing referenced block is a
+            // suspicious signal (wrong/case-mangled blockId), not a reason to
+            // silently skip verification.
+            if !block_texts.is_empty() {
+                issues.push(format!("evidence_quote_block_missing:{}", block_id));
+            }
+            continue;
+        };
+        let needle = normalized_quote_text(text);
+        let haystack = normalized_quote_text(source_text);
+        let matched = !needle.is_empty() && haystack.contains(&needle) || {
+            let loose_needle = normalized_quote_text_without_hyphens(text);
+            let loose_haystack = normalized_quote_text_without_hyphens(source_text);
+            !loose_needle.is_empty() && loose_haystack.contains(&loose_needle)
+        };
+        if !matched {
+            issues.push(format!("evidence_quote_not_in_source:{}", block_id));
+        }
+    }
+    issues.sort();
+    issues.dedup();
+    issues
+}
+
 pub(crate) fn llm_suggestion_auto_apply_issues(
     ir: &Value,
     suggestion: &Value,

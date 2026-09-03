@@ -101,3 +101,33 @@ Make PDF/DOCX import usable as a one-click/batch flow that lands on editable dra
 - Existing editable drafts must not be overwritten unless explicitly requested.
 - Normal users should see user-level text only; OCR/LLM/IR/runtime/rule split wording belongs only in advanced diagnostics.
 - Local generated draft is authoritative; cloud model output is a background quality check and never overwrites the draft by default.
+# Current Active Goal: AI 生成、核验、补全能力完整性审计与产品闭环
+
+## Goal
+
+审计并补齐真实 Tauri 文档导入、编辑、预览、导出链路中的 AI 能力：生成（从 PDF/DOCX 形成可编辑草稿）、核验（结构/答案/质量门禁/云端交叉检查）、补全（扫描答案、缺失字段和编辑器内内容），并确认模型配置、工具调用、权限/超时/重试、结构化输出校验、持久化证据、UI 状态和测试覆盖是否完整。最终交付可追踪的审计结论、优先级缺口，以及必要的产品代码和回归验证。
+
+- [complete] A1 盘点 AI 入口、调用协议、产物、UI 和测试覆盖（6 路并发审计完成）
+- [complete] A2 形成按风险排序的缺口矩阵和目标闭环设计
+- [complete] A3 实现高优先级缺口：并发编排（LLM转化∥本地解析）、视觉答案候选闭环、云端对照 opt-in 可达、confidence/quote/base_url/provider/重试/可观测收紧
+- [complete] A4 以底层测试验证（cargo 535 通过，新增 7 测试；tsc 绿）
+- [complete] A5 对抗审计轮（2 轮红队）：修复 worker panic 挂死、reject-only 忽略失败、base_url 绕过、候选防覆盖、TOCTOU、quote 验真盲区
+- [complete] A6 V2 导出门禁错误分类解析 + 题组「AI 题组建议」UI 入口
+- [complete] A7 验证接手：确认现有改动质量（535 tests passed, tsc green），A7 后续项为增量体验改进非阻断
+
+## Status
+
+**AI 审计目标已达成**。核心 P0/P1 缺口（并发、视觉闭环、网关收紧、导出门禁、UI 入口）已修复并通过测试验证。A7 后续项（导入取消、队列持久化、preflight LLM 检查、V2 revision 分歧）为用户体验增强和架构统一，不影响当前功能正确性。
+
+## Current Decisions
+
+- 以 Tauri UI、Rust command handler、持久化 job/revision、真实 student runtime 和导出门禁为主证据；CLI 仅作辅助诊断。
+- 本地生成结果仍是默认权威；AI 核验结果必须可追溯并能阻止高风险导出；AI 补全必须保留来源、置信度和人工确认状态。
+- 不把密钥写入仓库或计划文件；工具调用必须有显式 schema、超时、重试边界、错误分类和 JSON 校验。
+
+## 2026-09-03 用户确认的 AI 交互边界
+
+- 可追踪审计按一次用户可理解的 AI 阶段/run 归并，不要求每次重试、轮询或纯预览调用都产生持久记录；仅对候选生成、接受/拒绝、权威稿写入、导出阻断和阶段失败保留 durable event。
+- AI 输出缺少业务必需字段、类型错误、未知 patch 路径或证据不匹配时必须 fail-closed；仅允许明确安全的编号/格式归一化，不得用空数组、空对象或默认置信度掩盖协议错误。
+- AI 文字/答案/结构变更先作为候选 diff 展示：新增绿色、删除红色；用户接受后才写入权威稿和 revision，拒绝不修改权威内容但保留决策摘要。
+- 视觉答案候选与题组补全遵循同一接受/拒绝协议；本地确定性稿仍是初始权威，云端结果默认只读核验。

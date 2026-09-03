@@ -1,3 +1,4 @@
+import type { InteractionSpec } from "./authoring-ir";
 export type LlmProvider = "OpenAiCompatible" | "AnthropicCompatible" | "Ollama" | "Custom";
 
 export interface LlmProfilePublic {
@@ -56,14 +57,30 @@ export interface DiagnosticsSettings {
   keepFullProcessArtifacts: boolean;
 }
 
+export interface LlmSuggestionPatch {
+  op?: string;
+  path?: string;
+  value?: string;
+}
+
+export interface LlmSuggestionQuestion {
+  id: string;
+  prompt?: string;
+  interaction?: InteractionSpec | {
+    type?: string;
+    options?: string[];
+  };
+  [key: string]: unknown;
+}
+
 export interface LlmSuggestion {
   suggestionId: string;
   jobId: string;
   groupId: string;
   kind?: string;
   confidence: number;
-  patch: unknown;
-  questions?: unknown[];
+  patch?: LlmSuggestionPatch[] | unknown;
+  questions?: LlmSuggestionQuestion[];
   evidence?: unknown;
   warnings: string[];
   createdAt: string;

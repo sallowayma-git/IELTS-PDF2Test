@@ -1,5 +1,5 @@
 use crate::{
-    util::{job_dir, write_json},
+    util::{append_text, job_dir, write_json},
     validator::allowed_question_kind,
     CommandResult,
 };
@@ -20,6 +20,7 @@ pub(crate) fn run_llm_gateway(
     let input_path = cache_dir.join(format!("{}-input-{}.json", command_name, stamp));
     let output_path = cache_dir.join(format!("{}-output-{}.json", command_name, stamp));
     write_json(&input_path, &redact_llm_input_for_cache(input))?;
+    let started = std::time::Instant::now();
     let output = match command_name {
         "classify_group" | "extract_group" | "test_profile" => {
             run_openai_compatible_group_llm(command_name, input, api_key)
@@ -28,9 +29,39 @@ pub(crate) fn run_llm_gateway(
         "extract_pdf_image_answers" => run_openai_compatible_vision_answer_llm(input, api_key),
         "generate_pdf_reading_outline" => run_openai_compatible_cloud_outline_llm(input, api_key),
         _ => Err(format!("unsupported_llm_gateway_command:{}", command_name)),
-    }?;
+    };
+    // Per-call observability record: every gateway invocation (success or
+    // failure) lands in llm-calls.jsonl with its latency and error class so
+    // failures stay diagnosable after the fact.
+    let call_record = json!({
+        "recordType": "llm_call",
+        "commandName": command_name,
+        "jobId": job_id,
+        "model": input.get("profile").and_then(|profile| profile.get("model")).cloned().unwrap_or(Value::Null),
+        "ok": output.is_ok(),
+        "latencyMs": started.elapsed().as_millis() as u64,
+        "errorClass": match &output {
+            Ok(_) => Value::Null,
+            Err(error) => json!(error.split(':').next().unwrap_or("unknown")),
+        },
+        "recordedAt": Utc::now().to_rfc3339()
+    });
+    let _ = append_llm_call_record(root, job_id, &call_record);
+    let output = output?;
     write_json(&output_path, &output)?;
     Ok(output)
+}
+
+fn append_llm_call_record(root: &Path, job_id: &str, record: &Value) -> CommandResult<()> {
+    let line = serde_json::to_string(record).map_err(|error| error.to_string())?;
+    append_text(
+        &job_dir(root, job_id).join("llm-calls.jsonl"),
+        &format!(
+            "{}
+",
+            line
+        ),
+    )
 }
 
 pub(crate) fn redact_llm_input_for_cache(input: &Value) -> Value {
@@ -99,7 +130,39 @@ fn openai_chat_content(payload: &Value) -> CommandResult<String> {
         .ok_or_else(|| "llm_empty_content".to_string())
 }
 
-fn parse_llm_json_content(content: &str) -> CommandResult<Value> {
+/// Fail-closed confidence normalization. A non-numeric or out-of-range
+/// confidence collapses to 0.0 and gets a warning appended, so a pathological
+/// model output can never satisfy an auto-apply threshold. (Missing values are
+/// filled with the per-command default before this runs; that default is
+/// always below the auto-apply threshold.)
+fn normalize_confidence_fail_closed(obj: &mut serde_json::Map<String, Value>) {
+    let raw = obj.get("confidence").cloned();
+    let in_range = raw
+        .as_ref()
+        .and_then(Value::as_f64)
+        .map(|value| (0.0..=1.0).contains(&value))
+        .unwrap_or(false);
+    if !in_range {
+        obj.insert("confidence".to_string(), json!(0.0));
+        if let Some(warnings) = obj.get_mut("warnings").and_then(Value::as_array_mut) {
+            warnings.push(json!(format!("confidence_out_of_range:{:?}", raw)));
+        }
+    }
+}
+
+/// Clamp a confidence value into 0.0..=1.0. Used for read-only outputs
+/// (cloud outline) where the value only feeds display and comparison.
+fn clamp_confidence_value(obj: &mut serde_json::Map<String, Value>) {
+    let clamped = obj
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .map(|value| value.clamp(0.0, 1.0));
+    if let Some(value) = clamped {
+        obj.insert("confidence".to_string(), json!(value));
+    }
+}
+
+pub(crate) fn parse_llm_json_content(content: &str) -> CommandResult<Value> {
     serde_json::from_str::<Value>(content).or_else(|first_error| {
         let trimmed = content.trim();
         let start = trimmed.find('{');
@@ -125,7 +188,9 @@ fn openai_post(profile: &Value, api_key: Option<&str>, body: Value) -> CommandRe
                 if !retryable || attempt == 2 {
                     break;
                 }
-                thread::sleep(Duration::from_millis(400 * (attempt as u64 + 1)));
+                let retry_after_ms = retry_after_ms_from_error(&last_error);
+                let backoff_ms = 400 * (attempt as u64 + 1);
+                thread::sleep(Duration::from_millis(retry_after_ms.max(backoff_ms)));
             }
         }
     }
@@ -135,12 +200,26 @@ fn openai_post(profile: &Value, api_key: Option<&str>, body: Value) -> CommandRe
 fn is_retryable_llm_http_error(error: &str) -> bool {
     error.starts_with("llm_http_failed:")
         || error.starts_with("llm_http_body_failed:")
+        || error.starts_with("llm_http_429:")
+        || error.starts_with("llm_http_408:")
         || error.starts_with("llm_http_502:")
         || error.starts_with("llm_http_503:")
         || error.starts_with("llm_http_504:")
         || error.starts_with("llm_http_524:")
         || (error.starts_with("llm_http_json_failed:") && error.contains("error code: 502"))
         || (error.starts_with("llm_http_json_failed:") && error.contains("error code: 524"))
+}
+
+/// Honor a server-provided Retry-After (seconds), capped so a hostile or
+/// misconfigured endpoint cannot stall the pipeline for minutes per retry.
+fn retry_after_ms_from_error(error: &str) -> u64 {
+    error
+        .rsplit(";retry_after=")
+        .next()
+        .and_then(|suffix| suffix.split(';').next())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(|seconds| seconds.saturating_mul(1000).min(5_000))
+        .unwrap_or(0)
 }
 
 fn openai_post_once(profile: &Value, api_key: Option<&str>, body: Value) -> CommandResult<Value> {
@@ -160,14 +239,32 @@ fn openai_post_once(profile: &Value, api_key: Option<&str>, body: Value) -> Comm
         .send()
         .map_err(|error| format!("llm_http_failed:{}", error))?;
     let status = response.status();
+    let retry_after = response
+        .headers()
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(0);
     let text = response
         .text()
         .map_err(|error| format!("llm_http_body_failed:{}", error))?;
+    if !status.is_success() {
+        let retry_suffix = if retry_after > 0 {
+            format!(";retry_after={}", retry_after.min(30))
+        } else {
+            String::new()
+        };
+        let payload = serde_json::from_str::<Value>(&text)
+            .unwrap_or_else(|_| json!({"raw": text.chars().take(300).collect::<String>()}));
+        return Err(format!(
+            "llm_http_{}:{}{}",
+            status.as_u16(),
+            payload,
+            retry_suffix
+        ));
+    }
     let payload = serde_json::from_str::<Value>(&text)
         .map_err(|error| format!("llm_http_json_failed:{}:{}", error, text))?;
-    if !status.is_success() {
-        return Err(format!("llm_http_{}:{}", status.as_u16(), payload));
-    }
     Ok(payload)
 }
 
@@ -462,14 +559,33 @@ pub(crate) fn validate_llm_suggestion_output(
     if !obj.get("confidence").map(Value::is_number).unwrap_or(false) {
         obj.insert("confidence".to_string(), json!(0.65));
     }
+    normalize_confidence_fail_closed(obj);
+    // Missing structural fields are completed with safe defaults (empty
+    // arrays) instead of rejecting the whole output, but the completion is
+    // recorded as a warning so downstream trust decisions and the diff
+    // preview can see that the model output was incomplete. Defaults never
+    // raise trust: the default confidence stays below the auto-apply
+    // threshold.
+    let mut defaulted_fields = Vec::<&str>::new();
     if !obj.get("patch").map(Value::is_array).unwrap_or(false) {
         obj.insert("patch".to_string(), json!([]));
+        defaulted_fields.push("patch");
     }
     if !obj.get("warnings").map(Value::is_array).unwrap_or(false) {
         obj.insert("warnings".to_string(), json!([]));
+        defaulted_fields.push("warnings");
     }
     if !obj.get("questions").map(Value::is_array).unwrap_or(false) {
         obj.insert("questions".to_string(), json!([]));
+        defaulted_fields.push("questions");
+    }
+    if !defaulted_fields.is_empty() {
+        if let Some(warnings) = obj.get_mut("warnings").and_then(Value::as_array_mut) {
+            warnings.push(json!(format!(
+                "output_fields_defaulted:{}",
+                defaulted_fields.join(",")
+            )));
+        }
     }
     let evidence = obj
         .entry("evidence".to_string())
@@ -531,6 +647,7 @@ fn validate_vision_transcription_output(
             json!(if has_text { 0.6 } else { 0.0 }),
         );
     }
+    normalize_confidence_fail_closed(obj);
     if !obj.get("warnings").map(Value::is_array).unwrap_or(false) {
         obj.insert("warnings".to_string(), json!([]));
     }
@@ -666,6 +783,7 @@ fn validate_vision_answer_output(
         obj.insert("confidence".to_string(), json!(0.6));
     }
     ensure_json_array_field(obj, "warnings");
+    normalize_confidence_fail_closed(obj);
     ensure_json_array_field(obj, "evidence");
     let evidence = obj
         .entry("metadata".to_string())
@@ -701,6 +819,14 @@ fn validate_cloud_outline_output(
     };
     if !obj.get("groups").map(Value::is_array).unwrap_or(false) {
         obj.insert("groups".to_string(), json!([]));
+        if let Some(warnings) = obj.get_mut("warnings").and_then(Value::as_array_mut) {
+            warnings.push(json!("output_fields_defaulted:groups"));
+        } else {
+            obj.insert(
+                "warnings".to_string(),
+                json!(["output_fields_defaulted:groups"]),
+            );
+        }
     }
     if let Some(groups) = obj.get_mut("groups").and_then(Value::as_array_mut) {
         for group in groups {
@@ -754,6 +880,7 @@ fn validate_cloud_outline_output(
             {
                 group_obj.insert("confidence".to_string(), json!(0.5));
             }
+            clamp_confidence_value(group_obj);
             let evidence = group_obj
                 .entry("evidence".to_string())
                 .or_insert_with(|| json!({}));
@@ -771,6 +898,7 @@ fn validate_cloud_outline_output(
     if !obj.get("confidence").map(Value::is_number).unwrap_or(false) {
         obj.insert("confidence".to_string(), json!(0.5));
     }
+    clamp_confidence_value(obj);
     ensure_json_array_field(obj, "warnings");
     let evidence = obj
         .entry("metadata".to_string())

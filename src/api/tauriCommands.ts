@@ -204,8 +204,37 @@ export async function llmExtractGroup(jobId: string, groupId: string, profileId:
   return command("llm_extract_group", { jobId, groupId, profileId });
 }
 
-export async function applyLlmSuggestion(jobId: string, suggestionId: string, selectedPaths: string[]): Promise<ReadingAuthoringIr> {
-  return command("apply_llm_suggestion", { jobId, suggestionId, selectedPaths });
+export async function applyLlmSuggestion(
+  jobId: string,
+  suggestionId: string,
+  selectedPaths: string[],
+  options?: { questionIds?: string[]; userConfirmed?: boolean }
+): Promise<ReadingAuthoringIr> {
+  return command("apply_llm_suggestion", {
+    jobId,
+    suggestionId,
+    selectedPaths,
+    questionIds: options?.questionIds,
+    userConfirmed: options?.userConfirmed ?? false
+  });
+}
+
+export async function applyVisionAnswerCandidates(
+  jobId: string,
+  decisions: { questionNumber: string; accept: boolean; answer?: unknown }[],
+  candidateGeneratedAt?: string
+): Promise<{
+  authoringIr: ReadingAuthoringIr;
+  acceptedQuestionIds: string[];
+  rejectedQuestionIds: string[];
+  alreadyAnsweredQuestionIds?: string[];
+  unmatchedQuestionNumbers: string[];
+}> {
+  return command("apply_vision_answer_candidates", {
+    jobId,
+    generatedAt: candidateGeneratedAt,
+    decisions
+  });
 }
 
 export async function validateAuthoringIr(jobId: string): Promise<ValidationReport> {

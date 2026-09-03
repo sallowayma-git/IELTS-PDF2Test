@@ -50,8 +50,69 @@ function plainExportGuidance(message: string): string[] {
   return guidance.length ? guidance : ["导出前检查没有通过。你可以返回编辑，也可以忽略内容检查继续导出。"];
 }
 
+/// V2 publish-gate failures use the `authoring_v2_export_blocked:*` format
+/// emitted by authoring_v2_commands.rs. Parse each blocker kind into
+/// actionable guidance instead of showing the raw error string.
+function parseV2ExportBlock(message: string): {
+  kind: "quality_state" | "unresolved_answers" | "hard_failures" | "issues" | "compile_blocked";
+  detail: string;
+} | undefined {
+  const blocked = message.match(/^authoring_v2_export_blocked:(quality_state|unresolved_answers|hard_failures|issues)=(.*)$/);
+  if (blocked) {
+    return { kind: blocked[1] as "quality_state" | "unresolved_answers" | "hard_failures" | "issues", detail: blocked[2].trim() };
+  }
+  if (message.startsWith("authoring_v2_export_compile_blocked:")) {
+    return { kind: "compile_blocked", detail: message.slice("authoring_v2_export_compile_blocked:".length).trim() };
+  }
+  return undefined;
+}
+
+function buildV2ExportDiagnostics(message: string): ExportDiagnostics {
+  const block = parseV2ExportBlock(message);
+  if (!block) {
+    return { title: "导出没有完成", issues: [], guidance: [message], canForce: false };
+  }
+  const guidance: string[] = [];
+  switch (block.kind) {
+    case "quality_state":
+      guidance.push(
+        block.detail === "review_required"
+          ? "V2 质量门处于“需要复核”状态：请在题稿编辑页完成人工确认后再发布。"
+          : `V2 质量门处于“${block.detail}”状态：存在结构性问题，请先在题稿编辑页处理阻塞项。`
+      );
+      break;
+    case "unresolved_answers": {
+      const slots = block.detail.split(",").filter(Boolean);
+      guidance.push(`仍有 ${slots.length} 个答案位未解析（${slots.slice(0, 8).join("、")}${slots.length > 8 ? "…" : ""}）；请在题稿编辑页补齐或确认这些答案。`);
+      break;
+    }
+    case "hard_failures": {
+      const codes = block.detail.split(",").filter(Boolean);
+      guidance.push(`存在 ${codes.length} 个硬性结构失败：${codes.slice(0, 6).join("、")}${codes.length > 6 ? "…" : ""}；这些无法通过人工确认跳过，需要修复数据。`);
+      break;
+    }
+    case "issues": {
+      const issueIds = block.detail.split(",").filter(Boolean);
+      guidance.push(`存在 ${issueIds.length} 个未解决的阻塞问题（${issueIds.slice(0, 6).join("、")}${issueIds.length > 6 ? "…" : ""}）；请在题稿编辑页处理或按证据忽略对应问题。`);
+      break;
+    }
+    case "compile_blocked":
+      guidance.push("学生端运行时编译失败：题组结构没有通过运行时契约校验，请检查题组类型、选项和答案设置。");
+      break;
+  }
+  return {
+    title: "发布门禁没有通过",
+    issues: [],
+    guidance,
+    canForce: false
+  };
+}
+
 function buildExportDiagnostics(caught: unknown): ExportDiagnostics {
   const message = caught instanceof Error ? caught.message : String(caught);
+  if (message.includes("authoring_v2_export_blocked") || message.includes("authoring_v2_export_compile_blocked")) {
+    return buildV2ExportDiagnostics(message);
+  }
   const issues = parseValidationPayload(message)?.issues ?? [];
   if (!issues.length) {
     return {

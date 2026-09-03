@@ -129,6 +129,7 @@ pub(crate) fn cleanup_transient_job_artifacts(
         "llm-last-suggestion.json",
         "llm-calls.jsonl",
         "vision-transcription-output.json",
+        "vision-answer-output.json",
         "vision-transcription.txt",
         "manual-transcription.txt",
         "validation-report.json",
@@ -189,6 +190,7 @@ pub(crate) fn minimize_process_artifacts_after_authoring(
         "llm-last-suggestion.json",
         "llm-calls.jsonl",
         "vision-transcription-output.json",
+        "vision-answer-output.json",
         "vision-transcription.txt",
         "manual-transcription.txt",
     ] {

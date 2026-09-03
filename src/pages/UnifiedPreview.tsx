@@ -10,7 +10,13 @@ import {
 import { go } from "../app/router";
 import { isPhase5EditorEnabled } from "../config/featureFlags";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
-import type { AutoPipelineReport, GroupKind, PreviewAssets, QuestionDraft, QuestionGroupDraft, ReadingAuthoringIr } from "../types";
+import {
+  applyLlmSuggestion,
+  applyVisionAnswerCandidates,
+  listLlmProfiles,
+  llmExtractGroup
+} from "../api/tauriCommands";
+import type { AutoPipelineReport, GroupKind, LlmSuggestion, PreviewAssets, QuestionDraft, QuestionGroupDraft, ReadingAuthoringIr, VisionAnswerCandidate, VisionAnswerCandidates } from "../types";
 
 const CLOUD_REVIEW_PENDING_KEY_PREFIX = "ielts-author-studio.cloud-review.";
 const CLOUD_REVIEW_FAILED_KEY_PREFIX = "ielts-author-studio.cloud-review.failed.";
@@ -222,7 +228,10 @@ function cloudStateIsTerminal(state: CloudState): boolean {
   return state === "done" || state === "warning" || state === "unavailable" || state === "error";
 }
 
-async function loadPreviewArtifacts(jobId: string): Promise<PreviewAssets | undefined> {
+async function loadPreviewArtifacts(
+  jobId: string,
+  onCompileError?: (message: string) => void
+): Promise<PreviewAssets | undefined> {
   try {
     await validateAuthoringIr(jobId);
   } catch {
@@ -230,7 +239,8 @@ async function loadPreviewArtifacts(jobId: string): Promise<PreviewAssets | unde
   }
   try {
     return await generatePreviewAssets(jobId);
-  } catch {
+  } catch (caught) {
+    onCompileError?.(caught instanceof Error ? caught.message : String(caught));
     return undefined;
   }
 }
@@ -305,6 +315,19 @@ function findLatestVisionTranscriptionIssue(
   return persistedIssue ?? buildVisionTranscriptionFallbackIssue(fallback);
 }
 
+function findLatestVisionAnswerIssue(rawAuditIssues: AuditIssue[]): AuditIssue | undefined {
+  return [...rawAuditIssues]
+    .reverse()
+    .find((issue) => auditIssueKind(issue) === "vision_answer_extraction_summary" || auditIssuePath(issue).includes("visionAnswerExtraction"));
+}
+
+function candidateAnswerText(answer: unknown): string {
+  if (typeof answer === "string") return answer;
+  if (Array.isArray(answer)) return answer.map((item) => String(item)).filter(Boolean).join(" / ");
+  if (answer === null || answer === undefined) return "";
+  return String(answer);
+}
+
 function formatConfidence(value: number | undefined): string {
   const normalized = typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
   return `${Math.round(normalized * 100)}%`;
@@ -334,13 +357,23 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   const [cloudLabel, setCloudLabel] = useState("等待云端复核");
   const [activeGroupId, setActiveGroupId] = useState<string | undefined>();
   const [activeQuestionId, setActiveQuestionId] = useState<string | undefined>();
+  const [visionAnswerCandidates, setVisionAnswerCandidates] = useState<VisionAnswerCandidates | undefined>();
+  const [dismissedCandidateNumbers, setDismissedCandidateNumbers] = useState<Set<string>>(new Set());
+  const [adoptingCandidates, setAdoptingCandidates] = useState(false);
+  const [previewCompileError, setPreviewCompileError] = useState<string | undefined>();
+  const [llmProfileId, setLlmProfileId] = useState<string | undefined>();
+  const [llmSuggestionBusy, setLlmSuggestionBusy] = useState(false);
+  const [llmSuggestion, setLlmSuggestion] = useState<LlmSuggestion | undefined>();
+  const [llmSuggestionError, setLlmSuggestionError] = useState<string | undefined>();
+  const [suggestionSelection, setSuggestionSelection] = useState({ kind: true, layout: true, questions: true });
+  const [dismissedSuggestionQuestions, setDismissedSuggestionQuestions] = useState<Set<string>>(new Set());
   const cloudPollTimer = useRef<number | undefined>(undefined);
   const previewRequestId = useRef(0);
 
   async function refreshStudentPreview() {
     const requestId = ++previewRequestId.current;
     setStudentPreviewStatus("loading");
-    const assets = await loadPreviewArtifacts(jobId);
+    const assets = await loadPreviewArtifacts(jobId, (message) => setPreviewCompileError(message));
     if (requestId !== previewRequestId.current) return;
     if (assets?.source?.questionGroups?.length) {
       setPreviewAssets(assets);
@@ -357,19 +390,25 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     const nextPipeline = detail.pipelineReport;
     setIr(nextIr);
     setPipelineReport(nextPipeline);
+    setVisionAnswerCandidates(detail.visionAnswerCandidates);
 
     const sourceIsPdf = mainSourceIsPdf(nextIr);
     const nextCloud = cloudStateFromReport(nextPipeline, sourceIsPdf);
     const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
     const queued = isCloudReviewQueued(jobId);
     const failedMessage = window.sessionStorage.getItem(failedCloudReviewKey(jobId));
-    if (pending && !cloudStateIsTerminal(nextCloud.state)) {
+    // Only a real completion/failure state (done/warning/error) may override
+    // the background-review indicators. A missing report (localOnly pipeline
+    // minimizes pipeline-report.json) surfaces as "unavailable", which must
+    // not mask a running silent review as "未配置云端模型".
+    const reachedTerminal = nextCloud.state === "done" || nextCloud.state === "warning" || nextCloud.state === "error";
+    if (pending && !reachedTerminal) {
       setCloudState("running");
       setCloudLabel("云端复核中");
-    } else if (queued && !cloudStateIsTerminal(nextCloud.state)) {
+    } else if (queued && !reachedTerminal) {
       setCloudState("queued");
       setCloudLabel("已加入云端复核队列");
-    } else if (failedMessage && !cloudStateIsTerminal(nextCloud.state)) {
+    } else if (failedMessage && nextCloud.state !== "done" && nextCloud.state !== "warning") {
       setCloudState("error");
       setCloudLabel("云端复核失败");
     } else {
@@ -385,6 +424,16 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   useEffect(() => {
     load(true).catch((error) => setRuntimeError(error instanceof Error ? error.message : String(error)));
   }, [jobId]);
+
+  useEffect(() => {
+    listLlmProfiles()
+      .then((items) =>
+        setLlmProfileId(
+          items.find((profile) => profile.enabled && profile.profileId !== "profile-local-placeholder")?.profileId
+        )
+      )
+      .catch(() => setLlmProfileId(undefined));
+  }, []);
 
   useEffect(() => {
     const listener = (event: Event) => {
@@ -450,12 +499,22 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   useEffect(() => {
     const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
     if (!pending) return undefined;
+    let attempts = 0;
     cloudPollTimer.current = window.setInterval(() => {
+      attempts += 1;
+      // Bounded polling: if the review never lands (worker died, queue lost),
+      // stop after ~4 minutes instead of polling forever.
+      if (attempts > 150) {
+        window.sessionStorage.removeItem(pendingCloudReviewKey(jobId));
+        if (cloudPollTimer.current) window.clearInterval(cloudPollTimer.current);
+        return;
+      }
       void getJob(jobId).then((detail) => {
         const nextReport = detail.pipelineReport;
         if (!nextReport?.quality?.cloudComparison?.attempted) return;
         setIr(detail.authoringIr);
         setPipelineReport(nextReport);
+        setVisionAnswerCandidates(detail.visionAnswerCandidates);
         const nextCloud = cloudStateFromReport(nextReport, mainSourceIsPdf(detail.authoringIr));
         setCloudState(nextCloud.state);
         setCloudLabel(nextCloud.label);
@@ -470,38 +529,105 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
 
   useEffect(() => {
     if (!ir || !mainSourceIsPdf(ir)) return;
+    // A live queue from a previous page must keep a worker even when this
+    // job's report carries no profile (localOnly minimize), so start the
+    // scheduler unconditionally before any guard returns.
+    startBackgroundCloudReviewScheduler();
 
     const comparison = pipelineReport?.quality?.cloudComparison;
-    const profileId = pipelineReport?.llm?.profileId;
-    if (comparison?.attempted || !profileId || profileId === "profile-local-placeholder") return;
+    if (comparison?.attempted) return;
     if (window.sessionStorage.getItem(failedCloudReviewKey(jobId))) return;
 
     const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
     if (pending) {
       setCloudState("running");
       setCloudLabel("云端复核中");
-      startBackgroundCloudReviewScheduler();
       return;
     }
-
     if (isCloudReviewQueued(jobId)) {
       setCloudState("queued");
       setCloudLabel("已加入云端复核队列");
-      startBackgroundCloudReviewScheduler();
       return;
     }
 
+    // Silent introduction: prefer the report's profile, fall back to the
+    // enabled profile from settings (localOnly reports have a null profile).
+    const profileId = pipelineReport?.llm?.profileId ?? llmProfileId;
+    if (!profileId || profileId === "profile-local-placeholder") return;
+    if (comparison?.failure) return;
     if (enqueueBackgroundCloudReview(jobId, profileId)) {
       setCloudState("queued");
       setCloudLabel("已加入云端复核队列");
     }
-    startBackgroundCloudReviewScheduler();
-  }, [ir, jobId, pipelineReport?.llm?.profileId, pipelineReport?.quality?.cloudComparison?.attempted]);
+  }, [ir, jobId, llmProfileId, pipelineReport?.llm?.profileId, pipelineReport?.quality?.cloudComparison?.attempted, pipelineReport?.quality?.cloudComparison?.failure]);
 
   const passageBlocks = useMemo(() => ir?.passage.htmlBlocks ?? [], [ir]);
   const rawAuditIssues = ir?.audit.issues ?? [];
   const visionTranscriptionIssue = findLatestVisionTranscriptionIssue(rawAuditIssues, pipelineReport?.parser?.visionTranscription);
   const visionConfigHint = visionConfigurationHint(visionTranscriptionIssue);
+  const visionAnswerIssue = findLatestVisionAnswerIssue(rawAuditIssues);
+  const suggestionKindDiff = useMemo(() => {
+    if (!llmSuggestion || !activeGroup) return undefined;
+    const patchList = Array.isArray(llmSuggestion.patch) ? llmSuggestion.patch : [];
+    const kindPatch = patchList.find((item) => item?.path === "/kind" && typeof item?.value === "string");
+    const suggested = (kindPatch?.value ?? llmSuggestion.kind ?? "").trim();
+    if (!suggested || suggested === activeGroup.kind) return undefined;
+    return { current: activeGroup.kind, suggested: suggested as GroupKind };
+  }, [llmSuggestion, activeGroup]);
+  const suggestionLayoutDiff = useMemo(() => {
+    if (!llmSuggestion || !activeGroup) return undefined;
+    const patchList = Array.isArray(llmSuggestion.patch) ? llmSuggestion.patch : [];
+    const layoutPatch = patchList.find((item) => item?.path === "/layout/template" && typeof item?.value === "string");
+    const suggested = layoutPatch?.value?.trim();
+    if (!suggested) return undefined;
+    const current = String((activeGroup.layout as { template?: string } | undefined)?.template ?? "");
+    if (suggested === current) return undefined;
+    return { current: current || "（未设置）", suggested };
+  }, [llmSuggestion, activeGroup]);
+  const suggestionQuestionDiffs = useMemo(() => {
+    if (!llmSuggestion || !activeGroup) return [];
+    const currentById = new Map(activeGroup.questions.map((question) => [question.id, question]));
+    return (llmSuggestion.questions ?? [])
+      .filter((suggested) => currentById.has(suggested.id))
+      .map((suggested) => {
+        const current = currentById.get(suggested.id)!;
+        const currentPrompt = current.prompt ?? "";
+        const suggestedPrompt = typeof suggested.prompt === "string" ? suggested.prompt : currentPrompt;
+        const currentInteraction = current.interaction?.type;
+        const suggestedInteraction = suggested.interaction?.type ?? currentInteraction;
+        return {
+          id: suggested.id,
+          changed: suggestedPrompt !== currentPrompt || suggestedInteraction !== currentInteraction,
+          currentPrompt,
+          suggestedPrompt,
+          interactionChanged: suggestedInteraction !== currentInteraction,
+          currentInteraction,
+          suggestedInteraction
+        };
+      })
+      .filter((diff) => diff.changed);
+  }, [llmSuggestion, activeGroup]);
+  const suggestionApplyPaths = useMemo(() => {
+    const paths: string[] = [];
+    if (suggestionKindDiff && suggestionSelection.kind) paths.push("kind");
+    if (suggestionLayoutDiff && suggestionSelection.layout) paths.push("layout");
+    if (suggestionQuestionDiffs.length && suggestionSelection.questions) paths.push("questions");
+    return paths;
+  }, [suggestionKindDiff, suggestionLayoutDiff, suggestionQuestionDiffs.length, suggestionSelection]);
+  const pendingVisionCandidates = useMemo(() => {
+    if (!visionAnswerCandidates?.candidates?.length || !ir) return [];
+    return visionAnswerCandidates.candidates.filter((candidate) => {
+      if (dismissedCandidateNumbers.has(candidate.questionNumber)) return false;
+      // Persisted dismissals (recorded by the backend on reject) stay hidden.
+      const dismissedAt = candidate as { dismissedAt?: string };
+      if (dismissedAt.dismissedAt) return false;
+      const questionId = candidate.questionId ?? `q${candidate.questionNumber}`;
+      const question = ir.groups.flatMap((group) => group.questions).find((item) => item.id === questionId);
+      if (!question) return false;
+      const current = candidateAnswerText(question.answer);
+      return current.trim().length === 0;
+    });
+  }, [visionAnswerCandidates, dismissedCandidateNumbers, ir]);
   const groupQuestionCount = activeGroup?.questions.length ?? 0;
   const verifiedQuestionCount = activeGroup?.questions.filter((question) => question.verified).length ?? 0;
   const activeGroupMissingPromptIds = activeGroup ? missingPromptIdsForGroup(visionTranscriptionIssue, activeGroup) : [];
@@ -568,6 +694,80 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       ...question,
       answer: answerValueFromInput(question, value)
     }));
+  }
+
+  async function decideVisionCandidate(candidate: VisionAnswerCandidate, accept: boolean) {
+    setAdoptingCandidates(true);
+    setRuntimeError(undefined);
+    try {
+      const result = await applyVisionAnswerCandidates(
+        jobId,
+        [{ questionNumber: candidate.questionNumber, accept }],
+        visionAnswerCandidates?.generatedAt
+      );
+      if (result?.authoringIr) setIr(result.authoringIr);
+      if (!accept) {
+        setDismissedCandidateNumbers((current) => new Set(current).add(candidate.questionNumber));
+      }
+      await load(false);
+      refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setRuntimeError(
+        message.includes("vision_answer_candidates_stale")
+          ? "视觉答案候选刚被后台复核刷新，请查看最新列表后重试。"
+          : message
+      );
+    } finally {
+      setAdoptingCandidates(false);
+    }
+  }
+
+  async function fetchLlmSuggestion() {
+    if (!activeGroup) return;
+    if (!llmProfileId) {
+      setLlmSuggestionError("尚未配置启用的云端模型；请在设置页添加 OpenAI 兼容模型后再试。");
+      return;
+    }
+    setLlmSuggestionBusy(true);
+    setLlmSuggestionError(undefined);
+    try {
+      const suggestion = await llmExtractGroup(jobId, activeGroup.groupId, llmProfileId);
+      setLlmSuggestion(suggestion);
+      setSuggestionSelection({ kind: true, layout: true, questions: true });
+      setDismissedSuggestionQuestions(new Set());
+    } catch (caught) {
+      setLlmSuggestion(undefined);
+      setLlmSuggestionError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLlmSuggestionBusy(false);
+    }
+  }
+
+  async function adoptLlmSuggestion() {
+    if (!llmSuggestion) return;
+    const selectedQuestions = (llmSuggestion.questions ?? [])
+      .map((question) => question.id)
+      .filter((id) => !dismissedSuggestionQuestions.has(id));
+    setLlmSuggestionBusy(true);
+    setRuntimeError(undefined);
+    try {
+      // Manual adoption after a visible diff review: userConfirmed skips only
+      // the automatic confidence gate; evidence/quote checks still apply.
+      const saved = await applyLlmSuggestion(jobId, llmSuggestion.suggestionId, suggestionApplyPaths, {
+        questionIds: suggestionApplyPaths.includes("questions") ? selectedQuestions : undefined,
+        userConfirmed: true
+      });
+      setLlmSuggestion(undefined);
+      setDismissedSuggestionQuestions(new Set());
+      setIr(saved);
+      refresh();
+      void refreshStudentPreview();
+    } catch (caught) {
+      setRuntimeError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setLlmSuggestionBusy(false);
+    }
   }
 
   function selectGroup(groupId: string) {
@@ -694,6 +894,47 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
           {visionConfigHint ? <small>{visionConfigHint}</small> : null}
         </div>
       ) : null}
+      {visionAnswerIssue ? (
+        <div className="warning-box compact-banner" data-testid="vision-answer-summary">
+          <strong>视觉答案补全</strong>
+          <p>{auditIssueText(visionAnswerIssue)}</p>
+          {issueStringList(visionAnswerIssue, "missingQuestionIds").length ? (
+            <small>仍缺少答案：{issueStringList(visionAnswerIssue, "missingQuestionIds").slice(0, 12).join("、")}</small>
+          ) : null}
+        </div>
+      ) : null}
+      {pendingVisionCandidates.length ? (
+        <div className="warning-box compact-banner" data-testid="vision-answer-candidates">
+          <strong>视觉答案候选（{pendingVisionCandidates.length}）</strong>
+          <p>以下是视觉模型从答案页图片识别出的候选答案，尚未写入题稿；请逐题采用或忽略。</p>
+          <ul className="vision-answer-candidate-list">
+            {pendingVisionCandidates.slice(0, 20).map((candidate) => {
+              const quote = candidate.evidence && typeof candidate.evidence === "object" && "quote" in candidate.evidence
+                ? String((candidate.evidence as { quote?: unknown }).quote ?? "")
+                : "";
+              const pageIndex = candidate.evidence && typeof candidate.evidence === "object" && "pageIndex" in candidate.evidence
+                ? (candidate.evidence as { pageIndex?: unknown }).pageIndex
+                : undefined;
+              return (
+                <li key={candidate.questionNumber}>
+                  <span>
+                    <strong>{candidate.questionId ?? `q${candidate.questionNumber}`}</strong>
+                    {" "}
+                    <del className="ai-diff-del">（空）</del>
+                    <ins className="ai-diff-add">{candidateAnswerText(candidate.answer) || "（空候选）"}</ins>
+                    {typeof candidate.confidence === "number" ? `（置信度 ${formatConfidence(candidate.confidence)}）` : ""}
+                    {quote ? ` · 第 ${pageIndex ?? "?"} 页 “${quote.slice(0, 40)}”` : ""}
+                  </span>
+                  <span className="vision-answer-candidate-actions">
+                    <button data-testid={`vision-answer-adopt-${candidate.questionNumber}`} onClick={() => void decideVisionCandidate(candidate, true)} disabled={adoptingCandidates}>采用</button>
+                    <button className="ghost" onClick={() => void decideVisionCandidate(candidate, false)} disabled={adoptingCandidates}>忽略</button>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="preview-two-pane">
         <section className="preview-passage-pane">
@@ -807,6 +1048,138 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                     <p>{activeGroup.reviewWarnings.join("；")}</p>
                   </div>
                 ) : null}
+                {activeGroup.llmReview ? (
+                  <div className="warning-box group-warning-box" data-testid="group-llm-review">
+                    <strong>AI 识别复核：{activeGroup.llmReview.status === "low_confidence" ? "低置信度，需要人工确认" : "自动采用被拦截，需要人工确认"}</strong>
+                    <p>
+                      模型建议题型：{groupKindLabels[activeGroup.llmReview.suggestedKind as GroupKind] ?? activeGroup.llmReview.suggestedKind ?? "未知"}
+                      （置信度 {formatConfidence(activeGroup.llmReview.confidence)}）；本地题稿未被云端结果修改。
+                    </p>
+                    {activeGroup.llmReview.warnings?.length ? (
+                      <small>{activeGroup.llmReview.warnings.join("；")}</small>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="llm-suggestion-panel" data-testid="llm-suggestion-panel">
+                  <div className="pane-heading">
+                    <div>
+                      <h3>AI 题组建议</h3>
+                      <small>{llmProfileId ? "对当前题组重新识别，产出只读建议；需人工采用后才会修改题稿。" : "尚未配置可用的云端模型；可在设置页添加后使用。"}</small>
+                    </div>
+                    <button
+                      className="ghost small"
+                      data-testid="fetch-llm-suggestion"
+                      onClick={() => void fetchLlmSuggestion()}
+                      disabled={llmSuggestionBusy || !activeGroup}
+                    >
+                      {llmSuggestionBusy ? "识别中..." : "获取 AI 建议"}
+                    </button>
+                  </div>
+                  {llmSuggestionError ? (
+                    <p className="empty" data-testid="llm-suggestion-error">{llmSuggestionError}</p>
+                  ) : null}
+                  {llmSuggestion ? (
+                    <div className="llm-suggestion-card" data-testid="llm-suggestion-card">
+                      {/* Diff-style review: current value struck in red, AI
+                          proposal in green; every section and question is
+                          individually opt-in before anything is applied. */}
+                      <div className="llm-suggestion-meta">
+                        <span>置信度</span>
+                        <strong>{formatConfidence(typeof llmSuggestion.confidence === "number" ? llmSuggestion.confidence : undefined)}</strong>
+                        {typeof llmSuggestion.confidence === "number" && llmSuggestion.confidence < 0.85 ? (
+                          <em className="low-confidence-chip">低置信度：请逐项核对后再应用</em>
+                        ) : null}
+                      </div>
+                      {suggestionKindDiff ? (
+                        <label className="llm-diff-section">
+                          <input
+                            type="checkbox"
+                            checked={suggestionSelection.kind}
+                            onChange={(event) => setSuggestionSelection((current) => ({ ...current, kind: event.target.checked }))}
+                          />
+                          <span className="llm-diff-line">
+                            题型：<del className="ai-diff-del">{groupKindLabels[suggestionKindDiff.current] ?? suggestionKindDiff.current}</del>
+                            <ins className="ai-diff-add">{groupKindLabels[suggestionKindDiff.suggested] ?? suggestionKindDiff.suggested}</ins>
+                            <small>（题型应用会同步更新版式模板）</small>
+                          </span>
+                        </label>
+                      ) : null}
+                      {suggestionLayoutDiff ? (
+                        <label className="llm-diff-section">
+                          <input
+                            type="checkbox"
+                            checked={suggestionSelection.layout}
+                            onChange={(event) => setSuggestionSelection((current) => ({ ...current, layout: event.target.checked }))}
+                          />
+                          <span className="llm-diff-line">
+                            版式：<del className="ai-diff-del">{suggestionLayoutDiff.current}</del>
+                            <ins className="ai-diff-add">{suggestionLayoutDiff.suggested}</ins>
+                          </span>
+                        </label>
+                      ) : null}
+                      {suggestionQuestionDiffs.length ? (
+                        <div className="llm-diff-section">
+                          <label className="llm-diff-section-head">
+                            <input
+                              type="checkbox"
+                              checked={suggestionSelection.questions}
+                              onChange={(event) => setSuggestionSelection((current) => ({ ...current, questions: event.target.checked }))}
+                            />
+                            <span>题目内容（{suggestionQuestionDiffs.length} 题有变化）</span>
+                          </label>
+                          {suggestionSelection.questions ? (
+                            <ul className="llm-question-diff-list">
+                              {suggestionQuestionDiffs.map((diff) => (
+                                <li key={diff.id}>
+                                  <label className="llm-question-diff-row">
+                                    <input
+                                      type="checkbox"
+                                      checked={!dismissedSuggestionQuestions.has(diff.id)}
+                                      onChange={(event) =>
+                                        setDismissedSuggestionQuestions((current) => {
+                                          const next = new Set(current);
+                                          if (event.target.checked) next.delete(diff.id);
+                                          else next.add(diff.id);
+                                          return next;
+                                        })
+                                      }
+                                    />
+                                    <span className="llm-question-diff-text">
+                                      <strong>{diff.id}</strong>
+                                      <del className="ai-diff-del">{diff.currentPrompt || "（空题干）"}</del>
+                                      <ins className="ai-diff-add">{diff.suggestedPrompt || "（空题干）"}</ins>
+                                      {diff.interactionChanged ? (
+                                        <small>交互类型将同步更新：{diff.currentInteraction ?? "未知"} → {diff.suggestedInteraction ?? "未知"}</small>
+                                      ) : null}
+                                    </span>
+                                  </label>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {llmSuggestion.warnings?.length ? (
+                        <ul className="llm-suggestion-warnings">
+                          {llmSuggestion.warnings.slice(0, 6).map((warning, index) => (
+                            <li key={index}>{String(warning)}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <div className="llm-suggestion-actions">
+                        <button
+                          data-testid="apply-llm-suggestion"
+                          onClick={() => void adoptLlmSuggestion()}
+                          disabled={llmSuggestionBusy || !suggestionApplyPaths.length}
+                        >
+                          应用所选部分{suggestionApplyPaths.length ? `（${suggestionApplyPaths.join(" / ")}）` : ""}
+                        </button>
+                        <button className="ghost" onClick={() => setLlmSuggestion(undefined)} disabled={llmSuggestionBusy}>忽略</button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
                 {(activeGroup.requiresManualQuestionImport || activeGroupMissingPromptIds.length) ? (
                   <div className="warning-box group-warning-box">
                     <strong>题干待补充</strong>
@@ -837,7 +1210,10 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
                   <p className="empty">正在编译学生端 HTML…</p>
                 ) : null}
                 {studentPreviewStatus === "unavailable" ? (
-                  <p className="empty">学生端预览暂不可用。请先保存完整题稿，或检查校验是否通过运行时门禁。</p>
+                  <>
+                    <p className="empty">学生端预览暂不可用。请先保存完整题稿，或检查校验是否通过运行时门禁。</p>
+                    {previewCompileError ? <p className="empty" data-testid="preview-compile-error">编译错误：{previewCompileError}</p> : null}
+                  </>
                 ) : null}
                 {studentGroupPreview ? (
                   <article className="student-runtime-sheet">

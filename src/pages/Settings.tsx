@@ -115,6 +115,7 @@ export function Settings({ refresh }: { refresh: () => void }) {
   const [preflight, setPreflight] = useState<EnvironmentPreflightReport | undefined>();
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSettings>({ keepFullProcessArtifacts: false });
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [testingProfile, setTestingProfile] = useState(false);
   const [testResult, setTestResult] = useState<LlmTestResult | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [dirtyVersion, setDirtyVersion] = useState(0);
@@ -188,19 +189,42 @@ export function Settings({ refresh }: { refresh: () => void }) {
   }
 
   async function removeProfile(profileId: string) {
-    const nextProfiles = await deleteLlmProfile(profileId);
-    setProfiles(nextProfiles);
-    refresh();
-    selectProfile(nextProfiles[0]);
+    setError(undefined);
+    try {
+      const nextProfiles = await deleteLlmProfile(profileId);
+      setProfiles(nextProfiles);
+      refresh();
+      selectProfile(nextProfiles[0]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
   }
 
   async function runProfileTest() {
-    if (!form.profileId) return;
-    setTestResult(await testLlmProfile(form.profileId));
+    if (!form.profileId) {
+      setTestResult(undefined);
+      setError("请先保存配置后再测试连接；未保存的新配置不会参与测试。");
+      return;
+    }
+    setError(undefined);
+    setTestingProfile(true);
+    try {
+      setTestResult(await testLlmProfile(form.profileId));
+    } catch (caught) {
+      setTestResult(undefined);
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setTestingProfile(false);
+    }
   }
 
   async function rerunPreflight() {
-    setPreflight(await runEnvironmentPreflight());
+    setError(undefined);
+    try {
+      setPreflight(await runEnvironmentPreflight());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
   }
 
   async function toggleArtifactRetention(enabled: boolean) {
@@ -253,7 +277,7 @@ export function Settings({ refresh }: { refresh: () => void }) {
                 {saveState === "saving" ? "正在自动保存..." : saveState === "saved" ? "已自动保存" : "修改后会自动保存到当前配置"}
               </p>
             </div>
-            {form.profileId ? <button className="ghost small" onClick={() => void runProfileTest()}>测试连接</button> : null}
+            {form.profileId ? <button className="ghost small" data-testid="test-llm-profile" onClick={() => void runProfileTest()} disabled={testingProfile}>{testingProfile ? "测试中..." : "测试连接"}</button> : null}
           </div>
 
           <div className="settings-editor-grid">

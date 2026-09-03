@@ -1433,3 +1433,31 @@ textarea.structured-node {
     min-width: 80px;
   }
 }
+
+.llm-suggestion-panel { border: 1px solid rgba(90,120,190,.35); border-radius: 18px; padding: 14px 16px; margin: 14px 0; background: rgba(90,120,190,.08); }
+.llm-suggestion-card { border: 1px solid rgba(90,120,190,.4); border-radius: 14px; padding: 12px 14px; margin-top: 10px; display: grid; gap: 8px; background: rgba(255,255,255,.6); }
+.llm-suggestion-card > div { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.llm-suggestion-card span { color: var(--muted); }
+.llm-suggestion-warnings { margin: 4px 0 0; padding-left: 18px; color: #7a4a09; font-size: 12px; }
+.llm-suggestion-actions { display: flex; gap: 8px; margin-top: 6px; }
+.vision-answer-candidate-list { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.vision-answer-candidate-list li { display: flex; justify-content: space-between; gap: 12px; align-items: center; border-top: 1px dashed rgba(199,120,56,.35); padding-top: 8px; flex-wrap: wrap; }
+.vision-answer-candidate-actions { display: flex; gap: 8px; }
+.cloud-review-opt-in { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; }
+.cloud-review-opt-in input { margin-top: 4px; }
+.cloud-review-opt-in span { display: grid; gap: 4px; }
+.cloud-review-opt-in small { color: var(--muted); }
+
+.llm-diff-section { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px dashed rgba(90,120,190,.3); }
+.llm-diff-section input { margin-top: 4px; }
+.llm-diff-section-head { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.llm-diff-line { display: inline-flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.llm-diff-line small { color: var(--muted); }
+.ai-diff-del { background: rgba(184,75,63,.12); color: var(--danger); text-decoration: line-through; border-radius: 6px; padding: 1px 6px; }
+.ai-diff-add { background: rgba(31,138,112,.12); color: var(--accent); text-decoration: none; border-radius: 6px; padding: 1px 6px; font-weight: 600; }
+.llm-question-diff-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 10px; }
+.llm-question-diff-row { display: flex; gap: 10px; align-items: flex-start; }
+.llm-question-diff-text { display: grid; gap: 4px; font-size: 13px; }
+.llm-question-diff-text strong { font-size: 12px; color: var(--muted); }
+.llm-suggestion-meta { display: flex; gap: 10px; align-items: baseline; }
+.low-confidence-chip { color: #b45309; font-size: 12px; font-style: normal; }

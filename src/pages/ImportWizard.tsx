@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { createImportJob, getAuthoringV2, importSourceFile, runAutoPipeline } from "../api/tauriCommands";
+import { useEffect, useState } from "react";
+import { createImportJob, getAuthoringV2, importSourceFile, listLlmProfiles, runAutoPipeline } from "../api/tauriCommands";
 import { choosePdfFolderSources, chooseSourceFile, chooseSourceFiles, type PickedPath } from "../api/desktopDialogs";
 import { go } from "../app/router";
 import type { AutoPipelineReport, Frequency, PassageCategory } from "../types";
+import type { LlmProfilePublic } from "../types";
 import { jobStatusLabel, workflowStepLabel } from "../utils/displayLabels";
 import { enqueueBackgroundCloudReview, startBackgroundCloudReviewScheduler } from "./UnifiedPreview";
 import { isPhase5EditorEnabled } from "../config/featureFlags";
@@ -39,16 +40,17 @@ function formatImportError(error: unknown): string {
 }
 
 function modelStageText(stage: BusyStage): string {
-  if (stage === "processing") return "正在完成首轮粗切与题组生成；若 PDF 文字层不完整，会自动补做视觉识别。主流程只等待本地题稿落地，整卷云端复核会自动转入后台队列。";
+  if (stage === "processing") return "正在完成首轮粗切与题组生成；若 PDF 文字层不完整，会自动补做视觉识别。已启用云端对照时，云端模型会与本地识别并发运行，结果只做只读比对。";
   if (stage === "uploading") return "正在写入本地源文件和可选答案文件。";
   if (stage === "creating") return "正在建立导题任务。";
   return "选择文件后开始本地粗切。";
 }
 
-function backgroundCloudReviewProfileId(sourceFile: PickedPath, report: AutoPipelineReport): string | undefined {
-  const profileId = report.llm.profileId;
+function backgroundCloudReviewProfileId(sourceFile: PickedPath, profileId?: string): string | undefined {
+  // The localOnly pipeline report always has a null llm.profileId, so the
+  // cloud review profile must come from the enabled profile chosen at import
+  // time instead of from the report.
   if (!profileId || profileId === "profile-local-placeholder") return undefined;
-  if (report.quality?.cloudComparison?.attempted) return undefined;
   return /\.pdf$/i.test(sourceFile.name) || /\.pdf$/i.test(sourceFile.path) ? profileId : undefined;
 }
 
@@ -64,7 +66,7 @@ function renderModelReport(report: AutoPipelineReport, cloudQueued = false) {
   const cloud = report.quality?.cloudComparison;
   return (
     <div className="pipeline-summary">
-      <div><span>视觉答案补全</span><strong>{visionAnswers?.attempted ? visionAnswers.applied ? `已补全 ${visionAnswers.answerCount ?? 0} 题` : "已尝试，未安全写入" : "未触发"}</strong></div>
+      <div><span>视觉答案补全</span><strong>{visionAnswers?.attempted ? (visionAnswers.answerCount ?? 0) > 0 ? `已产出 ${visionAnswers.answerCount} 条候选，待编辑页确认` : "已检查，未产出候选" : "未触发"}</strong></div>
       <div><span>云端整卷对照</span><strong>{cloud?.attempted ? cloud.passed ? "通过" : `${cloud.warningCount ?? cloud.issues?.length ?? 0} 项需确认` : cloudQueued ? "已加入后台队列" : "未触发"}</strong></div>
       <div><span>本地题稿</span><strong>{report.userStatus === "needsConfirmation" ? "已生成，待确认" : "已生成"}</strong></div>
       {visionAnswers?.missingQuestionIds?.length ? <p>仍缺少答案：{visionAnswers.missingQuestionIds.join("、")}</p> : null}
@@ -74,6 +76,10 @@ function renderModelReport(report: AutoPipelineReport, cloudQueued = false) {
 }
 
 export function ImportWizard({ refresh }: { refresh: () => void }) {
+  const [profiles, setProfiles] = useState<LlmProfilePublic[]>([]);
+  const [cloudReviewOptIn, setCloudReviewOptIn] = useState(true);
+  const enabledProfileId = profiles.find((profile) => profile.enabled && profile.profileId !== "profile-local-placeholder")?.profileId;
+  const cloudReviewAvailable = Boolean(enabledProfileId);
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<PassageCategory>("P1");
   const [frequency, setFrequency] = useState<Frequency>("medium");
@@ -84,6 +90,12 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
   const [busy, setBusy] = useState(false);
   const [busyStage, setBusyStage] = useState<BusyStage>("idle");
   const [autoReport, setAutoReport] = useState<AutoPipelineReport | undefined>();
+
+  useEffect(() => {
+    listLlmProfiles()
+      .then((items) => setProfiles(items))
+      .catch(() => setProfiles([]));
+  }, []);
   const [queuedCloudReviewCount, setQueuedCloudReviewCount] = useState(0);
   const [batchProgress, setBatchProgress] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -158,10 +170,22 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
           );
         }
         setBusyStage("processing");
-        setBatchProgress(`正在生成 ${index + 1}/${sourceFiles.length}：${sourceFile.name}。当前执行本地几何与结构识别，云复核稍后自动转后台。`);
-        const report = await runAutoPipeline(job.jobId, { confidenceThreshold: 0.85, parseMode, executionMode: "localOnly", target: "editableDraft" });
+        setBatchProgress(`正在生成 ${index + 1}/${sourceFiles.length}：${sourceFile.name}。本地识别先行，AI 补全与云端对照将在后台静默运行。`);
+        // Silent introduction: the user only waits for the local rule
+        // conversion (fast, always authoritative). AI completion (vision
+        // answer candidates) and the read-only cloud comparison run in the
+        // background queue and land in the editor when ready.
+        const report = await runAutoPipeline(job.jobId, {
+          confidenceThreshold: 0.85,
+          parseMode,
+          executionMode: "localOnly",
+          target: "editableDraft"
+        });
         latestReport = report;
-        const cloudReviewProfileId = backgroundCloudReviewProfileId(sourceFile, report);
+        const cloudReviewProfileId =
+          cloudReviewAvailable && cloudReviewOptIn
+            ? backgroundCloudReviewProfileId(sourceFile, enabledProfileId)
+            : undefined;
         if (cloudReviewProfileId) {
           backgroundCloudReviewJobs.push({ jobId: job.jobId, profileId: cloudReviewProfileId });
         }
@@ -171,7 +195,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
         }
       }
       if (backgroundCloudReviewJobs.length) {
-        setBatchProgress(`本地题稿已完成，正在把 ${backgroundCloudReviewJobs.length} 个 PDF 加入后台云复核队列。`);
+        setBatchProgress(`本地题稿已完成，正在把 ${backgroundCloudReviewJobs.length} 个 PDF 加入后台 AI 复核队列（视觉答案候选 + 云端对照）。`);
         setQueuedCloudReviewCount(backgroundCloudReviewJobs.length);
         for (const { jobId, profileId } of backgroundCloudReviewJobs) {
           enqueueBackgroundCloudReview(jobId, profileId);
@@ -209,7 +233,7 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
         <dt>当前步骤</dt><dd>{workflowStepLabel(report.currentStep)}</dd>
         <dt>处理结果</dt><dd>{report.userMessage ?? "题稿已生成，可以开始检查和编辑。"}</dd>
         <dt>需要确认的识别结果</dt><dd>{report.llm.suggestionCount} 条，已采用 {report.llm.appliedCount} 条</dd>
-        <dt>视觉答案补全</dt><dd>{report.parser?.visionAnswerExtraction?.attempted ? report.parser.visionAnswerExtraction.applied ? `已补全 ${report.parser.visionAnswerExtraction.answerCount ?? 0} 题` : "已尝试，未安全写入" : "未触发"}</dd>
+        <dt>视觉答案补全</dt><dd>{report.parser?.visionAnswerExtraction?.attempted ? (report.parser.visionAnswerExtraction.answerCount ?? 0) > 0 ? `已产出 ${report.parser.visionAnswerExtraction.answerCount} 条候选，待编辑页确认` : "已检查，未产出候选" : "未触发"}</dd>
         <dt>云端对照</dt><dd>{report.quality?.cloudComparison?.attempted ? report.quality.cloudComparison.passed ? "通过" : `${report.quality.cloudComparison.warningCount ?? 0} 项需确认` : queuedCloudReviewCount > 0 ? "已加入后台队列" : "将自动转入后台队列"}</dd>
         <dt>仍需确认</dt><dd>{report.authoring?.remainingReviewItems ?? 0} 项</dd>
       </dl>
@@ -259,6 +283,22 @@ export function ImportWizard({ refresh }: { refresh: () => void }) {
             <label>难度<select data-testid="frequency-select" value={frequency} onChange={(event) => setFrequency(event.target.value as Frequency)}><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
             <label>标签<input data-testid="tags-input" value={tags} onChange={(event) => setTags(event.target.value)} /></label>
             <label>识别方式<select data-testid="parse-mode" value={parseMode} onChange={(event) => setParseMode(event.target.value as typeof parseMode)}><option value="auto">自动</option><option value="text">读取文字</option><option value="ocr">识别扫描件文字</option></select></label>
+            <label className="cloud-review-opt-in" data-testid="cloud-review-opt-in">
+              <input
+                type="checkbox"
+                checked={cloudReviewAvailable && cloudReviewOptIn}
+                disabled={!cloudReviewAvailable}
+                onChange={(event) => setCloudReviewOptIn(event.target.checked)}
+              />
+              <span>
+                导入时并发运行云端对照（只读）
+                <small>
+                  {cloudReviewAvailable
+                    ? "勾选后，云端模型会与本地识别同时运行：扫描答案页将发送页面图片、题目文本将发送结构化摘要素材，用于只读比对与视觉答案候选；本地题稿始终权威，云端结果不会覆盖题稿。扫描答案候选需你在编辑页逐题确认。"
+                    : "尚未配置可用的云端模型；可在设置页添加 OpenAI 兼容模型后启用。"}
+                </small>
+              </span>
+            </label>
           </details>
         </section>
         <section className="form-section contrast">

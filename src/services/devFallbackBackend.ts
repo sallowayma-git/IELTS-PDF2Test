@@ -31,6 +31,7 @@ import type {
   ValidationIssue,
   ValidationPolicy,
   ValidationReport,
+  VisionAnswerCandidates,
   WritingJob,
   CreateWritingJobInput,
   WritingJobPatch,
@@ -64,6 +65,7 @@ type Store = {
   profiles: LlmProfilePublic[];
   suggestions: Record<string, LlmSuggestion[]>;
   pipelineReports: Record<string, AutoPipelineReport>;
+  visionAnswerCandidates: Record<string, VisionAnswerCandidates>;
   revisions: Record<string, Array<Record<string, unknown>>>;
   diagnostics: DiagnosticsSettings;
   writingJobs: WritingJob[];
@@ -79,6 +81,7 @@ export interface JobDetail {
   validationReport?: ValidationReport;
   previewAssets?: PreviewAssets;
   pipelineReport?: AutoPipelineReport;
+  visionAnswerCandidates?: VisionAnswerCandidates;
   llmSuggestions: LlmSuggestion[];
 }
 
@@ -203,6 +206,7 @@ function initialStore(): Store {
     ],
     suggestions: {},
     pipelineReports: {},
+    visionAnswerCandidates: {},
     revisions: {},
     diagnostics: { keepFullProcessArtifacts: false },
     writingJobs: [],
@@ -2535,6 +2539,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         validationReport: store.validation[jobId],
         previewAssets: store.previews[jobId],
         pipelineReport: store.pipelineReports[jobId],
+        visionAnswerCandidates: store.visionAnswerCandidates[jobId],
         llmSuggestions: store.suggestions[jobId] ?? []
       };
       return detail as T;
@@ -3196,6 +3201,94 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       updateJob(store, jobId, { status: next.needsReview || sourceReviewIssueCount ? "NeedsReview" : "DraftSaved", currentStep: "Authoring", issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: next.needsReview + sourceReviewIssueCount } });
       save(store);
       return store.authoring[jobId] as T;
+    }
+
+    case "apply_vision_answer_candidates": {
+      const jobId = args.jobId as string;
+      const ir = store.authoring[jobId];
+      if (!ir) throw new Error("authoring_ir_missing");
+      const candidatesDoc = store.visionAnswerCandidates[jobId];
+      if (!candidatesDoc) throw new Error("vision_answer_candidates_missing");
+      if (args.generatedAt && candidatesDoc.generatedAt && args.generatedAt !== candidatesDoc.generatedAt) {
+        throw new Error("vision_answer_candidates_stale:regenerated_by_background_review");
+      }
+      const decisions = (args.decisions ?? []) as { questionNumber: string; accept: boolean; answer?: unknown }[];
+      if (!decisions.length) throw new Error("vision_answer_decisions_empty");
+      const accepted: string[] = [];
+      const rejected: string[] = [];
+      const unmatched: string[] = [];
+      const alreadyAnswered: string[] = [];
+      const dismissedNumbers: string[] = [];
+      for (const decision of decisions) {
+        const number = String(decision.questionNumber ?? "").trim().replace(/^[qQ]/, "");
+        if (!number) continue;
+        if (!decision.accept) {
+          rejected.push(`q${number}`);
+          dismissedNumbers.push(number);
+          continue;
+        }
+        const candidate = (candidatesDoc.candidates ?? []).find((item) => String(item.questionNumber) === number);
+        if (!candidate) {
+          unmatched.push(number);
+          continue;
+        }
+        const answer = decision.answer !== undefined && decision.answer !== null ? decision.answer : candidate.answer;
+        const answerEmpty = typeof answer === "string" ? answer.trim().length === 0 : answer === null || answer === undefined;
+        if (answerEmpty) {
+          unmatched.push(number);
+          continue;
+        }
+        const questionId = `q${number}`;
+        let matched = false;
+        let blocked = false;
+        for (const group of ir.groups ?? []) {
+          for (const question of group.questions ?? []) {
+            if (question.id === questionId || String((question as { displayNumber?: string }).displayNumber ?? "") === number) {
+              const current = (question as { answer?: unknown }).answer;
+              const currentFilled = typeof current === "string" ? current.trim().length > 0 : current !== null && current !== undefined;
+              const verified = Boolean((question as { verified?: boolean }).verified);
+              if (currentFilled || verified) {
+                alreadyAnswered.push(questionId);
+                blocked = true;
+                matched = true;
+                break;
+              }
+              (question as { answer: unknown }).answer = answer;
+              if (typeof candidate.confidence === "number") {
+                (question as { confidence?: number }).confidence = candidate.confidence;
+              }
+              matched = true;
+              break;
+            }
+          }
+          if (matched) break;
+        }
+        if (blocked) continue;
+        if (matched) accepted.push(questionId);
+        else unmatched.push(number);
+      }
+      if (dismissedNumbers.length) {
+        for (const candidate of candidatesDoc.candidates ?? []) {
+          if (dismissedNumbers.includes(String(candidate.questionNumber))) {
+            (candidate as { dismissedAt?: string }).dismissedAt = now();
+          }
+        }
+        save(store);
+      }
+      if (!accepted.length && !rejected.length && !alreadyAnswered.length) {
+        throw new Error(`vision_answer_no_candidates_applied:accepted=0,rejected=${rejected.length},unmatched=${unmatched.length}`);
+      }
+      const patched = refreshAuthoringDerivedFields(ir);
+      const withAdoptionAudit: ReadingAuthoringIr = {
+        ...patched,
+        audit: { ...patched.audit, llmUsed: true, updatedAt: now(), revision: patched.audit.revision + 1 }
+      };
+      const next = refreshReviewState(withAdoptionAudit);
+      store.authoring[jobId] = next.ir;
+      const sourceReviewIssueCount = sourceReviewIssues(sourceReviewStatus(store, jobId)).length;
+      updateJob(store, jobId, { status: next.needsReview || sourceReviewIssueCount ? "NeedsReview" : "DraftSaved", currentStep: "Authoring", issueCounts: { ...requireJob(store, jobId).issueCounts, needsReview: next.needsReview + sourceReviewIssueCount } });
+      save(store);
+      return { authoringIr: store.authoring[jobId], acceptedQuestionIds: accepted, rejectedQuestionIds: rejected, alreadyAnsweredQuestionIds: alreadyAnswered, unmatchedQuestionNumbers: unmatched } as T;
     }
 
     case "validate_authoring_ir": {

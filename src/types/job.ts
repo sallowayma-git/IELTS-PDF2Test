@@ -73,3 +73,24 @@ export interface JobMetaPatch {
   tags?: string[];
   activeLlmProfileId?: string;
 }
+
+export interface VisionAnswerCandidate {
+  questionNumber: string;
+  questionId?: string | null;
+  answer: unknown;
+  confidence?: number | null;
+  evidence?: {
+    questionNumber?: string | number;
+    pageIndex?: number;
+    quote?: string;
+  } | null;
+}
+
+export interface VisionAnswerCandidates {
+  schemaVersion: string;
+  jobId: string;
+  profileId?: string | null;
+  generatedAt: string;
+  candidateCount: number;
+  candidates: VisionAnswerCandidate[];
+}

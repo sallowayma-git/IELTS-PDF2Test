@@ -8,7 +8,9 @@ use authoring_v2_commands::{
     apply_authoring_v2_patches_core, export_authoring_v2_core, get_authoring_v2_core,
     resolve_authoring_asset_preview_core,
 };
-use auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
+use auto_pipeline::{
+    run_auto_pipeline_core, run_cloud_review_core, run_cloud_review_core_with_gateway,
+};
 use chrono::{DateTime, Utc};
 use diagnostics::DiagnosticsSettings;
 use export_artifacts::{build_wrapper, safe_exam_id};
@@ -23,8 +25,8 @@ use export_pack::{
 };
 use export_writing_library::export_writing_library_core;
 use llm_commands::{
-    apply_llm_suggestion_core, delete_llm_profile_core, llm_run_group_core, save_llm_profile_core,
-    test_llm_profile_core,
+    apply_llm_suggestion_core, apply_vision_answer_candidates_core, delete_llm_profile_core,
+    llm_run_group_core, save_llm_profile_core, test_llm_profile_core,
 };
 use pdf_facts_shadow::debug_document_ir_v2_overlay_core;
 use preview_commands::{
@@ -324,6 +326,8 @@ pub struct JobDetail {
     pub preview_assets: Option<Value>,
     #[serde(rename = "pipelineReport")]
     pub pipeline_report: Option<Value>,
+    #[serde(rename = "visionAnswerCandidates")]
+    pub vision_answer_candidates: Option<Value>,
     #[serde(rename = "llmSuggestions")]
     pub llm_suggestions: Vec<Value>,
 }
@@ -1126,10 +1130,33 @@ async fn apply_llm_suggestion(
     job_id: String,
     suggestion_id: String,
     selected_paths: Vec<String>,
+    question_ids: Option<Vec<String>>,
+    user_confirmed: Option<bool>,
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    apply_llm_suggestion_core(&root, &job_id, &suggestion_id, selected_paths)
+    apply_llm_suggestion_core(
+        &root,
+        &job_id,
+        &suggestion_id,
+        selected_paths,
+        question_ids,
+        user_confirmed.unwrap_or(false),
+    )
+}
+
+#[tauri::command]
+async fn apply_vision_answer_candidates(
+    job_id: String,
+    decisions: Value,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_vision_answer_candidates_core(&root, &job_id, decisions)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1421,6 +1448,7 @@ pub fn run() {
             llm_classify_group,
             llm_extract_group,
             apply_llm_suggestion,
+            apply_vision_answer_candidates,
             validate_authoring_ir,
             generate_preview_assets,
             run_preview_e2e,
@@ -6136,14 +6164,36 @@ Answers
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        // Vision candidates are confirm-only: the summary must present them
+        // as pending candidates, never claim they were auto-filled.
         assert!(audit_issues.iter().any(|issue| {
             issue.get("kind").and_then(Value::as_str) == Some("vision_answer_extraction_summary")
                 && issue
                     .get("message")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
-                    .contains("视觉模型已从 PDF 图片页补全答案")
+                    .contains("视觉模型产出了答案候选")
         }));
+        let candidates_doc: Value =
+            read_json(&job_dir(&root, &job.job_id).join("vision-answer-candidates.json"))
+                .expect("vision answer candidates should be persisted");
+        assert_eq!(
+            candidates_doc.get("schemaVersion").and_then(Value::as_str),
+            Some("VisionAnswerCandidatesV1")
+        );
+        let candidate_numbers: Vec<&str> = candidates_doc
+            .pointer("/candidates")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(|item| item.get("questionNumber").and_then(Value::as_str))
+            .collect();
+        assert!(!candidate_numbers.is_empty());
+        assert!(candidates_doc
+            .pointer("/candidates/0/questionId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .starts_with('q'));
         let cloud_audit = audit_issues
             .iter()
             .find(|issue| {
@@ -10239,5 +10289,721 @@ Answers
             authoring_or_llm_required >= 1,
             "at least one fully text-layer sample should require authoring or LLM review"
         );
+    }
+
+    /// Mock server that serves a fixed sequence of HTTP responses, one per
+    /// connection, so retry behavior can be tested end to end.
+    fn mock_openai_server_sequence(
+        responses: Vec<(u16, String)>,
+    ) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let request = read_mock_http_request(&mut stream);
+                sender.send(request).unwrap();
+                let response = format!(
+                    "HTTP/1.1 {} {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    status,
+                    if status == 200 { "OK" } else { "Error" },
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+        (format!("http://{}/v1", address), receiver, handle)
+    }
+
+    fn mock_profile_input(base_url: &str) -> Value {
+        json!({
+            "profile": {
+                "profileId": "profile-mock",
+                "provider": "OpenAiCompatible",
+                "baseUrl": base_url,
+                "model": "mock-json-model",
+                "temperature": 0,
+                "timeoutMs": 10000,
+                "forceJson": true
+            }
+        })
+    }
+
+    fn mock_group_input(base_url: &str) -> Value {
+        let mut input = mock_profile_input(base_url);
+        input["group"] = json!({
+            "groupId": "group-1",
+            "kind": "short_answer",
+            "sourceBlockIds": ["b1"],
+            "instruction": ["x"],
+            "questions": []
+        });
+        input
+    }
+
+    fn mock_ok_body() -> String {
+        json!({
+            "choices": [{"message": {"content": serde_json::to_string(&json!({
+                "kind": "short_answer",
+                "confidence": 0.9,
+                "patch": [],
+                "questions": [],
+                "warnings": [],
+                "evidence": {"sourceBlockIds": ["b1"], "quotes": [{"blockId": "b1", "text": "x"}]}
+            })).unwrap()}}],
+            "usage": {"total_tokens": 5}
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn llm_gateway_retries_429_then_succeeds() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let ok_body = mock_ok_body();
+        let (base_url, request_receiver, handle) = mock_openai_server_sequence(vec![
+            (429, "{\"error\":\"rate limited\"}".to_string()),
+            (200, ok_body),
+        ]);
+        let input = mock_group_input(&base_url);
+
+        let output = llm_gateway::run_llm_gateway(
+            &root,
+            "job-retry-429",
+            "extract_group",
+            &input,
+            Some("sk-mock-secret"),
+        )
+        .expect("second attempt should succeed after a 429");
+        assert_eq!(
+            output.get("kind").and_then(Value::as_str),
+            Some("short_answer")
+        );
+        let first_request = request_receiver.recv().unwrap();
+        let second_request = request_receiver.recv().unwrap();
+        handle.join().unwrap();
+        assert!(first_request.starts_with("POST /v1/chat/completions "));
+        assert!(second_request.starts_with("POST /v1/chat/completions "));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn llm_gateway_call_record_persists_latency_and_error_class() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let input = mock_group_input("http://127.0.0.1:9/unreachable");
+        let result = llm_gateway::run_llm_gateway(
+            &root,
+            "job-call-record",
+            "extract_group",
+            &input,
+            Some("sk-mock-secret"),
+        );
+        assert!(result.is_err());
+        let record_path = job_dir(&root, "job-call-record").join("llm-calls.jsonl");
+        let records = fs::read_to_string(&record_path).expect("llm-calls.jsonl should exist");
+        let record: Value = serde_json::from_str(records.lines().next().unwrap()).unwrap();
+        assert_eq!(
+            record.get("recordType").and_then(Value::as_str),
+            Some("llm_call")
+        );
+        assert_eq!(record.get("ok").and_then(Value::as_bool), Some(false));
+        assert!(record.get("latencyMs").and_then(Value::as_u64).is_some());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn llm_json_parse_content_extracts_wrapped_json_and_rejects_garbage() {
+        let wrapped = "Here is your JSON:\n{\"kind\":\"short_answer\",\"confidence\":0.9}\nThanks!";
+        let parsed = llm_gateway::parse_llm_json_content(wrapped).unwrap();
+        assert_eq!(
+            parsed.get("kind").and_then(Value::as_str),
+            Some("short_answer")
+        );
+        assert!(llm_gateway::parse_llm_json_content("no json here at all").is_err());
+        assert!(llm_gateway::parse_llm_json_content("{\"kind\":").is_err());
+    }
+
+    #[test]
+    fn llm_suggestion_confidence_out_of_range_never_auto_applies() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut output = json!({
+            "kind": "short_answer",
+            "confidence": 87,
+            "patch": [],
+            "questions": [],
+            "warnings": [],
+            "evidence": {"sourceBlockIds": ["b1"], "quotes": []}
+        });
+        let profile = json!({"model": "m"});
+        let payload = json!({});
+        llm_gateway::validate_llm_suggestion_output(
+            &mut output,
+            "extract_group",
+            &profile,
+            &payload,
+        )
+        .unwrap();
+        assert_eq!(
+            output.get("confidence").and_then(Value::as_f64),
+            Some(0.0),
+            "out-of-range confidence must collapse to 0 (fail closed)"
+        );
+        assert!(output
+            .get("warnings")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or_default()
+                .contains("confidence_out_of_range")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn llm_suggestion_fabricated_quote_text_blocks_auto_apply() {
+        let doc = json!({
+            "pages": [{
+                "pageIndex": 1,
+                "blocks": [
+                    {"blockId": "b1", "text": "Do the following statements agree with the information given in Reading Passage 1?"},
+                    {"blockId": "b2", "text": "Complete the notes below. Choose ONE WORD ONLY."}
+                ]
+            }]
+        });
+        let block_texts = auto_pipeline::source_block_text_map(Some(&doc));
+        let suggestion = json!({
+            "groupId": "group-1",
+            "kind": "short_answer",
+            "confidence": 0.9,
+            "patch": [],
+            "questions": [],
+            "warnings": [],
+            "evidence": {
+                "sourceBlockIds": ["b1"],
+                "quotes": [{"blockId": "b1", "text": "fabricated quote that never appears in the source text"}]
+            }
+        });
+        let mismatches =
+            llm_suggestions::llm_suggestion_quote_mismatches(&suggestion, &block_texts);
+        assert!(mismatches
+            .iter()
+            .any(|issue| issue.contains("evidence_quote_not_in_source:b1")));
+        let real_quote_suggestion = json!({
+            "groupId": "group-1",
+            "kind": "short_answer",
+            "confidence": 0.9,
+            "patch": [],
+            "questions": [],
+            "warnings": [],
+            "evidence": {
+                "sourceBlockIds": ["b1"],
+                "quotes": [{"blockId": "b1", "text": "  statements   AGREE with the  information "}]
+            }
+        });
+        assert!(llm_suggestions::llm_suggestion_quote_mismatches(
+            &real_quote_suggestion,
+            &block_texts
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn llm_profile_save_rejects_public_http_unknown_provider_and_accepts_localhost() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let public_http = SaveLlmProfileInput {
+            profile_id: Some("profile-http-public".to_string()),
+            name: "Public HTTP".to_string(),
+            provider: "OpenAiCompatible".to_string(),
+            base_url: "http://api.example.com/v1".to_string(),
+            model: "m".to_string(),
+            api_key: None,
+            temperature: 0.0,
+            timeout_ms: 60000,
+            force_json: true,
+            enabled: true,
+        };
+        let error = save_llm_profile_core(&root, public_http).unwrap_err();
+        assert!(
+            error.contains("llm_profile_base_url_insecure_http"),
+            "plain http to a public host must be rejected, got: {error}"
+        );
+
+        let unknown_provider = SaveLlmProfileInput {
+            profile_id: Some("profile-unknown".to_string()),
+            name: "Unknown".to_string(),
+            provider: "MistralNative".to_string(),
+            base_url: "https://api.example.com/v1".to_string(),
+            model: "m".to_string(),
+            api_key: None,
+            temperature: 0.0,
+            timeout_ms: 60000,
+            force_json: true,
+            enabled: true,
+        };
+        let error = save_llm_profile_core(&root, unknown_provider).unwrap_err();
+        assert!(error.contains("unsupported_llm_provider"), "got: {error}");
+
+        let credentials_in_url = SaveLlmProfileInput {
+            profile_id: Some("profile-creds".to_string()),
+            name: "Creds".to_string(),
+            provider: "OpenAiCompatible".to_string(),
+            base_url: "https://user:pass@api.example.com/v1".to_string(),
+            model: "m".to_string(),
+            api_key: None,
+            temperature: 0.0,
+            timeout_ms: 60000,
+            force_json: true,
+            enabled: true,
+        };
+        let error = save_llm_profile_core(&root, credentials_in_url).unwrap_err();
+        assert!(
+            error.contains("llm_profile_base_url_credentials_in_url"),
+            "got: {error}"
+        );
+
+        let localhost_http = SaveLlmProfileInput {
+            profile_id: Some("profile-localhost".to_string()),
+            name: "Local Ollama".to_string(),
+            provider: "Ollama".to_string(),
+            base_url: "http://localhost:11434/v1".to_string(),
+            model: "m".to_string(),
+            api_key: None,
+            temperature: 0.0,
+            timeout_ms: 60000,
+            force_json: true,
+            enabled: true,
+        };
+        let saved = save_llm_profile_core(&root, localhost_http).unwrap();
+        assert_eq!(
+            saved.get("provider").and_then(Value::as_str),
+            Some("Ollama")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_vision_answer_candidates_writes_accepted_answers_and_audit() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut job = test_job();
+        job.current_step = WorkflowStep::Authoring;
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let authoring_ir = json!({
+            "schemaVersion": "IeltsAuthoringIRV1",
+            "exam": {"title": "t"},
+            "passage": {"htmlBlocks": []},
+            "groups": [{
+                "groupId": "group-1",
+                "kind": "short_answer",
+                "questionRange": [1, 2],
+                "instruction": [],
+                "verified": false,
+                "questions": [
+                    {"id": "q1", "displayNumber": "1", "prompt": "p1", "answer": "", "sourceBlockIds": [], "confidence": 0.5, "verified": false},
+                    {"id": "q2", "displayNumber": "2", "prompt": "p2", "answer": "", "sourceBlockIds": [], "confidence": 0.5, "verified": false}
+                ]
+            }],
+            "answerKey": {},
+            "questionOrder": [],
+            "questionDisplayMap": {},
+            "audit": {"revision": 0, "source": "auto_extract", "humanVerified": false, "llmUsed": false, "updatedAt": "", "notes": "", "issues": []}
+        });
+        write_json(
+            &job_dir(&root, &job.job_id).join("authoring-ir.json"),
+            &authoring_ir,
+        )
+        .unwrap();
+        write_json(
+            &job_dir(&root, &job.job_id).join("vision-answer-candidates.json"),
+            &json!({
+                "schemaVersion": "VisionAnswerCandidatesV1",
+                "jobId": job.job_id,
+                "profileId": "profile-vision",
+                "generatedAt": "2026-09-02T00:00:00Z",
+                "candidateCount": 2,
+                "candidates": [
+                    {"questionNumber": "1", "questionId": "q1", "answer": "stencilling", "confidence": 0.72, "evidence": {"questionNumber": "1", "pageIndex": 5, "quote": "stencilling"}},
+                    {"questionNumber": "2", "questionId": "q2", "answer": "travel", "confidence": 0.66, "evidence": null}
+                ]
+            }),
+        )
+        .unwrap();
+
+        let missing = apply_vision_answer_candidates_core(
+            &root,
+            &job.job_id,
+            json!([{"questionNumber": "99", "accept": true}]),
+        )
+        .unwrap_err();
+        assert!(missing.contains("vision_answer_no_candidates_applied"));
+
+        // Reject-only decisions succeed and persist the dismissal.
+        let reject_only = apply_vision_answer_candidates_core(
+            &root,
+            &job.job_id,
+            json!([{"questionNumber": "2", "accept": false}]),
+        )
+        .unwrap();
+        assert_eq!(
+            reject_only
+                .get("rejectedQuestionIds")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["q2"])
+        );
+        let candidates_after: Value =
+            read_json(&job_dir(&root, &job.job_id).join("vision-answer-candidates.json")).unwrap();
+        assert!(candidates_after
+            .pointer("/candidates/1/dismissedAt")
+            .and_then(Value::as_str)
+            .is_some());
+
+        let result = apply_vision_answer_candidates_core(
+            &root,
+            &job.job_id,
+            json!([
+                {"questionNumber": "1", "accept": true},
+                {"questionNumber": "2", "accept": false}
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            result
+                .get("acceptedQuestionIds")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["q1"])
+        );
+        assert_eq!(
+            result
+                .get("rejectedQuestionIds")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["q2"])
+        );
+        let saved: Value =
+            read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        assert_eq!(
+            saved
+                .pointer("/groups/0/questions/0/answer")
+                .and_then(Value::as_str),
+            Some("stencilling")
+        );
+        assert_eq!(
+            saved
+                .pointer("/groups/0/questions/0/confidence")
+                .and_then(Value::as_f64),
+            Some(0.72)
+        );
+        assert_eq!(
+            saved
+                .pointer("/groups/0/questions/0/verified")
+                .and_then(Value::as_bool),
+            Some(false),
+            "adopting a vision candidate must not mark the question human-verified"
+        );
+        assert_eq!(
+            saved
+                .pointer("/groups/0/questions/1/answer")
+                .and_then(Value::as_str),
+            Some("")
+        );
+        assert!(saved
+            .pointer("/audit/issues")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(
+                |issue| issue.get("kind").and_then(Value::as_str) == Some("vision_answer_adoption")
+            ));
+
+        // Re-adoption against a now-filled answer must not overwrite it.
+        let reapply = apply_vision_answer_candidates_core(
+            &root,
+            &job.job_id,
+            json!([{"questionNumber": "1", "accept": true, "answer": "tampered"}]),
+        )
+        .unwrap();
+        assert_eq!(
+            reapply
+                .get("alreadyAnsweredQuestionIds")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+            Some(vec!["q1"])
+        );
+        let saved_again: Value =
+            read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        assert_eq!(
+            saved_again
+                .pointer("/groups/0/questions/0/answer")
+                .and_then(Value::as_str),
+            Some("stencilling")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cloud_review_write_back_preserves_concurrent_user_edit() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-merge-review",
+                "name": "Merge Review Test",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 60000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
+        let mut job = make_job(CreateJobInput {
+            title: Some("Merge Review".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["merge-review-regression".to_string()]),
+            llm_profile_id: Some("profile-merge-review".to_string()),
+        });
+        attach_fixture_source(&root, &mut job, "no-text.pdf", "MainQuestion");
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let authoring_ir = json!({
+            "schemaVersion": "IeltsAuthoringIRV1",
+            "exam": {"title": "merge-review"},
+            "passage": {"htmlBlocks": []},
+            "groups": [{
+                "groupId": "group-1",
+                "kind": "short_answer",
+                "questionRange": [1, 1],
+                "instruction": [],
+                "verified": false,
+                "questions": [
+                    {"id": "q1", "displayNumber": "1", "prompt": "original prompt", "answer": "", "sourceBlockIds": [], "confidence": 0.5, "verified": false}
+                ]
+            }],
+            "answerKey": {},
+            "questionOrder": [],
+            "questionDisplayMap": {},
+            "audit": {"revision": 0, "source": "auto_extract", "humanVerified": false, "llmUsed": false, "updatedAt": "", "notes": "", "issues": []}
+        });
+        write_json(
+            &job_dir(&root, &job.job_id).join("authoring-ir.json"),
+            &authoring_ir,
+        )
+        .unwrap();
+
+        // The fake gateway plays the LLM while the review is in flight: the
+        // first outline call also lands a concurrent user edit on disk, i.e.
+        // inside run_cloud_review_core's read-compute-write window.
+        let edit_root = root.clone();
+        let edit_job_id = job.job_id.clone();
+        let report = run_cloud_review_core_with_gateway(
+            &root,
+            &job.job_id,
+            Some(RunCloudReviewInput {
+                profile_id: Some("profile-merge-review".to_string()),
+            }),
+            &mut move |gateway_root: &Path,
+                       gateway_job_id: &str,
+                       command_name: &str,
+                       _input: &Value,
+                       _api_key: Option<&str>| {
+                if command_name == "generate_pdf_reading_outline" {
+                    let mut user_edit: Value = read_json(
+                        &gateway_root
+                            .join("jobs")
+                            .join(gateway_job_id)
+                            .join("authoring-ir.json"),
+                    )?;
+                    user_edit["groups"][0]["questions"][0]["prompt"] =
+                        json!("user edited during review window");
+                    write_json(
+                        &gateway_root
+                            .join("jobs")
+                            .join(gateway_job_id)
+                            .join("authoring-ir.json"),
+                        &user_edit,
+                    )?;
+                }
+                let _ = (&edit_root, &edit_job_id);
+                match command_name {
+                    "generate_pdf_reading_outline" => Ok(json!({
+                        "title": "Merge Review Cloud",
+                        "groups": [{
+                            "range": [1, 1],
+                            "kind": "short_answer",
+                            "layoutHint": "list",
+                            "questionIds": ["q1"],
+                            "notesText": "",
+                            "confidence": 0.9,
+                            "evidence": {"quotes": [{"pageIndex": 1, "text": "original prompt"}]}
+                        }],
+                        "answerKey": {"1": "symbols"},
+                        "confidence": 0.9,
+                        "warnings": []
+                    })),
+                    "extract_pdf_image_answers" => Ok(json!({
+                        "answers": {"1": "symbols"},
+                        "confidence": 0.9,
+                        "warnings": [],
+                        "evidence": [{"questionNumber": "1", "pageIndex": 1, "quote": "1 symbols"}]
+                    })),
+                    other => Err(format!("unexpected_command:{}", other)),
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            report
+                .pointer("/quality/cloudComparison/attempted")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        // The review issues must be present…
+        let saved: Value =
+            read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        assert!(saved
+            .pointer("/audit/issues")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|issue| issue.get("kind").and_then(Value::as_str)
+                == Some("cloud_comparison_summary")));
+
+        // …and a concurrent user edit that landed during the review window
+        // must not have been clobbered by the background write-back.
+        assert_eq!(
+            saved
+                .pointer("/groups/0/questions/0/prompt")
+                .and_then(Value::as_str),
+            Some("user edited during review window")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_llm_suggestion_supports_question_subset_and_manual_confirm() {
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut job = test_job();
+        job.current_step = WorkflowStep::Authoring;
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let authoring_ir = json!({
+            "schemaVersion": "IeltsAuthoringIRV1",
+            "exam": {"title": "t"},
+            "passage": {"htmlBlocks": []},
+            "groups": [{
+                "groupId": "group-1",
+                "kind": "short_answer",
+                "questionRange": [1, 2],
+                "instruction": [],
+                "verified": false,
+                "sourceBlockIds": ["b1"],
+                "layout": {"template": "short_answer_list"},
+                "questions": [
+                    {"id": "q1", "displayNumber": "1", "prompt": "old one", "answer": "", "sourceBlockIds": ["b1"], "confidence": 0.5, "verified": false},
+                    {"id": "q2", "displayNumber": "2", "prompt": "old two", "answer": "", "sourceBlockIds": ["b1"], "confidence": 0.5, "verified": false}
+                ]
+            }],
+            "answerKey": {},
+            "questionOrder": [],
+            "questionDisplayMap": {},
+            "audit": {"revision": 0, "source": "auto_extract", "humanVerified": false, "llmUsed": false, "updatedAt": "", "notes": "", "issues": []}
+        });
+        write_json(
+            &job_dir(&root, &job.job_id).join("authoring-ir.json"),
+            &authoring_ir,
+        )
+        .unwrap();
+        let suggestion = json!({
+            "suggestionId": "suggestion-subset",
+            "jobId": job.job_id,
+            "groupId": "group-1",
+            "kind": "short_answer",
+            "confidence": 0.55,
+            "patch": [],
+            "questions": [
+                {"id": "q1", "prompt": "improved one"},
+                {"id": "q2", "prompt": "improved two"}
+            ],
+            "warnings": [],
+            "evidence": {
+                "sourceBlockIds": ["b1"],
+                "quotes": [{"blockId": "b1", "text": "source evidence"}]
+            },
+            "createdAt": "2026-09-03T00:00:00Z"
+        });
+        llm_suggestions::save_llm_suggestion(&root, &job.job_id, &suggestion).unwrap();
+
+        // Without an explicit human confirmation the low-confidence gate holds.
+        let blocked = apply_llm_suggestion_core(
+            &root,
+            &job.job_id,
+            "suggestion-subset",
+            vec!["questions".to_string()],
+            Some(vec!["q1".to_string()]),
+            false,
+        )
+        .unwrap_err();
+        assert!(blocked.contains("low_confidence_suggestion_requires_manual_review"));
+
+        // An unknown question id in the subset is rejected outright.
+        let unknown = apply_llm_suggestion_core(
+            &root,
+            &job.job_id,
+            "suggestion-subset",
+            vec!["questions".to_string()],
+            Some(vec!["q99".to_string()]),
+            true,
+        )
+        .unwrap_err();
+        assert!(unknown.contains("llm_suggestion_question_not_in_suggestion"));
+
+        // Human-confirmed diff adoption applies only the reviewed question.
+        apply_llm_suggestion_core(
+            &root,
+            &job.job_id,
+            "suggestion-subset",
+            vec!["questions".to_string()],
+            Some(vec!["q1".to_string()]),
+            true,
+        )
+        .unwrap();
+        let saved: Value =
+            read_json(&job_dir(&root, &job.job_id).join("authoring-ir.json")).unwrap();
+        assert_eq!(
+            saved
+                .pointer("/groups/0/questions/0/prompt")
+                .and_then(Value::as_str),
+            Some("improved one")
+        );
+        assert_eq!(
+            saved
+                .pointer("/groups/0/questions/1/prompt")
+                .and_then(Value::as_str),
+            Some("old two"),
+            "unselected questions must stay untouched"
+        );
+        assert_eq!(
+            saved
+                .pointer("/audit/lastSuggestionManuallyConfirmed")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }

@@ -109,6 +109,7 @@ pub(crate) async fn get_job_core(job_id: String, app: AppHandle) -> CommandResul
         validation_report: read_json_opt(&dir.join("validation-report.json"))?,
         preview_assets: read_json_opt(&dir.join("preview").join("preview-assets.json"))?,
         pipeline_report: read_json_opt(&dir.join("pipeline-report.json"))?,
+        vision_answer_candidates: read_json_opt(&dir.join("vision-answer-candidates.json"))?,
         llm_suggestions: load_llm_suggestions(&root, &job_id)?,
     })
 }
