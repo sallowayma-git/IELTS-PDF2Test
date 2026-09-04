@@ -11,7 +11,12 @@ use crate::{hash_bytes, html_escape, main_source_file, CommandResult, ImportJob,
 use chrono::Utc;
 use quick_xml::{events::Event, Reader};
 use serde_json::{json, Value};
-use std::{collections::HashMap, fs, path::Path, process::Command};
+use std::{
+    collections::{BTreeSet, HashMap},
+    fs,
+    path::Path,
+    process::Command,
+};
 
 #[derive(Debug, Clone)]
 struct TableCellIr {
@@ -1853,11 +1858,31 @@ pub(crate) fn image_count_from_extraction(extraction: &Value) -> usize {
 }
 
 fn extraction_page_count(extraction: &Value) -> usize {
-    extraction
+    let listed = extraction
         .get("pages")
         .and_then(Value::as_array)
         .map(Vec::len)
-        .unwrap_or(0)
+        .unwrap_or(0);
+    let declared = extraction
+        .get("pageCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    listed.max(declared)
+}
+
+fn available_page_indexes(extraction: &Value) -> BTreeSet<u64> {
+    extraction
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|page| {
+            page.get("images")
+                .and_then(Value::as_array)
+                .is_some_and(|images| !images.is_empty())
+        })
+        .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64))
+        .collect()
 }
 
 fn rendered_page_count_from_extraction(extraction: &Value) -> usize {
@@ -1952,8 +1977,32 @@ fn stabilize_pdf_image_extraction_fields(
     let image_count = image_count_from_extraction(extraction);
     let inferred_provider =
         renderer_provider.unwrap_or_else(|| renderer_provider_from_extraction(extraction));
-    let inferred_requires_manual_review =
+    let mut inferred_requires_manual_review =
         requires_manual_review.unwrap_or_else(|| extraction_requires_manual_review(extraction));
+    let available_page_indexes = available_page_indexes(extraction);
+    let expected_page_indexes = if page_count > 0 {
+        (1..=page_count as u64).collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+    let missing_page_indexes = expected_page_indexes
+        .difference(&available_page_indexes)
+        .copied()
+        .collect::<Vec<_>>();
+    let rendered_page_indexes = rendered_page_indexes(extraction);
+    let explicitly_partial = extraction
+        .get("partialCoverage")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let coverage_status = if page_count == 0 {
+        "unknown"
+    } else if missing_page_indexes.is_empty() && !explicitly_partial {
+        "complete"
+    } else {
+        "partial"
+    };
+    let partial_coverage = coverage_status == "partial";
+    inferred_requires_manual_review |= partial_coverage;
     let obj = extraction
         .as_object_mut()
         .expect("PdfImageExtractionV1 should be a JSON object");
@@ -1971,6 +2020,17 @@ fn stabilize_pdf_image_extraction_fields(
         .or_insert(renderer_version.unwrap_or(Value::Null));
     obj.insert("pageCount".to_string(), json!(page_count));
     obj.insert("renderedPageCount".to_string(), json!(rendered_page_count));
+    obj.insert("partialCoverage".to_string(), json!(partial_coverage));
+    obj.insert("coverageStatus".to_string(), json!(coverage_status));
+    obj.insert(
+        "coverage".to_string(),
+        json!({
+            "pageCount": page_count,
+            "availablePageIndexes": available_page_indexes,
+            "renderedPageIndexes": rendered_page_indexes,
+            "missingPageIndexes": missing_page_indexes
+        }),
+    );
     obj.entry("dpi".to_string())
         .or_insert(json!(dpi.unwrap_or(180)));
     obj.insert("ocrPerformed".to_string(), json!(false));
@@ -1989,6 +2049,30 @@ fn stabilize_pdf_image_extraction_fields(
             .map(|value| json!(value))
             .unwrap_or(Value::Null)
     });
+}
+
+fn mark_rendering_failure(extraction: &Value, error: &str) -> Value {
+    let mut marked = extraction.clone();
+    let Some(obj) = marked.as_object_mut() else {
+        return marked;
+    };
+    let warnings = obj
+        .entry("warnings".to_string())
+        .or_insert_with(|| json!([]));
+    if !warnings.is_array() {
+        *warnings = json!([]);
+    }
+    if let Some(items) = warnings.as_array_mut() {
+        items.push(json!(format!("page renderer failed: {}", error)));
+    }
+    obj.insert(
+        "failureReason".to_string(),
+        json!("renderer_page_render_failed"),
+    );
+    obj.insert("partialCoverage".to_string(), json!(true));
+    obj.insert("requiresManualReview".to_string(), json!(true));
+    stabilize_pdf_image_extraction_fields(&mut marked, None, None, None, None, None, Some(true));
+    marked
 }
 
 fn merge_rendered_page_images(extraction: &Value, rendered: &Value) -> Value {
@@ -2052,21 +2136,22 @@ fn merge_rendered_page_images(extraction: &Value, rendered: &Value) -> Value {
                         .unwrap_or(false)
             ),
         );
+        if let Some(reason) = rendered
+            .get("failureReason")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            obj.insert("failureReason".to_string(), json!(reason));
+        }
+        if rendered
+            .get("requiresManualReview")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            obj.insert("requiresManualReview".to_string(), json!(true));
+        }
         if !merged_has_images {
-            if let Some(reason) = rendered
-                .get("failureReason")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-            {
-                obj.insert("failureReason".to_string(), json!(reason));
-            }
-            if rendered
-                .get("requiresManualReview")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                obj.insert("requiresManualReview".to_string(), json!(true));
-            }
+            obj.insert("partialCoverage".to_string(), json!(true));
         }
     }
     stabilize_pdf_image_extraction_fields(&mut merged, None, None, None, None, None, None);
@@ -2246,7 +2331,7 @@ fn render_pdf_pages_unsupported(
         "rendererProvider": provider,
         "rendererVersion": null,
         "renderPurpose": "vision-llm-transcription-input",
-        "pageCount": 0,
+        "pageCount": pdf_page_count_from_file(input_path),
         "renderedPageCount": 0,
         "dpi": 180,
         "ocrPerformed": false,
@@ -2325,12 +2410,12 @@ fn render_pdf_pages_with_macos_sips(
         "rendererProvider": "system-sips",
         "rendererVersion": null,
         "renderPurpose": "vision-llm-transcription-input",
-        "pageCount": 1,
+        "pageCount": pdf_page_count_from_file(input_path).max(1),
         "renderedPageCount": 1,
         "dpi": 180,
         "ocrPerformed": false,
         "failureReason": null,
-        "requiresManualReview": false,
+        "requiresManualReview": true,
         "futureAdapter": "pdfium-render-page-renderer",
         "pages": [{
             "pageIndex": 1,
@@ -2360,7 +2445,7 @@ fn render_pdf_pages_with_macos_sips(
         Some(Value::Null),
         Some(180),
         None,
-        Some(false),
+        Some(true),
     );
     write_json(output_path, &extraction)?;
     Ok(extraction)
@@ -2394,7 +2479,11 @@ pub(crate) fn extract_pdf_images_for_vision(
                     write_json(output_path, &merged)?;
                     Ok(merged)
                 }
-                Err(_) if image_count_from_extraction(&extraction) > 0 => Ok(extraction),
+                Err(error) if image_count_from_extraction(&extraction) > 0 => {
+                    let marked = mark_rendering_failure(&extraction, &error);
+                    write_json(output_path, &marked)?;
+                    Ok(marked)
+                }
                 Err(_) => {
                     let warnings = extraction
                         .get("warnings")
@@ -2593,6 +2682,127 @@ pub(crate) fn missing_source_document_ir(job: &ImportJob, mode: &str, reason: &s
             "sourceStoredName": null
         }
     })
+}
+
+fn pdf_page_count_from_file(input_path: &Path) -> usize {
+    let Ok(bytes) = fs::read(input_path) else {
+        return 0;
+    };
+    let marker = b"/Type";
+    bytes
+        .windows(marker.len())
+        .enumerate()
+        .filter(|(index, window)| {
+            if *window != marker {
+                return false;
+            }
+            let rest = bytes[index + marker.len()..]
+                .iter()
+                .skip_while(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+                .copied()
+                .collect::<Vec<_>>();
+            rest.starts_with(b"/Page")
+                && !rest.get(5).is_some_and(|byte| byte.is_ascii_alphabetic())
+        })
+        .count()
+}
+
+fn rendered_page_indexes(extraction: &Value) -> BTreeSet<u64> {
+    extraction
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|page| {
+            page.get("images")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|image| {
+                    image
+                        .get("renderedFallback")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        || image.get("renderSource").is_some()
+                })
+        })
+        .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64))
+        .collect()
+}
+
+#[cfg(test)]
+mod pdf_image_tests {
+    use super::*;
+
+    #[test]
+    fn rendered_page_coverage_is_partial_and_requires_review() {
+        let mut extraction = json!({
+            "schemaVersion": "PdfImageExtractionV1",
+            "pages": [
+                {"pageIndex": 1, "images": [{"renderedFallback": true}]},
+                {"pageIndex": 2, "images": []},
+                {"pageIndex": 3, "images": []}
+            ],
+            "renderingAttempted": true,
+            "requiresManualReview": false
+        });
+        stabilize_pdf_image_extraction_fields(&mut extraction, None, None, None, None, None, None);
+        assert_eq!(
+            extraction.get("coverageStatus").and_then(Value::as_str),
+            Some("partial")
+        );
+        assert_eq!(
+            extraction.get("partialCoverage").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            extraction
+                .get("requiresManualReview")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            extraction
+                .pointer("/coverage/missingPageIndexes")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn render_failure_is_not_hidden_by_embedded_images() {
+        let extraction = json!({
+            "schemaVersion": "PdfImageExtractionV1",
+            "pages": [{
+                "pageIndex": 1,
+                "images": [{"assetId": "embedded-1", "sizeBytes": 10}]
+            }],
+            "requiresManualReview": false
+        });
+        let marked = mark_rendering_failure(&extraction, "renderer boom");
+        assert_eq!(
+            marked.get("requiresManualReview").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            marked.get("partialCoverage").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            marked.get("failureReason").and_then(Value::as_str),
+            Some("renderer_page_render_failed")
+        );
+        assert!(marked
+            .get("warnings")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .unwrap_or_default()
+                .contains("renderer boom")));
+    }
 }
 
 #[cfg(test)]

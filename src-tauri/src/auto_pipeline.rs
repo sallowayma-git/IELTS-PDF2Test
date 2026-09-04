@@ -492,9 +492,12 @@ where
     )?;
     let answers = output.get("answers").cloned().unwrap_or_else(|| json!({}));
     let candidate = json!({
+        "schemaVersion": "VisionAnswerCandidateV1",
         "source": format!("vision-answer-images:{}", profile_id),
-        "provider": "openai-compatible-vision",
+        "provider": profile.get("provider").cloned().unwrap_or_else(|| json!("OpenAiCompatible")),
         "profileId": profile_id,
+        "model": profile.get("model").cloned().unwrap_or(Value::Null),
+        "jobId": job.job_id,
         "answers": answers,
         "confidence": output.get("confidence").cloned().unwrap_or(Value::Null),
         "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
@@ -1352,7 +1355,8 @@ fn write_vision_answer_candidates_file(
             "schemaVersion": "VisionAnswerCandidatesV1",
             "jobId": job_id,
             "profileId": candidate.get("profileId").cloned().unwrap_or(Value::Null),
-            "generatedAt": Utc::now().to_rfc3339(),
+            "provider": candidate.get("provider").cloned().unwrap_or(Value::Null),
+            "model": candidate.get("model").cloned().unwrap_or(Value::Null),
             "candidateCount": candidates.len(),
             "candidates": candidates
         }),

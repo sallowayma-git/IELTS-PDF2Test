@@ -5,13 +5,20 @@
 //! manifest last, after the staged package has passed the same probe used by
 //! the runtime validator.
 
+use crate::artifact_store::JobArtifactPaths;
+use crate::authoring_v2_commands::{
+    validate_authoring_v2_publish_readiness, AUTHORING_V2_SHADOW_FILE,
+};
 use crate::export_artifacts::{build_wrapper, safe_exam_id};
 use crate::export_nas_library::{nas_reading_exams_dir, normalize_nas_library_root};
 use crate::reading_runtime_v2::{
     run_student_loader_probe, safe_join_asset_path, ExamAssetManifestV2, StudentProbeReportV2,
 };
-use crate::reading_source_v2::{validate_reading_source_v2, ReadingExamSourceV2};
+use crate::reading_source_v2::{
+    compile_reading_source_v2, validate_reading_source_v2, ReadingExamSourceV2,
+};
 use crate::schema::common::canonical_json_bytes;
+use crate::schema::IeltsAuthoringIRV2;
 use crate::CommandResult;
 use chrono::Utc;
 use fs2::FileExt;
@@ -42,6 +49,168 @@ pub(crate) struct NasPackagePublishInput {
     pub minimum_runtime_version: Option<String>,
     pub expected_manifest_sha256: Option<String>,
     pub fault: Option<String>,
+    pub job_id: Option<String>,
+    pub revision: Option<u64>,
+}
+
+fn validate_v2_export_binding(
+    root: &Path,
+    input: &NasPackagePublishInput,
+    source_path: &Path,
+    source_bytes: &[u8],
+) -> CommandResult<()> {
+    if source_path.file_name().and_then(|name| name.to_str()) != Some("reading-source-v2.json") {
+        return Err("nas_package_v2_export_receipt_required:source_filename".to_string());
+    }
+    let export_dir = source_path
+        .parent()
+        .ok_or_else(|| "nas_package_v2_export_receipt_required:source_parent".to_string())?;
+    let manifest_path = export_dir.join("manifest-v2.json");
+    let authoring_path = export_dir.join("authoring-ir-v2.json");
+    let manifest_bytes = fs::read(&manifest_path).map_err(|error| {
+        format!(
+            "nas_package_v2_export_receipt_missing:{}:{error}",
+            manifest_path.display()
+        )
+    })?;
+    let manifest: Value = serde_json::from_slice(&manifest_bytes).map_err(|error| {
+        format!(
+            "nas_package_v2_export_receipt_invalid:{}:{error}",
+            manifest_path.display()
+        )
+    })?;
+    if manifest.get("schemaVersion").and_then(Value::as_str) != Some("AuthoringV2ExportReceiptV1") {
+        return Err("nas_package_v2_export_receipt_invalid:schema".to_string());
+    }
+    let files = manifest
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "nas_package_v2_export_receipt_invalid:files".to_string())?;
+    let expected_files = [
+        "authoring-ir-v2.json",
+        "reading-source-v2.json",
+        "manifest-v2.json",
+    ];
+    if files.len() != expected_files.len()
+        || expected_files
+            .iter()
+            .any(|expected| !files.iter().any(|file| file.as_str() == Some(*expected)))
+    {
+        return Err("nas_package_v2_export_receipt_invalid:files".to_string());
+    }
+    let authoring_bytes = fs::read(&authoring_path).map_err(|error| {
+        format!(
+            "nas_package_v2_export_receipt_missing:{}:{error}",
+            authoring_path.display()
+        )
+    })?;
+    let authoring_value: Value = serde_json::from_slice(&authoring_bytes).map_err(|error| {
+        format!(
+            "nas_package_v2_export_authoring_invalid:{}:{error}",
+            authoring_path.display()
+        )
+    })?;
+    let job_id = manifest
+        .get("jobId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "nas_package_v2_export_receipt_invalid:jobId".to_string())?;
+    let revision = manifest
+        .get("revision")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "nas_package_v2_export_receipt_invalid:revision".to_string())?;
+    if input.job_id.as_deref().is_some_and(|value| value != job_id)
+        || input.revision.is_some_and(|value| value != revision)
+    {
+        return Err("nas_package_v2_export_receipt_input_mismatch".to_string());
+    }
+    if manifest.get("examId").and_then(Value::as_str)
+        != authoring_value
+            .pointer("/exam/examId")
+            .and_then(Value::as_str)
+        || manifest.get("sourceDocumentId").and_then(Value::as_str)
+            != authoring_value
+                .get("sourceDocumentId")
+                .and_then(Value::as_str)
+    {
+        return Err("nas_package_v2_export_receipt_invalid:authoring_binding".to_string());
+    }
+    if manifest.get("reviewRequired") != Some(&Value::Bool(false)) {
+        return Err("nas_package_v2_export_receipt_invalid:reviewRequired".to_string());
+    }
+    let expected_authoring_hash = manifest
+        .get("authoringSha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "nas_package_v2_export_receipt_invalid:authoringSha256".to_string())?;
+    let expected_runtime_hash = manifest
+        .get("runtimeSha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "nas_package_v2_export_receipt_invalid:runtimeSha256".to_string())?;
+    if sha256_hex(&authoring_bytes) != expected_authoring_hash
+        || sha256_hex(source_bytes) != expected_runtime_hash
+    {
+        return Err("nas_package_v2_export_receipt_hash_mismatch".to_string());
+    }
+
+    let paths = JobArtifactPaths::for_job(root, job_id)?;
+    let persisted_path = if revision == 0 {
+        paths.job_dir.join(AUTHORING_V2_SHADOW_FILE)
+    } else {
+        paths.revision_path(revision)
+    };
+    let persisted_bytes = fs::read(&persisted_path).map_err(|error| {
+        format!(
+            "nas_package_v2_export_binding_missing:{}:{error}",
+            persisted_path.display()
+        )
+    })?;
+    let persisted_value: Value = serde_json::from_slice(&persisted_bytes).map_err(|error| {
+        format!(
+            "nas_package_v2_export_binding_invalid:{}:{error}",
+            persisted_path.display()
+        )
+    })?;
+    // `quality` is a derived report and is refreshed during every export, so
+    // it is deliberately excluded from the persisted-content binding. The
+    // receipt still authenticates the exact exported authoring bytes via
+    // authoringSha256 above; this comparison only prevents exporting an old
+    // or unrelated authoring revision from the same job.
+    let persisted_binding = authoring_binding_value(&persisted_value);
+    let exported_binding = authoring_binding_value(&authoring_value);
+    let persisted_canonical =
+        canonical_json_bytes(&persisted_binding).map_err(|error| error.to_string())?;
+    let exported_canonical =
+        canonical_json_bytes(&exported_binding).map_err(|error| error.to_string())?;
+    if sha256_hex(&persisted_canonical) != sha256_hex(&exported_canonical)
+        || persisted_binding != exported_binding
+    {
+        return Err("nas_package_v2_export_binding_detached".to_string());
+    }
+    let bound_authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value.clone())
+        .map_err(|error| format!("nas_package_v2_export_binding_invalid:authoring:{error}"))?;
+    let bound_source = compile_reading_source_v2(&bound_authoring).map_err(|issues| {
+        format!(
+            "nas_package_v2_export_binding_invalid:authoring_compile:{}",
+            serde_json::to_string(&issues).unwrap_or_default()
+        )
+    })?;
+    let exported_source: ReadingExamSourceV2 = serde_json::from_slice(source_bytes)
+        .map_err(|error| format!("nas_package_v2_export_binding_invalid:runtime:{error}"))?;
+    if exported_source != bound_source {
+        return Err("nas_package_v2_export_binding_detached:runtime".to_string());
+    }
+    let proof = validate_authoring_v2_publish_readiness(root, job_id, revision, &authoring_value)?;
+    if manifest.get("publishProof") != Some(&proof) {
+        return Err("nas_package_v2_export_receipt_proof_mismatch".to_string());
+    }
+    Ok(())
+}
+
+fn authoring_binding_value(value: &Value) -> Value {
+    let mut binding = value.clone();
+    if let Some(object) = binding.as_object_mut() {
+        object.remove("quality");
+    }
+    binding
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +258,7 @@ pub(crate) fn publish_nas_package_v2_core(root: &Path, input: Value) -> CommandR
             source_path.display()
         )
     })?;
+    validate_v2_export_binding(&root, &input, &source_path, &source_bytes)?;
     let source_value: Value = serde_json::from_slice(&source_bytes).map_err(|error| {
         format!(
             "nas_package_v2_source_json:{}:{error}",
@@ -1268,6 +1438,62 @@ mod tests {
         root
     }
 
+    fn test_export_bundle(root: &Path) -> (PathBuf, ReadingExamSourceV2) {
+        let mut authoring_value: Value = serde_json::from_str(include_str!(
+            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        authoring_value["quality"]["state"] = json!("ready");
+        authoring_value["quality"]["issues"] = json!([]);
+        let authoring: IeltsAuthoringIRV2 =
+            serde_json::from_value(authoring_value.clone()).unwrap();
+        let source = compile_reading_source_v2(&authoring).unwrap();
+        let source_value = serde_json::to_value(&source).unwrap();
+        let export_dir = root.join("export");
+        fs::create_dir_all(&export_dir).unwrap();
+        fs::create_dir_all(root.join("jobs").join(&authoring.job_id)).unwrap();
+        fs::write(
+            export_dir.join("authoring-ir-v2.json"),
+            canonical_json_bytes(&authoring_value).unwrap(),
+        )
+        .unwrap();
+        let source_path = export_dir.join("reading-source-v2.json");
+        let source_bytes = canonical_json_bytes(&source_value).unwrap();
+        fs::write(&source_path, &source_bytes).unwrap();
+        fs::write(
+            root.join("jobs")
+                .join(&authoring.job_id)
+                .join(AUTHORING_V2_SHADOW_FILE),
+            canonical_json_bytes(&authoring_value).unwrap(),
+        )
+        .unwrap();
+        let proof =
+            validate_authoring_v2_publish_readiness(root, &authoring.job_id, 0, &authoring_value)
+                .unwrap();
+        let manifest = json!({
+            "schemaVersion": "AuthoringV2ExportReceiptV1",
+            "jobId": authoring.job_id,
+            "examId": authoring.exam.exam_id,
+            "revision": 0,
+            "sourceDocumentId": authoring.source_document_id,
+            "files": ["authoring-ir-v2.json", "reading-source-v2.json", "manifest-v2.json"],
+            "authoringSha256": sha256_hex(&canonical_json_bytes(&authoring_value).unwrap()),
+            "runtimeSha256": sha256_hex(&source_bytes),
+            "assetCount": authoring.assets.len(),
+            "assets": authoring.assets,
+            "v1FilesRemainReadable": true,
+            "pdfPerQuestionLlmRepair": false,
+            "reviewRequired": false,
+            "publishProof": proof
+        });
+        fs::write(
+            export_dir.join("manifest-v2.json"),
+            canonical_json_bytes(&manifest).unwrap(),
+        )
+        .unwrap();
+        (source_path, source)
+    }
+
     #[test]
     fn package_path_policy_rejects_unsafe_relative_paths() {
         for path in [
@@ -1314,13 +1540,7 @@ mod tests {
     #[test]
     fn publish_normalizes_publish_child_to_one_transaction_root() {
         let root = temp_root();
-        let source_path = root.join("reading-source-v2.json");
-        let authoring: IeltsAuthoringIRV2 = serde_json::from_str(include_str!(
-            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
-        ))
-        .unwrap();
-        let source = compile_reading_source_v2(&authoring).unwrap();
-        fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+        let (source_path, _source) = test_export_bundle(&root);
 
         let nas_parent = root.join("nas");
         let publish_child = nas_parent.join("publish");
@@ -1345,6 +1565,34 @@ mod tests {
     }
 
     #[test]
+    fn publisher_rejects_valid_json_without_v2_export_binding() {
+        let root = temp_root();
+        let authoring_value: Value = serde_json::from_str(include_str!(
+            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        let authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value).unwrap();
+        let source = compile_reading_source_v2(&authoring).unwrap();
+        let source_path = root.join("reading-source-v2.json");
+        fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+
+        let error = publish_nas_package_v2_core(
+            &root,
+            json!({
+                "libraryRoot": root.join("library"),
+                "sourcePath": source_path
+            }),
+        )
+        .unwrap_err();
+        assert!(
+            error.starts_with("nas_package_v2_export_receipt_missing:"),
+            "{error}"
+        );
+        assert!(!root.join("library").join("manifest.js").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn runtime_version_policy_blocks_invalid_or_future_student_runtime() {
         assert!(validate_minimum_runtime_version("0.2.0").is_ok());
         assert!(validate_minimum_runtime_version("0.1.9").is_ok());
@@ -1355,13 +1603,7 @@ mod tests {
     #[test]
     fn package_publish_probes_before_commit_and_fault_rolls_back_old_manifest() {
         let root = temp_root();
-        let source_path = root.join("reading-source-v2.json");
-        let authoring: IeltsAuthoringIRV2 = serde_json::from_str(include_str!(
-            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
-        ))
-        .unwrap();
-        let source = compile_reading_source_v2(&authoring).unwrap();
-        fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+        let (source_path, _source) = test_export_bundle(&root);
         let library_root = root.join("library");
         let first = publish_nas_package_v2_core(
             &root,
@@ -1398,13 +1640,7 @@ mod tests {
     #[test]
     fn partial_resource_backup_fault_restores_old_visible_package() {
         let root = temp_root();
-        let source_path = root.join("reading-source-v2.json");
-        let authoring: IeltsAuthoringIRV2 = serde_json::from_str(include_str!(
-            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
-        ))
-        .unwrap();
-        let source = compile_reading_source_v2(&authoring).unwrap();
-        fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+        let (source_path, _source) = test_export_bundle(&root);
         let library_root = root.join("library");
         publish_nas_package_v2_core(
             &root,
@@ -1449,13 +1685,7 @@ mod tests {
     #[test]
     fn post_commit_report_failure_rolls_back_package_and_report() {
         let root = temp_root();
-        let source_path = root.join("reading-source-v2.json");
-        let authoring: IeltsAuthoringIRV2 = serde_json::from_str(include_str!(
-            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
-        ))
-        .unwrap();
-        let source = compile_reading_source_v2(&authoring).unwrap();
-        fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+        let (source_path, _source) = test_export_bundle(&root);
         let library_root = root.join("library");
         let first = publish_nas_package_v2_core(
             &root,
@@ -1499,13 +1729,7 @@ mod tests {
     #[test]
     fn v2_commit_fault_preserves_loadable_legacy_v1_manifest() {
         let root = temp_root();
-        let source_path = root.join("reading-source-v2.json");
-        let authoring: IeltsAuthoringIRV2 = serde_json::from_str(include_str!(
-            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
-        ))
-        .unwrap();
-        let source = compile_reading_source_v2(&authoring).unwrap();
-        fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+        let (source_path, _source) = test_export_bundle(&root);
 
         let library_root = root.join("library");
         fs::create_dir_all(&library_root).unwrap();
@@ -1559,13 +1783,7 @@ mod tests {
     #[test]
     fn package_publish_rejects_busy_lock_before_commit() {
         let root = temp_root();
-        let source_path = root.join("reading-source-v2.json");
-        let authoring: IeltsAuthoringIRV2 = serde_json::from_str(include_str!(
-            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
-        ))
-        .unwrap();
-        let source = compile_reading_source_v2(&authoring).unwrap();
-        fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+        let (source_path, source) = test_export_bundle(&root);
 
         let library_root = root.join("library");
         let lock_path = make_paths(&library_root, &library_root, &source.exam_id)

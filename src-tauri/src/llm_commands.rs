@@ -464,57 +464,59 @@ pub(crate) fn apply_vision_answer_candidates_core(
         return Err("vision_answer_decisions_empty".to_string());
     }
 
-    // Reject-on-sight when the caller reviewed a stale candidate document:
-    // a background cloud review may have regenerated the candidates in the
-    // meantime, and silently adopting unseen answers would be wrong.
-    if let Some(expected_generated_at) = decisions.get("generatedAt").and_then(Value::as_str) {
-        let current_generated_at = candidates_doc
-            .get("generatedAt")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !current_generated_at.is_empty() && current_generated_at != expected_generated_at {
-            return Err(
-                "vision_answer_candidates_stale:regenerated_by_background_review".to_string(),
-            );
-        }
+    if candidates_doc.get("schemaVersion").and_then(Value::as_str)
+        != Some("VisionAnswerCandidatesV1")
+        || candidates_doc.get("jobId").and_then(Value::as_str) != Some(job_id)
+    {
+        return Err("vision_answer_candidates_invalid".to_string());
     }
-    let decision_list = decisions
-        .get("decisions")
-        .and_then(Value::as_array)
-        .cloned()
-        .or_else(|| decisions.as_array().cloned())
-        .unwrap_or_default();
-    if decision_list.is_empty() {
-        return Err("vision_answer_decisions_empty".to_string());
-    }
-
     let mut accepted = Vec::<String>::new();
     let mut rejected = Vec::<String>::new();
     let mut unmatched = Vec::<String>::new();
     let mut already_answered = Vec::<String>::new();
     let mut dismissed_numbers = Vec::<String>::new();
+    let mut seen_decisions = std::collections::BTreeMap::<String, String>::new();
     for decision in &decision_list {
+        if !decision.is_object() {
+            return Err("vision_answer_decision_invalid".to_string());
+        }
         let number = decision
             .get("questionNumber")
-            .and_then(Value::as_str)
-            .map(|value| value.trim().trim_start_matches(['q', 'Q']).to_string())
-            .or_else(|| {
-                decision
-                    .get("questionNumber")
-                    .and_then(Value::as_u64)
-                    .map(|value| value.to_string())
+            .and_then(|value| {
+                value
+                    .as_str()
+                    .map(|value| value.trim().trim_start_matches(['q', 'Q']).to_string())
+                    .or_else(|| value.as_u64().map(|value| value.to_string()))
             })
-            .unwrap_or_default();
-        if number.is_empty() {
-            continue;
-        }
+            .and_then(|value| {
+                value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|number| *number > 0 && *number <= 200)
+                    .map(|number| number.to_string())
+            })
+            .ok_or_else(|| "vision_answer_decision_question_number_invalid".to_string())?;
         let accept = decision
             .get("accept")
             .and_then(Value::as_bool)
-            .unwrap_or(false);
+            .ok_or_else(|| format!("vision_answer_decision_invalid:{}:accept", number))?;
+        let answer_fingerprint = decision
+            .get("answer")
+            .map(|value| serde_json::to_string(value).unwrap_or_default())
+            .unwrap_or_default();
+        let decision_fingerprint = format!("{}:{}", accept, answer_fingerprint);
+        if let Some(previous) = seen_decisions.get(&number) {
+            if previous != &decision_fingerprint {
+                return Err(format!("vision_answer_decisions_conflict:{}", number));
+            }
+            continue;
+        }
+        seen_decisions.insert(number.clone(), decision_fingerprint);
         if !accept {
             rejected.push(format!("q{}", number));
-            dismissed_numbers.push(number.clone());
+            if !dismissed_numbers.iter().any(|item| item == &number) {
+                dismissed_numbers.push(number.clone());
+            }
             continue;
         }
         let Some(candidate) = candidates_doc
@@ -539,20 +541,33 @@ pub(crate) fn apply_vision_answer_candidates_core(
             let type_ok = value.is_string()
                 || value
                     .as_array()
-                    .map(|items| items.iter().all(Value::is_string))
+                    .map(|items| {
+                        !items.is_empty()
+                            && items.iter().all(|item| {
+                                item.as_str().is_some_and(|text| !text.trim().is_empty())
+                            })
+                    })
                     .unwrap_or(false);
             if !type_ok {
-                unmatched.push(number.clone());
-                continue;
+                return Err(format!("vision_answer_decision_invalid:{}:answer", number));
             }
         }
         let answer = override_answer
             .unwrap_or_else(|| candidate.get("answer").cloned().unwrap_or(Value::Null));
-        let answer_is_empty = answer
-            .as_str()
-            .map(|text| text.trim().is_empty())
-            .unwrap_or(false);
-        if answer.is_null() || answer_is_empty {
+        let answer_is_empty = match &answer {
+            Value::String(text) => text.trim().is_empty(),
+            Value::Array(items) => {
+                items.is_empty()
+                    || items.iter().all(|item| {
+                        item.as_str()
+                            .map(|text| text.trim().is_empty())
+                            .unwrap_or(true)
+                    })
+            }
+            Value::Null => true,
+            _ => false,
+        };
+        if answer_is_empty {
             unmatched.push(number.clone());
             continue;
         }
@@ -661,7 +676,7 @@ pub(crate) fn apply_vision_answer_candidates_core(
                 }
             }
         }
-        let _ = write_json(&dir.join("vision-answer-candidates.json"), &candidates_doc);
+        write_json(&dir.join("vision-answer-candidates.json"), &candidates_doc)?;
     }
 
     if accepted.is_empty() && rejected.is_empty() && already_answered.is_empty() {

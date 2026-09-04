@@ -13,8 +13,10 @@ use crate::artifact_store::{
 use crate::ielts_grammar::evaluate_quality;
 use crate::reading_source_v2::compile_reading_source_v2;
 use crate::schema::common::AssetDescriptorV2;
-use crate::schema::ielts_authoring_v2::AnswerValueV2;
 use crate::schema::IeltsAuthoringIRV2;
+use crate::source_review::{
+    source_review_issues, source_review_status, source_review_status_for_job,
+};
 use crate::util::{
     is_safe_path_segment, job_dir, read_json_opt, safe_job_dir, stage_file_with_hash,
 };
@@ -29,7 +31,7 @@ use std::path::{Component, Path};
 use std::{fs, fs::OpenOptions, path::PathBuf};
 use uuid::Uuid;
 
-const AUTHORING_V2_SHADOW_FILE: &str = "authoring-ir-v2.shadow.json";
+pub(crate) const AUTHORING_V2_SHADOW_FILE: &str = "authoring-ir-v2.shadow.json";
 const DOCUMENT_V2_SHADOW_FILE: &str = "document-ir-v2.shadow.json";
 const SESSION_SCHEMA_VERSION: &str = "AuthoringEditorSessionV1";
 
@@ -165,6 +167,285 @@ pub(crate) fn apply_authoring_v2_patches_core(root: &Path, input: Value) -> Comm
     }))
 }
 
+/// Return the durable proof required before a V2 export can be published.
+///
+/// This is shared with the NAS publisher so a source file cannot be published
+/// merely because it happens to deserialize as `ReadingExamSourceV2`.
+pub(crate) fn validate_authoring_v2_publish_readiness(
+    root: &Path,
+    job_id: &str,
+    revision: u64,
+    authoring_value: &Value,
+) -> CommandResult<Value> {
+    safe_job_dir(root, job_id)?;
+    validate_authoring(authoring_value)?;
+    if authoring_value.get("jobId").and_then(Value::as_str) != Some(job_id) {
+        return Err("authoring_v2_export_blocked:job_id_mismatch".to_string());
+    }
+    let current = recover_current_revision(root, job_id)?;
+    if current.revision != revision {
+        return Err(format!(
+            "authoring_v2_export_blocked:revision_not_current:current={}:requested={revision}",
+            current.revision
+        ));
+    }
+
+    let quality: crate::schema::quality_report_v2::QualityReportV2 = serde_json::from_value(
+        authoring_value
+            .get("quality")
+            .cloned()
+            .ok_or_else(|| "AUTHORING_SCHEMA_INVALID:quality_missing".to_string())?,
+    )
+    .map_err(|error| format!("AUTHORING_SCHEMA_INVALID:quality:{error}"))?;
+    if !matches!(
+        &quality.state,
+        crate::schema::quality_report_v2::ReadinessStateV2::Ready
+    ) {
+        let state = match &quality.state {
+            crate::schema::quality_report_v2::ReadinessStateV2::Ready => "ready",
+            crate::schema::quality_report_v2::ReadinessStateV2::ReviewRequired => "review_required",
+            crate::schema::quality_report_v2::ReadinessStateV2::Blocked => "blocked",
+        };
+        return Err(format!("authoring_v2_export_blocked:quality_state={state}"));
+    }
+    let unresolved_answers = authoring_value
+        .get("answerKey")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|answers| answers.iter())
+        .filter_map(|(slot_id, value)| {
+            (value.get("kind").and_then(Value::as_str) == Some("unresolved"))
+                .then_some(slot_id.clone())
+        })
+        .collect::<Vec<_>>();
+    if !unresolved_answers.is_empty() {
+        return Err(format!(
+            "authoring_v2_export_blocked:unresolved_answers={}",
+            unresolved_answers.join(",")
+        ));
+    }
+    if !quality.hard_failures.is_empty() {
+        return Err(format!(
+            "authoring_v2_export_blocked:hard_failures={}",
+            quality.hard_failures.join(",")
+        ));
+    }
+    let unresolved_blockers = quality
+        .issues
+        .iter()
+        .filter(|issue| {
+            matches!(
+                issue.severity,
+                crate::schema::quality_report_v2::ReviewSeverityV2::Blocking
+            ) && issue
+                .details
+                .as_ref()
+                .and_then(|details| details.get("resolution"))
+                .and_then(Value::as_str)
+                .is_none_or(|resolution| !matches!(resolution, "resolved" | "ignored"))
+        })
+        .map(|issue| issue.issue_id.clone())
+        .collect::<Vec<_>>();
+    if !unresolved_blockers.is_empty() {
+        return Err(format!(
+            "authoring_v2_export_blocked:issues={}",
+            unresolved_blockers.join(",")
+        ));
+    }
+    if authoring_value
+        .pointer("/audit/humanVerified")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err("authoring_v2_export_blocked:human_verification_required".to_string());
+    }
+
+    let document_ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
+    let source_review = match document_ir.as_ref() {
+        Some(document) => source_review_status(root, job_id, Some(document))?,
+        None => source_review_status_for_job(root, job_id)?,
+    };
+    if source_review.get("schemaVersion").and_then(Value::as_str) != Some("SourceReviewV1")
+        || source_review.get("jobId").and_then(Value::as_str) != Some(job_id)
+    {
+        return Err("authoring_v2_export_blocked:source_review_invalid".to_string());
+    }
+    if source_review.get("stale").and_then(Value::as_bool) == Some(true) {
+        return Err("authoring_v2_export_blocked:source_review_stale".to_string());
+    }
+    if source_review.get("resolved").and_then(Value::as_bool) != Some(true) {
+        return Err("authoring_v2_export_blocked:source_review_unresolved".to_string());
+    }
+    let source_review_blockers = source_review_issues(&source_review);
+    if !source_review_blockers.is_empty() {
+        return Err(format!(
+            "authoring_v2_export_blocked:source_review_issues={}",
+            serde_json::to_string(&source_review_blockers).unwrap_or_default()
+        ));
+    }
+
+    let mut ai_fallbacks = Vec::new();
+    let mut partial_failures = Vec::new();
+    collect_publish_gate_markers(
+        authoring_value,
+        "authoring",
+        &mut ai_fallbacks,
+        &mut partial_failures,
+    );
+    for relative in ["authoring-ir.json", "pipeline-report.json"] {
+        let path = job_dir(root, job_id).join(relative);
+        if let Some(value) = read_json_opt(&path)? {
+            collect_publish_gate_markers(
+                &value,
+                relative,
+                &mut ai_fallbacks,
+                &mut partial_failures,
+            );
+        }
+    }
+    if !ai_fallbacks.is_empty() {
+        return Err(format!(
+            "authoring_v2_export_blocked:ai_fallback={}",
+            ai_fallbacks.join(",")
+        ));
+    }
+    if !partial_failures.is_empty() {
+        return Err(format!(
+            "authoring_v2_export_blocked:partial_failures={}",
+            partial_failures.join(",")
+        ));
+    }
+
+    Ok(json!({
+        "schemaVersion": "AuthoringV2PublishProofV1",
+        "jobId": job_id,
+        "revision": revision,
+        "qualityState": "ready",
+        "humanVerified": true,
+        "sourceReview": source_review,
+        "unresolvedAnswers": [],
+        "unresolvedBlockingIssues": [],
+        "aiFallbacks": [],
+        "partialFailures": []
+    }))
+}
+
+fn collect_publish_gate_markers(
+    value: &Value,
+    path: &str,
+    ai_fallbacks: &mut Vec<String>,
+    partial_failures: &mut Vec<String>,
+) {
+    let lower_path = path.to_ascii_lowercase();
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object {
+                let child_path = format!("{path}.{key}");
+                let lower_key = key.to_ascii_lowercase();
+                if child.as_bool() == Some(true)
+                    && (matches!(
+                        lower_key.as_str(),
+                        "aifallback"
+                            | "llmfallback"
+                            | "fallbackused"
+                            | "partialfailure"
+                            | "aipartialfailure"
+                            | "requiresmanualquestionimport"
+                    ) || (lower_key == "fallback"
+                        && (lower_path.contains("audit")
+                            || lower_path.contains("llm")
+                            || lower_path.contains("ai")
+                            || lower_path.contains("suggestion")
+                            || lower_path.contains("evidence"))))
+                {
+                    if lower_key.contains("fallback") {
+                        ai_fallbacks.push(child_path.clone());
+                    } else {
+                        partial_failures.push(child_path.clone());
+                    }
+                }
+                if child.as_array().is_some_and(|items| !items.is_empty())
+                    && ((lower_key == "failures"
+                        && (lower_path.contains("llm") || lower_path.contains("ai")))
+                        || matches!(
+                            lower_key.as_str(),
+                            "blockedautoapplygroups" | "lowconfidencegroups"
+                        ))
+                {
+                    partial_failures.push(child_path.clone());
+                }
+                if lower_key == "status"
+                    && child.as_str().is_some_and(|status| {
+                        matches!(
+                            status.to_ascii_lowercase().as_str(),
+                            "partial" | "partial_failure" | "needs_review" | "auto_apply_blocked"
+                        )
+                    })
+                    && (lower_path.contains("llm")
+                        || lower_path.contains("ai")
+                        || lower_path.contains("vision")
+                        || lower_path.contains("cloud")
+                        || lower_path.contains("quality")
+                        || lower_path.contains("audit"))
+                {
+                    partial_failures.push(child_path.clone());
+                }
+                if (lower_key == "code"
+                    && child
+                        .as_str()
+                        .is_some_and(|code| code.eq_ignore_ascii_case("PARTIAL_RECOVERY_FAILURE")))
+                    || (lower_key == "failure"
+                        && json_value_is_nonempty(child)
+                        && (lower_path.contains("llm")
+                            || lower_path.contains("ai")
+                            || lower_path.contains("vision")
+                            || lower_path.contains("cloud")
+                            || lower_path.contains("quality")
+                            || lower_path.contains("audit")))
+                {
+                    partial_failures.push(child_path.clone());
+                }
+                collect_publish_gate_markers(child, &child_path, ai_fallbacks, partial_failures);
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                collect_publish_gate_markers(
+                    child,
+                    &format!("{path}[{index}]"),
+                    ai_fallbacks,
+                    partial_failures,
+                );
+            }
+        }
+        Value::String(text) => {
+            let lower = text.to_ascii_lowercase();
+            if (lower.contains("ai fallback")
+                || lower.contains("llm fallback")
+                || lower.contains("rust-local-fallback")
+                || lower.contains("deterministic-local-fallback"))
+                && (lower_path.contains("note") || lower_path.contains("audit"))
+            {
+                ai_fallbacks.push(path.to_string());
+            }
+            if lower.contains("partial failure") && lower_path.contains("audit") {
+                partial_failures.push(path.to_string());
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn json_value_is_nonempty(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(value) => !value.trim().is_empty(),
+        Value::Array(value) => !value.is_empty(),
+        Value::Object(value) => !value.is_empty(),
+        Value::Bool(_) | Value::Number(_) => true,
+    }
+}
+
 pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResult<Value> {
     let input: ExportAuthoringV2Input = serde_json::from_value(input)
         .map_err(|error| format!("authoring_v2_invalid_export_request:{error}"))?;
@@ -203,54 +484,8 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
             "authoring_v2_export_blocked:quality_state={quality_state}"
         ));
     }
-    let unresolved_answer_slots = authoring
-        .answer_key
-        .iter()
-        .filter_map(|(slot_id, value)| {
-            matches!(value, AnswerValueV2::Unresolved).then_some(slot_id.clone())
-        })
-        .collect::<Vec<_>>();
-    if !unresolved_answer_slots.is_empty() {
-        return Err(format!(
-            "authoring_v2_export_blocked:unresolved_answers={}",
-            unresolved_answer_slots.join(",")
-        ));
-    }
-    let hard_failures = authoring
-        .quality
-        .hard_failures
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    if !hard_failures.is_empty() {
-        return Err(format!(
-            "authoring_v2_export_blocked:hard_failures={}",
-            hard_failures.join(",")
-        ));
-    }
-    let unresolved_blockers = authoring
-        .quality
-        .issues
-        .iter()
-        .filter(|issue| {
-            matches!(
-                issue.severity,
-                crate::schema::quality_report_v2::ReviewSeverityV2::Blocking
-            ) && issue
-                .details
-                .as_ref()
-                .and_then(|details| details.get("resolution"))
-                .and_then(Value::as_str)
-                .is_none_or(|resolution| !matches!(resolution, "resolved" | "ignored"))
-        })
-        .map(|issue| issue.issue_id.clone())
-        .collect::<Vec<_>>();
-    if !unresolved_blockers.is_empty() {
-        return Err(format!(
-            "authoring_v2_export_blocked:issues={}",
-            unresolved_blockers.join(",")
-        ));
-    }
+    let publish_proof =
+        validate_authoring_v2_publish_readiness(root, &input.job_id, revision, &authoring_value)?;
     let runtime = compile_reading_source_v2(&authoring).map_err(|issues| {
         format!(
             "authoring_v2_export_compile_blocked:{}",
@@ -323,7 +558,8 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
             })).collect::<Vec<_>>(),
             "v1FilesRemainReadable": true,
             "pdfPerQuestionLlmRepair": false,
-            "reviewRequired": quality_state != "ready"
+            "reviewRequired": quality_state != "ready",
+            "publishProof": publish_proof
         });
         write_canonical_json_atomic(&manifest_path, &manifest_value)?;
         fs::rename(&staging_dir, &output_dir)
@@ -348,7 +584,8 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
         "runtimePath": output_dir.join("reading-source-v2.json"),
         "manifestPath": output_dir.join("manifest-v2.json"),
         "v1FilesRemainReadable": true,
-        "pdfPerQuestionLlmRepair": false
+        "pdfPerQuestionLlmRepair": false,
+        "publishProof": publish_proof
     });
     let history_path = format!("export-history/phase5-v2-{}-{}.json", revision, export_id);
     let history_file_path = artifact_layout.job_dir.join(&history_path);
@@ -1768,10 +2005,11 @@ mod tests {
     use super::{
         apply_patch, expand_question_expression, export_authoring_v2_core,
         materialize_authoring_assets, physical_shadow_matches_authoring,
-        preserve_issue_resolutions, resolve_authoring_asset_preview_core, AUTHORING_V2_SHADOW_FILE,
+        preserve_issue_resolutions, resolve_authoring_asset_preview_core,
+        validate_authoring_v2_publish_readiness, AUTHORING_V2_SHADOW_FILE,
     };
     use crate::schema::common::{AssetDescriptorV2, AssetExtractionModeV2, AssetKindV2};
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2217,6 +2455,64 @@ mod tests {
             "authoring_v2_export_blocked:quality_state=review_required"
         );
         assert!(!export_dir.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn publish_readiness_rejects_human_unverified_stale_review_and_ai_fallback() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ielts-authoring-v2-readiness-{suffix}"));
+        let job_id = "readiness-gate";
+        let job_dir = root.join("jobs").join(job_id);
+        fs::create_dir_all(&job_dir).unwrap();
+
+        let mut authoring: Value = serde_json::from_str(include_str!(
+            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        authoring["jobId"] = json!(job_id);
+        authoring["quality"]["state"] = json!("ready");
+        authoring["audit"]["humanVerified"] = json!(false);
+        let error =
+            validate_authoring_v2_publish_readiness(&root, job_id, 0, &authoring).unwrap_err();
+        assert_eq!(
+            error,
+            "authoring_v2_export_blocked:human_verification_required"
+        );
+
+        authoring["audit"]["humanVerified"] = json!(true);
+        fs::write(
+            job_dir.join("source-review.json"),
+            serde_json::to_vec(&json!({
+                "schemaVersion": "SourceReviewV1",
+                "jobId": job_id,
+                "required": true,
+                "resolved": true,
+                "stale": true,
+                "fingerprint": "old",
+                "parserWarnings": [],
+                "lowConfidenceBlocks": [],
+                "resolvedAt": null,
+                "note": null
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let error =
+            validate_authoring_v2_publish_readiness(&root, job_id, 0, &authoring).unwrap_err();
+        assert_eq!(error, "authoring_v2_export_blocked:source_review_stale");
+
+        let _ = fs::remove_file(job_dir.join("source-review.json"));
+        authoring["audit"]["notes"] = json!(["AI fallback was used"]);
+        let error =
+            validate_authoring_v2_publish_readiness(&root, job_id, 0, &authoring).unwrap_err();
+        assert!(
+            error.starts_with("authoring_v2_export_blocked:ai_fallback="),
+            "{error}"
+        );
         let _ = fs::remove_dir_all(root);
     }
 

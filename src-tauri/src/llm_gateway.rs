@@ -6,7 +6,19 @@ use crate::{
 use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use serde_json::{json, Value};
-use std::{fs, path::Path, thread, time::Duration};
+use std::{
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+    thread,
+    time::{Duration, Instant},
+};
+
+const MAX_LLM_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_LLM_PDF_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_LLM_INLINE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_LLM_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_LLM_ATTEMPTS: usize = 3;
 
 pub(crate) fn run_llm_gateway(
     root: &Path,
@@ -25,9 +37,13 @@ pub(crate) fn run_llm_gateway(
         "classify_group" | "extract_group" | "test_profile" => {
             run_openai_compatible_group_llm(command_name, input, api_key)
         }
-        "transcribe_pdf_images" => run_openai_compatible_vision_llm(input, api_key),
-        "extract_pdf_image_answers" => run_openai_compatible_vision_answer_llm(input, api_key),
-        "generate_pdf_reading_outline" => run_openai_compatible_cloud_outline_llm(input, api_key),
+        "transcribe_pdf_images" => run_openai_compatible_vision_llm(root, job_id, input, api_key),
+        "extract_pdf_image_answers" => {
+            run_openai_compatible_vision_answer_llm(root, job_id, input, api_key)
+        }
+        "generate_pdf_reading_outline" => {
+            run_openai_compatible_cloud_outline_llm(root, job_id, input, api_key)
+        }
         _ => Err(format!("unsupported_llm_gateway_command:{}", command_name)),
     };
     // Per-call observability record: every gateway invocation (success or
@@ -116,9 +132,60 @@ fn llm_force_json(profile: &Value) -> bool {
     profile.get("forceJson").and_then(Value::as_bool) != Some(false)
 }
 
+fn require_openai_compatible_provider(profile: &Value) -> CommandResult<()> {
+    let provider = profile
+        .get("provider")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "llm_provider_missing".to_string())?;
+    // Ollama exposes the OpenAI-compatible `/v1/chat/completions` contract.
+    // Other configured provider labels do not have a protocol-specific route
+    // here, so rejecting them is safer than silently sending the wrong wire
+    // format to an endpoint that may accept it.
+    if !matches!(provider, "OpenAiCompatible" | "Ollama") {
+        return Err(format!(
+            "llm_provider_unsupported_for_openai_route:{}",
+            provider
+        ));
+    }
+    Ok(())
+}
+
 fn openai_chat_completions_endpoint(profile: &Value) -> CommandResult<String> {
+    require_openai_compatible_provider(profile)?;
     let base_url =
         llm_base_url(profile).ok_or_else(|| "llm_profile_base_url_missing".to_string())?;
+    let parsed = reqwest::Url::parse(&base_url)
+        .map_err(|error| format!("llm_profile_base_url_invalid:{}", error))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().filter(|host| !host.is_empty()).is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err("llm_profile_base_url_invalid:unsupported_url_shape".to_string());
+    }
+    if parsed.scheme() == "http" {
+        let host = parsed.host_str().unwrap_or_default().trim_end_matches('.');
+        let local_http = host == "localhost"
+            || host == "host.docker.internal"
+            || host.ends_with(".local")
+            || host
+                .parse::<std::net::IpAddr>()
+                .ok()
+                .map(|ip| {
+                    ip.is_loopback()
+                        || match ip {
+                            std::net::IpAddr::V4(ip) => ip.is_private() || ip.is_link_local(),
+                            std::net::IpAddr::V6(ip) => ip.is_unicast_link_local(),
+                        }
+                })
+                .unwrap_or(false);
+        if !local_http {
+            return Err(format!("llm_profile_base_url_insecure_http:{}", host));
+        }
+    }
     Ok(format!("{}/chat/completions", base_url))
 }
 
@@ -132,9 +199,8 @@ fn openai_chat_content(payload: &Value) -> CommandResult<String> {
 
 /// Fail-closed confidence normalization. A non-numeric or out-of-range
 /// confidence collapses to 0.0 and gets a warning appended, so a pathological
-/// model output can never satisfy an auto-apply threshold. (Missing values are
-/// filled with the per-command default before this runs; that default is
-/// always below the auto-apply threshold.)
+/// model output can never satisfy an auto-apply threshold. Missing required
+/// fields are rejected by the command-specific validators before this runs.
 fn normalize_confidence_fail_closed(obj: &mut serde_json::Map<String, Value>) {
     let raw = obj.get("confidence").cloned();
     let in_range = raw
@@ -150,47 +216,101 @@ fn normalize_confidence_fail_closed(obj: &mut serde_json::Map<String, Value>) {
     }
 }
 
-/// Clamp a confidence value into 0.0..=1.0. Used for read-only outputs
-/// (cloud outline) where the value only feeds display and comparison.
-fn clamp_confidence_value(obj: &mut serde_json::Map<String, Value>) {
-    let clamped = obj
-        .get("confidence")
-        .and_then(Value::as_f64)
-        .map(|value| value.clamp(0.0, 1.0));
-    if let Some(value) = clamped {
-        obj.insert("confidence".to_string(), json!(value));
+pub(crate) fn parse_llm_json_content(content: &str) -> CommandResult<Value> {
+    let first_error = match serde_json::from_str::<Value>(content) {
+        Ok(value) => return Ok(value),
+        Err(error) => error,
+    };
+    let mut candidates = Vec::<(usize, usize, Value)>::new();
+    for (start, byte) in content.bytes().enumerate() {
+        if !matches!(byte, b'{' | b'[') {
+            continue;
+        }
+        let Some(end) = balanced_json_end(content, start) else {
+            continue;
+        };
+        if let Ok(value) = serde_json::from_str::<Value>(&content[start..end]) {
+            candidates.push((start, end, value));
+        }
+    }
+    let outermost = candidates
+        .iter()
+        .filter(|(start, end, _)| {
+            !candidates.iter().any(|(other_start, other_end, _)| {
+                other_start <= start && other_end >= end && (other_start < start || other_end > end)
+            })
+        })
+        .collect::<Vec<_>>();
+    match outermost.as_slice() {
+        [(_, _, value)] => Ok((*value).clone()),
+        [] => Err(format!("llm_json_parse_failed:{}", first_error)),
+        _ => Err("llm_json_parse_failed:ambiguous_wrapped_json".to_string()),
     }
 }
 
-pub(crate) fn parse_llm_json_content(content: &str) -> CommandResult<Value> {
-    serde_json::from_str::<Value>(content).or_else(|first_error| {
-        let trimmed = content.trim();
-        let start = trimmed.find('{');
-        let end = trimmed.rfind('}');
-        if let (Some(start), Some(end)) = (start, end) {
-            if start <= end {
-                return serde_json::from_str::<Value>(&trimmed[start..=end])
-                    .map_err(|error| format!("llm_json_parse_failed:{};{}", error, first_error));
+fn balanced_json_end(content: &str, start: usize) -> Option<usize> {
+    let bytes = content.as_bytes();
+    let mut stack = Vec::<u8>::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for index in start..bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
             }
+            continue;
         }
-        Err(format!("llm_json_parse_failed:{}", first_error))
-    })
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => stack.push(byte),
+            b'}' => {
+                if stack.pop() != Some(b'{') {
+                    return None;
+                }
+            }
+            b']' => {
+                if stack.pop() != Some(b'[') {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        if stack.is_empty() {
+            return Some(index + 1);
+        }
+    }
+    None
 }
 
 fn openai_post(profile: &Value, api_key: Option<&str>, body: Value) -> CommandResult<Value> {
     let mut last_error = String::new();
-    for attempt in 0..3 {
-        match openai_post_once(profile, api_key, body.clone()) {
+    let deadline = Instant::now() + llm_timeout(profile, 60_000);
+    for attempt in 0..MAX_LLM_ATTEMPTS {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("llm_timeout_budget_exhausted".to_string());
+        }
+        match openai_post_once(profile, api_key, body.clone(), remaining) {
             Ok(payload) => return Ok(payload),
             Err(error) => {
                 let retryable = is_retryable_llm_http_error(&error);
                 last_error = error;
-                if !retryable || attempt == 2 {
+                if !retryable || attempt + 1 == MAX_LLM_ATTEMPTS {
                     break;
                 }
                 let retry_after_ms = retry_after_ms_from_error(&last_error);
                 let backoff_ms = 400 * (attempt as u64 + 1);
-                thread::sleep(Duration::from_millis(retry_after_ms.max(backoff_ms)));
+                let delay = Duration::from_millis(retry_after_ms.max(backoff_ms));
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining <= delay {
+                    return Err(format!("llm_timeout_budget_exhausted:{}", last_error));
+                }
+                thread::sleep(delay);
             }
         }
     }
@@ -198,21 +318,33 @@ fn openai_post(profile: &Value, api_key: Option<&str>, body: Value) -> CommandRe
 }
 
 fn is_retryable_llm_http_error(error: &str) -> bool {
-    error.starts_with("llm_http_failed:")
+    if error.starts_with("llm_http_timeout:")
+        || error.starts_with("llm_http_connect_failed:")
         || error.starts_with("llm_http_body_failed:")
-        || error.starts_with("llm_http_429:")
-        || error.starts_with("llm_http_408:")
-        || error.starts_with("llm_http_502:")
-        || error.starts_with("llm_http_503:")
-        || error.starts_with("llm_http_504:")
-        || error.starts_with("llm_http_524:")
-        || (error.starts_with("llm_http_json_failed:") && error.contains("error code: 502"))
-        || (error.starts_with("llm_http_json_failed:") && error.contains("error code: 524"))
+    {
+        return true;
+    }
+    let Some(status) = error
+        .strip_prefix("llm_http_")
+        .and_then(|value| value.split(':').next())
+        .and_then(|value| value.parse::<u16>().ok())
+    else {
+        return false;
+    };
+    matches!(status, 408 | 425 | 429) || (500..=599).contains(&status)
 }
 
 /// Honor a server-provided Retry-After (seconds), capped so a hostile or
 /// misconfigured endpoint cannot stall the pipeline for minutes per retry.
 fn retry_after_ms_from_error(error: &str) -> u64 {
+    if let Some(milliseconds) = error
+        .rsplit(";retry_after_ms=")
+        .next()
+        .and_then(|suffix| suffix.split(';').next())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+    {
+        return milliseconds.min(5_000);
+    }
     error
         .rsplit(";retry_after=")
         .next()
@@ -222,10 +354,31 @@ fn retry_after_ms_from_error(error: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn openai_post_once(profile: &Value, api_key: Option<&str>, body: Value) -> CommandResult<Value> {
+fn retry_after_ms_from_header(value: &str) -> u64 {
+    if let Ok(seconds) = value.trim().parse::<u64>() {
+        return seconds.saturating_mul(1000).min(5_000);
+    }
+    let Ok(date) = chrono::DateTime::parse_from_rfc2822(value.trim()) else {
+        return 0;
+    };
+    let delay = date
+        .with_timezone(&Utc)
+        .signed_duration_since(Utc::now())
+        .num_milliseconds()
+        .max(0) as u64;
+    delay.min(5_000)
+}
+
+fn openai_post_once(
+    profile: &Value,
+    api_key: Option<&str>,
+    body: Value,
+    timeout: Duration,
+) -> CommandResult<Value> {
     let endpoint = openai_chat_completions_endpoint(profile)?;
     let client = reqwest::blocking::Client::builder()
-        .timeout(llm_timeout(profile, 60_000))
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| format!("llm_http_client_failed:{}", error))?;
     let mut request = client
@@ -235,22 +388,38 @@ fn openai_post_once(profile: &Value, api_key: Option<&str>, body: Value) -> Comm
     if let Some(secret) = api_key.filter(|value| !value.trim().is_empty()) {
         request = request.bearer_auth(secret);
     }
-    let response = request
-        .send()
-        .map_err(|error| format!("llm_http_failed:{}", error))?;
+    let response = request.send().map_err(|error| {
+        if error.is_timeout() {
+            format!("llm_http_timeout:{}", error)
+        } else if error.is_connect() {
+            format!("llm_http_connect_failed:{}", error)
+        } else {
+            format!("llm_http_transport_failed:{}", error)
+        }
+    })?;
     let status = response.status();
     let retry_after = response
         .headers()
         .get("retry-after")
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(retry_after_ms_from_header)
         .unwrap_or(0);
-    let text = response
-        .text()
+    if response.content_length().unwrap_or(0) > MAX_LLM_RESPONSE_BYTES {
+        return Err("llm_http_response_too_large".to_string());
+    }
+    let mut body_reader = response.take(MAX_LLM_RESPONSE_BYTES.saturating_add(1));
+    let mut body_bytes = Vec::new();
+    body_reader
+        .read_to_end(&mut body_bytes)
         .map_err(|error| format!("llm_http_body_failed:{}", error))?;
+    if body_bytes.len() as u64 > MAX_LLM_RESPONSE_BYTES {
+        return Err("llm_http_response_too_large".to_string());
+    }
+    let text = String::from_utf8(body_bytes)
+        .map_err(|error| format!("llm_http_body_invalid_utf8:{}", error))?;
     if !status.is_success() {
         let retry_suffix = if retry_after > 0 {
-            format!(";retry_after={}", retry_after.min(30))
+            format!(";retry_after_ms={retry_after}")
         } else {
             String::new()
         };
@@ -321,13 +490,61 @@ fn cloud_outline_prompt(input: &Value) -> String {
     )
 }
 
-fn data_url_for_image(image: &Value) -> CommandResult<String> {
-    let path = image
+fn read_llm_file(
+    root: &Path,
+    job_id: &str,
+    raw_path: &str,
+    max_bytes: u64,
+    kind: &str,
+) -> CommandResult<(PathBuf, Vec<u8>)> {
+    let path = PathBuf::from(raw_path.trim());
+    if !path.is_absolute() {
+        return Err(format!("llm_{}_path_must_be_absolute", kind));
+    }
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("llm_{}_root_unavailable:{}", kind, error))?;
+    let path = fs::canonicalize(&path)
+        .map_err(|error| format!("llm_{}_path_unavailable:{}:{}", kind, path.display(), error))?;
+    if !path.starts_with(&root) {
+        return Err(format!(
+            "llm_{}_path_outside_app_root:{}:{}",
+            kind,
+            job_id,
+            path.display()
+        ));
+    }
+    let metadata = fs::metadata(&path)
+        .map_err(|error| format!("llm_{}_metadata_failed:{}:{}", kind, path.display(), error))?;
+    if !metadata.is_file() {
+        return Err(format!("llm_{}_path_not_file:{}", kind, path.display()));
+    }
+    if metadata.len() > max_bytes {
+        return Err(format!(
+            "llm_{}_too_large:max_bytes={}:size_bytes={}",
+            kind,
+            max_bytes,
+            metadata.len()
+        ));
+    }
+    let bytes = fs::read(&path)
+        .map_err(|error| format!("llm_{}_read_failed:{}:{}", kind, path.display(), error))?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(format!(
+            "llm_{}_too_large:max_bytes={}:size_bytes={}",
+            kind,
+            max_bytes,
+            bytes.len()
+        ));
+    }
+    Ok((path, bytes))
+}
+
+fn data_url_for_image(root: &Path, job_id: &str, image: &Value) -> CommandResult<String> {
+    let raw_path = image
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| "vision_image_path_missing".to_string())?;
-    let bytes =
-        fs::read(path).map_err(|error| format!("vision_image_read_failed:{}:{}", path, error))?;
+    let (_path, bytes) = read_llm_file(root, job_id, raw_path, MAX_LLM_IMAGE_BYTES, "image")?;
     let mime_type = image
         .get("mimeType")
         .and_then(Value::as_str)
@@ -339,12 +556,11 @@ fn data_url_for_image(image: &Value) -> CommandResult<String> {
     ))
 }
 
-fn data_url_for_pdf(input: &Value) -> CommandResult<Option<Value>> {
-    let Some(path) = input.get("pdfPath").and_then(Value::as_str) else {
+fn data_url_for_pdf(root: &Path, job_id: &str, input: &Value) -> CommandResult<Option<Value>> {
+    let Some(raw_path) = input.get("pdfPath").and_then(Value::as_str) else {
         return Ok(None);
     };
-    let bytes =
-        fs::read(path).map_err(|error| format!("cloud_pdf_read_failed:{}:{}", path, error))?;
+    let (_path, bytes) = read_llm_file(root, job_id, raw_path, MAX_LLM_PDF_BYTES, "pdf")?;
     let filename = input
         .pointer("/sourceFile/originalName")
         .and_then(Value::as_str)
@@ -359,8 +575,14 @@ fn data_url_for_pdf(input: &Value) -> CommandResult<Option<Value>> {
     })))
 }
 
-fn append_pdf_images_to_content(content: &mut Vec<Value>, input: &Value) -> CommandResult<usize> {
+fn append_pdf_images_to_content(
+    root: &Path,
+    job_id: &str,
+    content: &mut Vec<Value>,
+    input: &Value,
+) -> CommandResult<usize> {
     let mut image_count = 0usize;
+    let mut inline_bytes = 0u64;
     for page in input
         .get("pages")
         .and_then(Value::as_array)
@@ -382,9 +604,12 @@ fn append_pdf_images_to_content(content: &mut Vec<Value>, input: &Value) -> Comm
             content.push(
                 json!({"type": "text", "text": format!("Page {}, image {}", page_index, label)}),
             );
-            content.push(
-                json!({"type": "image_url", "image_url": {"url": data_url_for_image(image)?}}),
-            );
+            let image_data_url = data_url_for_image(root, job_id, image)?;
+            inline_bytes = inline_bytes.saturating_add(image_data_url.len() as u64);
+            if inline_bytes > MAX_LLM_INLINE_BYTES {
+                return Err("vision_inline_payload_too_large".to_string());
+            }
+            content.push(json!({"type": "image_url", "image_url": {"url": image_data_url}}));
             image_count += 1;
         }
     }
@@ -416,11 +641,16 @@ fn run_openai_compatible_group_llm(
     Ok(parsed)
 }
 
-fn run_openai_compatible_vision_llm(input: &Value, api_key: Option<&str>) -> CommandResult<Value> {
+fn run_openai_compatible_vision_llm(
+    root: &Path,
+    job_id: &str,
+    input: &Value,
+    api_key: Option<&str>,
+) -> CommandResult<Value> {
     let profile = llm_profile(input);
     let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
     let mut content = vec![json!({"type": "text", "text": vision_prompt(input)})];
-    let image_count = append_pdf_images_to_content(&mut content, input)?;
+    let image_count = append_pdf_images_to_content(root, job_id, &mut content, input)?;
     if image_count == 0 {
         return Err("vision_transcription_no_images".to_string());
     }
@@ -443,13 +673,15 @@ fn run_openai_compatible_vision_llm(input: &Value, api_key: Option<&str>) -> Com
 }
 
 fn run_openai_compatible_vision_answer_llm(
+    root: &Path,
+    job_id: &str,
     input: &Value,
     api_key: Option<&str>,
 ) -> CommandResult<Value> {
     let profile = llm_profile(input);
     let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
     let mut content = vec![json!({"type": "text", "text": vision_answer_prompt(input)})];
-    let image_count = append_pdf_images_to_content(&mut content, input)?;
+    let image_count = append_pdf_images_to_content(root, job_id, &mut content, input)?;
     if image_count == 0 {
         return Err("vision_answer_extraction_no_images".to_string());
     }
@@ -472,6 +704,8 @@ fn run_openai_compatible_vision_answer_llm(
 }
 
 fn run_openai_compatible_cloud_outline_llm(
+    root: &Path,
+    job_id: &str,
     input: &Value,
     api_key: Option<&str>,
 ) -> CommandResult<Value> {
@@ -479,7 +713,7 @@ fn run_openai_compatible_cloud_outline_llm(
     let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
     let mut warnings = Vec::<String>::new();
     let mut content = vec![json!({"type": "text", "text": cloud_outline_prompt(input)})];
-    if let Some(pdf_part) = data_url_for_pdf(input)? {
+    if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
         content.push(pdf_part);
     } else {
         warnings.push("cloud_outline_pdf_file_unavailable".to_string());
@@ -503,7 +737,8 @@ fn run_openai_compatible_cloud_outline_llm(
             let mut image_content = vec![
                 json!({"type": "text", "text": format!("{}\nThe direct PDF file request failed, so compare using the supplied rendered/extracted page images.", cloud_outline_prompt(input))}),
             ];
-            let image_count = append_pdf_images_to_content(&mut image_content, input)?;
+            let image_count =
+                append_pdf_images_to_content(root, job_id, &mut image_content, input)?;
             if image_count == 0 {
                 return Err(format!(
                     "cloud_outline_direct_pdf_failed_and_no_images:{}",
@@ -557,43 +792,139 @@ pub(crate) fn validate_llm_suggestion_output(
         return Err("suggestion_not_object".to_string());
     };
     if !obj.get("confidence").map(Value::is_number).unwrap_or(false) {
-        obj.insert("confidence".to_string(), json!(0.65));
+        return Err("suggestion_confidence_missing_or_invalid".to_string());
     }
-    normalize_confidence_fail_closed(obj);
-    // Missing structural fields are completed with safe defaults (empty
-    // arrays) instead of rejecting the whole output, but the completion is
-    // recorded as a warning so downstream trust decisions and the diff
-    // preview can see that the model output was incomplete. Defaults never
-    // raise trust: the default confidence stays below the auto-apply
-    // threshold.
-    let mut defaulted_fields = Vec::<&str>::new();
     if !obj.get("patch").map(Value::is_array).unwrap_or(false) {
-        obj.insert("patch".to_string(), json!([]));
-        defaulted_fields.push("patch");
-    }
-    if !obj.get("warnings").map(Value::is_array).unwrap_or(false) {
-        obj.insert("warnings".to_string(), json!([]));
-        defaulted_fields.push("warnings");
+        return Err("suggestion_patch_missing_or_invalid".to_string());
     }
     if !obj.get("questions").map(Value::is_array).unwrap_or(false) {
-        obj.insert("questions".to_string(), json!([]));
-        defaulted_fields.push("questions");
+        return Err("suggestion_questions_missing_or_invalid".to_string());
     }
-    if !defaulted_fields.is_empty() {
-        if let Some(warnings) = obj.get_mut("warnings").and_then(Value::as_array_mut) {
-            warnings.push(json!(format!(
-                "output_fields_defaulted:{}",
-                defaulted_fields.join(",")
-            )));
+    if let Some(warnings) = obj.get("warnings") {
+        if !warnings.is_array() {
+            return Err("suggestion_warnings_invalid".to_string());
+        }
+    } else {
+        obj.insert("warnings".to_string(), json!([]));
+    }
+
+    let evidence = obj
+        .get("evidence")
+        .ok_or_else(|| "suggestion_evidence_missing".to_string())?;
+    let evidence_obj = evidence
+        .as_object()
+        .ok_or_else(|| "suggestion_evidence_invalid".to_string())?;
+    let source_block_ids = evidence_obj
+        .get("sourceBlockIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "suggestion_evidence_source_block_ids_missing".to_string())?;
+    for block_id in source_block_ids {
+        if block_id
+            .as_str()
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err("suggestion_evidence_source_block_id_invalid".to_string());
         }
     }
-    let evidence = obj
-        .entry("evidence".to_string())
-        .or_insert_with(|| json!({}));
-    if !evidence.is_object() {
-        *evidence = json!({});
+    let quotes = evidence_obj
+        .get("quotes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "suggestion_evidence_quotes_missing".to_string())?;
+    for quote in quotes {
+        let quote_obj = quote
+            .as_object()
+            .ok_or_else(|| "suggestion_evidence_quote_invalid".to_string())?;
+        if quote_obj
+            .get("blockId")
+            .and_then(Value::as_str)
+            .is_none_or(|value| value.trim().is_empty())
+            || quote_obj
+                .get("text")
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err("suggestion_evidence_quote_invalid".to_string());
+        }
     }
-    if let Some(evidence_obj) = evidence.as_object_mut() {
+
+    for patch in obj
+        .get("patch")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let patch_obj = patch
+            .as_object()
+            .ok_or_else(|| "suggestion_patch_item_invalid".to_string())?;
+        if patch_obj.get("op").and_then(Value::as_str) != Some("replace") {
+            return Err("suggestion_patch_op_invalid".to_string());
+        }
+        let path = patch_obj
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "suggestion_patch_path_missing".to_string())?;
+        let value = patch_obj
+            .get("value")
+            .ok_or_else(|| "suggestion_patch_value_missing".to_string())?;
+        match path {
+            "/kind" => {
+                let value = value
+                    .as_str()
+                    .ok_or_else(|| "suggestion_patch_kind_invalid".to_string())?;
+                if !allowed_question_kind(value) {
+                    return Err(format!("invalid_patch_kind:{}", value));
+                }
+            }
+            "/layout/template" => {
+                if value.as_str().is_none_or(|value| value.trim().is_empty()) {
+                    return Err("suggestion_patch_layout_template_invalid".to_string());
+                }
+            }
+            other => return Err(format!("suggestion_patch_path_invalid:{}", other)),
+        }
+    }
+
+    for question in obj
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let question_obj = question
+            .as_object()
+            .ok_or_else(|| "suggestion_question_invalid".to_string())?;
+        if question_obj
+            .get("id")
+            .and_then(Value::as_str)
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err("suggestion_question_id_invalid".to_string());
+        }
+        if let Some(prompt) = question_obj.get("prompt") {
+            if !prompt.is_string() {
+                return Err("suggestion_question_prompt_invalid".to_string());
+            }
+        }
+        if let Some(interaction) = question_obj.get("interaction") {
+            let interaction_obj = interaction
+                .as_object()
+                .ok_or_else(|| "suggestion_question_interaction_invalid".to_string())?;
+            if interaction_obj
+                .get("type")
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err("suggestion_question_interaction_type_invalid".to_string());
+            }
+        }
+    }
+
+    // Warnings are optional metadata, but every field that can influence
+    // adoption is required and structurally checked. A malformed model
+    // response therefore becomes a gateway error and is handled by the
+    // caller's explicit low-confidence fallback path.
+    normalize_confidence_fail_closed(obj);
+    if let Some(evidence_obj) = obj.get_mut("evidence").and_then(Value::as_object_mut) {
         evidence_obj.insert("mode".to_string(), json!(mode));
         evidence_obj.insert("source".to_string(), json!("openai-compatible-rust"));
         evidence_obj.insert(
@@ -604,20 +935,6 @@ pub(crate) fn validate_llm_suggestion_output(
             "usage".to_string(),
             payload.get("usage").cloned().unwrap_or(Value::Null),
         );
-        if !evidence_obj
-            .get("sourceBlockIds")
-            .map(Value::is_array)
-            .unwrap_or(false)
-        {
-            evidence_obj.insert("sourceBlockIds".to_string(), json!([]));
-        }
-        if !evidence_obj
-            .get("quotes")
-            .map(Value::is_array)
-            .unwrap_or(false)
-        {
-            evidence_obj.insert("quotes".to_string(), json!([]));
-        }
     }
     Ok(())
 }
@@ -634,7 +951,7 @@ fn validate_vision_transcription_output(
         return Err("transcription_not_object".to_string());
     };
     if !obj.get("text").map(Value::is_string).unwrap_or(false) {
-        obj.insert("text".to_string(), json!(""));
+        return Err("transcription_text_missing_or_invalid".to_string());
     }
     let has_text = obj
         .get("text")
@@ -642,13 +959,13 @@ fn validate_vision_transcription_output(
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false);
     if !obj.get("confidence").map(Value::is_number).unwrap_or(false) {
-        obj.insert(
-            "confidence".to_string(),
-            json!(if has_text { 0.6 } else { 0.0 }),
-        );
+        return Err("transcription_confidence_missing_or_invalid".to_string());
     }
-    normalize_confidence_fail_closed(obj);
-    if !obj.get("warnings").map(Value::is_array).unwrap_or(false) {
+    if let Some(warnings) = obj.get("warnings") {
+        if !warnings.is_array() {
+            return Err("transcription_warnings_invalid".to_string());
+        }
+    } else {
         obj.insert("warnings".to_string(), json!([]));
     }
     if !has_text {
@@ -656,12 +973,15 @@ fn validate_vision_transcription_output(
             warnings.push(json!("empty-vision-transcription"));
         }
     }
+    if let Some(evidence) = obj.get("evidence") {
+        if !evidence.is_object() {
+            return Err("transcription_evidence_invalid".to_string());
+        }
+    }
+    normalize_confidence_fail_closed(obj);
     let evidence = obj
         .entry("evidence".to_string())
         .or_insert_with(|| json!({}));
-    if !evidence.is_object() {
-        *evidence = json!({});
-    }
     if let Some(evidence_obj) = evidence.as_object_mut() {
         evidence_obj.insert("mode".to_string(), json!("transcribe_pdf_images"));
         evidence_obj.insert("source".to_string(), json!("openai-compatible-vision-rust"));
@@ -731,35 +1051,36 @@ fn normalize_answer_value(value: &Value) -> Option<Value> {
     }
 }
 
-fn normalize_answer_map_value(raw: Option<Value>) -> serde_json::Map<String, Value> {
+fn normalize_answer_map_value_checked(
+    raw: Option<&Value>,
+    field: &str,
+) -> CommandResult<serde_json::Map<String, Value>> {
+    let value = raw.ok_or_else(|| format!("{field}_missing"))?;
+    let map = value
+        .as_object()
+        .ok_or_else(|| format!("{field}_not_object"))?;
     let mut normalized = serde_json::Map::new();
-    if let Some(Value::Object(map)) = raw {
-        for (key, value) in map {
-            let Some(number) = normalize_question_number_key(&key) else {
-                continue;
-            };
-            if let Some(answer) = normalize_answer_value(&value) {
-                normalized.insert(number, answer);
-            }
+    for (key, value) in map {
+        let number = normalize_question_number_key(key)
+            .ok_or_else(|| format!("{field}_question_number_invalid:{key}"))?;
+        if normalized.contains_key(&number) {
+            return Err(format!("{field}_duplicate_question_number:{number}"));
         }
+        let answer =
+            normalize_answer_value(value).ok_or_else(|| format!("{field}_answer_invalid:{key}"))?;
+        normalized.insert(number, answer);
     }
-    normalized
+    Ok(normalized)
 }
 
-fn ensure_json_array_field(obj: &mut serde_json::Map<String, Value>, key: &str) {
-    if !obj.get(key).map(Value::is_array).unwrap_or(false) {
-        obj.insert(key.to_string(), json!([]));
-    }
-}
-
-fn normalize_cloud_outline_kind(kind: &str) -> String {
+fn normalize_cloud_outline_kind(kind: &str) -> Option<String> {
     let normalized = kind.trim().to_ascii_lowercase().replace(['-', ' '], "_");
     match normalized.as_str() {
         "note_completion" | "notes_completion" | "note_completion_questions" => {
-            "summary_completion".to_string()
+            Some("summary_completion".to_string())
         }
-        value if allowed_question_kind(value) => value.to_string(),
-        _ => "short_answer".to_string(),
+        value if allowed_question_kind(value) => Some(value.to_string()),
+        _ => None,
     }
 }
 
@@ -774,17 +1095,63 @@ fn validate_vision_answer_output(
     let Some(obj) = output.as_object_mut() else {
         return Err("vision_answer_not_object".to_string());
     };
-    let answers = normalize_answer_map_value(obj.remove("answers"));
+    let answers = normalize_answer_map_value_checked(obj.get("answers"), "vision_answer_answers")?;
     obj.insert("answers".to_string(), Value::Object(answers.clone()));
     if answers.is_empty() {
         return Err("vision_answer_answers_empty".to_string());
     }
     if !obj.get("confidence").map(Value::is_number).unwrap_or(false) {
-        obj.insert("confidence".to_string(), json!(0.6));
+        return Err("vision_answer_confidence_missing_or_invalid".to_string());
     }
-    ensure_json_array_field(obj, "warnings");
+    if let Some(warnings) = obj.get("warnings") {
+        if !warnings.is_array() {
+            return Err("vision_answer_warnings_invalid".to_string());
+        }
+    } else {
+        obj.insert("warnings".to_string(), json!([]));
+    }
+    if let Some(evidence) = obj.get("evidence") {
+        if !evidence.is_array() {
+            return Err("vision_answer_evidence_invalid".to_string());
+        }
+    } else {
+        return Err("vision_answer_evidence_missing".to_string());
+    }
+    let evidence_items = obj
+        .get("evidence")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "vision_answer_evidence_invalid".to_string())?;
+    if evidence_items.is_empty() {
+        return Err("vision_answer_evidence_empty".to_string());
+    }
+    for evidence in evidence_items {
+        let evidence_obj = evidence
+            .as_object()
+            .ok_or_else(|| "vision_answer_evidence_item_invalid".to_string())?;
+        let question_number = evidence_obj.get("questionNumber").and_then(|value| {
+            value
+                .as_str()
+                .and_then(normalize_question_number_key)
+                .or_else(|| {
+                    value
+                        .as_u64()
+                        .and_then(|number| normalize_question_number_key(&number.to_string()))
+                })
+        });
+        if question_number.is_none()
+            || evidence_obj
+                .get("pageIndex")
+                .and_then(Value::as_u64)
+                .is_none_or(|value| value == 0)
+            || evidence_obj
+                .get("quote")
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err("vision_answer_evidence_item_invalid".to_string());
+        }
+    }
     normalize_confidence_fail_closed(obj);
-    ensure_json_array_field(obj, "evidence");
     let evidence = obj
         .entry("metadata".to_string())
         .or_insert_with(|| json!({}));
@@ -817,28 +1184,146 @@ fn validate_cloud_outline_output(
     let Some(obj) = output.as_object_mut() else {
         return Err("cloud_outline_not_object".to_string());
     };
+    if !obj.get("title").map(Value::is_string).unwrap_or(false) {
+        return Err("cloud_outline_title_missing_or_invalid".to_string());
+    }
     if !obj.get("groups").map(Value::is_array).unwrap_or(false) {
-        obj.insert("groups".to_string(), json!([]));
-        if let Some(warnings) = obj.get_mut("warnings").and_then(Value::as_array_mut) {
-            warnings.push(json!("output_fields_defaulted:groups"));
-        } else {
-            obj.insert(
-                "warnings".to_string(),
-                json!(["output_fields_defaulted:groups"]),
-            );
+        return Err("cloud_outline_groups_missing_or_invalid".to_string());
+    }
+    if !obj.get("confidence").map(Value::is_number).unwrap_or(false) {
+        return Err("cloud_outline_confidence_missing_or_invalid".to_string());
+    }
+    if let Some(warnings) = obj.get("warnings") {
+        if !warnings.is_array() {
+            return Err("cloud_outline_warnings_invalid".to_string());
+        }
+    } else {
+        obj.insert("warnings".to_string(), json!([]));
+    }
+
+    let answer_key =
+        normalize_answer_map_value_checked(obj.get("answerKey"), "cloud_outline_answer_key")?;
+    obj.insert("answerKey".to_string(), Value::Object(answer_key));
+
+    let groups = obj
+        .get("groups")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or_else(|| "cloud_outline_groups_missing_or_invalid".to_string())?;
+    for (index, group) in groups.iter().enumerate() {
+        let group_obj = group
+            .as_object()
+            .ok_or_else(|| format!("cloud_outline_group_invalid:{index}"))?;
+        let kind = group_obj
+            .get("kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("cloud_outline_group_kind_missing:{index}"))?;
+        let _normalized_kind = normalize_cloud_outline_kind(kind)
+            .ok_or_else(|| format!("cloud_outline_group_kind_invalid:{index}:{kind}"))?;
+        let _layout_hint = group_obj
+            .get("layoutHint")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("cloud_outline_group_layout_missing:{index}"))?;
+        if !group_obj
+            .get("notesText")
+            .map(Value::is_string)
+            .unwrap_or(false)
+        {
+            return Err(format!("cloud_outline_group_notes_missing:{index}"));
+        }
+        let range = group_obj
+            .get("range")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("cloud_outline_group_range_missing:{index}"))?;
+        if range.len() != 2 {
+            return Err(format!("cloud_outline_group_range_invalid:{index}"));
+        }
+        let start = range[0]
+            .as_u64()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| format!("cloud_outline_group_range_invalid:{index}"))?;
+        let end = range[1]
+            .as_u64()
+            .filter(|value| *value >= start)
+            .ok_or_else(|| format!("cloud_outline_group_range_invalid:{index}"))?;
+        let question_ids = group_obj
+            .get("questionIds")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("cloud_outline_group_question_ids_missing:{index}"))?;
+        let expected_count = end.saturating_sub(start).saturating_add(1) as usize;
+        if question_ids.len() != expected_count {
+            return Err(format!(
+                "cloud_outline_group_question_ids_count_invalid:{index}"
+            ));
+        }
+        let mut seen_question_ids = std::collections::BTreeSet::new();
+        for question_id in question_ids {
+            let question_id = question_id
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| format!("cloud_outline_group_question_id_invalid:{index}"))?;
+            if !seen_question_ids.insert(question_id) {
+                return Err(format!(
+                    "cloud_outline_group_question_id_duplicate:{index}:{question_id}"
+                ));
+            }
+        }
+        if !group_obj
+            .get("confidence")
+            .map(Value::is_number)
+            .unwrap_or(false)
+        {
+            return Err(format!(
+                "cloud_outline_group_confidence_missing_or_invalid:{index}"
+            ));
+        }
+        if let Some(warnings) = group_obj.get("warnings") {
+            if !warnings.is_array() {
+                return Err(format!("cloud_outline_group_warnings_invalid:{index}"));
+            }
+        }
+        let evidence = group_obj
+            .get("evidence")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("cloud_outline_group_evidence_missing:{index}"))?;
+        let quotes = evidence
+            .get("quotes")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("cloud_outline_group_quotes_missing:{index}"))?;
+        if quotes.is_empty() {
+            return Err(format!("cloud_outline_group_quotes_empty:{index}"));
+        }
+        for quote in quotes {
+            let quote_obj = quote
+                .as_object()
+                .ok_or_else(|| format!("cloud_outline_group_quote_invalid:{index}"))?;
+            if quote_obj
+                .get("pageIndex")
+                .and_then(Value::as_u64)
+                .is_none_or(|value| value == 0)
+                || quote_obj
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err(format!("cloud_outline_group_quote_invalid:{index}"));
+            }
         }
     }
+
+    normalize_confidence_fail_closed(obj);
     if let Some(groups) = obj.get_mut("groups").and_then(Value::as_array_mut) {
-        for group in groups {
+        for (index, group) in groups.iter_mut().enumerate() {
             let Some(group_obj) = group.as_object_mut() else {
-                continue;
+                return Err(format!("cloud_outline_group_invalid:{index}"));
             };
             let kind = group_obj
                 .get("kind")
                 .and_then(Value::as_str)
-                .unwrap_or("short_answer")
+                .unwrap_or_default()
                 .to_string();
-            let normalized_kind = normalize_cloud_outline_kind(&kind);
+            let normalized_kind = normalize_cloud_outline_kind(&kind)
+                .ok_or_else(|| format!("cloud_outline_group_kind_invalid:{index}:{kind}"))?;
             if normalized_kind != kind {
                 group_obj.insert("kind".to_string(), json!(normalized_kind));
                 group_obj.insert("rawKind".to_string(), json!(kind));
@@ -849,57 +1334,12 @@ fn validate_cloud_outline_output(
                     items.push(json!(format!("kind normalized from {}", kind)));
                 }
             }
-            if !group_obj
-                .get("layoutHint")
-                .map(Value::is_string)
-                .unwrap_or(false)
-            {
-                group_obj.insert("layoutHint".to_string(), json!(""));
-            }
-            if !group_obj
-                .get("notesText")
-                .map(Value::is_string)
-                .unwrap_or(false)
-            {
-                group_obj.insert("notesText".to_string(), json!(""));
-            }
-            if !group_obj.get("range").map(Value::is_array).unwrap_or(false) {
-                group_obj.insert("range".to_string(), json!([]));
-            }
-            if !group_obj
-                .get("questionIds")
-                .map(Value::is_array)
-                .unwrap_or(false)
-            {
-                group_obj.insert("questionIds".to_string(), json!([]));
-            }
-            if !group_obj
-                .get("confidence")
-                .map(Value::is_number)
-                .unwrap_or(false)
-            {
-                group_obj.insert("confidence".to_string(), json!(0.5));
-            }
-            clamp_confidence_value(group_obj);
-            let evidence = group_obj
-                .entry("evidence".to_string())
-                .or_insert_with(|| json!({}));
-            if !evidence.is_object() {
-                *evidence = json!({});
-            }
-            if let Some(evidence_obj) = evidence.as_object_mut() {
-                ensure_json_array_field(evidence_obj, "quotes");
-            }
-            ensure_json_array_field(group_obj, "warnings");
+            group_obj
+                .entry("warnings".to_string())
+                .or_insert_with(|| json!([]));
+            normalize_confidence_fail_closed(group_obj);
         }
     }
-    let answer_key = normalize_answer_map_value(obj.remove("answerKey"));
-    obj.insert("answerKey".to_string(), Value::Object(answer_key));
-    if !obj.get("confidence").map(Value::is_number).unwrap_or(false) {
-        obj.insert("confidence".to_string(), json!(0.5));
-    }
-    clamp_confidence_value(obj);
-    ensure_json_array_field(obj, "warnings");
     let evidence = obj
         .entry("metadata".to_string())
         .or_insert_with(|| json!({}));

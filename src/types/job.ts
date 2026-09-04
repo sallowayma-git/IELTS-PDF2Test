@@ -90,7 +90,6 @@ export interface VisionAnswerCandidates {
   schemaVersion: string;
   jobId: string;
   profileId?: string | null;
-  generatedAt: string;
   candidateCount: number;
   candidates: VisionAnswerCandidate[];
 }

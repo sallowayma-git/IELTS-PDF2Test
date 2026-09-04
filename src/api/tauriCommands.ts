@@ -221,8 +221,7 @@ export async function applyLlmSuggestion(
 
 export async function applyVisionAnswerCandidates(
   jobId: string,
-  decisions: { questionNumber: string; accept: boolean; answer?: unknown }[],
-  candidateGeneratedAt?: string
+  decisions: { questionNumber: string; accept: boolean; answer?: unknown }[]
 ): Promise<{
   authoringIr: ReadingAuthoringIr;
   acceptedQuestionIds: string[];
@@ -232,7 +231,6 @@ export async function applyVisionAnswerCandidates(
 }> {
   return command("apply_vision_answer_candidates", {
     jobId,
-    generatedAt: candidateGeneratedAt,
     decisions
   });
 }

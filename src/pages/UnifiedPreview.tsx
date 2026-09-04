@@ -21,7 +21,10 @@ import type { AutoPipelineReport, GroupKind, LlmSuggestion, PreviewAssets, Quest
 const CLOUD_REVIEW_PENDING_KEY_PREFIX = "ielts-author-studio.cloud-review.";
 const CLOUD_REVIEW_FAILED_KEY_PREFIX = "ielts-author-studio.cloud-review.failed.";
 const CLOUD_REVIEW_QUEUE_STORAGE_KEY = "ielts-author-studio.cloud-review.queue";
+const CLOUD_REVIEW_LEASE_STORAGE_KEY = "ielts-author-studio.cloud-review.lease";
+const CLOUD_REVIEW_LEASE_TTL_MS = 15 * 60 * 1000;
 const CLOUD_REVIEW_EVENT_NAME = "ielts-author-studio.cloud-review.event";
+const CLOUD_REVIEW_WORKER_ID = `worker-${Math.random().toString(36).slice(2)}-${Date.now()}`;
 type AuditIssue = string | { message?: string; [key: string]: unknown };
 type CloudReviewQueueItem = { jobId: string; profileId?: string };
 type CloudReviewQueuePhase = "queued" | "running" | "completed" | "failed";
@@ -74,29 +77,89 @@ function cloudReviewWindow(): CloudReviewRuntimeWindow | undefined {
   return window as CloudReviewRuntimeWindow;
 }
 
-function readCloudReviewQueue(): CloudReviewQueueItem[] {
+function cloudReviewStorage(): Storage | undefined {
   const runtimeWindow = cloudReviewWindow();
-  if (!runtimeWindow) return [];
-  const raw = runtimeWindow.sessionStorage.getItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY);
+  if (!runtimeWindow) return undefined;
+  try {
+    return runtimeWindow.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+function cloudReviewErrorText(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.replace(/\s+/g, " ").trim().slice(0, 500) || "云端复核失败";
+}
+
+function readCloudReviewQueue(): CloudReviewQueueItem[] {
+  const storage = cloudReviewStorage();
+  if (!storage) return [];
+  const raw = storage.getItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as CloudReviewQueueItem[];
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is CloudReviewQueueItem => !!item?.jobId);
+    const deduped = new Map<string, CloudReviewQueueItem>();
+    for (const item of parsed) {
+      if (typeof item?.jobId !== "string" || !item.jobId.trim()) continue;
+      const profileId = typeof item.profileId === "string" && item.profileId.trim() ? item.profileId : undefined;
+      deduped.set(item.jobId, { jobId: item.jobId, profileId });
+    }
+    return [...deduped.values()];
   } catch {
-    runtimeWindow.sessionStorage.removeItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY);
+    storage.removeItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY);
     return [];
   }
 }
 
 function writeCloudReviewQueue(queue: CloudReviewQueueItem[]): void {
-  const runtimeWindow = cloudReviewWindow();
-  if (!runtimeWindow) return;
-  if (queue.length) {
-    runtimeWindow.sessionStorage.setItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY, JSON.stringify(queue));
-    return;
+  const storage = cloudReviewStorage();
+  if (!storage) return;
+  try {
+    if (queue.length) {
+      storage.setItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY, JSON.stringify(queue));
+      return;
+    }
+    storage.removeItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY);
+  } catch {
+    // A restricted WebView may deny persistent storage; the foreground run
+    // still reports its own result, but no durable queue is claimed.
   }
-  runtimeWindow.sessionStorage.removeItem(CLOUD_REVIEW_QUEUE_STORAGE_KEY);
+}
+
+function acquireCloudReviewLease(): boolean {
+  const storage = cloudReviewStorage();
+  if (!storage) return false;
+  const now = Date.now();
+  try {
+    const raw = storage.getItem(CLOUD_REVIEW_LEASE_STORAGE_KEY);
+    if (raw) {
+      const lease = JSON.parse(raw) as { owner?: string; expiresAt?: number };
+      if (lease.owner && lease.owner !== CLOUD_REVIEW_WORKER_ID && typeof lease.expiresAt === "number" && lease.expiresAt > now) {
+        return false;
+      }
+    }
+    storage.setItem(CLOUD_REVIEW_LEASE_STORAGE_KEY, JSON.stringify({
+      owner: CLOUD_REVIEW_WORKER_ID,
+      expiresAt: now + CLOUD_REVIEW_LEASE_TTL_MS
+    }));
+    const confirmed = JSON.parse(storage.getItem(CLOUD_REVIEW_LEASE_STORAGE_KEY) ?? "{}");
+    return confirmed.owner === CLOUD_REVIEW_WORKER_ID;
+  } catch {
+    return false;
+  }
+}
+
+function releaseCloudReviewLease(): void {
+  const storage = cloudReviewStorage();
+  if (!storage) return;
+  try {
+    const lease = JSON.parse(storage.getItem(CLOUD_REVIEW_LEASE_STORAGE_KEY) ?? "{}");
+    if (lease.owner === CLOUD_REVIEW_WORKER_ID) storage.removeItem(CLOUD_REVIEW_LEASE_STORAGE_KEY);
+  } catch {
+    storage.removeItem(CLOUD_REVIEW_LEASE_STORAGE_KEY);
+  }
 }
 
 function removeCloudReviewQueueItem(jobId: string): void {
@@ -136,6 +199,7 @@ export function enqueueBackgroundCloudReview(jobId: string, profileId?: string |
 
   writeCloudReviewQueue([...queue, { jobId, profileId: normalizedProfileId }]);
   emitCloudReviewQueueEvent({ jobId, phase: "queued" });
+  startBackgroundCloudReviewScheduler();
   return true;
 }
 
@@ -143,6 +207,7 @@ export function startBackgroundCloudReviewScheduler(): void {
   const runtimeWindow = cloudReviewWindow();
   if (!runtimeWindow) return;
   if (runtimeWindow.__IELTS_CLOUD_REVIEW_WORKER__) return;
+  if (!readCloudReviewQueue().length || !acquireCloudReviewLease()) return;
 
   runtimeWindow.__IELTS_CLOUD_REVIEW_WORKER__ = (async () => {
     try {
@@ -150,30 +215,33 @@ export function startBackgroundCloudReviewScheduler(): void {
         const next = readCloudReviewQueue()[0];
         if (!next) break;
 
-        runtimeWindow.sessionStorage.setItem(pendingCloudReviewKey(next.jobId), "1");
-        runtimeWindow.sessionStorage.removeItem(failedCloudReviewKey(next.jobId));
+        const storage = cloudReviewStorage();
+        storage?.setItem(pendingCloudReviewKey(next.jobId), "1");
+        storage?.removeItem(failedCloudReviewKey(next.jobId));
         emitCloudReviewQueueEvent({ jobId: next.jobId, phase: "running" });
         try {
           const report = await runCloudReview(next.jobId, next.profileId ? { profileId: next.profileId } : undefined);
-          runtimeWindow.sessionStorage.removeItem(failedCloudReviewKey(next.jobId));
+          storage?.removeItem(failedCloudReviewKey(next.jobId));
           emitCloudReviewQueueEvent({ jobId: next.jobId, phase: "completed", report });
         } catch (error) {
-          runtimeWindow.sessionStorage.setItem(
+          const errorText = cloudReviewErrorText(error);
+          storage?.setItem(
             failedCloudReviewKey(next.jobId),
-            error instanceof Error ? error.message : String(error)
+            errorText
           );
           emitCloudReviewQueueEvent({
             jobId: next.jobId,
             phase: "failed",
-            error: error instanceof Error ? error.message : String(error)
+            error: errorText
           });
         } finally {
-          runtimeWindow.sessionStorage.removeItem(pendingCloudReviewKey(next.jobId));
+          storage?.removeItem(pendingCloudReviewKey(next.jobId));
           removeCloudReviewQueueItem(next.jobId);
         }
       }
     } finally {
       runtimeWindow.__IELTS_CLOUD_REVIEW_WORKER__ = null;
+      releaseCloudReviewLease();
       if (readCloudReviewQueue().length) startBackgroundCloudReviewScheduler();
     }
   })();
@@ -394,9 +462,10 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
 
     const sourceIsPdf = mainSourceIsPdf(nextIr);
     const nextCloud = cloudStateFromReport(nextPipeline, sourceIsPdf);
-    const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
+    const storage = cloudReviewStorage();
+    const pending = storage?.getItem(pendingCloudReviewKey(jobId)) === "1";
     const queued = isCloudReviewQueued(jobId);
-    const failedMessage = window.sessionStorage.getItem(failedCloudReviewKey(jobId));
+    const failedMessage = storage?.getItem(failedCloudReviewKey(jobId));
     // Only a real completion/failure state (done/warning/error) may override
     // the background-review indicators. A missing report (localOnly pipeline
     // minimizes pipeline-report.json) surfaces as "unavailable", which must
@@ -497,7 +566,8 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
   }, [activeGroup, activeQuestionId]);
 
   useEffect(() => {
-    const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
+    const storage = cloudReviewStorage();
+    const pending = storage?.getItem(pendingCloudReviewKey(jobId)) === "1";
     if (!pending) return undefined;
     let attempts = 0;
     cloudPollTimer.current = window.setInterval(() => {
@@ -505,7 +575,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
       // Bounded polling: if the review never lands (worker died, queue lost),
       // stop after ~4 minutes instead of polling forever.
       if (attempts > 150) {
-        window.sessionStorage.removeItem(pendingCloudReviewKey(jobId));
+        storage?.removeItem(pendingCloudReviewKey(jobId));
         if (cloudPollTimer.current) window.clearInterval(cloudPollTimer.current);
         return;
       }
@@ -518,7 +588,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
         const nextCloud = cloudStateFromReport(nextReport, mainSourceIsPdf(detail.authoringIr));
         setCloudState(nextCloud.state);
         setCloudLabel(nextCloud.label);
-        window.sessionStorage.removeItem(pendingCloudReviewKey(jobId));
+        storage?.removeItem(pendingCloudReviewKey(jobId));
         if (cloudPollTimer.current) window.clearInterval(cloudPollTimer.current);
       }).catch(() => undefined);
     }, 1600);
@@ -536,9 +606,10 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
 
     const comparison = pipelineReport?.quality?.cloudComparison;
     if (comparison?.attempted) return;
-    if (window.sessionStorage.getItem(failedCloudReviewKey(jobId))) return;
+    const storage = cloudReviewStorage();
+    if (storage?.getItem(failedCloudReviewKey(jobId))) return;
 
-    const pending = window.sessionStorage.getItem(pendingCloudReviewKey(jobId)) === "1";
+    const pending = storage?.getItem(pendingCloudReviewKey(jobId)) === "1";
     if (pending) {
       setCloudState("running");
       setCloudLabel("云端复核中");
@@ -702,8 +773,7 @@ export function UnifiedPreview({ jobId, refresh }: { jobId: string; refresh: () 
     try {
       const result = await applyVisionAnswerCandidates(
         jobId,
-        [{ questionNumber: candidate.questionNumber, accept }],
-        visionAnswerCandidates?.generatedAt
+        [{ questionNumber: candidate.questionNumber, accept }]
       );
       if (result?.authoringIr) setIr(result.authoringIr);
       if (!accept) {

@@ -157,10 +157,6 @@ pub(crate) fn source_review_status(
 }
 
 pub(crate) fn source_review_status_for_job(root: &Path, job_id: &str) -> CommandResult<Value> {
-    let saved = read_json_opt(&source_review_path(root, job_id))?;
-    if let Some(saved) = saved {
-        return Ok(saved);
-    }
     let document_ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
     source_review_status(root, job_id, document_ir.as_ref())
 }
@@ -175,9 +171,13 @@ pub(crate) fn write_source_review_status(
     let review_value = source_review_status(root, job_id, doc)?;
     let mut review = SourceReviewV1::from_value(&review_value)
         .ok_or_else(|| "invalid_source_review_status".to_string())?;
-    review.resolved = resolved || !review.required;
-    review.stale = false;
-    review.resolved_at = resolved.then(|| Utc::now().to_rfc3339());
+    if review.stale {
+        review.resolved = false;
+        review.resolved_at = None;
+    } else {
+        review.resolved = resolved || !review.required;
+        review.resolved_at = resolved.then(|| Utc::now().to_rfc3339());
+    }
     review.note = note;
     let review = review.to_value()?;
     write_json(&source_review_path(root, job_id), &review)?;
@@ -192,8 +192,10 @@ pub(crate) fn resolve_source_review_status(
     let review_value = source_review_status_for_job(root, job_id)?;
     let mut review = SourceReviewV1::from_value(&review_value)
         .ok_or_else(|| "invalid_source_review_status".to_string())?;
+    if review.stale {
+        return Err("source_review_stale:document_changed_since_last_review".to_string());
+    }
     review.resolved = true;
-    review.stale = false;
     review.resolved_at = Some(Utc::now().to_rfc3339());
     review.note = note;
     let review = review.to_value()?;
@@ -221,11 +223,27 @@ pub(crate) fn source_review_issues(review: &Value) -> Vec<Value> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
         });
-    if !required || resolved {
+    let stale = typed
+        .as_ref()
+        .map(|review| review.stale)
+        .unwrap_or_else(|| {
+            review
+                .get("stale")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        });
+    if !required || (resolved && !stale) {
         return Vec::new();
     }
 
     let mut issues = Vec::new();
+    if stale {
+        issues.push(json_issue(
+            "AuthoringIR",
+            "$.sourceReview.stale",
+            "The source document changed after the previous source review; review it again before publish",
+        ));
+    }
     let parser_warnings = typed.as_ref().map(|review| {
         review
             .parser_warnings

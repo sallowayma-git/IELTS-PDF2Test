@@ -3209,9 +3209,6 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       if (!ir) throw new Error("authoring_ir_missing");
       const candidatesDoc = store.visionAnswerCandidates[jobId];
       if (!candidatesDoc) throw new Error("vision_answer_candidates_missing");
-      if (args.generatedAt && candidatesDoc.generatedAt && args.generatedAt !== candidatesDoc.generatedAt) {
-        throw new Error("vision_answer_candidates_stale:regenerated_by_background_review");
-      }
       const decisions = (args.decisions ?? []) as { questionNumber: string; accept: boolean; answer?: unknown }[];
       if (!decisions.length) throw new Error("vision_answer_decisions_empty");
       const accepted: string[] = [];
