@@ -1,0 +1,123 @@
+/* 极简外壳（计划 §16.3 / §10.4）：两个一级入口，没有流水线 stepper 和 job 技术条。 */
+
+.shell {
+  display: grid;
+  /* 侧栏用 clamp 而不是固定 224px，缩放和窄窗下自己收窄，不逼主区溢出。 */
+  grid-template-columns: clamp(72px, 14vw, 208px) minmax(0, 1fr);
+  min-height: 100vh;
+  min-width: 0;
+}
+
+/* 工作区要最终考试界面的信息密度：外壳让位，整页交给 ExamCanvas。 */
+.shell.shell-immersive { grid-template-columns: minmax(0, 1fr); }
+
+.sidebar {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 14px;
+  border-right: 1px solid var(--line);
+  background: rgba(255, 250, 240, 0.74);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+
+.sidebar-header { min-width: 0; }
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.brand-mark { width: 36px; height: 36px; flex: 0 0 auto; object-fit: contain; }
+.brand-copy { min-width: 0; }
+.brand strong, .brand small { display: block; overflow-wrap: anywhere; }
+.brand small { color: var(--muted); margin-top: 2px; }
+
+.primary-nav { display: grid; gap: 6px; min-width: 0; }
+
+.primary-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.primary-nav button:hover,
+.primary-nav button.active {
+  background: var(--ink);
+  color: var(--paper-2);
+}
+
+.nav-short {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(19, 32, 29, 0.06);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.primary-nav button.active .nav-short,
+.primary-nav button:hover .nav-short { background: rgba(255, 250, 240, 0.16); }
+
+.nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.app-main { min-width: 0; }
+
+/* 内容区不再是大圆角卡片 + overflow:hidden，改为纯内边距容器，长内容自然滚动。 */
+.app-main-content {
+  min-width: 0;
+  padding: 20px clamp(16px, 2.2vw, 28px);
+}
+
+.app-main-content.immersive { padding: 0; }
+
+/* 窄窗把侧栏变成顶部横条，避免两栏都被挤到不可用宽度。 */
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .primary-nav { grid-auto-flow: column; }
+  .nav-label { display: none; }
+}
+
+/* 兼容期旧页面横幅：只提示，不阻塞。 */
+.legacy-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent-2);
+  border-radius: 12px;
+  background: rgba(199, 120, 56, 0.08);
+  color: var(--ink);
+}

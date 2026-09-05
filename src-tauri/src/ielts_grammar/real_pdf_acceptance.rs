@@ -1944,6 +1944,11 @@ fn petri_real_pdf_reaches_all_declared_acceptance_truth() {
 
 #[test]
 fn phase4_eight_real_pdfs_reach_physical_authoring_quality_truth() {
+    if !crate::test_support::golden_private_corpus_ready(
+        "phase4_eight_real_pdfs_reach_physical_authoring_quality_truth",
+    ) {
+        return;
+    }
     let root = repo_root();
     let spec = read_json(&root.join(ACCEPTANCE_SPEC)).expect("acceptance spec must load");
     assert_eq!(
@@ -2015,6 +2020,11 @@ fn phase4_eight_real_pdfs_reach_physical_authoring_quality_truth() {
 
 #[test]
 fn phase5_real_pdf_edit_and_v2_export_round_trip() {
+    if !crate::test_support::golden_private_corpus_ready(
+        "phase5_real_pdf_edit_and_v2_export_round_trip",
+    ) {
+        return;
+    }
     let root = repo_root();
     let manifest = read_json(&root.join(MANIFEST)).expect("golden manifest must load");
     let fixture = manifest

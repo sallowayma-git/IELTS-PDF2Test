@@ -1,0 +1,113 @@
+/* 设置表面（计划 §10.7 / §14）：单列主表单，最大宽度 720px，在 720-1600px 都是一列。 */
+
+.settings-page {
+  width: min(100%, 720px);
+  margin-inline: auto;
+  min-width: 0;
+  display: grid;
+  gap: 20px;
+}
+
+.settings-header h1 { font-size: clamp(24px, 3vw, 34px); }
+
+.settings-group {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 250, 240, 0.62);
+}
+
+.settings-group h2 { font-size: 18px; }
+
+.settings-field { display: grid; gap: 6px; margin: 0; min-width: 0; color: var(--muted); font-weight: 700; }
+.settings-field input,
+.settings-field select { width: 100%; min-width: 0; }
+.settings-field small { color: var(--muted); font-weight: 400; }
+
+.settings-toggle {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.settings-toggle input { margin-top: 3px; }
+.settings-toggle span { display: grid; gap: 3px; min-width: 0; }
+.settings-toggle small { color: var(--muted); font-weight: 400; }
+
+.settings-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.settings-field-label { display: grid; gap: 3px; min-width: 0; font-weight: 700; }
+.settings-field-label small { color: var(--muted); font-weight: 400; }
+
+.settings-notice {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: rgba(31, 138, 112, 0.08);
+  color: var(--ink);
+}
+
+.settings-preflight-alert {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  background: rgba(184, 75, 63, 0.08);
+  color: var(--danger);
+}
+
+.settings-test-result { align-self: center; font-weight: 700; overflow-wrap: anywhere; }
+.settings-test-result.ok { color: var(--accent); }
+.settings-test-result.bad { color: var(--danger); }
+
+.settings-advanced-toggle {
+  justify-self: start;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.settings-advanced { display: grid; gap: 12px; min-width: 0; padding-top: 4px; }
+
+.settings-diagnostics { min-width: 0; }
+.settings-diagnostics ul { display: grid; gap: 4px; margin: 8px 0; padding: 0; list-style: none; }
+.settings-diagnostics li { display: grid; gap: 2px; min-width: 0; padding: 7px 9px; border-left: 3px solid var(--line); }
+.settings-diagnostics li.error { border-left-color: var(--danger); }
+.settings-diagnostics li.warning { border-left-color: var(--accent-2); }
+.settings-diagnostics li.ok { border-left-color: var(--accent); }
+.settings-diagnostics span { color: var(--muted); overflow-wrap: anywhere; }
+
+/* 旧设置页（兼容期 legacy 路由）仍在用这两个栅格：改成单列，避免任何缩放下的列宽竞争。 */
+.settings-studio {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  width: min(100%, 960px);
+  margin-inline: auto;
+  min-width: 0;
+}
+
+.settings-editor-grid { grid-template-columns: minmax(0, 1fr); }
+
+@media (min-width: 1100px) {
+  .settings-editor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

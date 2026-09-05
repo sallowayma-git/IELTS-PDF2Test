@@ -186,12 +186,31 @@ pub(crate) fn evaluate_quality(authoring: &Value, physical_shadow: Option<&Value
     };
     let has_blocking = !hard_failures.is_empty();
     let has_low_task_score = task_scores.values().any(|score| *score < 0.92);
+    // Only UNRESOLVED, BLOCKING issues hold readiness back. This mirrors the export gate's own
+    // `unresolved_blockers` predicate exactly (authoring_v2_commands: severity == Blocking and no
+    // resolution in {resolved, ignored}).
+    //
+    // The previous `!issues.is_empty()` disagreed with that gate in two ways that both blocked
+    // good documents: a single `info` note made an otherwise-perfect paper unpublishable, and
+    // resolving or ignoring an issue changed nothing -- so `preserve_issue_resolutions` went to the
+    // trouble of carrying resolutions forward across every save that nothing ever read.
+    let unresolved_blocking_issues = issues
+        .iter()
+        .filter(|issue| {
+            issue.get("severity").and_then(Value::as_str) == Some("blocking")
+                && issue
+                    .get("details")
+                    .and_then(|details| details.get("resolution"))
+                    .and_then(Value::as_str)
+                    .is_none_or(|resolution| !matches!(resolution, "resolved" | "ignored"))
+        })
+        .count();
     let state = if has_blocking {
         "blocked"
     } else if document_score < 0.95
         || has_low_task_score
         || source_coverage < 0.995
-        || !issues.is_empty()
+        || unresolved_blocking_issues > 0
     {
         "review_required"
     } else {

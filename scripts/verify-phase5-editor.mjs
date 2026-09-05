@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 
 const requiredFiles = [
   "src/pages/StructuredAuthoringEditorV2.tsx",
-  "src/components/ExamCanvasV2.tsx",
+  "src/exam-canvas/ExamCanvas.tsx",
   "src/editor/authoringTiptap.tsx",
   "src/types/runtime-view-model-v2.ts",
   "src/services/runtimeViewModelV2.ts",
@@ -30,7 +30,8 @@ if (!flags.includes("pdfPerQuestionLlmRepair: false")) throw new Error("PDF per-
 if (!flags.includes("return true")) throw new Error("Phase 5 editor must always use the structured authoring surface");
 
 const editor = readFileSync("src/pages/StructuredAuthoringEditorV2.tsx", "utf8");
-const examCanvas = readFileSync("src/components/ExamCanvasV2.tsx", "utf8");
+// ExamCanvas 在产品收敛阶段从 src/components/ExamCanvasV2.tsx 迁到 src/exam-canvas/ExamCanvas.tsx。
+const examCanvas = readFileSync("src/exam-canvas/ExamCanvas.tsx", "utf8");
 for (const token of [
   "ContentNodeV2",
   "responseGroups",
@@ -95,8 +96,27 @@ for (const token of ["RuntimeViewModelV2", "questionOrder", "answerSlots", "asse
 for (const token of ["phase5-export-blockers", "exportBlocked", "recoveryCandidate.baseRevision", "anchorsOverride", "sourceAnchorStyle", "selectIssue", "ExamCanvasV2", 'mode="author"', 'mode="student"']) {
   if (!editor.includes(token)) throw new Error("Phase 5 editor audit boundary is missing " + token);
 }
-for (const token of ["buildReadingInteractionModelV2", "buildRuntimeViewModelV2", "exam-canvas-v2", "v2-passage-pane", "v2-question-pane", "v2-response-group", "v2-slot-question", "contentEditable", "onTextChange", "onAnswerChange", "onStructureAction", "resolveAuthoringAssetPreview", "table.row.add", "option.add", "answer-slot.insert"]) {
+for (const token of ["buildReadingInteractionModelV2", "buildRuntimeViewModelV2", "exam-canvas-v2", "v2-passage-pane", "v2-question-pane", "v2-response-group", "v2-slot-question", "InlineTextEditor", "onTextCommand", "expectedText", "onTextChange", "onAnswerChange", "onStructureAction", "resolveAuthoringAssetPreview", "table.row.add", "option.add", "answer-slot.insert"]) {
   if (!examCanvas.includes(token)) throw new Error("Phase 5 shared ExamCanvas contract is missing " + token);
+}
+
+// 产品要求变更（简化/双路识别/WYSIWYG 计划 §9.3）：原位文本编辑不再使用裸 contentEditable +
+// document.execCommand。原因是中文输入法 composition 与 rerender 冲突、光标跳动、粘贴富文本污染、
+// React 状态与 DOM 分叉、浏览器 undo 与应用 undo 不一致、blur 前崩溃丢内容。
+// 现在的契约是继承字体的 auto-size textarea（InlineTextEditor）+ onTextCommand/expectedText 乐观并发。
+// 这两条负向断言防止旧实现被无意恢复。
+for (const banned of ["contentEditable", "document.execCommand"]) {
+  if (examCanvas.includes(banned)) {
+    throw new Error("ExamCanvas must not reintroduce " + banned + " (see plan section 9.3)");
+  }
+}
+const inlineEditor = readFileSync("src/exam-canvas/editors/InlineTextEditor.tsx", "utf8");
+for (const token of ["onCompositionStart", "onCompositionEnd", "clipboardData.getData(\"text/plain\")", "aria-label"]) {
+  if (!inlineEditor.includes(token)) throw new Error("Inline text editor IME/paste contract is missing " + token);
+}
+const editorCommands = readFileSync("src/exam-canvas/editorCommands.ts", "utf8");
+for (const token of ["set_text", "expectedText", "codePointLength", "EditorCommandConflictError", "Array.from(text).length"]) {
+  if (!editorCommands.includes(token)) throw new Error("EditorCommandV1 contract is missing " + token);
 }
 
 const rustAuthoring = readFileSync("src-tauri/src/authoring_v2_commands.rs", "utf8");

@@ -2622,13 +2622,22 @@ fn repair_stream_lengths(bytes: &[u8]) -> Vec<u8> {
     repaired
 }
 
+/// Byte offset of the stream payload, i.e. the first byte after the EOL that follows the
+/// `stream` keyword.
+///
+/// The two-byte arm alone was a latent no-op bug: `bytes.get(start..start + 2)` always yields a
+/// two-byte slice, so `Some(b"\n")` / `Some(b"\r")` could never match. Every PDF that uses a
+/// single LF after `stream` -- which the spec allows and LF-normalised files always use -- returned
+/// None here, which made `repair_stream_lengths` skip the stream and left a wrong `/Length` in
+/// place. Check the two-byte sequences first, then fall back to a single-byte EOL.
 fn stream_data_start(bytes: &[u8], stream_position: usize) -> Option<usize> {
     let mut data_start = stream_position + b"stream".len();
     match bytes.get(data_start..data_start + 2) {
-        Some(b"\r\n") => data_start += 2,
-        Some(b"\n\r") => data_start += 2,
-        Some(b"\n") | Some(b"\r") => data_start += 1,
-        _ => return None,
+        Some(b"\r\n") | Some(b"\n\r") => data_start += 2,
+        _ => match bytes.get(data_start) {
+            Some(b'\n') | Some(b'\r') => data_start += 1,
+            _ => return None,
+        },
     }
     Some(data_start)
 }
@@ -3194,6 +3203,11 @@ mod tests {
 
     #[test]
     fn available_private_real_pdf_corpus_preserves_physical_layer_invariants() {
+        if !crate::test_support::golden_private_corpus_ready(
+            "available_private_real_pdf_corpus_preserves_physical_layer_invariants",
+        ) {
+            return;
+        }
         let manifest_path = fixture_path("fixtures/golden/manifest.json");
         let manifest: Value = serde_json::from_slice(
             &fs::read(&manifest_path).expect("golden corpus manifest should be readable"),
@@ -3437,6 +3451,12 @@ mod tests {
 
     #[test]
     fn indirect_page_resources_preserve_real_chili_passage_and_answer_images() {
+        if !crate::test_support::private_fixture_ready(
+            "indirect_page_resources_preserve_real_chili_passage_and_answer_images",
+            "fixtures/golden/private-real/chili-peppers.pdf",
+        ) {
+            return;
+        }
         let root = env::temp_dir().join(format!(
             "phase4-chili-indirect-assets-{}",
             Uuid::new_v4().simple()
@@ -3478,6 +3498,12 @@ mod tests {
 
     #[test]
     fn real_organisational_image_only_answer_pages_route_to_full_page_ocr_plan() {
+        if !crate::test_support::private_fixture_ready(
+            "real_organisational_image_only_answer_pages_route_to_full_page_ocr_plan",
+            "fixtures/golden/private-real/organisational-design.pdf",
+        ) {
+            return;
+        }
         let root = env::temp_dir().join(format!(
             "phase4-organisational-image-only-{}",
             Uuid::new_v4().simple()
@@ -3967,11 +3993,107 @@ mod tests {
         let bytes = fs::read(path).unwrap();
         let repaired = repair_classic_pdf_structure(&bytes).unwrap();
         let xref_position = token_positions(&repaired, b"xref").last().copied().unwrap();
-        assert!(String::from_utf8_lossy(&repaired[..xref_position]).contains("/Length 882"));
-        assert_eq!(
-            String::from_utf8_lossy(&repaired[1261..]),
-            "xref\r\n0 6\r\n0000000000 65535 f\r\n0000000010 00000 n\r\n0000000062 00000 n\r\n0000000122 00000 n\r\n0000000251 00000 n\r\n0000000324 00000 n\r\ntrailer\r\n<< /Size 6 /Root 1 0 R >>\r\nstartxref\r\n1261\r\n%%EOF\r\n"
+        let body = &repaired[..xref_position];
+
+        // Assert the INVARIANT the repair guarantees, not a literal byte count. A literal
+        // `/Length 882` only holds for a CRLF copy of the fixture; git's text/binary heuristic
+        // plus core.autocrlf decides the newline flavour per machine, so a literal made this
+        // test pass on one platform and fail on another while the repair was correct both times.
+        // (.gitattributes now pins fixtures to -text, but the invariant is the right assertion
+        // regardless.)
+        let mut checked_streams = 0usize;
+        for stream_position in token_positions(body, b"stream") {
+            let Some(data_start) = stream_data_start(body, stream_position) else {
+                continue;
+            };
+            let Some(endstream_position) = token_positions(&body[data_start..], b"endstream")
+                .first()
+                .map(|position| data_start + position)
+            else {
+                continue;
+            };
+            let Some(object_marker) = token_positions(&body[..stream_position], b"obj")
+                .last()
+                .copied()
+            else {
+                continue;
+            };
+            let Some(length_position) =
+                token_positions(&body[object_marker + 3..stream_position], b"/Length")
+                    .last()
+                    .copied()
+                    .map(|position| object_marker + 3 + position)
+            else {
+                continue;
+            };
+            let declared =
+                String::from_utf8_lossy(&body[length_position + b"/Length".len()..stream_position])
+                    .trim()
+                    .split_whitespace()
+                    .next()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap();
+            assert_eq!(
+                declared,
+                endstream_position - data_start,
+                "/Length must equal the real stream byte count"
+            );
+            checked_streams += 1;
+        }
+        assert!(
+            checked_streams > 0,
+            "fixture must contain at least one repairable stream; body_len={} stream_tokens={:?} obj_tokens={:?} length_tokens={:?}",
+            body.len(),
+            token_positions(body, b"stream"),
+            token_positions(body, b"obj"),
+            token_positions(body, b"/Length")
         );
+
+        // Canonical xref: CRLF end-of-line markers, one entry per object, every in-use entry
+        // pointing at a real `N 0 obj` header, and startxref agreeing with the xref offset.
+        let tail = String::from_utf8_lossy(&repaired[xref_position..]).to_string();
+        assert!(
+            tail.starts_with("xref\r\n"),
+            "xref block must use CRLF: {tail:?}"
+        );
+        assert!(
+            tail.contains("trailer"),
+            "repaired tail must keep the trailer"
+        );
+        assert!(
+            tail.contains(&format!("startxref\r\n{xref_position}\r\n%%EOF")),
+            "startxref must point at the canonical xref offset: {tail:?}"
+        );
+
+        let offsets = indirect_object_offsets(body);
+        assert!(
+            !offsets.is_empty(),
+            "repaired body must expose indirect objects"
+        );
+        for (object_id, offset) in &offsets {
+            let header = format!("{object_id} 0 obj");
+            assert!(
+                repaired[*offset..].starts_with(header.as_bytes()),
+                "xref offset for object {object_id} must land on its header"
+            );
+        }
+        for line in tail.lines().skip(2) {
+            if line.starts_with("trailer") {
+                break;
+            }
+            if line.ends_with(" 00000 n") || line.ends_with(" 00000 n ") {
+                let entry_offset = line
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .parse::<usize>()
+                    .unwrap();
+                assert!(
+                    offsets.values().any(|value| *value == entry_offset),
+                    "in-use xref entry {entry_offset} must match a real object offset"
+                );
+            }
+        }
     }
 
     #[test]

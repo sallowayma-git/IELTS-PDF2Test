@@ -1,0 +1,8 @@
+/* 少量跨表面工具类。新表面优先用语义类名，这里只放确实通用的。 */
+
+.empty { color: var(--muted); }
+.empty.compact { margin: 0; }
+.error-text { color: var(--danger); overflow-wrap: anywhere; }
+.button-row { display: flex; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.tag-row { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.file-name { min-width: 0; overflow-wrap: anywhere; }

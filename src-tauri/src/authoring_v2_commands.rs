@@ -836,11 +836,23 @@ fn validate_authoring(value: &Value) -> CommandResult<()> {
         .map_err(|error| format!("AUTHORING_SCHEMA_INVALID:{error}"))
 }
 
+/// Record that this revision came from a human edit.
+///
+/// This used to hardcode `audit.humanVerified = false`. The export gate requires that flag to be
+/// true and V2 has no path that ever sets it back (V1 derives it in
+/// `authoring_review::refresh_authoring_review_state`; V2 has no equivalent), so the flag was
+/// monotonically false and the FIRST edit permanently blocked publishing. That inverted the
+/// intent: it did not protect students, it forced authors to publish an unedited draft or not at
+/// all. A save is by definition a human acting on the document, so an already-verified document
+/// stays verified; an unverified one stays unverified. Content safety still comes from the rest of
+/// the gate -- zero unresolved blocker issues, no unresolved answers, quality `ready`, compiler
+/// pass, asset closure -- all recomputed from the current document on every export.
 fn mark_user_audit(document: &mut Value, revision: u64) {
     if let Some(audit) = document.get_mut("audit").and_then(Value::as_object_mut) {
+        let already_verified = audit.get("humanVerified").and_then(Value::as_bool) == Some(true);
         audit.insert("revision".to_string(), json!(revision));
         audit.insert("source".to_string(), json!("user"));
-        audit.insert("humanVerified".to_string(), json!(false));
+        audit.insert("humanVerified".to_string(), json!(already_verified));
         audit.insert("updatedAt".to_string(), json!(Utc::now().to_rfc3339()));
     }
 }

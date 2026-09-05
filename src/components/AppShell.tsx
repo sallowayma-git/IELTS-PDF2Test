@@ -1,190 +1,50 @@
-import { useEffect, useState, type ReactNode } from "react";
-import type { ImportJob } from "../types";
+import type { ReactNode } from "react";
 import type { RouteState } from "../app/router";
-import { go } from "../app/router";
-import { isPhase5EditorEnabled } from "../config/featureFlags";
-import { StatusPill } from "./StatusPill";
+import { go, libraryPath } from "../app/router";
 import wonderLogo from "../assets/wonder-ielts-logo-square.png";
 
-// 导航结构：4 个一级入口。工作台 / 题库管理 / 设置 为无子项的一级；
-// 「转化工具」为可展开分组，收录原有一次工具的 4 个页面。
-type LeafNav = { label: string; short: string; path: string; match: string };
-type NavEntry =
-  | ({ kind: "leaf" } & LeafNav)
-  | { kind: "group"; label: string; short: string; match: string[]; defaultOpen?: boolean; children: LeafNav[] };
-
-const navEntries: NavEntry[] = [
-  { kind: "leaf", label: "工作台", short: "台", path: "/dashboard", match: "dashboard" },
-  {
-    kind: "group",
-    label: "转化工具",
-    short: "转化",
-    match: ["jobs", "new", "document", "split", "groups", "llm-review", "preview", "authoring-v2", "phase5", "export", "writing"],
-    defaultOpen: true,
-    children: [
-      { label: "导题任务", short: "任务", path: "/jobs", match: "jobs" },
-      { label: "新建导题", short: "新建", path: "/jobs/new", match: "new" },
-      { label: "写作题创作", short: "写作", path: "/writing", match: "writing" },
-      { label: "结构化编辑器（Phase 5）", short: "V2", path: "/phase5", match: "phase5" },
-      { label: "NAS 导出", short: "导出", path: "/export", match: "export" }
-    ]
-  },
-  { kind: "leaf", label: "题库管理", short: "题库", path: "/library", match: "library" },
-  { kind: "leaf", label: "设置", short: "设", path: "/settings", match: "settings" }
+// 极简外壳（计划 §16.3）：只有「题库」和「设置」两个一级入口。
+// 已删除：转化工具展开组、流水线 stepper、activeJob 技术条、category/frequency/错误数。
+// 各页面自己负责顶部栏，AppShell 不读取任何 job 状态。
+const NAV = [
+  { label: "题库", short: "库", path: "/library", match: "library" as const },
+  { label: "设置", short: "设", path: "/settings", match: "settings" as const }
 ];
 
-const steps = [
-  ["document", "源文档确认"],
-  ["preview", "确认与编辑"],
-  ["export", "导出发布"]
-] as const;
-
-const EXPAND_KEY = "ielts-author-studio.nav.expanded.";
-
-export function AppShell({ route, activeJob, children }: { route: RouteState; activeJob?: ImportJob; children: ReactNode }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const phase5EditorEnabled = isPhase5EditorEnabled();
-  const activeStep = route.name === "split" || route.name === "groups" || route.name === "llm-review" || route.name === "authoring-v2" || route.name === "phase5"
-    ? "preview"
-    : route.name;
-
-  useEffect(() => {
-    setCollapsed(window.localStorage.getItem("ielts-author-studio.sidebar-collapsed") === "1");
-    // 读取各分组的展开态；默认展开的分组在未记录时视为展开。
-    const next: Record<string, boolean> = {};
-    for (const entry of navEntries) {
-      if (entry.kind === "group") {
-        const stored = window.localStorage.getItem(EXPAND_KEY + entry.label);
-        next[entry.label] = stored === null ? !!entry.defaultOpen : stored === "1";
-      }
-    }
-    setExpanded(next);
-  }, []);
-
-  // 当前路由命中某分组子项时，自动展开该分组。
-  useEffect(() => {
-    setExpanded((current) => {
-      let changed = false;
-      const next = { ...current };
-      for (const entry of navEntries) {
-        if (entry.kind === "group" && entry.match.includes(route.name) && !next[entry.label]) {
-          next[entry.label] = true;
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [route.name]);
-
-  function toggleSidebar() {
-    setCollapsed((current) => {
-      const next = !current;
-      window.localStorage.setItem("ielts-author-studio.sidebar-collapsed", next ? "1" : "0");
-      return next;
-    });
-  }
-
-  function toggleGroup(label: string) {
-    setExpanded((current) => {
-      const next = { ...current, [label]: !current[label] };
-      window.localStorage.setItem(EXPAND_KEY + label, next[label] ? "1" : "0");
-      return next;
-    });
-  }
+export function AppShell({ route, children }: { route: RouteState; children: ReactNode }) {
+  // 工作区要的是最终考试界面的信息密度，外壳不套大圆角卡片，也不占用侧栏宽度。
+  const immersive = route.name === "workspace";
 
   return (
-    <div className={`shell ${collapsed ? "sidebar-collapsed" : ""}`}>
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <button className="brand" onClick={() => go("/dashboard")}>
-            <img className="brand-mark" src={wonderLogo} alt="Wonder IELTS" />
-            <span className="brand-copy">
-              <strong>IELTS Author</strong>
-              <small>Epic 8 Studio</small>
-            </span>
-          </button>
-          <button
-            className="ghost small sidebar-toggle"
-            onClick={toggleSidebar}
-            title={collapsed ? "展开导航栏" : "收起导航栏"}
-            aria-label={collapsed ? "展开导航栏" : "收起导航栏"}
-          >
-            {collapsed ? "›" : "‹"}
-          </button>
-        </div>
-        <nav className="primary-nav">
-          {navEntries.map((entry) => {
-            if (entry.kind === "leaf") {
-              const active = route.name === entry.match || (entry.match === "library" && route.name === "libraryExam");
-              return (
-                <button key={entry.path} className={active ? "active" : ""} onClick={() => go(entry.path)} title={entry.label}>
-                  <span className="nav-short">{entry.short}</span>
-                  <span className="nav-label">{entry.label}</span>
-                </button>
-              );
-            }
-            const isOpen = !!expanded[entry.label];
-            const groupActive = entry.match.includes(route.name);
-            return (
-              <div className={`nav-group ${isOpen ? "open" : ""}`} key={entry.label}>
-                <button
-                  className={`nav-group-title ${groupActive ? "in-active-group" : ""}`}
-                  // 折叠态：分组标题直接跳首个子项（子项列表被 CSS 隐藏，无法展开）；
-                  // 展开态：切换分组展开/收起。
-                  onClick={() => (collapsed ? go(entry.children[0].path) : toggleGroup(entry.label))}
-                  title={collapsed ? `${entry.label}：${entry.children[0].label}` : entry.label}
-                >
-                  <span className="nav-short">{entry.short}</span>
-                  <span className="nav-label">{entry.label}</span>
-                  <span className="nav-caret">{isOpen ? "▾" : "▸"}</span>
-                </button>
-                {isOpen ? (
-                  <div className="nav-children">
-                    {entry.children.filter((child) => child.match !== "phase5" || phase5EditorEnabled).map((child) => (
-                      <button
-                        key={child.path}
-                        className={`nav-child ${route.name === child.match ? "active" : ""}`}
-                        onClick={() => go(child.path)}
-                        title={child.label}
-                      >
-                        <span className="nav-label">{child.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </nav>
-      </aside>
-      <main className="workspace">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">本地处理流程</p>
-            <h1>{activeJob ? activeJob.title : "作者端工作台"}</h1>
+    <div className={`shell ${immersive ? "shell-immersive" : ""}`}>
+      {immersive ? null : (
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            <button className="brand" onClick={() => go(libraryPath())}>
+              <img className="brand-mark" src={wonderLogo} alt="Wonder IELTS" />
+              <span className="brand-copy">
+                <strong>IELTS Author</strong>
+                <small>题库工作台</small>
+              </span>
+            </button>
           </div>
-          {activeJob ? (
-            <div className="job-strip">
-              <StatusPill status={activeJob.status} />
-              <span>{activeJob.category}</span>
-              <span>{activeJob.frequency}</span>
-              <span>{activeJob.issueCounts.errors} 个错误</span>
-            </div>
-          ) : (
-            <button className="primary" onClick={() => go("/jobs/new")}>新建导题任务</button>
-          )}
-        </header>
-        {activeJob ? (
-          <div className="stepper">
-            {steps.map(([step, label]) => (
-              <button key={step} className={activeStep === step ? "active" : ""} onClick={() => go(`/jobs/${activeJob.jobId}/${step}`)}>
-                {label}
+          <nav className="primary-nav">
+            {NAV.map((entry) => (
+              <button
+                key={entry.path}
+                className={route.name === entry.match ? "active" : ""}
+                onClick={() => go(entry.path)}
+                title={entry.label}
+              >
+                <span className="nav-short">{entry.short}</span>
+                <span className="nav-label">{entry.label}</span>
               </button>
             ))}
-          </div>
-        ) : null}
-        <div className="surface">{children}</div>
+          </nav>
+        </aside>
+      )}
+      <main className="app-main">
+        <div className={immersive ? "app-main-content immersive" : "app-main-content"}>{children}</div>
       </main>
     </div>
   );

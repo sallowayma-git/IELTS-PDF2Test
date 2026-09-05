@@ -1,0 +1,108 @@
+# 产品收敛门禁（计划 §18 Phase 0 / §19.7 / §24）。
+#
+# 这些门禁的目的不是「跑通脚本」，而是防止收敛期出现两类回归：
+#   1. 产品面偷偷长回去（路由、页面、命令、表结构漂移）
+#   2. 新表面引入横向溢出或裁切内容
+# 以及证明三表面主链在 UI 层是通的（导入 -> 打开 -> 改一个字符 -> 保存 -> 刷新仍在）。
+#
+# 覆盖层级声明：surface-gates 是浏览器 + devFallbackBackend 级，不能替代真实 Tauri 链路，
+# 真实链路由 backend-gates 的 Rust 测试和 windows-smoke.yml 的打包冒烟承担。
+name: Product Convergence Gates
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/product-convergence-gates.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "fixtures/**"
+      - "scripts/**"
+      - "src/**"
+      - "src-tauri/src/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "tsconfig*.json"
+
+jobs:
+  surface-gates:
+    name: Surface gates (routes / overflow / main chain)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: TypeScript check
+        run: npm run check
+
+      - name: Production build
+        run: npx vite build
+
+      # 产品面漂移必须是有意的：--strict 让未重新记录的漂移直接失败。
+      - name: Product surface baseline
+        run: npm run verify:product-baseline:strict
+
+      # 横向溢出零容忍：6 视口 x 路由 x {正常, 敌意内容}。
+      - name: Horizontal overflow matrix
+        run: npm run test:layout:legacy
+
+      # 三表面主链：题库导入 -> 打开工作区 -> 原位改一个字符 -> 保存 -> 刷新仍在。
+      - name: Library / workspace main chain smoke
+        run: npm run e2e:library-workspace
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: convergence-gate-screenshots
+          path: |
+            tmp/ui-layout
+            tmp/library-workspace-smoke
+          if-no-files-found: ignore
+          retention-days: 7
+
+  backend-gates:
+    name: Backend gates (fmt / check / tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install system dependencies for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - run: npm ci
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      # 真实后端主链：导入 -> 本地识别 -> V2 会话 -> 改一个字符 -> 重开仍在 -> 导出 -> NAS 发布。
+      # 单独跑一次并打开 --nocapture，让门禁失败时直接看到 shadow writer 的 .error.json 内容。
+      - name: Real backend product chain
+        run: npm run test:product-chain

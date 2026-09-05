@@ -1,0 +1,175 @@
+{
+  "$comment": "UI overflow stress fixture. Consumed by scripts/ui/layout-matrix.mjs and available to manual QA.",
+  "longFileName": "Cambridge_IELTS_Academic_Reading_Practice_Test_Passage_Three_Environmental_Science_Passage_Three_Environmental_Science_Passage_Three_Environmental_Science_FINAL_v12_reviewed.pdf",
+  "longFileNameLength": 177,
+  "longErrorMessage": "云端识别返回的内容未通过结构校验：题组 3 的选项数量与题号范围不一致，并且第 17 题的题干在跨页处缺少续行。已保留本地识别结果，可以继续编辑或重试云端识别。云端识别返回的内容未通过结构校验：题组 3 的选项数量与题号范围不一致，并且第 17 题的题干在跨页处缺少续行。已保留本地识别结果，可以继续编辑或重试云端识别。云端识别返回的内容未通过结构校验：题组 3 的选项数量与题号范围不一致，并且第 17 题的题干在跨页处缺少续行。已保留本地识别结果，可以继续编辑或重试云端识别。",
+  "longErrorMessageLength": 240,
+  "longUrl": "https://internal-nas.example.invalid/ielts/library/reading/2026/academic/passage-three/very-long-path-segment-for-overflow-testing/manifest.json?revision=1284&checksum=0f3ab91c7d4e5f60&mode=verify",
+  "manyTags": [
+    "tag-01-迁移标签",
+    "tag-02-迁移标签",
+    "tag-03-迁移标签",
+    "tag-04-迁移标签",
+    "tag-05-迁移标签",
+    "tag-06-迁移标签",
+    "tag-07-迁移标签",
+    "tag-08-迁移标签",
+    "tag-09-迁移标签",
+    "tag-10-迁移标签",
+    "tag-11-迁移标签",
+    "tag-12-迁移标签",
+    "tag-13-迁移标签",
+    "tag-14-迁移标签",
+    "tag-15-迁移标签",
+    "tag-16-迁移标签",
+    "tag-17-迁移标签",
+    "tag-18-迁移标签",
+    "tag-19-迁移标签",
+    "tag-20-迁移标签"
+  ],
+  "twelveOptions": [
+    {
+      "label": "A",
+      "text": "changing the bed linen every second day of the guest stay"
+    },
+    {
+      "label": "B",
+      "text": "washing the exterior windows including the upper floor frames"
+    },
+    {
+      "label": "C",
+      "text": "cleaning the fridge and defrosting the freezer compartment"
+    },
+    {
+      "label": "D",
+      "text": "replacing the bathroom towels twice daily on request"
+    },
+    {
+      "label": "E",
+      "text": "providing an additional set of keys for the side entrance"
+    },
+    {
+      "label": "F",
+      "text": "arranging a late checkout beyond the standard eleven o'clock"
+    },
+    {
+      "label": "G",
+      "text": "storing luggage in the secure room after checkout has completed"
+    },
+    {
+      "label": "H",
+      "text": "delivering a continental breakfast to the room before eight"
+    },
+    {
+      "label": "I",
+      "text": "organising airport transfer with a licensed private driver"
+    },
+    {
+      "label": "J",
+      "text": "supplying an extra folding bed for a third occupant"
+    },
+    {
+      "label": "K",
+      "text": "offering a same-day laundry and pressing service on weekdays"
+    },
+    {
+      "label": "L",
+      "text": "booking guided walking tours of the old town for two people"
+    }
+  ],
+  "wideTable": {
+    "columns": [
+      "项目",
+      "第一阶段",
+      "第二阶段",
+      "第三阶段",
+      "第四阶段",
+      "负责人",
+      "预计工时",
+      "风险等级",
+      "依赖项",
+      "备注说明"
+    ],
+    "rows": [
+      [
+        "题号几何恢复",
+        "token 检测",
+        "序列打分",
+        "区间扩展",
+        "跨页续行",
+        "工程师 B",
+        "5 天",
+        "中",
+        "DocumentIRV2",
+        "需要 golden corpus 覆盖独立行题号"
+      ],
+      [
+        "选项悬挂缩进",
+        "label 列检测",
+        "右侧同行",
+        "下方续行",
+        "共享选项库",
+        "工程师 B",
+        "4 天",
+        "高",
+        "题号几何恢复",
+        "A-L 十二选项必须全部召回"
+      ],
+      [
+        "云端候选校验",
+        "JSON 提取",
+        "别名归一化",
+        "Schema 校验",
+        "分组 salvage",
+        "工程师 C",
+        "6 天",
+        "高",
+        "skill bundle",
+        "最多一次受约束修复请求"
+      ]
+    ]
+  },
+  "mixedScript": "IELTS 阅读 Reading Passage 1 —— Questions 14-20 匹配段落标题 Matching Headings（List of Headings i-x）",
+  "browserTextZoomPercent": [
+    100,
+    200
+  ],
+  "viewportMatrix": [
+    {
+      "width": 1100,
+      "height": 760,
+      "deviceScaleFactor": 1,
+      "note": "Tauri minWidth"
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "deviceScaleFactor": 1,
+      "note": "common laptop, inside the 1181-1469 overflow band"
+    },
+    {
+      "width": 1440,
+      "height": 960,
+      "deviceScaleFactor": 1,
+      "note": "Tauri default window width"
+    },
+    {
+      "width": 1536,
+      "height": 864,
+      "deviceScaleFactor": 1.25,
+      "note": "1920x1080 at Windows 125%"
+    },
+    {
+      "width": 1280,
+      "height": 720,
+      "deviceScaleFactor": 1.5,
+      "note": "1920x1080 at Windows 150%"
+    },
+    {
+      "width": 2560,
+      "height": 1440,
+      "deviceScaleFactor": 1,
+      "note": "large desktop"
+    }
+  ]
+}

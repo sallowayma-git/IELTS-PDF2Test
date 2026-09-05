@@ -4,7 +4,7 @@ import { go } from "../app/router";
 import { chooseExportDirectory } from "../api/desktopDialogs";
 import { answerValueForSelection, applyAuthoringV2Patches as applyLocalPatches, inverseAuthoringPatch, locateContentNode, taskTypeLabel } from "../services/authoringV2Patches";
 import { AuthoringTiptapEditor } from "../editor/authoringTiptap";
-import { ExamCanvasV2, type ExamCanvasStructureActionV2 } from "../components/ExamCanvasV2";
+import { ExamCanvasV2, type ExamCanvasStructureAction as ExamCanvasStructureActionV2 } from "../exam-canvas/ExamCanvas";
 import type {
   AnswerSlotV2,
   AnswerValueV2,

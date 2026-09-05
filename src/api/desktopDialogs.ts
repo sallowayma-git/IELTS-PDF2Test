@@ -48,12 +48,18 @@ function takeDevPickedPath(): PickedPath | null {
     const path = typeof first === "string" ? first : first.path;
     if (!path) return null;
     const name = typeof first === "string" ? nameFromPath(path) : first.name ?? nameFromPath(path);
+    const preset = typeof first === "string" ? undefined : first;
     return {
       path,
       name,
-      sizeBytes: typeof first === "string" ? 0 : first.sizeBytes ?? 0,
-      titleHint: typeof first === "string" ? cleanFileStem(name) : first.titleHint ?? cleanFileStem(name),
-      requiresDesktopParser: !/\.(txt|md|pdf|docx)$/i.test(name)
+      sizeBytes: preset?.sizeBytes ?? 0,
+      titleHint: preset?.titleHint ?? cleanFileStem(name),
+      // 预置项声明的是 Partial<PickedPath>，因此必须把真实内容一起带出来。
+      // 之前这里丢掉了 textContent/binaryContentBase64，导致浏览器开发预览下
+      // 预置文件永远拿不到真实解析内容（只能走桌面解析）。
+      textContent: preset?.textContent,
+      binaryContentBase64: preset?.binaryContentBase64,
+      requiresDesktopParser: preset?.requiresDesktopParser ?? !/\.(txt|md|pdf|docx)$/i.test(name)
     };
   } catch {
     window.localStorage.removeItem(DEV_PICKED_PATHS_KEY);

@@ -74,6 +74,8 @@ mod pdf_facts_shadow;
 mod pdf_geometry;
 mod pdf_ingest;
 mod preview_commands;
+#[cfg(test)]
+mod product_chain;
 mod reading_runtime_v2;
 mod reading_source;
 mod reading_source_v2;
@@ -81,6 +83,8 @@ mod runtime_compiler;
 mod runtime_validation;
 pub mod schema;
 mod source_review;
+#[cfg(test)]
+mod test_support;
 mod util;
 mod validator;
 mod workflow_state;
@@ -2288,7 +2292,15 @@ mod tests {
         handle.join().unwrap();
 
         assert!(request.starts_with("POST /v1/chat/completions "));
-        assert!(request.contains("authorization: Bearer sk-mock-secret"));
+        // Header names are compared case-insensitively: whether the HTTP writer emits
+        // `authorization` or `Authorization` is a dependency detail, not a product contract.
+        // What matters is that the bearer credential is on the wire.
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer sk-mock-secret"),
+            "request must carry the bearer credential; captured request was: {request}"
+        );
         assert!(request.contains("\"response_format\":{\"type\":\"json_object\"}"));
         assert_eq!(
             output.get("kind").and_then(Value::as_str),
@@ -3230,7 +3242,12 @@ Answers
         assert!(request.contains("\"type\":\"image_url\""));
         assert!(request.contains("data:image/png;base64,"));
         assert!(!request.contains(&image_path.to_string_lossy().to_string()));
-        assert!(request.contains("authorization: Bearer sk-vision-secret"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer sk-vision-secret"),
+            "vision request must carry the bearer credential; captured request was: {request}"
+        );
         assert_eq!(
             output.get("text").and_then(Value::as_str),
             Some("READING PASSAGE 1\nQuestions 1-1\n1 Mock vision text.\nAnswers\n1 TRUE")
@@ -3253,6 +3270,9 @@ Answers
 
     #[test]
     fn image_only_pdf_fixture_exposes_embedded_images_for_vision() {
+        if !crate::test_support::python_pypdf_available() {
+            return;
+        }
         let job = test_job();
         let fixture = parser_fixture("image-only-reading.pdf");
         let root = temp_test_root();
@@ -9188,6 +9208,11 @@ Answers
 
     #[test]
     fn registered_phase4_pdf_corpus_reaches_frozen_v1_parse_split_and_authoring() {
+        if !crate::test_support::golden_private_corpus_ready(
+            "registered_phase4_pdf_corpus_reaches_frozen_v1_parse_split_and_authoring",
+        ) {
+            return;
+        }
         for (fixture_id, sample, metadata) in phase4_pdf_fixtures() {
             let mut job = make_job(CreateJobInput {
                 title: Some(fixture_id.clone()),

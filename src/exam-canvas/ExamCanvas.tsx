@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { InlineTextEditor } from "./editors/InlineTextEditor";
+import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
 import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
 import type { AnswerValueV2, ContentNodeV2, IeltsAuthoringIRV2, OptionV2, ResponseGroupV2, TaskGroupV2 } from "../types";
 
-export type ExamCanvasStructureActionV2 =
+export type ExamCanvasStructureAction =
   | { type: "option.add"; taskId: string; responseGroupId: string; afterOptionId?: string }
   | { type: "option.move"; taskId: string; responseGroupId: string; optionId: string; direction: "up" | "down" }
   | { type: "option.delete"; taskId: string; responseGroupId: string; optionId: string }
@@ -14,14 +16,17 @@ export type ExamCanvasStructureActionV2 =
   | { type: "answer-slot.insert"; afterNodeId: string }
   | { type: "answer-slot.delete"; nodeId: string; slotId: string };
 
-export interface ExamCanvasV2Props {
+export interface ExamCanvasProps {
   authoring: IeltsAuthoringIRV2;
   mode: "student" | "author";
   selectedId?: string;
   onSelect?: (id: string) => void;
   onTextChange?: (node: Extract<ContentNodeV2, { type: "text" }>) => void;
+  /** 优先于 onTextChange。`expectedText` 是进入编辑那一刻的文本，用于乐观并发校验：
+   *  如果编辑过程中草稿被重新加载或被云端结果合并过，这次提交会被拒绝而不是静默覆盖。 */
+  onTextCommand?: (command: { nodeId: string; expectedText: string; text: string }) => void;
   onAnswerChange?: (slotId: string, value: AnswerValueV2) => void;
-  onStructureAction?: (action: ExamCanvasStructureActionV2) => void;
+  onStructureAction?: (action: ExamCanvasStructureAction) => void;
 }
 
 type VisualNodeV2 = Extract<ContentNodeV2, { type: "figure" | "image" | "diagram" }>;
@@ -43,7 +48,7 @@ function AuthorTools({
   children,
   compact = false
 }: {
-  canvas: ExamCanvasV2Props;
+  canvas: ExamCanvasProps;
   label: string;
   children: ReactNode;
   compact?: boolean;
@@ -67,7 +72,7 @@ function ToolButton({ label, disabled, onClick, children }: {
 }
 
 function OptionBankTools({ canvas, taskId, responseGroupId, options }: {
-  canvas: ExamCanvasV2Props;
+  canvas: ExamCanvasProps;
   taskId: string;
   responseGroupId: string;
   options: OptionV2[];
@@ -103,41 +108,83 @@ function selectedValues(value: AnswerValueV2 | undefined): string[] {
   return [];
 }
 
-function editableText(
-  node: Extract<ContentNodeV2, { type: "text" }>,
-  props: ExamCanvasV2Props
-): ReactNode {
-  const selected = props.selectedId === node.id;
-  const marks = (node.marks ?? []).map((mark) => typeof mark === "string" ? mark : "");
+/** 文本节点：作者模式下双击或点击进入原位编辑，学生模式下就是一个普通 span。
+ *  两种模式渲染同一个 `span.v2-text`，编辑器只是聚焦时替换其内容，
+ *  这样 author/student 的语义 DOM 保持一致（计划 §19.6 parity）。 */
+function EditableTextNode({
+  node,
+  canvas
+}: {
+  node: Extract<ContentNodeV2, { type: "text" }>;
+  canvas: ExamCanvasProps;
+}) {
+  const [editing, setEditing] = useState(false);
+  // 进入编辑时快照当前文本，作为提交时的 expectedText。
+  const [expectedText, setExpectedText] = useState(node.text);
+  const author = canvas.mode === "author";
+  const editable = Boolean(canvas.onTextCommand ?? canvas.onTextChange);
+  const beginEditing = () => {
+    setExpectedText(node.text);
+    setEditing(true);
+  };
+  const commitText = (text: string) => {
+    setEditing(false);
+    if (text === node.text) return;
+    if (canvas.onTextCommand) canvas.onTextCommand({ nodeId: node.id, expectedText, text });
+    else canvas.onTextChange?.({ ...node, text });
+  };
+  const selected = canvas.selectedId === node.id;
+  const marks = (node.marks ?? []).map((mark) => (typeof mark === "string" ? mark : ""));
   const className = [
     "v2-text",
     marks.includes("bold") ? "is-bold" : "",
     marks.includes("italic") ? "is-italic" : "",
     marks.includes("underline") ? "is-underlined" : "",
-    props.mode === "author" ? "v2-author-editable" : "",
-    selected ? "is-selected" : ""
+    author ? "v2-author-editable" : "",
+    selected ? "is-selected" : "",
+    editing ? "is-editing" : ""
   ].filter(Boolean).join(" ");
-  return <span
-    key={node.id}
-    className={className}
-    data-editor-id={node.id}
-    contentEditable={props.mode === "author"}
-    suppressContentEditableWarning
-    onClick={(event) => {
-      if (props.mode === "author") event.stopPropagation();
-      props.onSelect?.(node.id);
-    }}
-    onPaste={(event) => {
-      if (props.mode !== "author") return;
-      event.preventDefault();
-      document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
-    }}
-    onBlur={(event) => {
-      if (props.mode !== "author") return;
-      const text = event.currentTarget.textContent ?? "";
-      if (text !== node.text) props.onTextChange?.({ ...node, text });
-    }}
-  >{node.text}</span>;
+
+  if (author && editing) {
+    return (
+      <span key={node.id} className={className} data-editor-id={node.id}>
+        <InlineTextEditor
+          value={expectedText}
+          ariaLabel="编辑题目文字"
+          onCommit={commitText}
+          onCancel={() => setEditing(false)}
+        />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      key={node.id}
+      className={className}
+      data-editor-id={node.id}
+      // 作者模式下文本要能被键盘聚焦并进入编辑，否则原位编辑对键盘用户不可达。
+      tabIndex={author ? 0 : undefined}
+      role={author ? "button" : undefined}
+      aria-label={author ? `编辑文字：${node.text.slice(0, 40)}` : undefined}
+      onClick={(event) => {
+        if (!author) return;
+        event.stopPropagation();
+        canvas.onSelect?.(node.id);
+        if (editable) beginEditing();
+      }}
+      onKeyDown={(event) => {
+        if (!author || !editable) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          event.stopPropagation();
+          beginEditing();
+        }
+      }}
+    >
+      {node.text}
+    </span>
+  );
 }
 
 function nodeStyle(node: ContentNodeV2): CSSProperties | undefined {
@@ -148,7 +195,7 @@ function nodeStyle(node: ContentNodeV2): CSSProperties | undefined {
 
 function VisualAssetNode({ node, canvas, select }: {
   node: VisualNodeV2;
-  canvas: ExamCanvasV2Props;
+  canvas: ExamCanvasProps;
   select: (event: React.MouseEvent) => void;
 }) {
   const [preview, setPreview] = useState<AuthoringAssetPreview>();
@@ -224,7 +271,7 @@ function VisualAssetNode({ node, canvas, select }: {
   </figure>;
 }
 
-function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; canvas: ExamCanvasV2Props }): ReactNode {
+function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; canvas: ExamCanvasProps }): ReactNode {
   if (!nodes?.length) return null;
   return nodes.map((node) => {
     const selected = canvas.selectedId === node.id;
@@ -237,7 +284,7 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
     };
     switch (node.type) {
       case "text":
-        return editableText(node, canvas);
+        return <EditableTextNode key={node.id} node={node} canvas={canvas} />;
       case "hard_break":
         return <br key={node.id} />;
       case "paragraph":
@@ -326,7 +373,20 @@ function containsAnswerSlot(nodes: ContentNodeV2[] | undefined, slotIds?: Set<st
   });
 }
 
-export function ExamCanvasV2(props: ExamCanvasV2Props) {
+/** 矩阵已经完整呈现该 task 时，不再重复渲染逐组列表。 */
+function matrixHandled(
+  task: TaskGroupV2,
+  runtime: { questionDisplayMap: Record<string, string>; answerSlots: Record<string, { interaction?: string }> }
+): boolean {
+  if (!task.optionBank?.options.length) return false;
+  return matchingRowsFor(
+    task.responseGroups,
+    runtime.questionDisplayMap,
+    (slotId) => (runtime.answerSlots[slotId]?.interaction === "checkbox" ? "checkbox" : "radio")
+  ).length > 0;
+}
+
+export function ExamCanvas(props: ExamCanvasProps) {
   const runtime = useMemo(() => buildRuntimeViewModelV2(props.authoring), [props.authoring]);
   const interactionModel = useMemo(() => buildReadingInteractionModelV2(runtime), [runtime]);
   const [studentAnswers, setStudentAnswers] = useState<Record<string, string[]>>({});
@@ -358,7 +418,29 @@ export function ExamCanvasV2(props: ExamCanvasV2Props) {
         {runtime.taskGroups.map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
           <header className="v2-task-header"><h2>{task.taskType}</h2><div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
           {task.stimulus?.length ? <div className="v2-stimulus"><ContentNodes nodes={task.stimulus} canvas={props} /></div> : null}
-          {task.responseGroups.map((response) => {
+          {(() => {
+            // Matching 走矩阵版式：共享选项库 + 每行一个答案位（计划 §9.8）。
+            // 不符合矩阵前提的 matching（多答案位、unordered_set）继续走下面的逐组列表。
+            const bankOptions = (task as TaskGroupV2).optionBank?.options ?? [];
+            if (!bankOptions.length) return null;
+            const rows = matchingRowsFor(
+              task.responseGroups as ResponseGroupV2[],
+              runtime.questionDisplayMap,
+              (slotId) => runtime.answerSlots[slotId]?.interaction === "checkbox" ? "checkbox" : "radio"
+            );
+            if (!rows.length) return null;
+            return <MatchingMatrix
+              rows={rows}
+              options={bankOptions}
+              answers={canvasAnswers}
+              selectedId={props.selectedId}
+              interactive
+              renderContent={(nodes) => nodes?.length ? <ContentNodes nodes={nodes} canvas={props} /> : null}
+              onSelectOption={setOption}
+              onSelectTarget={props.mode === "author" ? props.onSelect : undefined}
+            />;
+          })()}
+          {matrixHandled(task as TaskGroupV2, runtime) ? null : task.responseGroups.map((response) => {
             const options = optionsFor(task as TaskGroupV2, response);
             const unordered = response.assignment === "unordered_set";
             const responseSlotIds = new Set(response.slotIds);
@@ -388,3 +470,6 @@ export function ExamCanvasV2(props: ExamCanvasV2Props) {
     </section>
   </div>;
 }
+
+/** 兼容期别名：`StructuredAuthoringEditorV2` 仍以旧名导入，P10 删除旧页面时一并移除。 */
+export const ExamCanvasV2 = ExamCanvas;

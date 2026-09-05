@@ -153,8 +153,12 @@ export default defineConfig({
   plugins: [react(), devSourceParserPlugin()],
   clearScreen: false,
   server: {
+    host: '0.0.0.0',
     port: 1420,
-    strictPort: true
+    strictPort: true,
+    watch: {
+      ignored: ['**/src-tauri/target/**']
+    }
   },
   envPrefix: ["VITE_", "TAURI_"]
 });

@@ -1,0 +1,49 @@
+/* 全局硬规则（计划 §10.3）。
+ *
+ * 目标不是修一个已知缺陷 —— findings F9 实测当前 6 视口 x 6 路由零横向溢出 ——
+ * 而是让新建的题库与工作区表面在长文件名、长错误、宽表格、超长 URL、
+ * Windows 125%/150% 缩放下无法再引入溢出。`scripts/ui/layout-matrix.mjs` 是它的回归门。
+ */
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+}
+
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+
+/* Grid/flex 子项默认 min-width:auto，会被 min-content 顶开容器。 */
+:is(.app-main, .app-main-content, .panel, .grid-child, .flex-child, .table-wrap) { min-width: 0; }
+
+/* 长文件名、长错误文本、超长 URL 必须换行而不是撑开容器。 */
+:is(p, td, th, label, button, .file-name, .error-message, .error-text) {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+img, svg, video, canvas { max-width: 100%; }
+
+/* `input, select, textarea { width: 100% }` 叠加 UA 默认外边距会顶出容器（findings F9）。 */
+button, input, select, textarea { max-width: 100%; }
+:where(input, select, textarea) { margin-inline: 0; }
+
+/* 单选/复选框永远不应该继承 `width: 100%`。
+ * legacy 的 `input, select, textarea { width: 100% }` 会让题面选项里的 radio/checkbox
+ * 占满整行，把选项文字挤到十几像素宽（findings F13）。 */
+input[type="radio"],
+input[type="checkbox"] { width: auto; flex: 0 0 auto; }
+
+/* 宽表格在自己的包裹层里横向滚动，不裁切、也不撑破页面。 */
+.table-wrap { overflow-x: auto; }
+.table-wrap > table { min-width: max-content; }
+
+body {
+  background:
+    radial-gradient(circle at 15% 10%, rgba(31, 138, 112, 0.14), transparent 32rem),
+    linear-gradient(135deg, #efe7d8 0%, #f8f2e8 48%, #e8efe7 100%);
+}

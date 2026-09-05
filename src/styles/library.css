@@ -1,0 +1,175 @@
+/* 题库表面（计划 §10.6）。行内不出现 hash、source path、schema、revision 或错误技术码。 */
+
+.library-page {
+  width: min(100%, 1440px);
+  margin-inline: auto;
+  min-width: 0;
+  /* 批量栏是 sticky 在底部，给它留出空间。 */
+  padding-bottom: 88px;
+  container-type: inline-size;
+}
+
+.library-header { display: grid; gap: 14px; margin-bottom: 18px; min-width: 0; }
+
+.library-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.library-header-top h1 { font-size: clamp(24px, 3vw, 36px); }
+.library-background-note { margin: 6px 0 0; color: var(--muted); }
+
+.library-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.library-tabs { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+
+.library-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 250, 240, 0.62);
+  color: var(--muted);
+}
+
+.library-tabs button.active { border-color: var(--accent); background: var(--accent); color: var(--paper-2); }
+.library-tabs .tab-count { font-variant-numeric: tabular-nums; opacity: 0.8; }
+
+.library-search {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 360px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.library-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(31, 138, 112, 0.08);
+  color: var(--ink);
+}
+
+.library-list { display: grid; gap: 8px; min-width: 0; }
+
+.library-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 260px) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 250, 240, 0.62);
+}
+
+.library-row-check { display: grid; place-items: center; width: 24px; margin: 0; }
+.library-row-check input { width: auto; }
+
+.library-row-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.library-row-main:disabled { color: var(--muted); cursor: default; }
+.library-row-main strong { overflow-wrap: anywhere; }
+.library-row-main small { color: var(--muted); }
+
+.library-row-state { display: grid; gap: 5px; min-width: 0; justify-items: start; }
+.library-row-detail { color: var(--muted); overflow-wrap: anywhere; }
+
+.stage-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.stage-pill.stage-queued,
+.stage-pill.stage-local,
+.stage-pill.stage-cloud,
+.stage-pill.stage-reconciling { border-color: var(--accent); color: var(--accent); }
+.stage-pill.stage-action_required { border-color: var(--accent-2); color: var(--accent-2); }
+.stage-pill.stage-ready { border-color: var(--accent); background: var(--accent); color: var(--paper-2); }
+.stage-pill.stage-published { border-color: var(--line-strong); color: var(--muted); }
+.stage-pill.stage-failed { border-color: var(--danger); color: var(--danger); }
+
+.issue-count {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(199, 120, 56, 0.16);
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.progress-track {
+  display: block;
+  width: min(100%, 220px);
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(19, 32, 29, 0.1);
+  overflow: hidden;
+}
+
+.progress-fill { display: block; height: 100%; background: var(--accent); transition: width 320ms ease; }
+
+.library-row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+.library-batch-bar {
+  position: sticky;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-top: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--paper-2);
+  box-shadow: var(--shadow);
+}
+
+.library-batch-message { color: var(--muted); overflow-wrap: anywhere; }
+
+/* 行内信息在窄容器里换行堆叠，而不是把栅格顶开。 */
+@container (max-width: 760px) {
+  .library-row { grid-template-columns: auto minmax(0, 1fr); }
+  .library-row-state,
+  .library-row-actions { grid-column: 1 / -1; justify-content: flex-start; justify-items: start; }
+}

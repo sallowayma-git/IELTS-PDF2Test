@@ -1,0 +1,160 @@
+/* 题目工作区（计划 §9.7 / §9.10）：全宽、不套大圆角卡片、两栏考试题面。 */
+
+.workspace-page {
+  display: grid;
+  /* header / notice / issues / pane-tabs 都是 auto，题面占满剩余高度。 */
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  height: 100dvh;
+  background: var(--paper-2);
+}
+
+.workspace-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+  padding: 10px clamp(12px, 1.6vw, 20px);
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 250, 240, 0.9);
+}
+
+.workspace-title { display: grid; gap: 2px; flex: 1 1 220px; min-width: 0; }
+.workspace-title strong { overflow-wrap: anywhere; font-size: 16px; }
+.workspace-title small { color: var(--muted); }
+
+.workspace-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+/* 普通编辑只显示保存状态，不显示 revision / hash / schema（计划 §2.4）。 */
+.save-state { padding: 3px 9px; border-radius: 999px; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.save-state.saving { background: rgba(31, 138, 112, 0.12); color: var(--accent); }
+.save-state.saved { background: rgba(31, 138, 112, 0.16); color: var(--accent); }
+.save-state.failed,
+.save-state.conflict { background: rgba(184, 75, 63, 0.14); color: var(--danger); }
+
+.workspace-header-actions .has-blockers { border-color: var(--accent-2); color: var(--accent-2); }
+
+.workspace-menu {
+  position: absolute;
+  top: calc(100% - 4px);
+  right: clamp(12px, 1.6vw, 20px);
+  z-index: 30;
+  display: grid;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--paper-2);
+  box-shadow: var(--shadow);
+}
+
+.workspace-menu button {
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.workspace-menu button:hover { background: rgba(19, 32, 29, 0.06); }
+
+.workspace-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 9px clamp(12px, 1.6vw, 20px);
+  border-bottom: 1px solid var(--line);
+  background: rgba(31, 138, 112, 0.08);
+  color: var(--ink);
+}
+
+.workspace-notice.warning { background: rgba(184, 75, 63, 0.1); color: var(--danger); }
+
+.workspace-issues {
+  max-height: 34vh;
+  min-width: 0;
+  padding: 10px clamp(12px, 1.6vw, 20px);
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.6);
+  overflow: auto;
+}
+
+.workspace-issues ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.workspace-issues li { min-width: 0; }
+
+.workspace-issues li button {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.workspace-issues li.blocker button { border-color: var(--danger); }
+.workspace-issues li.warning button { border-color: var(--accent-2); }
+
+.workspace-body { min-width: 0; min-height: 0; overflow: auto; }
+.workspace-load-error { display: grid; gap: 10px; padding: clamp(16px, 3vw, 32px); }
+.source-pages { display: grid; gap: 6px; margin-top: 12px; }
+.source-pages pre { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* 题面填满工作区：不套卡片边框和阴影，两栏各自滚动（计划 §9.7）。 */
+.workspace-body > .exam-canvas-v2 {
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.86fr);
+}
+
+.workspace-body > .exam-canvas-v2 > .v2-passage-pane,
+.workspace-body > .exam-canvas-v2 > .v2-question-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.workspace-body > .exam-canvas-v2 > .v2-question-pane { border-left: 1px solid var(--exam-border, var(--line)); }
+
+/* 宽窗不需要 tab 切换。 */
+.workspace-pane-tabs { display: none; }
+
+@media (max-width: 980px) {
+  .workspace-pane-tabs {
+    display: flex;
+    gap: 6px;
+    padding: 8px clamp(12px, 1.6vw, 20px);
+    border-bottom: 1px solid var(--line);
+  }
+  .workspace-pane-tabs button {
+    padding: 7px 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: rgba(255, 250, 240, 0.62);
+    color: var(--muted);
+  }
+  .workspace-pane-tabs button.active { border-color: var(--accent); background: var(--accent); color: var(--paper-2); }
+
+  .workspace-body > .exam-canvas-v2 { grid-template-columns: minmax(0, 1fr); }
+  .workspace-body[data-narrow-pane="passage"] > .exam-canvas-v2 > .v2-question-pane { display: none; }
+  .workspace-body[data-narrow-pane="questions"] > .exam-canvas-v2 > .v2-passage-pane { display: none; }
+  .workspace-body > .exam-canvas-v2 > .v2-question-pane { border-left: 0; }
+}

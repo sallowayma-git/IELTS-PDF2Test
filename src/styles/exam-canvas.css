@@ -1,0 +1,69 @@
+/* ExamCanvas 新增层：原位文本编辑器与 Matching 矩阵。
+ * `.exam-canvas-v2` 的题面排版规则仍在 legacy.css，author/student 共用，
+ * 因此这里只加编辑态与矩阵，不改结构排版（保持 §19.6 parity）。 */
+
+/* 原位编辑：视觉上仍是题面文字，只多一个淡色 focus ring（计划 §9.3）。 */
+.inline-text-editor {
+  display: inline-block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(31, 138, 112, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(31, 138, 112, 0.45);
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  resize: none;
+  overflow: hidden;
+}
+
+.inline-text-editor:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.exam-canvas-v2 .v2-text.v2-author-editable { border-radius: 3px; cursor: text; }
+.exam-canvas-v2 .v2-text.v2-author-editable:hover { background: rgba(31, 138, 112, 0.08); }
+.exam-canvas-v2 .v2-text.v2-author-editable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.exam-canvas-v2 .v2-text.is-editing { background: transparent; }
+
+/* Matching 矩阵：左侧题干、上方选项列、下方选项正文列出一次（计划 §9.8）。 */
+.v2-matching-matrix { min-width: 0; margin: 10px 0; overflow-x: auto; }
+
+.v2-matching-matrix > table {
+  min-width: max-content;
+  border-collapse: collapse;
+}
+
+.v2-matching-matrix th,
+.v2-matching-matrix td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.v2-matching-item-head { min-width: 220px; }
+.v2-matching-option-head { width: 44px; text-align: center; font-weight: 900; }
+
+.v2-matching-item { display: table-cell; font-weight: 400; }
+.v2-matching-item .v2-slot-number { margin-right: 8px; font-weight: 900; }
+.v2-matching-prompt { overflow-wrap: anywhere; }
+
+.v2-matching-cell { text-align: center; }
+.v2-matching-cell label { display: grid; place-items: center; margin: 0; }
+.v2-matching-cell input { width: auto; margin: 0; }
+
+.v2-matching-matrix tr.is-selected { background: rgba(31, 138, 112, 0.08); }
+
+.v2-matching-legend { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; min-width: 0; }
+.v2-matching-legend li { display: flex; gap: 8px; min-width: 0; }
+.v2-matching-legend strong { min-width: 22px; }
+.v2-matching-legend span { min-width: 0; overflow-wrap: anywhere; }
+
+/* 选项行：控件固定宽度，文字占满剩余空间并可收缩（findings F13）。 */
+.exam-canvas-v2 .v2-choice-item { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.exam-canvas-v2 .v2-choice-item > span { flex: 1 1 auto; min-width: 0; }
+.exam-canvas-v2 .v2-shared-selection { min-width: 0; }
+.exam-canvas-v2 .v2-text-answer { width: min(100%, 320px); }

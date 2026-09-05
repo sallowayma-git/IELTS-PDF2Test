@@ -1,0 +1,32 @@
+# 默认让 git 自行判断文本，但**测试夹具里的二进制资源必须永不做行尾转换**。
+#
+# 没有这条规则时，git 的 text/binary 猜测 + 每台机器的 core.autocrlf 会决定
+# fixtures/parser/*.pdf 在工作区里是 LF 还是 CRLF。字节级断言（例如 PDF 修复后的
+# /Length 与 xref 偏移）因此会在一台机器上通过、在另一台机器上失败，而被测代码两边都是对的。
+* text=auto
+
+*.pdf   binary
+*.docx  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.mp3   binary
+*.wav   binary
+*.m4a   binary
+*.zip   binary
+*.dll   binary
+*.exe   binary
+*.dylib binary
+*.so    binary
+
+# 生成的运行时脚本与 NAS 包内容以 LF 提交，避免跨平台 diff 噪音。
+*.mjs   text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.rs    text eol=lf
+*.css   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
