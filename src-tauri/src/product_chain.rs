@@ -775,3 +775,212 @@ fn readiness_keys_on_unresolved_blocking_issues_only() {
         "a warning must not make a document unpublishable"
     );
 }
+
+/// M1（原 P2-T03/T04）验收：Workspace API 的 DB 链必须——
+/// 1. 按需迁移填充权威稿（shadow 候选）；
+/// 2. 在事务里应用编辑（单字符 + 标题）并推进版本；
+/// 3. 新连接读到持久化结果（重启一致性）；
+/// 4. **不新增 revision 文件树**（P2-T04）；
+/// 5. 把 canonical DS 同步为 shadow 缓存（现有 export/publish 链可读）。
+#[test]
+fn library_v2_workspace_api_persists_edits_without_new_revisions() {
+    let root = temp_root("library-v2");
+    ensure_app_dirs(&root).unwrap();
+    let job = chain_job("Library v2 edit");
+    save_job(&root, &job).unwrap();
+    let dir = job_dir(&root, &job.job_id);
+    ensure_job_dirs(&dir).unwrap();
+
+    let mut authoring: Value = serde_json::from_slice(
+        &fs::read(workspace_path(READY_AUTHORING_FIXTURE))
+            .expect("ready authoring fixture must exist"),
+    )
+    .expect("ready authoring fixture must be valid JSON");
+    authoring
+        .as_object_mut()
+        .expect("authoring fixture must be an object")
+        .insert("jobId".to_string(), json!(job.job_id));
+    write_json(&dir.join(AUTHORING_V2_SHADOW_FILE), &authoring).unwrap();
+    write_json(
+        &dir.join(DOCUMENT_V2_SHADOW_FILE),
+        &physical_shadow_for(&authoring),
+    )
+    .unwrap();
+
+    // 1. 首次访问：按需迁移填充权威稿。
+    let workspace = crate::library::commands::get_workspace_item_core(&root, &job.job_id)
+        .expect("workspace item must load after on-demand migration");
+    assert_eq!(workspace.pointer("/item/editVersion"), Some(&json!(1)));
+    assert_eq!(
+        workspace.pointer("/item/hasCanonicalDs"),
+        Some(&json!(true))
+    );
+
+    // 2. 找一个真实 text 节点，做单字符编辑 + 标题保存。
+    let node_id = find_first_text_node_id(workspace.pointer("/ds").expect("ds must be present"))
+        .expect("ready fixture must contain a text node");
+    let current_text = find_first_text_node_text(workspace.pointer("/ds").unwrap(), &node_id)
+        .expect("text node must carry text");
+    let edited = format!("{current_text}-");
+    let revisions_before = count_revision_files(&dir);
+
+    let result = crate::library::commands::apply_editor_commands_core(
+        &root,
+        crate::library::repository::ApplyEditorCommandsInput {
+            item_id: job.job_id.clone(),
+            base_version: 1,
+            request_id: Some(format!("test-{}", job.job_id)),
+            commands: vec![json!({
+                "op": "replaceText",
+                "nodeId": node_id,
+                "from": current_text.chars().count() - 1,
+                "to": current_text.chars().count(),
+                "text": "-"
+            })],
+            title: Some("Library v2 title".to_string()),
+        },
+    )
+    .expect("DB edit transaction must succeed");
+    assert_eq!(result.pointer("/editVersion"), Some(&json!(2)));
+    assert_eq!(result.pointer("/appliedCount"), Some(&json!(1)));
+
+    // 3. 新连接（模拟重启）读到持久化结果。
+    let conn = crate::library::repository::open_library_connection(&root).unwrap();
+    let (ds, version) = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+        .unwrap()
+        .expect("canonical ds must be persisted");
+    assert_eq!(version, 2);
+    assert_eq!(
+        ds.pointer("/exam/title").and_then(Value::as_str),
+        Some("Library v2 title")
+    );
+    assert!(
+        find_first_text_node_text(&ds, &node_id)
+            .unwrap()
+            .ends_with('-'),
+        "single-character edit must persist"
+    );
+    let item = crate::library::repository::get_item(&conn, &job.job_id)
+        .unwrap()
+        .expect("item row must exist");
+    assert_eq!(item.title, "Library v2 title");
+
+    // 4. 不新增 revision 文件（新编辑不进文件树）。
+    let revisions_after = count_revision_files(&dir);
+    assert_eq!(
+        revisions_after, revisions_before,
+        "DB 编辑不得追加 revision 文件树"
+    );
+
+    // 5. shadow 缓存同步（canonical → 派生），现有 export/publish 链可读。
+    let synced: Value =
+        serde_json::from_slice(&fs::read(dir.join(AUTHORING_V2_SHADOW_FILE)).unwrap()).unwrap();
+    assert_eq!(
+        synced.pointer("/exam/title").and_then(Value::as_str),
+        Some("Library v2 title")
+    );
+
+    // 6. DB 直通发布：authoring 覆盖 + typed preflight（无历史痕迹门禁）+ NAS 提交。
+    let exported = crate::authoring_v2_commands::export_authoring_v2_core(
+        &root,
+        json!({
+            "jobId": job.job_id,
+            "exportDir": root.join("exports").join("library-v2"),
+            "editVersion": 2,
+            "authoring": synced
+        }),
+    )
+    .expect("DB direct export must pass the typed preflight");
+    let runtime_path = exported
+        .pointer("/receipt/runtimePath")
+        .and_then(Value::as_str)
+        .expect("export receipt must carry the runtime path")
+        .to_string();
+    let output_dir = exported
+        .pointer("/receipt/outputDir")
+        .and_then(Value::as_str)
+        .expect("export receipt must carry the output dir")
+        .to_string();
+    let exam_id = exported
+        .get("examId")
+        .and_then(Value::as_str)
+        .expect("export receipt must carry the exam id")
+        .to_string();
+    assert_eq!(
+        exported.get("revision"),
+        Some(&json!(0)),
+        "DB 直通的绑定标记 revision=0"
+    );
+    let package_manifest: Value =
+        serde_json::from_slice(&fs::read(Path::new(&output_dir).join("manifest-v2.json")).unwrap())
+            .unwrap();
+    assert_eq!(package_manifest.get("editVersion"), Some(&json!(2)));
+    assert_eq!(
+        package_manifest
+            .get("authoringSource")
+            .and_then(Value::as_str),
+        Some("canonical_ds")
+    );
+
+    let nas_parent = root.join("nas");
+    let published = publish_nas_package_v2_core(
+        &root,
+        json!({
+            "libraryRoot": nas_parent.join("publish"),
+            "sourcePath": runtime_path,
+            "assetRoot": output_dir,
+            "examId": exam_id,
+            "minimumRuntimeVersion": "0.2.0"
+        }),
+    )
+    .expect("a DB-direct export with a passing typed preflight must publish");
+    assert_eq!(
+        published.get("status").and_then(Value::as_str),
+        Some("committed")
+    );
+    assert_eq!(
+        published.pointer("/probe/passed").and_then(Value::as_bool),
+        Some(true),
+        "publish probe must pass: {published}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+fn find_first_text_node_id(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) == Some("text") {
+        if let Some(id) = value.get("id").and_then(Value::as_str) {
+            return Some(id.to_string());
+        }
+    }
+    match value {
+        Value::Array(items) => items.iter().find_map(find_first_text_node_id),
+        Value::Object(map) => map.values().find_map(find_first_text_node_id),
+        _ => None,
+    }
+}
+
+fn find_first_text_node_text(value: &Value, node_id: &str) -> Option<String> {
+    if value.get("id").and_then(Value::as_str) == Some(node_id) {
+        return value
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| find_first_text_node_text(item, node_id)),
+        Value::Object(map) => map
+            .values()
+            .find_map(|item| find_first_text_node_text(item, node_id)),
+        _ => None,
+    }
+}
+
+fn count_revision_files(job_dir: &Path) -> usize {
+    let revisions = job_dir.join("authoring").join("revisions");
+    match fs::read_dir(&revisions) {
+        Ok(entries) => entries.flatten().count(),
+        Err(_) => 0,
+    }
+}

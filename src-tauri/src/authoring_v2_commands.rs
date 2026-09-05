@@ -49,6 +49,14 @@ pub(crate) struct ExportAuthoringV2Input {
     pub job_id: String,
     pub export_dir: String,
     pub revision: Option<u64>,
+    /// M1 typed-preflight 直通：调用方（题库/工作区发布链）显式传入 canonical DS
+    /// （来自 library_items_v2，编辑版本 `editVersion`）。提供时：
+    /// - 不再读文件会话/校验文件 revision（DB 是权威，文件只是派生缓存）；
+    /// - 发布门禁换成 `check_publish_preflight`（当前稿检查，无历史痕迹扫描）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authoring: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_version: Option<u64>,
 }
 
 pub(crate) fn get_authoring_v2_core(root: &Path, job_id: &str) -> CommandResult<Value> {
@@ -330,6 +338,118 @@ pub(crate) fn validate_authoring_v2_publish_readiness(
     }))
 }
 
+/// M1 typed preflight（计划 §13.3/§13.4）：只检查**当前** canonical DS 与当前 blocker。
+/// 与 [`validate_authoring_v2_publish_readiness`] 的差别（均为有意移除）：
+/// - 不扫描历史 authoring/pipeline JSON 的 fallback/partial 字符串；
+/// - 不要求全局 `audit.humanVerified`；
+/// - 不依赖 SourceReviewV1 文件状态。
+/// 资源闭包由 publisher 的 staging/probe 与资产 hash 绑定继续保证（§13.5 原子发布保留）。
+pub(crate) fn check_publish_preflight(
+    job_id: &str,
+    edit_version: u64,
+    authoring_value: &Value,
+) -> Value {
+    let mut blockers: Vec<Value> = Vec::new();
+    let mut warnings: Vec<Value> = Vec::new();
+
+    if let Err(error) = validate_authoring(authoring_value) {
+        blockers.push(json!({
+            "code": "SCHEMA_INVALID",
+            "targetId": null,
+            "userMessage": "这道题的数据结构不完整，无法编译成学生端试卷。",
+            "action": "open_workspace",
+            "internal": error
+        }));
+    }
+
+    let quality = authoring_value
+        .get("quality")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let state = quality
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if state != "ready" {
+        blockers.push(json!({
+            "code": "QUALITY_NOT_READY",
+            "targetId": null,
+            "userMessage": "这道题还有未确认的内容，处理完界面里列出的问题后可以发布。",
+            "action": "open_workspace",
+            "internal": format!("quality_state={state}")
+        }));
+    }
+    let hard_failures = quality
+        .get("hardFailures")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for failure in hard_failures.iter().take(20) {
+        blockers.push(json!({
+            "code": "QUALITY_HARD_FAILURE",
+            "targetId": null,
+            "userMessage": "这道题存在必须修复的内容缺陷。",
+            "action": "open_workspace",
+            "internal": failure
+        }));
+    }
+    let unresolved_answers = authoring_value
+        .get("answerKey")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(|answers| answers.iter())
+        .filter(|(_, value)| value.get("kind").and_then(Value::as_str) == Some("unresolved"))
+        .map(|(slot_id, _)| slot_id.clone())
+        .collect::<Vec<_>>();
+    for slot_id in unresolved_answers.iter().take(20) {
+        blockers.push(json!({
+            "code": "ANSWER_MISSING",
+            "targetId": slot_id,
+            "userMessage": "这道题还有答案没有填写。",
+            "action": "open_workspace"
+        }));
+    }
+    let unresolved_blockers = quality
+        .get("issues")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|issue| {
+            issue.get("severity").and_then(Value::as_str) == Some("blocking")
+                && !matches!(
+                    issue.pointer("/details/resolution").and_then(Value::as_str),
+                    Some("resolved") | Some("ignored")
+                )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for issue in unresolved_blockers.iter().take(20) {
+        blockers.push(json!({
+            "code": "ISSUE_UNRESOLVED",
+            "targetId": issue.get("targetId").cloned().unwrap_or(Value::Null),
+            "userMessage": issue.get("message").cloned().unwrap_or_else(|| Value::String(
+                "这道题有需要处理的问题。".to_string()
+            )),
+            "action": "open_workspace",
+            "internal": issue.get("issueId").cloned().unwrap_or(Value::Null)
+        }));
+    }
+    if blockers.len() >= 20 {
+        warnings.push(
+            json!({ "code": "BLOCKER_LIST_TRUNCATED", "message": "问题较多，仅显示前 20 条。" }),
+        );
+    }
+
+    json!({
+        "schemaVersion": "PublishCheckResultV1",
+        "jobId": job_id,
+        "editVersion": edit_version,
+        "passed": blockers.is_empty(),
+        "blockers": blockers,
+        "warnings": warnings
+    })
+}
+
 fn collect_publish_gate_markers(
     value: &Value,
     path: &str,
@@ -463,12 +583,32 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
     export_lock
         .lock_exclusive()
         .map_err(|error| format!("authoring_v2_export_lock_acquire:{error}"))?;
-    let (mut authoring_value, revision) = load_current_authoring(root, &input.job_id)?;
-    if let Some(expected_revision) = input.revision {
-        if expected_revision != revision {
-            return Err(format!(
-                "revision_conflict:current={revision}:requested={expected_revision}"
-            ));
+
+    // ── M1 typed-preflight 直通（计划 §13.3/§13.4）────────────────────
+    // 调用方显式传入 canonical DS（library_items_v2 权威稿）时：文件只是派生
+    // 缓存，不再作为事实源读会话/校验文件 revision；发布门禁换成当前稿检查
+    // （无历史 fallback/partial 扫描、无全局 humanVerified、无 SourceReview 文件依赖）。
+    // staging/资产物化/原子 rename 与 legacy 完全同一条代码路径。
+    let db_direct = input.authoring.is_some();
+    // revision=0 是绑定标记：verify 据此以 shadow 文件（canonical 的派生缓存）为绑定源。
+    // edit_version 单独记录在 manifest，仅供展示/审计。
+    let (mut authoring_value, revision) = if db_direct {
+        (input.authoring.clone().expect("checked above"), 0u64)
+    } else {
+        load_current_authoring(root, &input.job_id)?
+    };
+    if db_direct && authoring_value.get("jobId").and_then(Value::as_str) != Some(input.job_id.as_str())
+    {
+        // DB 直通专属前置检查；legacy 路径维持原有检查顺序（readiness 内做同一检查）。
+        return Err("authoring_v2_export_blocked:job_id_mismatch".to_string());
+    }
+    if !db_direct {
+        if let Some(expected_revision) = input.revision {
+            if expected_revision != revision {
+                return Err(format!(
+                    "revision_conflict:current={revision}:requested={expected_revision}"
+                ));
+            }
         }
     }
     refresh_quality_report(root, &input.job_id, &mut authoring_value)?;
@@ -484,8 +624,22 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
             "authoring_v2_export_blocked:quality_state={quality_state}"
         ));
     }
-    let publish_proof =
-        validate_authoring_v2_publish_readiness(root, &input.job_id, revision, &authoring_value)?;
+    let publish_proof: Value = if db_direct {
+        let check = check_publish_preflight(&input.job_id, revision, &authoring_value);
+        if !check
+            .get("passed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(format!(
+                "publish_check_failed:{}",
+                serde_json::to_string(&check).unwrap_or_default()
+            ));
+        }
+        check
+    } else {
+        validate_authoring_v2_publish_readiness(root, &input.job_id, revision, &authoring_value)?
+    };
     let runtime = compile_reading_source_v2(&authoring).map_err(|issues| {
         format!(
             "authoring_v2_export_compile_blocked:{}",
@@ -543,6 +697,8 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
             "jobId": input.job_id,
             "examId": authoring.exam.exam_id,
             "revision": revision,
+            "editVersion": if db_direct { input.edit_version.unwrap_or(revision) } else { revision },
+            "authoringSource": if db_direct { "canonical_ds" } else { "artifact_session" },
             "sourceDocumentId": authoring.source_document_id,
             "files": ["authoring-ir-v2.json", "reading-source-v2.json", "manifest-v2.json"],
             "authoringSha256": authoring_receipt.sha256,
@@ -741,7 +897,12 @@ fn load_current_authoring(root: &Path, job_id: &str) -> CommandResult<(Value, u6
     Ok((value, 0))
 }
 
-fn refresh_quality_report(root: &Path, job_id: &str, authoring: &mut Value) -> CommandResult<()> {
+/// M1 起 library::commands 在 DB 保存后复用质量重算（canonical → 派生质量块）。
+pub(crate) fn refresh_quality_report(
+    root: &Path,
+    job_id: &str,
+    authoring: &mut Value,
+) -> CommandResult<()> {
     let previous_quality = authoring.get("quality").cloned();
     let physical_shadow = read_json_opt(&job_dir(root, job_id).join(DOCUMENT_V2_SHADOW_FILE))?
         .filter(|shadow| physical_shadow_matches_authoring(shadow, authoring));
@@ -827,7 +988,8 @@ fn preserve_issue_resolutions(quality: &mut Value, previous_quality: Option<&Val
     }
 }
 
-fn validate_authoring(value: &Value) -> CommandResult<()> {
+/// M1 起 DB 编辑事务复用同一 schema 校验。
+pub(crate) fn validate_authoring(value: &Value) -> CommandResult<()> {
     if value.get("schemaVersion").and_then(Value::as_str) != Some("IeltsAuthoringIRV2") {
         return Err("AUTHORING_SCHEMA_INVALID:expected=IeltsAuthoringIRV2".to_string());
     }
@@ -857,7 +1019,10 @@ fn mark_user_audit(document: &mut Value, revision: u64) {
     }
 }
 
-fn apply_patch(document: &mut Value, patch: &Value) -> CommandResult<()> {
+/// 单条 AuthoringPatchV2 应用（对 `serde_json::Value` 形态的权威稿操作）。
+/// M1 起 `library::repository` 的编辑事务复用同一套 patch 语义，
+/// 保证文件链（legacy）与 DB 链（canonical）行为一致。
+pub(crate) fn apply_patch(document: &mut Value, patch: &Value) -> CommandResult<()> {
     let object = patch
         .as_object()
         .ok_or_else(|| "authoring_v2_patch_must_be_object".to_string())?;

@@ -54,7 +54,10 @@ async function main() {
   try {
     ({ cdp } = await createPage(chrome.port));
     await setViewport(cdp, { width: 1440, height: 960, deviceScaleFactor: 1 });
-    await navigate(cdp, `${baseUrl}/#/library`);
+    // M1 起 devFallback 退出自动回退：浏览器冒烟必须显式开启（计划 §16.15）。
+    await navigate(cdp, `${baseUrl}/?devFallback=1#/library`);
+    // 写入 localStorage 标志：后续整页导航不丢（URL 参数只在第一次加载带上）。
+    await evaluate(cdp, `(() => { window.localStorage.setItem("pdf2test.dev-fallback.enabled", "1"); return true; })()`);
 
     // 默认路由必须是题库（计划 §16.1 验收：默认 hash 为 /library）。
     const defaultHash = await evaluate(cdp, "window.location.hash");
@@ -112,6 +115,8 @@ async function main() {
     if (!itemId) throw new Error("library row has no data-item-id");
     await evaluate(cdp, `(() => { window.location.hash = "/items/" + ${js(itemId)}; return true; })()`);
     await waitSelector(cdp, '[data-testid="exam-workspace"]', 60000);
+    // M1 加载链多一跳（先试 DB 权威稿再回退 legacy），等待「画布或降级态」真正出现再断言。
+    await waitSelector(cdp, '[data-testid="exam-canvas-v2-author"], .workspace-load-error', 30000);
     record("从题库打开工作区", itemId);
 
     // 浏览器 + devFallbackBackend 不会为真实导入的 job 生成 V2 题稿

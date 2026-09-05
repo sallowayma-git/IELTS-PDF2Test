@@ -25,8 +25,8 @@
 | 里程碑 | 对应原任务 | 内容 | 状态 |
 |---|---|---|---|
 | **M0** 真实验收基础 | P0-T01/T02/T03 | 基线固化（commit/schema/语料 + --reason 强制）；真实 Tauri E2E（tauri-driver）；AUTHORING_V2_NOT_AVAILABLE 复现结论；跨仓 NAS 契约入口；追踪口径修正 | **complete** |
-| **M1** 唯一权威稿 | P2-T01~T04、P3-T03、P7-T02 | library_items_v2 等新表 + 版本化迁移；Repository 切换；编辑事务（baseVersion/user_edited/有界恢复）；typed preflight；devFallback 出生产 | pending（next） |
-| **M2** 后端接管调度 | P6-T01/T02/T04/T05 | import_files + Rust scheduler + lease/取消/启动恢复 + `processing://item-updated`；删前端队列与 2s 轮询 | pending |
+| **M1** 唯一权威稿 | P2-T01~T04、P3-T03、P7-T02 | library_items_v2 等五张表 + user_version 迁移；Repository 事务编辑；按需迁移（revision→shadow）；typed preflight + export authoring 直通发布；devFallback 出生产（显式开启）；题库标题改读 V2 仓库 | **complete** |
+| **M2** 后端接管调度 | P6-T01/T02/T04/T05 | import_files + Rust scheduler + lease/取消/启动恢复 + `processing://item-updated`；删前端队列与 2s 轮询 | next |
 | **M3** 完整结构编辑 | P3-T01~T06 剩余 | 9 类 EditorCommandV1 全量；renderer/editor 按题型拆分；SourceDrawer/手工补录/热点调整；NAS renderer parity | pending |
 | **M4** 本地识别主链替换 | P4-T01~T06 | DocumentIRV2 直通、Question Layout Graph、题号 token-first、硬闭包、physical table、未分配账本 | pending |
 | **M5** 云端完整候选与合并 | P5-T01~T06、P6-T03 | skill bundle、CloudRecognitionCandidateV1、repair/salvage、三方合并与 user_edited 保护 | pending |

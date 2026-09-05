@@ -427,3 +427,58 @@ types/*.ts 内容寻址）、corpus（15 份公开合成 PDF sha256 + 私有语�
 两次无隔离运行把 `pdf-two-column` 测试 job 写进真实 AppData。清理：`scripts/e2e/cleanup-tauri-test-jobs.mjs`
 走产品路径移入回收站 + job.json 标题校验后删目录；`authoring_hub.db` 的两条 `library_items` 行按产品同款
 软删除语义置 `deleted_at`（ exams 行保留，恢复语义不变）。真实 AppData 现只剩用户自有 `profile-test`。
+
+---
+
+# Session 4 — M1：唯一权威稿与事务编辑（2026-09-05）
+
+## F-M1-1. 复用 patch 语义，不发明第二套命令应用
+
+`apply_authoring_v2_patches_core` 内的 `apply_patch(&mut Value, &Value)` 已覆盖 19 种 patch 词汇
+（replaceText/setAnswer/setHotspot/insertNode...），并按 code point 处理文本。M1 的 DB 编辑事务
+（`library::repository::apply_editor_commands_tx`）以函数注入复用它——文件链（legacy）与 DB 链
+（canonical）行为一致，零语义分叉。EditorCommandV1→patch 编译仍在前端（纯函数、已测）；
+九类命令协议的 Rust 侧原生翻译留给 M3。
+
+## F-M1-2. 旧链 `mark_user_edited` 有一个既有缺口，DB 事务层补齐
+
+旧 `mark_user_edited` 只在节点**已有** provenanceStatus 时更新——没有该字段的新节点编辑后不会带
+user_edited 标记（§8.7 保护不可靠）。旧文件链不动（避免连锁回归）；DB 事务在每条命令应用后
+调用新增的 `mark_command_target_user_edited`（尊重 preserveProvenance/restoreProvenanceStatus），
+测试锁定 provenanceStatus=user_edited 落库。
+
+## F-M1-3. NAS 发布器的绑定校验会重跑门禁——用 authoringSource 标记穿透门禁选择
+
+`nas_package_v2::verify` 会从发布包重放 `validate_authoring_v2_publish_readiness`（legacy 门禁，
+含 fallback 字符串扫描/humanVerified/SourceReview），并要求 manifest.publishProof 逐字节一致。
+DB 直通路径因此：export manifest 增加 `"authoringSource": "canonical_ds"`，verify 据此改用
+`check_publish_preflight`（typed，只查当前稿）。证明绑定语义不变——绑定源用 revision=0 标记
+指向 shadow 文件，而 DB 链每次保存都把 canonical DS 同步为 shadow（canonical→缓存方向，合法）。
+
+## F-M1-4. typed preflight（PublishCheckResultV1）与直通发布
+
+`check_publish_preflight` 只查：schema、quality.state、hardFailures、unresolved answers、
+未解决 blocking issues（user_message 直出，前端不再解析错误长字符串）。
+`export_authoring_v2_core` 增加可选 `authoring`+`editVersion` 输入：不再读文件会话/文件 revision；
+staging/资产物化/原子 rename 与 legacy 同一条代码路径（§13.5 原子性保留）。
+publishClient 优先直通，ITEM_NOT_FOUND/未播种时回退 legacy 会话链。
+
+## F-M1-5. devFallbackBackend 退出生产 bundle（§16.15）
+
+`command()` 的自动回退改为显式开启：URL 参数 `?devFallback=1` 或 localStorage 标志，动态 import
+（vite 拆独立 chunk，Tauri 生产永不加载）。冒烟脚本改为首导航后写 localStorage 标志
+（URL 参数在整页导航后会丢——本轮踩过的坑）。`JobDetail` 类型迁到 `src/types/job-detail.ts`，
+类型不再反向依赖测试替身。
+
+## F-M1-6. 题库标题的权威源切换
+
+工作区标题编辑（§9.10，M1 落地）走 `library_items_v2.title`；题库行合并时 V2 行
+（hasCanonicalDs）的标题优先于 job.json。旧 job.json 不回写（不做双写）。
+
+## F-M1-7. 测试基建坑位记录
+
+- rusqlite `Connection` 不可 Clone——事务测试用 `&mut conn` 直传。
+- 事务冲突路径的断言要验证「版本未推进」而不仅是报错码。
+- 迁移幂等测试用直接 SQL 模拟用户推进版本（7），断言迁移后仍为 7。
+- legacy 导出测试的 job_id 前置检查顺序敏感：db_direct 的 job_id 检查必须在 db_direct 分支内，
+  否则改变 legacy 错误顺序（quality_state 先于 job_id_mismatch）。

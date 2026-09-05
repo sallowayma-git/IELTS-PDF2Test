@@ -72,18 +72,8 @@ type Store = {
   trashedIds: string[];
 };
 
-export interface JobDetail {
-  job: ImportJob;
-  documentIr?: DocumentIr;
-  sourceReview?: SourceReview;
-  splitCandidates?: SplitCandidates;
-  authoringIr?: ReadingAuthoringIr;
-  validationReport?: ValidationReport;
-  previewAssets?: PreviewAssets;
-  pipelineReport?: AutoPipelineReport;
-  visionAnswerCandidates?: VisionAnswerCandidates;
-  llmSuggestions: LlmSuggestion[];
-}
+export type { JobDetail } from "../types";
+import type { JobDetail } from "../types";
 
 const STORE_KEY = "ielts-author-studio.dev-fallback-store.v1";
 const MAX_IMPORT_FILE_BYTES = 128 * 1024 * 1024;

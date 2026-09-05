@@ -63,6 +63,7 @@ mod export_writing_library;
 mod ielts_grammar;
 mod job_commands;
 mod job_store;
+mod library;
 mod library_commands;
 mod llm_commands;
 mod llm_gateway;
@@ -916,6 +917,41 @@ async fn pick_pdf_folder_sources(
     job_commands::pick_pdf_folder_sources_core(app).await
 }
 
+// ── M1：Workspace API（library/commands.rs 的薄壳，计划 §5.3 命令收敛）──
+
+#[tauri::command]
+async fn get_workspace_item(item_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        library::commands::get_workspace_item_core(&root, &item_id)
+    })
+    .await
+    .map_err(|error| format!("library_v2_join:{error}"))?
+}
+
+#[tauri::command]
+async fn apply_editor_commands(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let input: library::repository::ApplyEditorCommandsInput = serde_json::from_value(input)
+            .map_err(|error| format!("library_v2_invalid_input:{error}"))?;
+        library::commands::apply_editor_commands_core(&root, input)
+    })
+    .await
+    .map_err(|error| format!("library_v2_join:{error}"))?
+}
+
+#[tauri::command]
+async fn list_library_items(include_deleted: Option<bool>, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    let include_deleted = include_deleted.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || {
+        library::commands::list_library_items_core(&root, include_deleted)
+    })
+    .await
+    .map_err(|error| format!("library_v2_join:{error}"))?
+}
+
 #[tauri::command]
 async fn parse_document(
     job_id: String,
@@ -1423,10 +1459,24 @@ pub fn run() {
             ensure_app_dirs(&root).map_err(Box::<dyn std::error::Error>::from)?;
             // 初始化题库 DB schema + 首次启动迁移既有 job 数据（幂等，失败不阻断启动）。
             let _ = library_commands::migrate_existing_into_library(&root);
+            // M1：把旧题迁移到 library_items_v2（幂等；阻塞线程池里跑，不占 setup）。
+            {
+                let root = root.clone();
+                tauri::async_runtime::spawn_blocking(move || match library::migration::migrate_existing_items(&root) {
+                    Ok(report) => eprintln!(
+                        "[library] v2 migration: scanned={} shells={} seeded={} migration_required={}",
+                        report.scanned_jobs, report.created_shells, report.seeded_ds, report.migration_required
+                    ),
+                    Err(error) => eprintln!("[library] v2 migration failed: {error}"),
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             create_import_job,
+            get_workspace_item,
+            apply_editor_commands,
+            list_library_items,
             list_jobs,
             get_job,
             update_job_meta,

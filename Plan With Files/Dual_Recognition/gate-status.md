@@ -1,6 +1,6 @@
 # 门禁状态（Gate Status）
 
-日期：2026-09-05 · 基线 commit `bb978be`
+日期：2026-09-05 · 基线 commit `bb978be` → 冻结 `5daa04f` → M0 `401ca76` → M1（本文件随会话更新）
 
 ## 结论先说
 
@@ -13,9 +13,12 @@
 |---|---|---|---|
 | TypeScript | `npm run check` | 通过 | `tsc --noEmit` |
 | 生产构建 | `npx vite build` | 通过 | 142 modules |
-| 产品面基线 | `npm run verify:product-baseline` | 通过 | commit `5daa04f` / schema hash / 语料清单入基线；漂移重录强制 `--reason`（M0-T2）；routes 4 / pages 9 / commands 59 / tables 8 |
+| 产品面基线 | `npm run verify:product-baseline` | 通过 | commit/schema hash/语料清单入基线；漂移重录强制 `--reason`（M0-T2）；routes 4 / pages 9 / **commands 62**（M1 +3 Workspace API）/ tables 8 |
 | 横向溢出矩阵 | `npm run test:layout:legacy` | 通过 | 84 项检查 0 溢出 |
-| 三表面主链冒烟 | `npm run e2e:library-workspace` | 通过 | 13 步 |
+| 三表面主链冒烟 | `npm run e2e:library-workspace` | 通过 | 13 步（devFallback 显式开启，M1） |
+| **真实 Tauri E2E** | `npm run e2e:tauri` | 通过（发布步 blocked） | M0 新增，M1 扩至 9 步：导入→流水线→工作区→改字符→已保存→重开持久化→**改标题→已保存→题库行/重开均显示新标题**；发布被质量门如实 blocked。真实进程+WebView2+SQLite+文件系统，隔离 `PDF2TEST_AUTOMATION_DATA_DIR` |
+| **跨仓 NAS 契约** | `npm run e2e:nas-contract` | 通过 | M0 新增：真实发布产物 13/13 按学生端 manifest 规则校验；Electron 实测 M6 |
+| Rust 全量测试 | `cargo test` | 通过 | M1 后 560 passed（含 library 模块 6 测试 + product_chain 直通发布链测试） |
 | Rust fmt | `cargo fmt --check` | 通过 | |
 | Rust check | `cargo check` | 通过 | exit 0，83 个既有 dead_code 警告 |
 | Rust tests | `cargo test` | 通过（见下） | |

@@ -1,3 +1,4 @@
+import type { LibraryItemSummaryV2 } from "../../api/workspaceClient";
 import type { ImportJob, IssueCounts, JobStatus, LibraryExamSummary, LibraryStatus, WorkflowStep } from "../../types";
 
 // 题库行的统一模型（计划 §2.1 / §11.3）。
@@ -138,13 +139,15 @@ export function buildRow(
   id: string,
   job: ImportJob | undefined,
   summary: LibraryExamSummary | undefined,
-  options: { inTrash?: boolean } = {}
+  options: { inTrash?: boolean } = {},
+  v2?: LibraryItemSummaryV2
 ): LibraryRowV1 {
   const stage = deriveStage(job, summary);
   const actionable = actionableFrom(job?.issueCounts) || (summary?.issueErrors ?? 0);
   return {
     id,
-    title: job?.title ?? summary?.title ?? id,
+    // M1：V2 仓库是标题的权威（工作区改名写 library_items_v2）；只在已填充权威稿时覆盖。
+    title: (v2?.hasCanonicalDs ? v2.title : undefined) ?? job?.title ?? summary?.title ?? id,
     modality: summary?.subject === "writing" ? "writing" : "reading",
     stage,
     detail: detailFor(stage, job, actionable),

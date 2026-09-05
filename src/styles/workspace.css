@@ -158,3 +158,30 @@
   .workspace-body[data-narrow-pane="questions"] > .exam-canvas-v2 > .v2-passage-pane { display: none; }
   .workspace-body > .exam-canvas-v2 > .v2-question-pane { border-left: 0; }
 }
+
+/* 工作区标题原位编辑（计划 §9.10）：继承字体、无边框、仅 focus 时显示轮廓。 */
+.workspace-title-editable > [role="button"] {
+  cursor: text;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+.workspace-title-editable > [role="button"]:focus-visible,
+.workspace-title-editable > [role="button"]:hover {
+  background: var(--surface-raised, rgba(15, 23, 42, 0.06));
+}
+.workspace-title-input {
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line, #cbd5e1);
+  border-radius: 6px;
+  padding: 2px 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.workspace-title-input:focus-visible {
+  outline: 2px solid var(--accent, #0f766e);
+  outline-offset: 1px;
+}

@@ -46,16 +46,39 @@ import type {
   ApplyAuthoringV2PatchesInput,
   AuthoringV2ExportResultV2
 } from "../types";
-import { devFallbackInvoke, type JobDetail } from "../services/devFallbackBackend";
+import type { IeltsAuthoringIRV2, JobDetail } from "../types";
+// M1（计划 §16.14/§16.15）：devFallbackBackend 退出生产 bundle。
+// 只在显式开启（浏览器冒烟/开发预览通过 URL 参数或 localStorage 打开）时按需动态加载，
+// Tauri 生产环境永不 import 该模块（vite 会把它拆成独立 chunk，不进主包）。
+const DEV_FALLBACK_FLAG = "pdf2test.dev-fallback.enabled";
+
+function devFallbackRequested(): boolean {
+  try {
+    return (
+      new URLSearchParams(window.location.search).has("devFallback")
+      || window.localStorage.getItem(DEV_FALLBACK_FLAG) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function devFallbackInvokeLazy<T>(name: string, args?: Record<string, unknown>): Promise<T> {
+  if (!devFallbackRequested()) {
+    throw new Error(`requires_tauri_runtime:${name}`);
+  }
+  const backend = await import("../services/devFallbackBackend");
+  return backend.devFallbackInvoke<T>(name, args);
+}
 
 const isTauriRuntime = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-async function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
+export async function command<T>(name: string, args?: Record<string, unknown>): Promise<T> {
   if (isTauriRuntime()) {
     const { invoke } = await import("@tauri-apps/api/core");
     return invoke<T>(name, args);
   }
-  return devFallbackInvoke<T>(name, args);
+  return devFallbackInvokeLazy<T>(name, args);
 }
 
 export async function createImportJob(input: CreateJobInput): Promise<ImportJob> {
@@ -160,7 +183,14 @@ export async function applyAuthoringV2Patches(input: ApplyAuthoringV2PatchesInpu
   return command("apply_authoring_v2_patches", { input });
 }
 
-export async function exportAuthoringV2(input: { jobId: string; exportDir: string; revision?: number }): Promise<AuthoringV2ExportResultV2> {
+// M1：authoring 覆盖 + editVersion = DB 权威稿直通发布（typed preflight 路径）。
+export async function exportAuthoringV2(input: {
+  jobId: string;
+  exportDir: string;
+  revision?: number;
+  editVersion?: number;
+  authoring?: IeltsAuthoringIRV2;
+}): Promise<AuthoringV2ExportResultV2> {
   return command("export_authoring_v2", { input });
 }
 

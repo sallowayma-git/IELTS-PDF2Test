@@ -1,4 +1,5 @@
 export * from "./job";
+export * from "./job-detail";
 export * from "./document-ir";
 export * from "./authoring-ir";
 export * from "./validation";

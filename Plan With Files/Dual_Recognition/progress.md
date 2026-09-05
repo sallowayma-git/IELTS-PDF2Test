@@ -180,3 +180,45 @@ src/styles.css            -99.1%
 - Rust 命令级：`product_chain.rs` 4 测试
 - 浏览器级：`e2e:library-workspace`（devFallback，继续如实标注）
 - NAS 学生端：manifest 契约镜像校验已通；Electron 实测 pending（M6）
+
+---
+
+# Session 4 — M1 唯一权威稿（2026-09-05）
+
+## 交付物
+
+1. **`src-tauri/src/library/`**（原 P2-T01/T02）：schema.rs（五张 V2 表 + `PRAGMA user_version`
+   版本化迁移）、repository.rs（事务编辑：版本校验→逐条应用→校验→版本递增→journal→每 20 次保存
+   有界恢复快照；request_id 幂等重放）、migration.rs（current revision → shadow 候选优先级；
+   幂等；不覆盖用户编辑；迁移失败保留 migration_required 外壳）、commands.rs（Workspace API）、mod.rs。
+2. **Workspace API**（原 P2-T03）：`get_workspace_item`（按需迁移；首稿未生成时 ds=null）、
+   `apply_editor_commands`（§9.5 事务；提交后 canonical→shadow 派生同步 + 质量重算 + 状态回写，
+   **不新增 revision 文件**）、`list_library_items`。
+3. **typed preflight + 直通发布**（原 P7-T02 提前）：`check_publish_preflight`（PublishCheckResultV1，
+   只查当前稿）；export `authoring` 覆盖输入；`nas_package_v2` verify 按 authoringSource 换门禁；
+   publishClient 直通优先 + legacy 回退 + typed blocker 文案直显。
+4. **前端**（原 P2-T04/§16.14/§16.15）：workspaceClient.ts；useCanonicalEditor 双轨（DB 优先，
+   legacy 回退）+ 标题编辑 + EDIT_VERSION_CONFLICT 文案；ExamWorkspacePage 标题原位编辑；
+   publishClient 直通；题库行标题读 V2 仓库；devFallback 退出自动回退（显式开启 + 动态 import）。
+5. **测试**：library 模块 6 单测（schema 幂等/约束、shell 幂等、seed 不覆盖、冲突不推进版本、
+   事务应用+journal+user_edited、迁移幂等）；product_chain 新增
+   `library_v2_workspace_api_persists_edits_without_new_revisions`（迁移→编辑→标题→重启读→
+   **零新增 revision 文件**→shadow 同步→typed preflight 直通 export→NAS commit→probe）。
+
+## 实测记录（全部真实运行）
+
+- `cargo test`：560 passed / 0 failed（含新增 7 测试；dump 测试 ignored）
+- `npm run check` / `npm run build`：绿
+- `npm run verify:product-baseline:strict`：绿（commands 59→62，已带 reason 重录）
+- `npm run test:layout:legacy`：0 溢出
+- `npm run e2e:library-workspace`：13 步全过（devFallback 显式开启后仍全绿）
+- `npm run e2e:tauri`：**9 步** = 8 PASSED + 发布 BLOCKED（质量门，语料未达 ready）
+  —— 新增标题编辑步骤：标题改后「已保存」、题库行显示新标题、重开工作区标题保持
+- `npm run e2e:nas-contract`：13/13（此前运行）
+
+## 覆盖层级
+
+- M1 退出条件「改字符和标题、保存、重启、发布一致；新编辑不加 revision 文件」：
+  后端由 product_chain 新测试证明（真实 SQLite/文件系统）；UI 级由 e2e:tauri 证明
+  （编辑/标题/重开持久化）；「发布」环节 UI 级当前被质量门如实 BLOCKED（语料限制），
+  发布链本身的命令级证明在 product_chain 直通发布测试中。

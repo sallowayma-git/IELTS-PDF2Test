@@ -198,7 +198,13 @@ fn validate_v2_export_binding(
     if exported_source != bound_source {
         return Err("nas_package_v2_export_binding_detached:runtime".to_string());
     }
-    let proof = validate_authoring_v2_publish_readiness(root, job_id, revision, &authoring_value)?;
+    // M1：DB 直通发布（manifest.authoringSource == "canonical_ds"）以 typed preflight
+    // 复核证明（只查当前稿）；legacy 路径维持原门禁。证明绑定逐字节一致的语义不变。
+    let proof = if manifest.get("authoringSource").and_then(Value::as_str) == Some("canonical_ds") {
+        crate::authoring_v2_commands::check_publish_preflight(job_id, revision, &authoring_value)
+    } else {
+        validate_authoring_v2_publish_readiness(root, job_id, revision, &authoring_value)?
+    };
     if manifest.get("publishProof") != Some(&proof) {
         return Err("nas_package_v2_export_receipt_proof_mismatch".to_string());
     }

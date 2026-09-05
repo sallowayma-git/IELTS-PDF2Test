@@ -378,6 +378,48 @@ async function main() {
         return { marker: editedMarker, found: true };
       });
 
+      await recordStep("edit-title-and-save", async () => {
+        // 计划 §9.10「标题（可编辑）」：M1 起标题随命令批次进同一保存事务。
+        const newTitle = "E2E 标题 42";
+        const titleSpan = driver.wait(until.elementLocated(By.css('[data-testid="workspace-title"] [role="button"]')), 10000);
+        await driver.executeScript("arguments[0].click()", titleSpan);
+        const titleInput = await driver.wait(until.elementLocated(By.css('[data-testid="workspace-title-input"]')), 10000);
+        await titleInput.sendKeys(Key.chord(Key.CONTROL, "a"));
+        await titleInput.sendKeys(newTitle);
+        try {
+          await titleInput.sendKeys(Key.ENTER);
+        } catch {}
+        await driver.wait(
+          until.elementTextContains(
+            driver.wait(until.elementLocated(By.css('[data-testid="workspace-save-state"]')), 10000),
+            "已保存"
+          ),
+          20000
+        );
+        return { title: newTitle };
+      });
+
+      await recordStep("title-persists-in-library", async () => {
+        await driver.executeScript("location.hash = '#/library';");
+        await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 15000);
+        const row = await driver.wait(until.elementLocated(By.css(`[data-item-id="${itemId}"]`)), 15000);
+        const rowText = (await row.getText()).replace(/\s+/g, " ").trim();
+        if (!rowText.includes("E2E 标题 42")) {
+          throw new Error(`题库行未显示新标题，实际：${rowText.slice(0, 120)}`);
+        }
+        // 回到工作区，标题也应保持（DB 权威，工作区从仓库读）。
+        await openWorkspaceForItem(driver, itemId);
+        // 加载完成后标题才来自 V2 仓库；轮询等待，避免读到 job.json 回退值。
+        await driver.wait(
+          until.elementTextContains(
+            driver.wait(until.elementLocated(By.css('[data-testid="workspace-title"]')), 15000),
+            "E2E 标题 42"
+          ),
+          20000
+        );
+        return { title: "E2E 标题 42", persisted: true };
+      });
+
       await recordStep("publish-via-workspace-button", async () => {
         await driver.findElement(By.css('[data-testid="workspace-publish"]')).click();
         const notice = await driver.wait(

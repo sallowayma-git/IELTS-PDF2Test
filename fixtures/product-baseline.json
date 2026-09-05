@@ -1,10 +1,10 @@
 {
-  "recordedAt": "2026-09-05T10:13:48.744Z",
+  "recordedAt": "2026-09-05T11:42:30.631Z",
   "surface": {
-    "commitSha": "5daa04f4be3d0cce4fe4a45756da1d780e367789",
+    "commitSha": "401ca76f44d6b2a1f0d76cfcc2ca2d94e629fd87",
     "schemaHash": {
-      "files": 39,
-      "sha256": "39bea98acf45301db2342e634967d2c8feede7f399dd60326dc02fb510c0c607"
+      "files": 40,
+      "sha256": "13096e6130b9831fb89a00c5c743ea02e266372795a4dc0ac5b006f1a6b4be81"
     },
     "corpus": {
       "publicSyntheticPdf": [
@@ -91,6 +91,7 @@
     ],
     "tauriCommands": [
       "apply_authoring_v2_patches",
+      "apply_editor_commands",
       "apply_llm_suggestion",
       "apply_manual_transcription",
       "apply_vision_answer_candidates",
@@ -116,10 +117,12 @@
       "get_job_artifact_status",
       "get_library_exam",
       "get_library_stats",
+      "get_workspace_item",
       "get_writing_job",
       "import_source_file",
       "list_jobs",
       "list_library_exams",
+      "list_library_items",
       "list_llm_profiles",
       "list_trashed_exams",
       "list_writing_jobs",
@@ -241,8 +244,8 @@
       "src/exam-canvas/ExamCanvas.tsx": 29680,
       "src/pages/UnifiedPreview.tsx": 66337,
       "src/pages/StructuredAuthoringEditorV2.tsx": 55479,
-      "src/services/devFallbackBackend.ts": 173269,
-      "src-tauri/src/lib.rs": 450583,
+      "src/services/devFallbackBackend.ts": 172978,
+      "src-tauri/src/lib.rs": 452742,
       "src-tauri/src/authoring_pipeline.rs": 547026,
       "src-tauri/src/auto_pipeline.rs": 116127,
       "src-tauri/src/ielts_grammar/mod.rs": 112627
@@ -255,6 +258,18 @@
       "reason": "M0: app_root 增加 PDF2TEST_AUTOMATION_DATA_DIR 测试隔离钩子（真实 Tauri E2E 用）；新增 e2e/cleanup 脚本与 selenium-webdriver 依赖；基线字段扩展 commitSha/schemaHash/corpus",
       "driftSummary": [
         "  fileSizes.src-tauri/src/lib.rs: 450116 -> 450583 B (+467, 0.1%)"
+      ]
+    },
+    {
+      "at": "2026-09-05T11:42:30.630Z",
+      "commit": "401ca76f44d6b2a1f0d76cfcc2ca2d94e629fd87",
+      "reason": "M1: 新增 Workspace API 三命令（get_workspace_item/apply_editor_commands/list_library_items）；library_items_v2 等五张 V2 表入库；typed preflight（PublishCheckResultV1）+ export authoring 直通发布路径；devFallback 退出自动回退改显式开启",
+      "driftSummary": [
+        "  tauriCommands: added apply_editor_commands, get_workspace_item, list_library_items",
+        "  fileSizes.src-tauri/src/lib.rs: 450583 -> 452742 B (+2159, 0.5%)",
+        "  fileSizes.src/services/devFallbackBackend.ts: 173269 -> 172978 B (-291, -0.2%)",
+        "  commitSha: 5daa04f4be3d0cce4fe4a45756da1d780e367789 -> 401ca76f44d6b2a1f0d76cfcc2ca2d94e629fd87",
+        "  schemaHash: 39bea98acf45 (39 files) -> 13096e6130b9 (40 files)"
       ]
     }
   ]

@@ -4,7 +4,7 @@ import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { describePublishError, publishItem } from "../../api/publishClient";
 import { go, legacyPath, libraryPath, type LibraryIntent } from "../../app/router";
 import { ExamCanvas } from "../../exam-canvas/ExamCanvas";
-import type { JobDetail } from "../../services/devFallbackBackend";
+import type { JobDetail } from "../../types";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { blockerCount, deriveActionableIssues } from "./actionableIssues";
 import { useCanonicalEditor } from "./useCanonicalEditor";
@@ -30,6 +30,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [busyAction, setBusyAction] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
+  const [titleEditing, setTitleEditing] = useState(false);
   // 窄窗（<980px）下两栏改为顶部 tab 切换，而不是把 passage 与 questions 堆成一长列。
   const [narrowPane, setNarrowPane] = useState<"passage" | "questions">("questions");
 
@@ -83,7 +84,16 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         <button className="ghost small" onClick={() => go(libraryPath())}>← 返回题库</button>
 
         <div className="workspace-title">
-          <strong className="file-name">{title}</strong>
+          <EditableTitle
+            title={editor.title ?? title}
+            editing={titleEditing}
+            onBegin={() => setTitleEditing(true)}
+            onCommit={(next) => {
+              setTitleEditing(false);
+              editor.setTitle(next);
+            }}
+            onCancel={() => setTitleEditing(false)}
+          />
           {processingNote ? <small>{processingNote}</small> : null}
         </div>
 
@@ -233,5 +243,63 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
       ) : null}
     </section>
+  );
+}
+
+/** 工作区标题原位编辑（计划 §9.10「标题（可编辑）」，M1 落地）。
+ *  与正文编辑同一条版本化保存链：setTitle 只是排队，flush 时随命令批次一起进事务。 */
+function EditableTitle({
+  title,
+  editing,
+  onBegin,
+  onCommit,
+  onCancel
+}: {
+  title: string;
+  editing: boolean;
+  onBegin: () => void;
+  onCommit: (next: string) => void;
+  onCancel: () => void;
+}) {
+  if (!editing) {
+    return (
+      <strong className="file-name workspace-title-editable" data-testid="workspace-title">
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label={`重命名：${title}`}
+          onClick={onBegin}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onBegin();
+            }
+          }}
+        >
+          {title}
+        </span>
+      </strong>
+    );
+  }
+  return (
+    <strong className="file-name">
+      <input
+        className="workspace-title-input"
+        data-testid="workspace-title-input"
+        defaultValue={title}
+        aria-label="题目标题"
+        autoFocus
+        onBlur={(event) => onCommit(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onCommit(event.currentTarget.value);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            onCancel();
+          }
+        }}
+      />
+    </strong>
   );
 }

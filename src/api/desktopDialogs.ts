@@ -1,7 +1,19 @@
-import { devFallbackInvoke } from "../services/devFallbackBackend";
 import type { DocumentIr } from "../types";
 
 const isTauriRuntime = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// 与 tauriCommands 同款：devFallback 只在显式开启时按需加载（计划 §16.15）。
+const DEV_FALLBACK_FLAG = "pdf2test.dev-fallback.enabled";
+
+function devFallbackRequested(): boolean {
+  try {
+    return (
+      new URLSearchParams(window.location.search).has("devFallback")
+      || window.localStorage.getItem(DEV_FALLBACK_FLAG) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
 const DEV_PICKED_PATHS_KEY = "ielts-author-studio.dev-fallback-picked-paths.v1";
 
 export interface PickedPath {
@@ -201,6 +213,8 @@ export async function chooseExportDirectory(): Promise<string | null> {
     return invoke<string | null>("choose_export_dir");
   }
 
-  const fallback = await devFallbackInvoke<string | null>("choose_export_dir");
+  if (!devFallbackRequested()) return null;
+  const backend = await import("../services/devFallbackBackend");
+  const fallback = await backend.devFallbackInvoke<string | null>("choose_export_dir");
   return fallback ?? "local://exports";
 }
