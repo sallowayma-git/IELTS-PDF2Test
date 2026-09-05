@@ -359,6 +359,15 @@ pub struct SaveLlmProfileInput {
 pub struct AppState;
 
 fn app_root(app: &AppHandle) -> CommandResult<PathBuf> {
+    // 测试自动化钩子（与 job_commands.rs 的 PDF2TEST_AUTOMATION_* 同族）：
+    // Windows 上 app_data_dir 走 known-folder API，不读 APPDATA 环境变量，
+    // 真实 Tauri E2E 需要显式覆盖数据根目录，才能不污染真实用户数据。
+    if let Ok(dir) = env::var("PDF2TEST_AUTOMATION_DATA_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
     app.path().app_data_dir().map_err(|error| error.to_string())
 }
 

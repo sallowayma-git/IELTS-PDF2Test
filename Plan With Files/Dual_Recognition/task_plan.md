@@ -1,9 +1,9 @@
 # Task Plan — IELTS PDF2Test 产品简化 / 双路识别 / WYSIWYG 重构
 
 > 权威计划：[../IELTS_PDF2Test_Product_Simplification_Dual_Recognition_WYSIWYG_Plan_CN.md](../IELTS_PDF2Test_Product_Simplification_Dual_Recognition_WYSIWYG_Plan_CN.md)
-> 实施基线 commit：`bb978be`（`fix: harden AI import review and V2 publishing`）
+> 实施基线 commit：`bb978be`（`fix: harden AI import review and V2 publishing`）→ 冻结基线 `5daa04f`（2026-09-05 审计快照）
 > 追踪目录：`Plan With Files/Dual_Recognition/`
-> 启动日期：2026-09-05
+> 启动日期：2026-09-05；续建计划（M0-M7）启动日期：2026-09-05
 
 ## Goal
 
@@ -17,7 +17,23 @@
 
 同时达成：本地 `DocumentIRV2` 几何直接识别、云端完整可渲染候选、确定性对齐合并、持久化后台任务队列、零横向溢出。
 
-## Phase Map（本地执行阶段 ↔ 计划 PR）
+## 续建里程碑 M0–M7（对齐原任务书任务 ID）
+
+> 续建计划的实施顺序：真实验收基础 → Canonical DS → 持久化队列 → 完整编辑能力 → 本地/云端识别 → 合并 → 批量发布与清理 → 旧链退出。
+> 记录格式：原任务 ID — 续建里程碑 — 实现状态 — 验证层级 — 证据 — 剩余缺口。
+
+| 里程碑 | 对应原任务 | 内容 | 状态 |
+|---|---|---|---|
+| **M0** 真实验收基础 | P0-T01/T02/T03 | 基线固化（commit/schema/语料 + --reason 强制）；真实 Tauri E2E（tauri-driver）；AUTHORING_V2_NOT_AVAILABLE 复现结论；跨仓 NAS 契约入口；追踪口径修正 | **complete** |
+| **M1** 唯一权威稿 | P2-T01~T04、P3-T03、P7-T02 | library_items_v2 等新表 + 版本化迁移；Repository 切换；编辑事务（baseVersion/user_edited/有界恢复）；typed preflight；devFallback 出生产 | pending（next） |
+| **M2** 后端接管调度 | P6-T01/T02/T04/T05 | import_files + Rust scheduler + lease/取消/启动恢复 + `processing://item-updated`；删前端队列与 2s 轮询 | pending |
+| **M3** 完整结构编辑 | P3-T01~T06 剩余 | 9 类 EditorCommandV1 全量；renderer/editor 按题型拆分；SourceDrawer/手工补录/热点调整；NAS renderer parity | pending |
+| **M4** 本地识别主链替换 | P4-T01~T06 | DocumentIRV2 直通、Question Layout Graph、题号 token-first、硬闭包、physical table、未分配账本 | pending |
+| **M5** 云端完整候选与合并 | P5-T01~T06、P6-T03 | skill bundle、CloudRecognitionCandidateV1、repair/salvage、三方合并与 user_edited 保护 | pending |
+| **M6** 批量原子发布与清理 | P7-T03/T05、P7-T02 收尾 | publish_library_items 整批原子提交、发布恢复记录、引用集合清理、NAS Electron 实测 | pending |
+| **M7** 旧链退出与统一交付 | P8-T01~T05 | 删退休页面/双写/前端调度/旧预览发布；超大文件迁移；Windows 安装包 + 100 PDF 语料 + 故障矩阵验收 | pending |
+
+## Phase Map（本地执行阶段 ↔ 计划 PR，历史记录）
 
 | 阶段 | 内容 | 计划 PR | 状态 |
 |---|---|---|---|
@@ -40,9 +56,13 @@
 - [complete] S0.3 新增 `scripts/ui/layout-matrix.mjs`：视口/缩放矩阵断言 `scrollWidth <= clientWidth + 1`
 - [complete] S0.4 新增 `fixtures/ui/long-content.json`：长文件名/长错误/多选项/宽表压力内容
 - [complete] S0.5 新增 `scripts/verify-product-baseline.mjs`：route/命令/表/flag 快照与漂移检测
-- [deferred] S0.6 真实 Tauri E2E（`scripts/e2e/*`）—— 本机未验证 tauri-driver/WebDriver 可用，不写无法运行的推测脚本。
-  替代方案（P4 一并落地）：`src-tauri/tests/product_chain.rs` 直接驱动真实命令处理器 + 临时 AppData + 真实 SQLite，
-  覆盖 导入 -> 打开 -> 改一个字符 -> 保存 -> 发布；`cargo 1.96.1` 本机可用，可实测。
+- [complete] S0.6 真实 Tauri E2E —— **M0 已落地**（2026-09-05 更新：旧结论「本机未验证 tauri-driver 可用」作废，
+  `tauri-driver.exe` 实际存在于 cargo bin，学生端仓库实际在 `F:/workspace/IELTS-NASfor-WenDao`）。
+  `npm run e2e:tauri`（scripts/e2e/tauri-import-edit-publish.mjs）：tauri-driver + selenium-webdriver 驱动真实
+  Tauri 进程 + WebView2 + 真实 SQLite + 真实文件系统，覆盖 导入 -> 流水线 -> 打开工作区 -> 改一个字符 -> 已保存 ->
+  重开持久化 -> 发布（发布被质量门阻止时如实记 blocked，不计通过）。隔离方案：`PDF2TEST_AUTOMATION_DATA_DIR`
+  数据根钩子 + `WEBVIEW2_USER_DATA_FOLDER` + `PDF2TEST_AUTOMATION_PDF_DIR/EXPORT_DIR` 免对话框钩子。
+  与 product_chain.rs（Rust 命令级）和 library-workspace-smoke.mjs（浏览器级）分层报告，不互相替代。
 
 **出口**：不改变产品行为，但能用自动化证明产品链与溢出状态。
 **实测结果**：溢出矩阵 72 项检查 **0 溢出** —— 计划 UX-002 的溢出前提在受支持窗口范围内不成立，
@@ -77,8 +97,12 @@
 
 ## Phase 3 — 工作区与 ExamCanvas（PR-05/06/07）  [complete]
 
-- [complete] S3.1 `src/features/editor/ExamWorkspacePage.tsx`：header + Canvas + SourceDrawer + IssuePopover
-- [complete] S3.2 `src/exam-canvas/*`：从 `ExamCanvasV2.tsx` 迁移拆分为 renderer/editor 子模块
+- [complete] S3.1 `src/features/editor/ExamWorkspacePage.tsx`：header + Canvas + SourceDrawer + 问题侧栏
+  （**口径修正 2026-09-05**：审计指出「IssuePopover」实为中央问题列表 + scrollIntoView 定位，非 §8.6 的
+  题组右上角标记 + 小型 popover；原位云端 diff 属 M3。原记录言过其实）
+- [complete] S3.2 `src/exam-canvas/*`：改名迁移完成 + MatchingMatrix/InlineTextEditor 两个子模块
+  （**口径修正 2026-09-05**：计划 §16.7 列出的 5 renderer + 4 editor + ContentNodeRenderer 共 10 个文件
+  只落地 2 个；choice/completion/table 仍内联于 ExamCanvas.tsx——拆分剩余项归 M3）
 - [complete] S3.3 删除裸 `contentEditable` + `document.execCommand`，改为原位 AutoSizeTextarea（IME 安全）
 - [complete] S3.4 `EditorCommandV1` 协议（含 `set_text` + `expectedText` 乐观并发）
 - [complete] S3.5 `MatchingMatrix` 等题型 renderer；author/student 同 DOM 结构
@@ -106,7 +130,7 @@
 | heredoc 把 `\s` 折成 `\s`，模板字面量里变成 `s`，`split(/s+/)` 切碎类名 | 1 | 改用 `el.classList`，不再在模板里写正则转义 |
 | 浏览器 E2E 导入失败：`没有拿到 TXT 真实解析结果` | 1 | 根因是 `takeDevPickedPath` 丢弃 textContent（F14），已修复透传 |
 | 浏览器 E2E 保存超时：`element.blur()` 在 headless 无窗口焦点时不派发 focusout | 2 | 测试改用 Enter 提交；同时修掉组件的闭包陈旧风险（F15） |
-| 真实导入的 job 打不开工作区（`AUTHORING_V2_NOT_AVAILABLE`） | 1 | 环境限制（F16），非产品缺陷；E2E 拆成导入链 + 编辑链两段，工作区加降级 UI |
+| 真实导入的 job 打不开工作区（`AUTHORING_V2_NOT_AVAILABLE`） | 1 | 浏览器级：devFallback 不为真实导入造稿（F16），维持环境限制结论。**M0 实测更新**：真实 Tauri 链路上，流水线完整跑完后 V2 shadow 正常写出、工作区正常打开、编辑与重开持久化全通过（`npm run e2e:tauri` 全绿）；仅在流水线**进行中**打开工作区会命中该错误，且降级 UI 把原始错误码+路径暴露给用户——记为真实 UX 缺陷（findings F-M0-3），排入 M2（workspace live update）/M3（错误文案分层）修复 |
 
 ## 已知差距与 P4 交接
 
@@ -124,8 +148,9 @@
 4. **`ActionableIssue` 是前端派生的。** `actionableIssues.ts` 按计划 §6.8 做硬闭包检查，
    检查项与将来后端一致，P8 迁到后端时可以两边对比结果。
 5. **批量发布不是原子的。** 逐条发布，任一条失败不回滚已提交条目（`nas_package_v2` 只支持单条 staging）。
-6. **设置页只做了布局归位**，字段精简（单 active model、真实 Provider、`forceJson` 固定、诊断进开发者模式）
-   仍待 §14 / P7-T04。
+6. ~~**设置页只做了布局归位**~~（**口径修正 2026-09-05**：实测确认设置页已完整实现 §14——单 Profile、
+   只列 OpenAI-compatible/Ollama、`forceJson`/温度固定隐藏、高级折叠、显式「保存并测试」、
+   开发者模式诊断；后端 Provider 写入校验收敛仍在 P9）
 7. **`src/pages/LibraryPage.tsx` 已成孤儿**，仍参与 `tsc` 但不进 bundle，P10 删除。
 8. **`.review-grid` 是唯一活跃三栏**，只在兼容页 `DocumentReview` 用；P10 删除该页时一并清掉。
 

@@ -366,3 +366,64 @@ info/warning 不阻止 ready。
 修复：新增 `src-tauri/src/test_support.rs`，缺私有语料时**可见地跳过**（打印 SKIP 行），
 并提供 `EPIC8_REQUIRE_PRIVATE_CORPUS=1` 让挂载了语料的机器/CI 把缺失变回硬失败。
 `pypdf` 同理（本机无法安装：PyPI 镜像不可达）。
+
+---
+
+# Session 3 — M0：真实验收基础（2026-09-05，续建计划启动）
+
+## F-M0-1. tauri-driver 环境事实（推翻 S0.6 旧前提）
+
+`tauri-driver.exe` 实际在 `C:\Users\25788\.cargo\bin\`；WebView2 运行时 152.0.4191.62。
+匹配的 msedgedriver 从 `https://msedgedriver.microsoft.com/<ver>/edgedriver_win64.zip` 下载成功
+（azureedge 已 403/SSL 失败，blob storage 禁公开访问）。E2E 脚本内置：注册表读 WebView2 版本 →
+无本地驱动时自动下载缓存到 `%LOCALAPPDATA%\pdf2test-e2e-drivers`。
+
+## F-M0-2. Windows 数据隔离必须走产品钩子，不能只改环境变量
+
+Tauri v2 的 `app_data_dir()` 在 Windows 走 known-folder API（SHGetKnownFolderPath），
+**不读 APPDATA/LOCALAPPDATA 环境变量**——第一版 E2E 因此把测试 job 写进了真实用户 AppData（已全部清理，
+见 F-M0-8）。修复：`lib.rs app_root()` 增加 `PDF2TEST_AUTOMATION_DATA_DIR` 覆盖（45 个调用点全部经由它，
+无旁路），配合 WebView2 官方变量 `WEBVIEW2_USER_DATA_FOLDER` 隔离 localStorage/WebView 配置。
+与 job_commands.rs 既有的 `PDF2TEST_AUTOMATION_PDF_DIR/EXPORT_DIR` 同族，未设置时产品行为零变化。
+
+## F-M0-3. 处理中打开工作区会把原始错误码+路径暴露给用户（真实 UX 缺陷）
+
+证据：run-2026-09-05T09-45-07 截图与 report.json。job 尚在 `Working/DocumentReview` 时打开工作区，
+降级 UI 显示「这道题还没有可编辑的题稿：AUTHORING_V2_NOT_AVAILABLE:shadow_missing:C:\...\<path>」
+——直接违反计划 §3.4 技术词禁令。注意 `deriveStage` 映射本身正确（Working/DocumentReview→local 阶段）；
+问题在「行可随时点击打开」与「错误文案未分层」的组合。修复排期：M2（workspace live update）+ M3（用户错误/内部错误分离 §15.2）。
+
+## F-M0-4. 真实 Tauri E2E 全链路结论（M0-T3/T4 定论）
+
+`npm run e2e:tauri` 隔离运行：library 加载 → 免对话框导入（PDF 目录钩子）→ 真实流水线到稳定阶段 →
+**工作区打开（V2 shadow 正常写出）** → 原位编辑+「已保存」→ **重开持久化（真实 SQLite/文件链）** 全部 PASS；
+发布按钮点击后被质量门如实阻止（友好文案，语料未达 ready）→ 记 `blocked` 状态，verdict
+`passed-with-publish-gate-blocked`。**`AUTHORING_V2_NOT_AVAILABLE` 在完整流水线后的真实链路不复现**；
+F16 的「devFallback 限制」结论仅限浏览器级。附带观察：TFNG 选项渲染成 "TRUE TRUE"（label+正文重复），
+记 M3 renderer 拆分时核对 DS 是否 label==text 重复入档。
+
+## F-M0-5. E2E 竞态教训：行身份必须用 item-id 定位
+
+首两轮失败是 `rows[0]` 身份漂移（乐观插入 + 2s 轮询 + 真实库里已有旧行），不是产品缺陷。
+修法：导入前 diff 行集合拿新 item id，后续全部按 `[data-item-id=...]` 定位。另：selenium-webdriver
+远程会话必须在 capabilities 里显式 `browserName`（forBrowser() 不写入远程 caps）；Enter 提交后
+textarea 立即卸载，最后按键要容忍 stale element（提交本身已发生）。
+
+## F-M0-6. 基线固化升级（M0-T2）
+
+`verify-product-baseline.mjs` 新增：commitSha（git rev-parse）、schemaHash（contracts/ + schema/*.rs +
+types/*.ts 内容寻址）、corpus（15 份公开合成 PDF sha256 + 私有语料就绪标志 + e2e 主夹具）。
+漂移存在时 `--update` 无 `--reason` 直接拒绝——「重录即绿」的弱门禁收口。
+
+## F-M0-7. phase7 listening 门禁的 peer 路径误置（已修，门禁仍红但原因变真）
+
+门禁硬编码 `../NAS`（不存在的目录），真实学生端在 `../IELTS-NASfor-WenDao`，peer 依赖文件 10/10 齐全
+（含 ListeningExamPage.vue、StartupCheckPage.vue）。改为 `NAS_PEER_REPO` env → 旧路径 → 真实路径 的解析链。
+门禁当前仍失败，但原因从「缺目录」变为真实契约哈希漂移（`ListeningExamSourceV1` 等，与 phase1 同类）——
+哈希重录需与 peer 仓对齐后单独决策，不顺手改绿（AGENTS.md）。
+
+## F-M0-8. 测试污染清理（已完成）
+
+两次无隔离运行把 `pdf-two-column` 测试 job 写进真实 AppData。清理：`scripts/e2e/cleanup-tauri-test-jobs.mjs`
+走产品路径移入回收站 + job.json 标题校验后删目录；`authoring_hub.db` 的两条 `library_items` 行按产品同款
+软删除语义置 `deleted_at`（ exams 行保留，恢复语义不变）。真实 AppData 现只剩用户自有 `profile-test`。

@@ -14,6 +14,7 @@ Files/*.pdf
 
 # Test artifacts and generated data
 output/
+artifacts/
 
 # Local runtime job artifacts (created by manual runs and E2E helpers)
 jobs/

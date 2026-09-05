@@ -137,3 +137,46 @@ src/styles.css            -99.1%
 由于 devFallbackBackend 不为真实导入的 job 生成 V2 题稿（findings F16），
 导入链与编辑链在浏览器下必须分两段验证，无法连成一条。
 真实 Tauri 端到端（导入 -> 打开 -> 改一个字符 -> 保存 -> 发布）仍是待办，见 task_plan 的 S0.6 与 P4。
+
+---
+
+# Session 3 — M0 真实验收基础（2026-09-05）
+
+## 交付物
+
+1. **真实 Tauri E2E**（M0-T3 / 原 P0-T02）：`scripts/e2e/tauri-import-edit-publish.mjs` + `npm run e2e:tauri`。
+   tauri-driver + selenium-webdriver 驱动真实 `ielts-author-studio.exe`（tauri build --debug --no-bundle），
+   隔离 `PDF2TEST_AUTOMATION_DATA_DIR` + `WEBVIEW2_USER_DATA_FOLDER`，复用 `PDF2TEST_AUTOMATION_PDF_DIR/EXPORT_DIR`
+   免对话框钩子。结果：6 步 PASS + 发布步 BLOCKED（质量门），verdict `passed-with-publish-gate-blocked`，
+   report.json + 截图落 `artifacts/e2e-tauri/run-*/`（`--keep` 保留）。
+   覆盖层级：**真实进程 + WebView2 + SQLite + 文件系统**；与浏览器冒烟、product_chain 分层报告。
+2. **AUTHORING_V2_NOT_AVAILABLE 复现结论**（M0-T4）：完整流水线后不复现；处理中打开会暴露内部错误码
+   （F-M0-3，排 M2/M3）。product_chain 4 测试继续全绿（命令级证据）。
+3. **基线固化**（M0-T2 / 原 P0-T01）：commitSha + schemaHash + corpus 入 `fixtures/product-baseline.json`
+   （含 changeLog）；漂移重录强制 `--reason`。strict 门禁绿。
+4. **跨仓 NAS 契约入口**（M0-T5）：`src-tauri/src/product_chain.rs::dump_published_package_for_nas_contract`
+   (--ignored) 落真实发布产物到 `artifacts/nas-contract-fixture/`；`scripts/e2e/nas-student-contract.mjs`
+   按学生端 manifest 规则镜像校验 13/13 PASS；Electron 真实加载实测如实标 pending 到 M6
+   （学生端仓库 `F:/workspace/IELTS-NASfor-WenDao` 已确认，node_modules 未装）。
+5. **phase7 门禁 peer 路径修正**：`../NAS` → `NAS_PEER_REPO` env → `../IELTS-NASfor-WenDao` 解析链；
+   门禁由「缺目录」变为真实哈希漂移（不改绿，独立决策）。
+6. **追踪口径修正**（M0-T1）：task_plan 增加 M0-M7 里程碑表；S0.6 旧前提作废并记录落地证据；
+   S3.1/S3.2 与设置页状态按审计实况改写；Errors 表更新 AUTHORING_V2_NOT_AVAILABLE 结论。
+
+## 实测记录
+
+- `npm run e2e:tauri` → PASSED×6 + BLOCKED×1（run-2026-09-05T10-03-41-651Z）
+- `npm run verify:product-baseline:strict` → 无漂移（含新字段）
+- `cargo test product_chain` → 4 passed
+- `node scripts/e2e/nas-student-contract.mjs` → 13/13 PASS
+- `npm run verify:phase7:listening-contract` → 仍红：`ListeningExamSourceV1 contract hash is stale`
+  （真实漂移，peer 文件已全部可达）
+- 测试污染清理：2 job 目录 + DB 2 行软删除完成，真实 AppData 复原
+
+## 覆盖层级声明（按 AGENTS.md）
+
+- 真实产品端到端：`e2e:tauri`（本轮新增，导入→编辑→持久化真实链路已证；发布链由 product_chain 命令级证明，
+  UI 级发布成功路径待 M1 typed preflight + ready 语料后补）
+- Rust 命令级：`product_chain.rs` 4 测试
+- 浏览器级：`e2e:library-workspace`（devFallback，继续如实标注）
+- NAS 学生端：manifest 契约镜像校验已通；Electron 实测 pending（M6）

@@ -8,9 +8,14 @@
 //   node scripts/verify-product-baseline.mjs           # verify against the recorded baseline
 //   node scripts/verify-product-baseline.mjs --update  # accept the current surface as baseline
 //   node scripts/verify-product-baseline.mjs --print   # just print the current surface
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const require_ = createRequire(import.meta.url);
+const { execFileSync } = require_("node:child_process");
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = path.join(repoRoot, "fixtures", "product-baseline.json");
@@ -131,8 +136,64 @@ function fileSizes() {
   return out;
 }
 
+/** 本轮起始 commit（M0-T2 / 计划 P0-T01）：基线必须能回答「从哪个提交开始」。 */
+function gitCommitSha() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function sha256(content) {
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+/** 合同 schema 的内容寻址 hash：路径 + 内容一起进 hash，任何一端漂移都会改变它。 */
+function schemaHash() {
+  const roots = ["contracts", path.join("src-tauri", "src", "schema"), "src/types"];
+  const files = [];
+  const walk = (dir) => {
+    const full = path.join(repoRoot, dir);
+    if (!fs.existsSync(full)) return;
+    for (const entry of fs.readdirSync(full, { withFileTypes: true })) {
+      const rel = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(rel);
+      else if (/\.(json|rs|ts)$/.test(entry.name)) files.push(rel);
+    }
+  };
+  for (const root of roots) walk(root);
+  files.sort();
+  const combined = files
+    .map((rel) => `${rel}:${sha256(fs.readFileSync(path.join(repoRoot, rel)))}`)
+    .join("\n");
+  return { files: files.length, sha256: sha256(combined) };
+}
+
+/** 公开语料清单（M0-T2）：E2E 与回归实际使用的 PDF fixture，逐个记 sha256。
+ *  私有 8 份 Reading 语料不入库（git-ignored），只记录是否就绪（test_support.rs 的判定）。 */
+function corpusManifest() {
+  const dir = path.join(repoRoot, "fixtures", "golden", "synthetic", "pdf");
+  const files = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter((name) => name.endsWith(".pdf")).sort()
+        .map((name) => ({ name, sha256: sha256(fs.readFileSync(path.join(dir, name))) }))
+    : [];
+  const privateCorpus = path.join(repoRoot, "fixtures", "private");
+  const privateCorpusReady = fs.existsSync(privateCorpus)
+    ? fs.readdirSync(privateCorpus, { recursive: true }).some((name) => String(name).toLowerCase().endsWith(".pdf"))
+    : false;
+  return {
+    publicSyntheticPdf: files,
+    e2ePrimaryFixture: "fixtures/golden/synthetic/pdf/pdf-two-column.pdf",
+    privateCorpusReady
+  };
+}
+
 function collect() {
   return {
+    commitSha: gitCommitSha(),
+    schemaHash: schemaHash(),
+    corpus: corpusManifest(),
     routeNames: routeNames(),
     appPages: appPages(),
     tauriCommands: tauriCommands(),
@@ -182,6 +243,30 @@ function diffSizes(before, after) {
   return lines;
 }
 
+function diffSurface(baseline, current) {
+  return [
+    ...diffLists("routeNames", baseline.routeNames ?? [], current.routeNames),
+    ...diffLists("appPages", baseline.appPages ?? [], current.appPages),
+    ...diffLists("tauriCommands", baseline.tauriCommands ?? [], current.tauriCommands),
+    ...diffLists("frontendCommandCalls", baseline.frontendCommandCalls ?? [], current.frontendCommandCalls),
+    ...diffLists("sqliteTables", baseline.sqliteTables ?? [], current.sqliteTables),
+    ...diffFlags(baseline.featureFlagDefaults ?? {}, current.featureFlagDefaults ?? {}),
+    ...diffSizes(baseline.fileSizes ?? {}, current.fileSizes ?? {}),
+    ...Object.keys({ ...(baseline.productModules ?? {}), ...current.productModules })
+      .filter((root) => (baseline.productModules ?? {})[root] !== current.productModules[root])
+      .map((root) => `  productModules.${root}: ${(baseline.productModules ?? {})[root] ?? 0} -> ${current.productModules[root]} files`),
+    ...(baseline.commitSha !== undefined && baseline.commitSha !== current.commitSha
+      ? [`  commitSha: ${baseline.commitSha} -> ${current.commitSha}`]
+      : []),
+    ...(baseline.schemaHash && baseline.schemaHash.sha256 !== current.schemaHash.sha256
+      ? [`  schemaHash: ${baseline.schemaHash.sha256.slice(0, 12)} (${baseline.schemaHash.files} files) -> ${current.schemaHash.sha256.slice(0, 12)} (${current.schemaHash.files} files)`]
+      : []),
+    ...(baseline.corpus && JSON.stringify(baseline.corpus) !== JSON.stringify(current.corpus)
+      ? ["  corpus: fixture manifest changed"]
+      : [])
+  ];
+}
+
 function main() {
   const current = collect();
   if (process.argv.includes("--print")) {
@@ -190,33 +275,51 @@ function main() {
   }
   if (process.argv.includes("--update") || !fs.existsSync(BASELINE)) {
     const existed = fs.existsSync(BASELINE);
+    // M0-T2：重录基线必须说明产品行为变化，不能以重录快照代替验收。
+    // 第一次创建不要求 reason；对已存在基线的重录，若无 --reason 且上一次校验存在漂移则拒绝。
+    const reasonIndex = process.argv.indexOf("--reason");
+    const reason = reasonIndex >= 0 ? process.argv[reasonIndex + 1] : null;
+    let driftExisted = false;
+    if (existed) {
+      try {
+        const previous = JSON.parse(fs.readFileSync(BASELINE, "utf8")).surface;
+        driftExisted = diffSurface(previous, collect()).length > 0;
+      } catch {}
+      if (driftExisted && !reason) {
+        console.error("refusing to re-record: the product surface drifted and no --reason was given.");
+        console.error("基线更新必须同时说明产品行为变化（M0-T2）。用法：--update --reason \"<行为变化说明>\"");
+        return 2;
+      }
+    }
+    const previousDoc = existed ? JSON.parse(fs.readFileSync(BASELINE, "utf8")) : null;
+    const changeLog = previousDoc?.changeLog ?? [];
+    if (existed) {
+      changeLog.push({
+        at: new Date().toISOString(),
+        commit: current.commitSha,
+        reason: reason ?? "initial re-record (no drift)",
+        driftSummary: driftExisted ? diffSurface(JSON.parse(fs.readFileSync(BASELINE, "utf8")).surface, current).slice(0, 20) : []
+      });
+    }
     fs.mkdirSync(path.dirname(BASELINE), { recursive: true });
-    fs.writeFileSync(BASELINE, JSON.stringify({ recordedAt: new Date().toISOString(), surface: current }, null, 2) + "\n");
-    console.log(`${existed ? "updated" : "created"} ${path.relative(repoRoot, BASELINE)}`);
+    fs.writeFileSync(BASELINE, JSON.stringify({ recordedAt: new Date().toISOString(), surface: current, changeLog }, null, 2) + "\n");
+    console.log(`${existed ? "updated" : "created"} ${path.relative(repoRoot, BASELINE)}${reason ? ` (reason: ${reason})` : ""}`);
     if (!existed && !process.argv.includes("--update")) console.log("(no baseline existed; recorded the current surface)");
     return 0;
   }
   const baseline = JSON.parse(fs.readFileSync(BASELINE, "utf8")).surface;
-  const lines = [
-    ...diffLists("routeNames", baseline.routeNames, current.routeNames),
-    ...diffLists("appPages", baseline.appPages, current.appPages),
-    ...diffLists("tauriCommands", baseline.tauriCommands, current.tauriCommands),
-    ...diffLists("frontendCommandCalls", baseline.frontendCommandCalls, current.frontendCommandCalls),
-    ...diffLists("sqliteTables", baseline.sqliteTables, current.sqliteTables),
-    ...diffFlags(baseline.featureFlagDefaults, current.featureFlagDefaults),
-    ...diffSizes(baseline.fileSizes ?? {}, current.fileSizes),
-    ...Object.keys({ ...(baseline.productModules ?? {}), ...current.productModules })
-      .filter((root) => (baseline.productModules ?? {})[root] !== current.productModules[root])
-      .map((root) => `  productModules.${root}: ${(baseline.productModules ?? {})[root] ?? 0} -> ${current.productModules[root]} files`)
-  ];
-  console.log(`product-baseline: routes ${current.routeNames.length}, pages ${current.appPages.length}, commands ${current.tauriCommands.length}, tables ${current.sqliteTables.length}`);
+  const lines = diffSurface(baseline, current);
+  const changeLog = JSON.parse(fs.readFileSync(BASELINE, "utf8")).changeLog ?? [];
+  const lastChange = changeLog[changeLog.length - 1];
+  console.log(`product-baseline: commit ${String(current.commitSha ?? "(unknown)").slice(0, 12)}, schema ${current.schemaHash.sha256.slice(0, 12)} (${current.schemaHash.files} files), corpus ${current.corpus.publicSyntheticPdf.length} pdf, routes ${current.routeNames.length}, pages ${current.appPages.length}, commands ${current.tauriCommands.length}, tables ${current.sqliteTables.length}`);
+  if (lastChange) console.log(`last baseline update: ${lastChange.at} @ ${String(lastChange.commit ?? "").slice(0, 12)} :: ${lastChange.reason}`);
   if (!lines.length) {
     console.log("no drift from the recorded product surface.");
     return 0;
   }
   console.log("\nproduct surface drift (expected during convergence; review each line):");
   for (const line of lines) console.log(line);
-  console.log("\nIf every line is intended, re-record with: node scripts/verify-product-baseline.mjs --update");
+  console.log("\nIf every line is intended, re-record with: node scripts/verify-product-baseline.mjs --update --reason \"<行为变化说明>\"");
   return process.argv.includes("--strict") ? 1 : 0;
 }
 

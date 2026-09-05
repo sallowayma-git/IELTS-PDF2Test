@@ -13,7 +13,7 @@
 |---|---|---|---|
 | TypeScript | `npm run check` | 通过 | `tsc --noEmit` |
 | 生产构建 | `npx vite build` | 通过 | 142 modules |
-| 产品面基线 | `npm run verify:product-baseline` | 通过 | routes 4 / pages 10 / commands 59 / tables 8，无漂移 |
+| 产品面基线 | `npm run verify:product-baseline` | 通过 | commit `5daa04f` / schema hash / 语料清单入基线；漂移重录强制 `--reason`（M0-T2）；routes 4 / pages 9 / commands 59 / tables 8 |
 | 横向溢出矩阵 | `npm run test:layout:legacy` | 通过 | 84 项检查 0 溢出 |
 | 三表面主链冒烟 | `npm run e2e:library-workspace` | 通过 | 13 步 |
 | Rust fmt | `cargo fmt --check` | 通过 | |
@@ -35,7 +35,7 @@ CI 装配：`.github/workflows/product-convergence-gates.yml`（surface-gates + 
 | `verify:phase3:docx` | 断言 `documentIrV2 must remain disabled by default` | 否 | 同上 |
 | `verify:phase4:grammar` | 断言 `documentIrV2 must remain disabled by default` | 否 | 同上 |
 | `verify:phase6:runtime` | `ReadingExamSourceV2 contract hash is stale` | 否 | 不动。契约哈希漂移，需要单独决策是否重录 |
-| `verify:phase7:listening-contract` | 缺少同级仓库 `../NAS/server/src/lib/...` | 否 | 环境限制，本机没有 NAS 仓库 |
+| `verify:phase7:listening-contract` | ~~缺少同级仓库 `../NAS`~~ M0 修正：peer 仓库实际在 `../IELTS-NASfor-WenDao`（旧结论「没有 NAS 仓库」作废），peer 文件 10/10 全部找到；当前失败原因是 `ListeningExamSourceV1` 等契约哈希漂移（与 phase1 同类） | 否（漂移为历史遗留；路径误置已由 M0 修正） | 路径修正保留；哈希重录需与 peer 仓对齐后单独决策 |
 
 按 `AGENTS.md`：「Golden-baseline drift is diagnostic evidence, not an automatic instruction to restore old
 behavior or rewrite baselines.」这 7 个门禁不应该被顺手改绿 —— 它们要么编码了已被产品决策取代的旧要求

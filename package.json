@@ -15,6 +15,9 @@
     "test:layout": "node scripts/ui/layout-matrix.mjs",
     "test:layout:legacy": "node scripts/ui/layout-matrix.mjs --include-legacy",
     "e2e:library-workspace": "node scripts/e2e/library-workspace-smoke.mjs",
+    "e2e:tauri": "node scripts/e2e/tauri-import-edit-publish.mjs",
+    "e2e:nas-contract": "node scripts/e2e/nas-student-contract.mjs",
+    "dump:nas-fixture": "cargo test --manifest-path src-tauri/Cargo.toml dump_published_package_for_nas_contract -- --ignored --nocapture",
     "test:product-chain": "cargo test --manifest-path src-tauri/Cargo.toml product_chain -- --nocapture",
     "verify:phase0": "node scripts/phase0-golden.mjs verify",
     "verify:phase0:strict": "node scripts/phase0-golden.mjs verify --strict",
@@ -80,6 +83,7 @@
     "@tauri-apps/cli": "^2.5.0",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
-    "ajv": "^8.20.0"
+    "ajv": "^8.20.0",
+    "selenium-webdriver": "^4.48.0"
   }
 }

@@ -530,6 +530,85 @@ fn product_chain_ready_authoring_exports_and_publishes_to_nas() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// M0-T5（跨仓 NAS 契约入口）：把一份真实 publisher 产物落到仓库固定目录，
+/// 供 `scripts/e2e/nas-student-contract.mjs` 按学生端 manifest 规则校验。
+/// 默认忽略（会写仓库 artifacts 目录、不清理），需要时手动运行：
+///   cargo test --manifest-path src-tauri/Cargo.toml dump_published_package_for_nas_contract -- --ignored --nocapture
+#[test]
+#[ignore = "writes artifacts/nas-contract-fixture for the cross-repo contract check; run explicitly"]
+fn dump_published_package_for_nas_contract() {
+    let root = temp_root("nas-dump");
+    ensure_app_dirs(&root).unwrap();
+    let job = chain_job("NAS contract dump");
+    save_job(&root, &job).unwrap();
+    let dir = job_dir(&root, &job.job_id);
+    ensure_job_dirs(&dir).unwrap();
+
+    let mut authoring: Value = serde_json::from_slice(
+        &fs::read(workspace_path(READY_AUTHORING_FIXTURE))
+            .expect("ready authoring fixture must exist"),
+    )
+    .expect("ready authoring fixture must be valid JSON");
+    authoring
+        .as_object_mut()
+        .expect("authoring fixture must be an object")
+        .insert("jobId".to_string(), json!(job.job_id));
+    write_json(&dir.join(AUTHORING_V2_SHADOW_FILE), &authoring).unwrap();
+    write_json(
+        &dir.join(DOCUMENT_V2_SHADOW_FILE),
+        &physical_shadow_for(&authoring),
+    )
+    .unwrap();
+
+    let export_dir = root.join("exports").join("nas-dump");
+    let exported = export_authoring_v2_core(
+        &root,
+        json!({ "jobId": job.job_id, "exportDir": export_dir }),
+    )
+    .expect("ready authoring must export");
+    let runtime_path = exported
+        .pointer("/receipt/runtimePath")
+        .and_then(Value::as_str)
+        .expect("export receipt must carry the runtime path")
+        .to_string();
+    let output_dir = exported
+        .pointer("/receipt/outputDir")
+        .and_then(Value::as_str)
+        .expect("export receipt must carry the output dir")
+        .to_string();
+    let exam_id = exported
+        .get("examId")
+        .and_then(Value::as_str)
+        .expect("export receipt must carry the exam id")
+        .to_string();
+
+    // 输出目录固定在仓库 artifacts 下，先清空旧 dump 保证幂等。
+    let nas_parent = workspace_path("artifacts/nas-contract-fixture");
+    let _ = fs::remove_dir_all(&nas_parent);
+    fs::create_dir_all(&nas_parent).unwrap();
+    let published = publish_nas_package_v2_core(
+        &root,
+        json!({
+            "libraryRoot": nas_parent.join("publish"),
+            "sourcePath": runtime_path,
+            "assetRoot": output_dir,
+            "examId": exam_id,
+            "minimumRuntimeVersion": "0.2.0"
+        }),
+    )
+    .expect("a ready, exported item must publish");
+    assert_eq!(
+        published.get("status").and_then(Value::as_str),
+        Some("committed")
+    );
+    eprintln!(
+        "NAS contract fixture written to {} (examId {})",
+        nas_parent.display(),
+        exam_id
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 /// Editing must not make a publishable item unpublishable.
 ///
 /// `mark_user_audit` used to hardcode `audit.humanVerified = false` on every save, while the

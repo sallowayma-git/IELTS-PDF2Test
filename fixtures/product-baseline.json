@@ -1,6 +1,77 @@
 {
-  "recordedAt": "2026-09-05T07:41:05.497Z",
+  "recordedAt": "2026-09-05T10:13:48.744Z",
   "surface": {
+    "commitSha": "5daa04f4be3d0cce4fe4a45756da1d780e367789",
+    "schemaHash": {
+      "files": 39,
+      "sha256": "39bea98acf45301db2342e634967d2c8feede7f399dd60326dc02fb510c0c607"
+    },
+    "corpus": {
+      "publicSyntheticPdf": [
+        {
+          "name": "pdf-borderless-table.pdf",
+          "sha256": "6df6c4db08fdd846ef17a828d87cd0c0bea2debddffdbc214d6dd8e7fb9443ac"
+        },
+        {
+          "name": "pdf-broken-font.pdf",
+          "sha256": "d9a257f3251a9787e6de8931773117e44e8e8dea372e2b86026178e978bbc598"
+        },
+        {
+          "name": "pdf-flowchart.pdf",
+          "sha256": "b4f8cbd9734070c0326894ee2e0f4ae8efdac20663610337d7089e865431a22e"
+        },
+        {
+          "name": "pdf-header-footer.pdf",
+          "sha256": "88f8c0b0605c6bbd230671f85c57ec57085cfb9739ef415fb2fbae7a5751ce2a"
+        },
+        {
+          "name": "pdf-hidden-ocr.pdf",
+          "sha256": "f7d55e5dc5d18ec0d374f695fa6bd339e1b656ad26eaf647e8f66557eb3ad840"
+        },
+        {
+          "name": "pdf-image-only.pdf",
+          "sha256": "02a7745adf46e060d7be866ce3475a7aaafcf0431c835004225de16d0c055f4f"
+        },
+        {
+          "name": "pdf-map-hotspot.pdf",
+          "sha256": "36ab101b32886e62d95ef807efac0c7e6aa172a2f5d9b3a4b5108316b81eec27"
+        },
+        {
+          "name": "pdf-mixed-text-image.pdf",
+          "sha256": "1386bb49c0b420858227eb06663c96de24258e964e397df5363a4d095c5386ba"
+        },
+        {
+          "name": "pdf-native-ocr-conflict.pdf",
+          "sha256": "fe59b541a45d663ceb94fffb9b8ce4dab0e133b159cdae694b9e26b0dd04d3a8"
+        },
+        {
+          "name": "pdf-question-before-passage.pdf",
+          "sha256": "14f46523e91bc0d8f828f5d42d3432bea51431614b3b66c16b0fbdc1a7c68f6a"
+        },
+        {
+          "name": "pdf-rotated-page.pdf",
+          "sha256": "334e8a4a390206d50d31132a883ec677df0531f5692c13007ee15ea5f3493a70"
+        },
+        {
+          "name": "pdf-ruled-table.pdf",
+          "sha256": "64e8acbc4959f323e292337267718080211a397574de82517c519ed89b089cb7"
+        },
+        {
+          "name": "pdf-three-column.pdf",
+          "sha256": "472c1920cc8bda2b0c3cc657209dcaff94a17f05e219ddcc1ecd03d5ae0ffd41"
+        },
+        {
+          "name": "pdf-two-column.pdf",
+          "sha256": "552d9b98ada71d3ddd21d063d8539268d5fe87a0051723d65c29274a2ee7b81d"
+        },
+        {
+          "name": "pdf-vector-diagram.pdf",
+          "sha256": "c58f5429055ce5aac488291b1ab041207aa44491584b5c323e4b87cd9c8f9951"
+        }
+      ],
+      "e2ePrimaryFixture": "fixtures/golden/synthetic/pdf/pdf-two-column.pdf",
+      "privateCorpusReady": false
+    },
     "routeNames": [
       "legacy",
       "library",
@@ -171,10 +242,20 @@
       "src/pages/UnifiedPreview.tsx": 66337,
       "src/pages/StructuredAuthoringEditorV2.tsx": 55479,
       "src/services/devFallbackBackend.ts": 173269,
-      "src-tauri/src/lib.rs": 450116,
+      "src-tauri/src/lib.rs": 450583,
       "src-tauri/src/authoring_pipeline.rs": 547026,
       "src-tauri/src/auto_pipeline.rs": 116127,
       "src-tauri/src/ielts_grammar/mod.rs": 112627
     }
-  }
+  },
+  "changeLog": [
+    {
+      "at": "2026-09-05T10:13:48.743Z",
+      "commit": "5daa04f4be3d0cce4fe4a45756da1d780e367789",
+      "reason": "M0: app_root 增加 PDF2TEST_AUTOMATION_DATA_DIR 测试隔离钩子（真实 Tauri E2E 用）；新增 e2e/cleanup 脚本与 selenium-webdriver 依赖；基线字段扩展 commitSha/schemaHash/corpus",
+      "driftSummary": [
+        "  fileSizes.src-tauri/src/lib.rs: 450116 -> 450583 B (+467, 0.1%)"
+      ]
+    }
+  ]
 }

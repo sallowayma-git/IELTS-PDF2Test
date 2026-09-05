@@ -7,6 +7,21 @@ import Ajv2020 from "ajv/dist/2020.js";
 import ts from "typescript";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+// M0（续建计划 §2）：旧结论「peer 仓库在 ../NAS」指向已不存在的目录；真实学生端仓库
+// 位于 ../IELTS-NASfor-WenDao（README: Electron + apps/student-exam + server）。
+// 优先 NAS_PEER_REPO 环境变量，其次旧路径（兼容旧机器布局），最后真实路径。
+const peerRoot = [process.env.NAS_PEER_REPO, join(repoRoot, "../NAS"), join(repoRoot, "../IELTS-NASfor-WenDao")]
+  .filter(Boolean)
+  .map((candidate) => resolve(candidate))
+  .find((candidate) => existsSync(candidate));
+const PEER_PREFIX = "../NAS/";
+
+/** requiredFiles 数组里 `../NAS/...` 条目按 peer 根解析，其余按本仓根解析。 */
+function requiredFilePath(file) {
+  return file.startsWith(PEER_PREFIX)
+    ? join(peerRoot ?? repoRoot, file.slice(PEER_PREFIX.length))
+    : join(repoRoot, file);
+}
 const fixturePath = "fixtures/golden/synthetic/ielts/phase7-listening-part1-source-v1.json";
 const audioProbeFixturePath = "fixtures/golden/synthetic/ielts/phase7-listening-audio-probe-result-v1.json";
 const familiesFixturePath = "fixtures/golden/synthetic/ielts/phase7-listening-families-v1.json";
@@ -403,7 +418,7 @@ const requiredFiles = [
   familiesFixturePath,
   "Files/IELTS_Document_Recognition_Phase_7_Progress_CN.md"
 ];
-for (const file of requiredFiles) assert(existsSync(join(repoRoot, file)), `Phase 7 required file missing: ${file}`);
+for (const file of requiredFiles) assert(existsSync(requiredFilePath(file)), `Phase 7 required file missing: ${file}`);
 
 const manifest = readJson("contracts/contract-manifest.json");
 for (const [schemaName, path] of Object.entries({
@@ -595,25 +610,25 @@ assertPlaybackError(() => listeningRuntimeApi.createListeningAttempt(blockedAudi
 
 const flags = readFileSync(join(repoRoot, "src/config/featureFlags.ts"), "utf8");
 assert(flags.includes("listeningV1: false"), "Listening V1 feature flag must remain disabled by default");
-const listeningRoute = readFileSync(join(repoRoot, "../NAS/server/src/routes/exam.ts"), "utf8");
+const listeningRoute = readFileSync(join(peerRoot ?? repoRoot, "server/src/routes/exam.ts"), "utf8");
 assert(listeningRoute.includes("/api/exam/listening/:examId/submit"), "Listening submit route is missing");
 assert(listeningRoute.includes("/api/exam/listening/:examId/progress") && listeningRoute.includes("assertListeningFeatureEnabled"), "Listening progress route or feature gate is missing");
 assert(!listeningRoute.includes("source: loaded.source"), "Listening route must not expose the answer key source to the student");
-const listeningService = readFileSync(join(repoRoot, "../NAS/server/src/lib/exam/ExamListeningService.ts"), "utf8");
+const listeningService = readFileSync(join(peerRoot ?? repoRoot, "server/src/lib/exam/ExamListeningService.ts"), "utf8");
 for (const token of ["sourceRevision", "mediaSha256", "attemptId", "listening_attempt_answers_incomplete", "validatePlaybackSnapshot", "saveProgress", "scoreAnswer"]) {
   assert(listeningService.includes(token), `Listening service is missing ${token}`);
 }
-const listeningPage = readFileSync(join(repoRoot, "../NAS/apps/student-exam/src/pages/ListeningExamPage.vue"), "utf8");
+const listeningPage = readFileSync(join(peerRoot ?? repoRoot, "apps/student-exam/src/pages/ListeningExamPage.vue"), "utf8");
 for (const token of ["audioReady", "allowSeek", "allowReplay", "ListeningPlaybackSnapshotV1", "assetManifest", "getListeningAssetUrl", "saveProgress", "startSuite", "ReadingExam", "submitAttempt", "Audio failed to load"]) {
   assert(listeningPage.includes(token), `Listening student page is missing ${token}`);
 }
-const attemptService = readFileSync(join(repoRoot, "../NAS/server/src/lib/exam/ExamAttemptService.ts"), "utf8");
+const attemptService = readFileSync(join(peerRoot ?? repoRoot, "server/src/lib/exam/ExamAttemptService.ts"), "utf8");
 assert(attemptService.includes("'listening'") && attemptService.includes("listeningSnapshot") && attemptService.includes("listeningAnswers"), "Exam attempt recovery is missing Listening phase data");
-const startupPage = readFileSync(join(repoRoot, "../NAS/apps/student-exam/src/pages/StartupCheckPage.vue"), "utf8");
+const startupPage = readFileSync(join(peerRoot ?? repoRoot, "apps/student-exam/src/pages/StartupCheckPage.vue"), "utf8");
 assert(startupPage.includes("data.phase === 'listening'") && startupPage.includes("ListeningExam"), "Startup recovery does not route Listening phase");
-const listeningProvider = readFileSync(join(repoRoot, "../NAS/server/src/lib/library/listening/listening-v1-loader.ts"), "utf8");
+const listeningProvider = readFileSync(join(peerRoot ?? repoRoot, "server/src/lib/library/listening/listening-v1-loader.ts"), "utf8");
 assert(listeningProvider.includes("listening_asset_manifest_mismatch") && listeningProvider.includes("sourceAssetIds") && listeningProvider.includes("stagedAssetIds") && listeningProvider.includes("getAssetBytes"), "Listening provider is missing exact source/manifest asset closure");
-const listeningFlag = readFileSync(join(repoRoot, "../NAS/apps/student-exam/src/modules/listening-engine/featureFlag.ts"), "utf8");
+const listeningFlag = readFileSync(join(peerRoot ?? repoRoot, "apps/student-exam/src/modules/listening-engine/featureFlag.ts"), "utf8");
 assert(listeningFlag.includes("VITE_IELTS_LISTENING_V1") && listeningFlag.includes("=== '1'"), "Student Listening V1 feature flag must default to disabled");
 
 function run(command, args) {
