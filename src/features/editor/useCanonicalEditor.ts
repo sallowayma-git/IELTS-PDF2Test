@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { applyEditorCommands, getWorkspaceItem } from "../../api/workspaceClient";
 import { applyAuthoringV2Patches as applyLocalPatches, inverseAuthoringPatch } from "../../services/authoringV2Patches";
 import { EditorCommandConflictError, compileEditorCommand, type EditorCommandV1 } from "../../exam-canvas/editorCommands";
+import { toUserFacingError } from "../../utils/userFacingError";
 import type { AuthoringPatchV2, IeltsAuthoringIRV2 } from "../../types";
 
 const SAVE_DEBOUNCE_MS = 450;
@@ -12,11 +13,7 @@ export type SaveState = "idle" | "saving" | "saved" | "failed" | "conflict";
  *  结构操作自身抛出的中文提示（如「这个选项已用作本题答案」）原样透传。 */
 function describeEditError(error: unknown): string {
   if (error instanceof EditorCommandConflictError) return "这段内容已被改动过，请刷新后重新编辑。";
-  const raw = error instanceof Error ? error.message : String(error);
-  if (/^(AUTHORING_|EDITOR_|ITEM_)/.test(raw)) {
-    return "这次修改没有生效。请刷新后重试，或先处理已提示的问题。";
-  }
-  return raw;
+  return toUserFacingError(error, "这次修改没有生效。请刷新后重试，或先处理已提示的问题。").userMessage;
 }
 
 interface HistoryEntry { patch: AuthoringPatchV2; inverse: AuthoringPatchV2 }

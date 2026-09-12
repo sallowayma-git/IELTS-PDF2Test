@@ -1,10 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
+// 2026-09-12：本脚本原先对 `src/pages/StructuredAuthoringEditorV2.tsx`、`src/editor/authoringTiptap.tsx`、
+// `src/pages/ExportPage.tsx`、`src/pages/ImportWizard.tsx` 做 token 断言。这四个文件属旧世代页面，
+// 已按当前计划（§16 逐文件改造清单 / §20 删除清单）退休并删除，针对它们的断言随之退休。
+// 保留的断言全部指向**仍然存在**的文件：共享 ExamCanvas、原位文本编辑器、EditorCommandV1、
+// authoringV2Patches、runtimeViewModelV2 与 Rust 侧安全契约。
+
 const requiredFiles = [
-  "src/pages/StructuredAuthoringEditorV2.tsx",
   "src/exam-canvas/ExamCanvas.tsx",
-  "src/editor/authoringTiptap.tsx",
   "src/types/runtime-view-model-v2.ts",
   "src/services/runtimeViewModelV2.ts",
   "src/services/authoringV2Patches.ts",
@@ -29,58 +33,10 @@ if (!flags.includes("authoringEditorV2: true")) throw new Error("authoringEditor
 if (!flags.includes("pdfPerQuestionLlmRepair: false")) throw new Error("PDF per-question LLM repair safety flag is missing");
 if (!flags.includes("return true")) throw new Error("Phase 5 editor must always use the structured authoring surface");
 
-const editor = readFileSync("src/pages/StructuredAuthoringEditorV2.tsx", "utf8");
 // ExamCanvas 在产品收敛阶段从 src/components/ExamCanvasV2.tsx 迁到 src/exam-canvas/ExamCanvas.tsx。
 const examCanvas = readFileSync("src/exam-canvas/ExamCanvas.tsx", "utf8");
-for (const token of [
-  "ContentNodeV2",
-  "responseGroups",
-  "answerSlots",
-  "optionBank",
-  "sourceAnchorsFor",
-  "AuthoringEditorRecoveryV2",
-  "applyAuthoringV2Patches",
-  "AuthoringTiptapEditor",
-  "inverseAuthoringPatch",
-  "cropAsset",
-  "setHotspot",
-  "insertNode",
-  "deleteNode",
-  "moveNode",
-  "undo",
-  "redo",
-  "exportAuthoringV2",
-  "setQuestionExpression",
-  "setResponseCardinality",
-  "setResponseGroup",
-  "structured-expression-editor",
-  "cardinality-editor",
-  "optionBankRef",
-  "scoringPolicy",
-  "duplicatePolicy",
-  "allowOptionReuse",
-  "NAS_PACKAGE_V2_ENABLED = true"
-]) {
-  if (!editor.includes(token)) throw new Error("Phase 5 editor is missing " + token);
-}
-for (const token of [
-  "activeTasks.map((task) => renderTaskEditor(task))",
-  "task.responseGroups.length ? task.responseGroups.map((group) => renderResponseGroup(task, group))"
-]) {
-  if (!editor.includes(token)) throw new Error("Phase 6 editor coverage contract is missing " + token);
-}
-const exportPage = readFileSync("src/pages/ExportPage.tsx", "utf8");
-if (!exportPage.includes("!NAS_PACKAGE_V2_ENABLED") || !exportPage.includes('data-testid="force-export"')) {
-  throw new Error("V2 export must hide the unsupported force-publish action while preserving V1 force export");
-}
-const importWizard = readFileSync("src/pages/ImportWizard.tsx", "utf8");
-for (const token of ["getAuthoringV2", 'destination = "authoring-v2"', "Existing jobs without a structured artifact remain readable"]) {
-  if (!importWizard.includes(token)) throw new Error("Phase 5 import-to-editor routing is missing " + token);
-}
-
-const tiptap = readFileSync("src/editor/authoringTiptap.tsx", "utf8");
-for (const token of ["textSegmentsFromTiptap", "headerScope", "tableHeader", "tableCell"]) {
-  if (!tiptap.includes(token)) throw new Error("Phase 5 Tiptap roundtrip contract is missing " + token);
+for (const token of ["buildReadingInteractionModelV2", "buildRuntimeViewModelV2", "exam-canvas-v2", "v2-passage-pane", "v2-question-pane", "v2-response-group", "v2-slot-question", "InlineTextEditor", "onTextCommand", "expectedText", "onTextChange", "onAnswerChange", "onStructureAction", "resolveAuthoringAssetPreview", "table.row.add", "option.add", "answer-slot.insert"]) {
+  if (!examCanvas.includes(token)) throw new Error("Phase 5 shared ExamCanvas contract is missing " + token);
 }
 
 const patches = readFileSync("src/services/authoringV2Patches.ts", "utf8");
@@ -91,13 +47,6 @@ for (const token of ["ensureAnswerSlotsRemain", "AUTHORING_PATCH_ANSWER_SLOT_LOS
 const runtimeModel = readFileSync("src/services/runtimeViewModelV2.ts", "utf8");
 for (const token of ["RuntimeViewModelV2", "questionOrder", "answerSlots", "assets"]) {
   if (!runtimeModel.includes(token)) throw new Error("Phase 5 runtime projection is missing " + token);
-}
-
-for (const token of ["phase5-export-blockers", "exportBlocked", "recoveryCandidate.baseRevision", "anchorsOverride", "sourceAnchorStyle", "selectIssue", "ExamCanvasV2", 'mode="author"', 'mode="student"']) {
-  if (!editor.includes(token)) throw new Error("Phase 5 editor audit boundary is missing " + token);
-}
-for (const token of ["buildReadingInteractionModelV2", "buildRuntimeViewModelV2", "exam-canvas-v2", "v2-passage-pane", "v2-question-pane", "v2-response-group", "v2-slot-question", "InlineTextEditor", "onTextCommand", "expectedText", "onTextChange", "onAnswerChange", "onStructureAction", "resolveAuthoringAssetPreview", "table.row.add", "option.add", "answer-slot.insert"]) {
-  if (!examCanvas.includes(token)) throw new Error("Phase 5 shared ExamCanvas contract is missing " + token);
 }
 
 // 产品要求变更（简化/双路识别/WYSIWYG 计划 §9.3）：原位文本编辑不再使用裸 contentEditable +
@@ -153,4 +102,4 @@ const tsc = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", 
 });
 if (tsc.status !== 0) process.exit(tsc.status ?? 1);
 
-console.log("Phase 5 structured editor verification passed: Tiptap schema, structural patches, source issue rail, shared slots, recovery/history contract, V2 export, and V1 safety boundary are present.");
+console.log("Phase 5 structured editor verification passed: shared ExamCanvas, structural patches, source issue rail, shared slots, recovery/history contract, V2 export, and V1 safety boundary are present. (Page-level assertions on the retired StructuredAuthoringEditorV2/ExportPage/ImportWizard/authoringTiptap files were retired with those files on 2026-09-12.)");

@@ -8,12 +8,20 @@ import { LibraryBatchBar } from "./LibraryBatchBar";
 import { LibraryHeader } from "./LibraryHeader";
 import { LibraryItemList } from "./LibraryItemList";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
+import { toUserFacingError } from "../../utils/userFacingError";
 import { useLibraryStore } from "./libraryStore";
 import { matchesSearch, matchesTab, type LibraryFilterTab } from "./libraryTypes";
 
 // 题库是产品中心（计划 §0.3 / §16.4）：导入、批量任务进度、搜索、打开、选择发布都在这一页完成。
 // 已退休的独立页面：Dashboard、JobList、ImportWizard、ExportPage、LibraryExamDetail。
 const ALL_TABS: readonly LibraryFilterTab[] = ["all", "processing", "action_required", "ready", "failed", "trash"];
+
+/** 失败提示经用户文案层收敛；机器码/路径只进日志（audit A7-F04）。 */
+function describeLibraryActionError(error: unknown, fallback: string): string {
+  const facing = toUserFacingError(error, fallback);
+  console.error("[library]", facing.internalDetail);
+  return facing.userMessage;
+}
 
 export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
   const store = useLibraryStore();
@@ -110,7 +118,7 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
       await store.moveToTrash(id);
       setNotice("已移入回收站，可在回收站恢复。");
     } catch (error) {
-      setNotice(`删除失败：${error instanceof Error ? error.message : String(error)}`);
+      setNotice(describeLibraryActionError(error, "删除失败，请稍后重试。"));
     }
   }
 
@@ -119,7 +127,7 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
       await store.restore(id);
       setNotice("已从回收站恢复。");
     } catch (error) {
-      setNotice(`恢复失败：${error instanceof Error ? error.message : String(error)}`);
+      setNotice(describeLibraryActionError(error, "恢复失败，请稍后重试。"));
     }
   }
 
@@ -139,7 +147,7 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
         }}
       />
 
-      {store.error ? <p className="error-text">题库读取失败：{store.error}</p> : null}
+      {store.error ? <p className="error-text">{toUserFacingError(store.error, "题库读取失败，请稍后重试。").userMessage}</p> : null}
       {notice ? (
         <p className="library-notice" data-testid="library-notice" role="status">
           {notice}

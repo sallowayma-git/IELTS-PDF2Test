@@ -35,12 +35,13 @@ function routeNames() {
   return unique([...block[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]));
 }
 
-/** 仍被应用装配的 `src/pages/*` 组件。收敛期这些页面从 App.tsx 移到 legacyRoutes.tsx，
- *  两个文件都要扫，否则「页面数」会假性归零。 */
+/** 仍被应用装配的 `src/pages/*` 组件（含 `src/features/*` 下的页面级组件）。
+ *  2026-09-12：收敛期把旧世代页面移入 `src/app/legacyRoutes.tsx` 的做法已废弃——该文件与全部
+ *  退休页面已按计划 §16/§20 删除，应用现在只装配 library / workspace / settings 与 `legacy/writing`。
+ *  这里仍保留 `existsSync` 守卫，使后续再次收敛时「页面数」不会假性归零。 */
 function appPages() {
   const files = [
     "src/app/App.tsx",
-    "src/app/legacyRoutes.tsx",
     "src/features/settings/SettingsPage.tsx",
     "src/features/library/LibraryPage.tsx",
     "src/features/editor/ExamWorkspacePage.tsx"

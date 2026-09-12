@@ -8,6 +8,7 @@ import {
 import { StatusPill } from "../components/StatusPill";
 import { go } from "../app/router";
 import { setPublishIntent } from "../utils/publishIntent";
+import { toUserFacingError } from "../utils/userFacingError";
 import type { WritingJob, WritingJobStatus, WritingTaskType } from "../types";
 
 const TASK_DEFAULTS: Record<WritingTaskType, { suggested: number; label: string }> = {
@@ -27,6 +28,14 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
   const draft = useMemo(() => jobs.find((j) => j.status === "Draft"), [jobs]);
   const ready = useMemo(() => jobs.filter((j) => j.status === "ExportReady" || j.status === "Exported"), [jobs]);
 
+  // Route backend failures through the human-readable message layer; keep the raw
+  // code/detail in the console for diagnostics rather than showing it to the user.
+  function showError(error: unknown, fallback?: string) {
+    const facing = toUserFacingError(error, fallback);
+    console.error("[writing-studio]", facing.internalDetail);
+    setError(facing.userMessage);
+  }
+
   async function reload() {
     try {
       const list = await listWritingJobs();
@@ -35,7 +44,7 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
       const current = list.find((j) => j.jobId === selectedJobId);
       if (current) setEditing({ ...current });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      showError(e, "写作任务列表加载失败，请稍后重试。");
     }
   }
 
@@ -62,7 +71,7 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
       setSelectedJobId(job.jobId);
       refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      showError(e, "创建写作任务失败，请稍后重试。");
     } finally {
       setBusy(false);
     }
@@ -84,7 +93,7 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
       await reload();
       refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      showError(e, "保存写作任务失败，请稍后重试。");
     } finally {
       setBusy(false);
     }
@@ -104,7 +113,7 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
       await reload();
       refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      showError(e, "标记可导出失败，请稍后重试。");
     } finally {
       setBusy(false);
     }
@@ -122,7 +131,7 @@ export function WritingStudio({ refresh }: { refresh: () => void }) {
       await reload();
       refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      showError(e, "删除写作任务失败，请稍后重试。");
     } finally {
       setBusy(false);
     }

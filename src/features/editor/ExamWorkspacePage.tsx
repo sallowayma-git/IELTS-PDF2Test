@@ -12,6 +12,7 @@ import type { JobDetail } from "../../types";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { blockerCount, deriveActionableIssues } from "./actionableIssues";
 import { useCanonicalEditor } from "./useCanonicalEditor";
+import { toUserFacingError } from "../../utils/userFacingError";
 
 // 题目工作区（计划 §16.6 / §9.10）。
 // 打开就是最终 IELTS 题面，没有 编辑/预览 开关；左侧 passage、右侧 questions 由 ExamCanvas 渲染。
@@ -45,6 +46,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [busyAction, setBusyAction] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
+  const [noticeDetail, setNoticeDetail] = useState<string | undefined>();
   const [titleEditing, setTitleEditing] = useState(false);
   // 窄窗（<980px）下两栏改为顶部 tab 切换，而不是把 passage 与 questions 堆成一长列。
   const [narrowPane, setNarrowPane] = useState<"passage" | "questions">("questions");
@@ -71,13 +73,25 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     if (intent === "publish") setNotice("检查下面的问题后，点右上角「发布」把这道题发到 NAS。");
   }, [intent]);
 
+  /** 失败提示一律经用户文案层收敛；机器码/路径只进日志与开发者附注（audit A7-F04）。 */
+  function showError(error: unknown, fallback?: string) {
+    const { userMessage, internalDetail } = toUserFacingError(error, fallback);
+    if (internalDetail && internalDetail !== userMessage) console.error("[workspace]", internalDetail);
+    setNotice(userMessage);
+    setNoticeDetail(internalDetail);
+  }
+  function clearNotice() {
+    setNotice(undefined);
+    setNoticeDetail(undefined);
+  }
+
   async function withBusy(key: string, work: () => Promise<void>) {
     setBusyAction(key);
     setMenuOpen(false);
     try {
       await work();
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
+      showError(error);
     } finally {
       setBusyAction(undefined);
     }
@@ -163,7 +177,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       {notice ? (
         <p className="workspace-notice" role="status">
           {notice}
-          <button className="ghost small" onClick={() => setNotice(undefined)} aria-label="关闭提示">×</button>
+          {noticeDetail && noticeDetail !== notice && readAppSettings().developerMode ? (
+            <small className="workspace-notice-detail">技术详情：{noticeDetail}</small>
+          ) : null}
+          <button className="ghost small" onClick={clearNotice} aria-label="关闭提示">×</button>
         </p>
       ) : null}
       {editor.saveMessage ? <p className="workspace-notice warning" role="alert">{editor.saveMessage}</p> : null}
@@ -226,7 +243,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               try {
                 const patch = compileStructureAction(editor.draft!, action);
                 if (patch) editor.applyPatch(patch);
-              } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
+              } catch (error) { showError(error, "这个结构修改没有生效，请重试。"); }
             }}
           />
         ) : null}

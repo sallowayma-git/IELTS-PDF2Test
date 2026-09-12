@@ -8,6 +8,7 @@ import {
   testLlmProfile
 } from "../../api/tauriCommands";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
+import { toUserFacingError } from "../../utils/userFacingError";
 import type { DiagnosticsSettings, EnvironmentPreflightReport, LlmProfilePublic, LlmTestResult } from "../../types";
 import { useAppSettings } from "./appSettings";
 
@@ -73,6 +74,11 @@ function toForm(profile: LlmProfilePublic): ModelForm {
 function activeProfileOf(profiles: LlmProfilePublic[]): LlmProfilePublic | undefined {
   const real = profiles.filter((profile) => profile.profileId !== LOCAL_PLACEHOLDER_PROFILE);
   return real.find((profile) => profile.enabled) ?? real[0];
+}
+
+/** 普通用户只看到人话；机器码/路径收敛到 internalDetail（audit A7-F04）。 */
+function describeSettingsError(error: unknown, fallback: string): string {
+  return toUserFacingError(error, fallback).userMessage;
 }
 
 export function SettingsPage() {
@@ -147,7 +153,7 @@ export function SettingsPage() {
       setNotice(result.ok ? "已保存，连接正常。" : "已保存，但连接测试未通过。");
       setReloadTick((value) => value + 1);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError(describeSettingsError(caught, "保存或连接测试失败，请稍后重试。"));
     } finally {
       setBusy("idle");
     }
@@ -173,7 +179,7 @@ export function SettingsPage() {
       setNotice("已关闭云端识别，导入只跑本地识别。");
       setReloadTick((value) => value + 1);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError(describeSettingsError(caught, "关闭云端识别失败，请稍后重试。"));
     }
   }
 
@@ -188,7 +194,7 @@ export function SettingsPage() {
     try {
       setDiagnostics(await saveDiagnosticsSettings({ keepFullProcessArtifacts: next }));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError(describeSettingsError(caught, "保存诊断设置失败，请稍后重试。"));
     }
   }
 
@@ -263,7 +269,7 @@ export function SettingsPage() {
           </button>
           {testResult ? (
             <span className={testResult.ok ? "settings-test-result ok" : "settings-test-result bad"} data-testid="settings-test-result">
-              {testResult.ok ? "连接正常 · " + testResult.latencyMs + "ms" : testResult.message}
+              {testResult.ok ? "连接正常 · " + testResult.latencyMs + "ms" : toUserFacingError(testResult.message, "连接测试未通过。").userMessage}
             </span>
           ) : null}
         </div>

@@ -91,10 +91,10 @@ const requiredFiles = [
   "src-tauri/src/reading_runtime_v2.rs",
   "src-tauri/src/nas_package_v2.rs",
   "src-tauri/src/lib.rs",
-  "src/api/tauriCommands.ts",
-  "src/pages/ExportPage.tsx",
-  "src/pages/StructuredAuthoringEditorV2.tsx"
+  "src/api/tauriCommands.ts"
 ];
+// 2026-09-12：`src/pages/ExportPage.tsx` 与 `src/pages/StructuredAuthoringEditorV2.tsx` 是旧世代页面，
+// 已按当前计划（§16/§20）退休并删除；原先针对这两个文件的 token 断言一并退休。
 for (const file of requiredFiles) assert(existsSync(join(repoRoot, file)), `Phase 6 required file missing: ${file}`);
 
 const manifest = readJson("contracts/contract-manifest.json");
@@ -229,16 +229,13 @@ for (const token of ["normalizeReadingSource", "buildReadingRuntimeInteractionMo
 }
 const flags = readFileSync(join(repoRoot, "src/config/featureFlags.ts"), "utf8");
 assert(flags.includes("runtimeSourceV2: true") && flags.includes("nasPackageV2: true"), "Reading runtime and NAS V2 must be enabled by default");
-const structuredEditor = readFileSync(join(repoRoot, "src/pages/StructuredAuthoringEditorV2.tsx"), "utf8");
-assert(structuredEditor.includes("const NAS_PACKAGE_V2_ENABLED = true"), "The V2 NAS path must be the direct product path");
+// 2026-09-12：原 `structuredEditor` / `exportPage` 断言的目标文件（旧世代页面）已删除，断言退休。
 const tauriLib = readFileSync(join(repoRoot, "src-tauri/src/lib.rs"), "utf8");
 assert(tauriLib.includes("async fn publish_nas_package_v2") && tauriLib.includes("publish_nas_package_v2,"), "Phase 6 Tauri NAS V2 command is not wired into generate_handler");
 const tauriApi = readFileSync(join(repoRoot, "src/api/tauriCommands.ts"), "utf8");
 assert(tauriApi.includes("export async function exportNasPackageV2") && tauriApi.includes('command("publish_nas_package_v2"'), "Phase 6 authoring API is missing exportNasPackageV2");
 const authoringExport = readFileSync(join(repoRoot, "src-tauri/src/authoring_v2_commands.rs"), "utf8");
 assert(authoringExport.includes("materialize_authoring_assets") && authoringExport.includes("stage_file_with_hash") && authoringExport.includes("authoring_v2_asset_hash_mismatch"), "Phase 6 authoring export must materialize and verify runtime assets");
-const exportPage = readFileSync(join(repoRoot, "src/pages/ExportPage.tsx"), "utf8");
-assert(exportPage.includes("NAS_PACKAGE_V2_ENABLED") && exportPage.includes("exportNasPackageV2") && exportPage.includes("nas-package-v2-export-result"), "Phase 6 ExportPage V2 opt-in/probe result is not wired");
 const nasRoot = resolve(repoRoot, "../NAS");
 const readingServicePath = join(nasRoot, "server/src/lib/exam/ExamReadingService.ts");
 if (existsSync(readingServicePath)) {
