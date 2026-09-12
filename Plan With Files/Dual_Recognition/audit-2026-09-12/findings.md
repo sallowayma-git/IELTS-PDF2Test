@@ -61,6 +61,13 @@
 
 `npm run check` 通过；`cargo check --manifest-path src-tauri/Cargo.toml --locked` 通过（12.49s，88 warnings）。
 
+### R8. `verify:product-baseline --strict` gate 从设计上不可用 —— **本轮新发现并已修复**
+
+`diffSurface` 把 `commitSha` 计入漂移面。但承载该记录的提交**必然晚于**它所描述的那次提交，因此记录中的 SHA 永远落后 HEAD 一个提交 → 任何提交之后 `--strict` 必定 exit 1。该 gate 因此长期零信号（与 A11-F12 同源）。
+
+**处置**：将 `commitSha` 从漂移面移除、降级为信息性输出（仍打印对比），保留其余全部产品面比较项。修复后 `npm run verify:product-baseline:strict` → `no drift`（exit 0）。
+**证据层级**：`command`（脚本级）。
+
 ---
 
 ## 1. P0 发现（14 条，阻断级）

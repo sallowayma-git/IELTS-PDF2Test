@@ -255,9 +255,10 @@ function diffSurface(baseline, current) {
     ...Object.keys({ ...(baseline.productModules ?? {}), ...current.productModules })
       .filter((root) => (baseline.productModules ?? {})[root] !== current.productModules[root])
       .map((root) => `  productModules.${root}: ${(baseline.productModules ?? {})[root] ?? 0} -> ${current.productModules[root]} files`),
-    ...(baseline.commitSha !== undefined && baseline.commitSha !== current.commitSha
-      ? [`  commitSha: ${baseline.commitSha} -> ${current.commitSha}`]
-      : []),
+    // commitSha is deliberately NOT part of the drift surface: the record that
+    // carries it is committed *after* the code it describes, so the recorded SHA
+    // always lags HEAD by one commit. Counting it made `--strict` permanently
+    // red and therefore useless as a gate. It is still reported for traceability.
     ...(baseline.schemaHash && baseline.schemaHash.sha256 !== current.schemaHash.sha256
       ? [`  schemaHash: ${baseline.schemaHash.sha256.slice(0, 12)} (${baseline.schemaHash.files} files) -> ${current.schemaHash.sha256.slice(0, 12)} (${current.schemaHash.files} files)`]
       : []),
@@ -313,6 +314,11 @@ function main() {
   const lastChange = changeLog[changeLog.length - 1];
   console.log(`product-baseline: commit ${String(current.commitSha ?? "(unknown)").slice(0, 12)}, schema ${current.schemaHash.sha256.slice(0, 12)} (${current.schemaHash.files} files), corpus ${current.corpus.publicSyntheticPdf.length} pdf, routes ${current.routeNames.length}, pages ${current.appPages.length}, commands ${current.tauriCommands.length}, tables ${current.sqliteTables.length}`);
   if (lastChange) console.log(`last baseline update: ${lastChange.at} @ ${String(lastChange.commit ?? "").slice(0, 12)} :: ${lastChange.reason}`);
+  if (baseline.commitSha && baseline.commitSha !== current.commitSha) {
+    console.log(
+      `note: recorded surface was captured at ${String(baseline.commitSha).slice(0, 12)}; HEAD is ${String(current.commitSha ?? "(unknown)").slice(0, 12)} (commit sha is metadata, not surface drift).`
+    );
+  }
   if (!lines.length) {
     console.log("no drift from the recorded product surface.");
     return 0;

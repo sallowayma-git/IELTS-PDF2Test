@@ -32,6 +32,8 @@
 - 基线记录重录：`fixtures/product-baseline.json` 由 `401ca76` 更新至 `6affc57`（修掉 A11-F12 的 `commitSha` 过期问题），`--reason` 门通过。
 - 复核：`npm run verify:product-baseline:strict` → **`no drift from the recorded product surface.`**（exit 0）。
 - 观察：提交后 `src-tauri/src/product_chain.rs` 又被并行写入者改写——该改动属 `6affc57` 之后的新基线，未纳入本次冻结。
+- **修复 `--strict` gate 设计缺陷**（R8）：`diffSurface` 把 `commitSha` 计入漂移面，导致任何提交后 strict 必红（记录 SHA 必然落后 HEAD 一个提交）。已把 `commitSha` 降级为信息性输出，保留其余产品面比较项；修复后 `--strict` 恢复 `no drift`（exit 0）。
+- 产出基线记录提交 `9cc195f`（`fixtures/product-baseline.json` + 审计追踪文件）。
 
 ## 统计
 
