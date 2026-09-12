@@ -53,3 +53,11 @@
 - 提交：**`be68d4a`**（30 文件，-8128 行），只暂存本次清理路径。
 - **重要观察**：工作树中存在**另一个并发 agent** 的未提交工作（`src-tauri/src/product_chain.rs` P4-T02、`Plan With Files/Dual_Recognition/repair-2026-09-07/progress.md`、`Plan With Files/Dual_Recognition/task_plan.md`，mtime 11:52–11:56）。已**刻意排除**在本次提交之外。该并发写入也是本审计期间 `recognition/` 目录"凭空出现"（A1-F01 基线漂移）与 `Files/` 目录瞬时消失的原因。
 - 顺带修复：根 `task_plan.md` 中指向已删文档的悬空链接改为可追溯的 `git show <sha>:<path>` 形式。
+
+## 2026-09-12 计划文档事实层校正（建议 #2 执行）
+
+- 对象：`Plan With Files/IELTS_PDF2Test_Product_Simplification_Dual_Recognition_WYSIWYG_Plan_CN.md`（唯一写入文件）；以当前 `HEAD = 06005a5` 复核。
+- 改动：§0 增勘误说明；§1.1 增基线漂移说明；§1.2 修正 App.tsx/router/AppShell/ExamCanvas/devFallback/styles 六行；§1.4 修正 ExamCanvasV2 引用；§1.5 缺口矩阵增"状态"列（6 条已修复/缓解、其余保持 open）；§10.1 重写溢出前提（3 个选择器不存在、其余仅服务不可达页，真实问题是死 CSS）；§16 增落地率与"计划路径 vs 实际路径"说明、修正 §16.6/16.7/16.16；§17 增"几乎零推进"说明；§26 四轮结论改为"文档自洽复核"并新增 §26.5；§27 增实现状态列；§28 增"冻结无强制手段"说明；附录 A 修正 2 条失效路径；附录 B 改为逐项真实状态表。
+- 未改动：设计意图、架构承诺与待办事项；`src-tauri/` 全程只读。
+- 已跳过：A13-F12（§28 "最先启动的 PR" 已过时）等不在授权清单内的项；`tauriCommands.ts` "过大" 判断（A1 断言 2-16）未列入本次修正。
+- 未纳入：附录 A 第 10 行 `llm_gateway.rs`→`llm_suggestions.rs` 的指向偏差（任务书只要求修 2 条 `ExamCanvasV2` 路径，已记录待办）。

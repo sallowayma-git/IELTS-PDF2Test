@@ -11,6 +11,8 @@
 
 ## 0. 文档目的、结论与使用方式
 
+> **勘误说明（2026-09-12）**：本版对计划的**事实层**做了一次校正，以当前仓库 `HEAD = 06005a5` 的实际状态为准，修正了 §1、§10.1、§16、§17、§26、§27、§28 与附录 A/B 中已失效的路径、计数、缺口状态与过度声明。**设计意图、架构承诺与待办事项均未改动**；尚未实现的部分按实情标注为"未实现"，既不删除承诺，也不假称已完成。完整证据（findings 注册表、汇总报告与逐章子报告）见 `Plan With Files/Dual_Recognition/audit-2026-09-12/`。
+
 ### 0.1 这份计划解决什么
 
 本计划处理当前应用最核心的五个问题：
@@ -70,16 +72,18 @@ commit: bb978be07d0d1391e2c73852b1489efc88e563b7
 message: fix: harden AI import review and V2 publishing
 ```
 
+> **基线漂移说明（2026-09-12）**：以上是计划编制时（2026-09-04）冻结的**审计**基线。当前仓库 `HEAD` 已推进到 `06005a5`。本节以下各表的"当前职责/当前判断"两列是对 `bb978be` 的历史快照：**前端部分已系统性过时**（详见 §1.2 与 §1.5 的校正），后端清单经复核基本仍然成立。实施基线请以 `06005a5` 为准。
+
 当前配置已经默认打开 Reading V2、Authoring V2、Runtime V2、NAS Package V2、Quality Gate V2 和 Phase 5 Editor；Listening 仍默认关闭，逐题 PDF LLM Repair 强制关闭。因此当前问题不是“功能开关尚未启用”，而是新旧链路同时存在、产品表面没有完成收敛。
 
 ### 1.2 前端模块清单与当前职责
 
 | 文件/目录 | 当前职责 | 当前判断 | 目标处理 |
 |---|---|---|---|
-| `src/app/App.tsx` | 11 个页面的路由分发、全局 job 刷新 | 页面职责过多，路由和产品流程耦合 | 重写为 Library / Workspace / Settings 三路由 |
-| `src/app/router.ts` | hash 路由；包含 document/split/groups/llm-review/preview/authoring-v2/export 等 | 暴露内部流水线阶段 | 删除内部阶段路由，任务阶段变为题库行状态 |
-| `src/components/AppShell.tsx` | 侧栏、转化工具分组、步骤条、当前 job 技术状态 | 导航过深，重复表达流程 | 改为极简三入口；工作区隐藏侧栏或使用窄工具条 |
-| `src/components/ExamCanvasV2.tsx` | Reading V2 学生/作者双模式渲染、文本/表格/选项/图形操作 | 当前最值得保留的前端核心 | 升级为唯一 WYSIWYG 渲染与编辑引擎 |
+| `src/app/App.tsx` | **已重写**：仅分发 Library / Workspace / Settings 三路由，另保留 `legacy/writing` 的 WritingStudio；无全局 job 刷新 | 三路由收敛已完成 | 已完成；剩余项：移除对退休页 `WritingStudio` 的直接引用 |
+| `src/app/router.ts` | hash 路由只保留 `library` / `workspace` / `settings` 三个主表面 + `legacy` 逃生通道；document/split/groups/llm-review/preview/authoring-v2/export 已不在 `RouteName` 中，仅作为 `legacyRedirect` 重定向表的输入 | 内部阶段路由已删除 | 已完成（重定向保留一个发行周期，只写日志） |
+| `src/components/AppShell.tsx` | **已极简化**：仅「题库」「设置」两个一级入口；工作区隐藏侧栏；已删除转化工具展开组、stepper、activeJob 技术条 | 导航已收敛 | 已完成 |
+| `src/exam-canvas/ExamCanvas.tsx`（原 `src/components/ExamCanvasV2.tsx`，已改名迁移） | Reading V2 学生/作者双模式渲染、文本/表格/选项/图形操作 | 当前最值得保留的前端核心 | 升级为唯一 WYSIWYG 渲染与编辑引擎 |
 | `src/editor/authoringTiptap.tsx` | 另一套 ContentDoc ↔ Tiptap 映射与编辑器 | 与 ExamCanvas 重复；媒体/流程图为占位表达 | 从主链路移除；只保留迁移期或删除 |
 | `src/pages/Dashboard.tsx` | 工作台汇总 | 与题库首页重复 | 删除，题库成为默认首页 |
 | `src/pages/JobList.tsx` | 导入任务列表 | 与题库任务态重复 | 删除，任务直接作为题库行 |
@@ -92,10 +96,10 @@ message: fix: harden AI import review and V2 publishing
 | `src/pages/ExportPage.tsx` | 单题/批量/目录/NAS 发布和复杂错误引导 | 独立页面不符合目标流程 | 发布并入题库批量操作和工作区主按钮 |
 | `src/pages/Settings.tsx` | 多 Profile、高级 Provider、URL、模型、Key、超时、温度、JSON、启用、预检、诊断 | 普通用户选项过多；Provider 能力不一致 | 默认简化，只显示一个主模型配置；高级项折叠 |
 | `src/api/tauriCommands.ts` | 所有 V1/V2/题库/LLM/导出命令的平铺封装 | 过大且和 dev fallback 强耦合 | 按业务拆成 5 个 client |
-| `src/services/devFallbackBackend.ts` | 在浏览器 localStorage 中复制大量后端行为 | 容易与真实 Tauri 分叉 | 从生产路径移除，仅测试构建使用最小 fake adapter |
+| `src/services/devFallbackBackend.ts` | 在浏览器 localStorage 中复制大量后端行为 | **F13 已修复**：两处动态 import 均已由 `import.meta.env.DEV` 短路（`src/api/tauriCommands.ts:69`、`src/api/desktopDialogs.ts:218`），已移出生产 bundle；文件本身仍在（3888 行） | 保留；后续以最小 fake adapter 收尾（`src/test-support/fakeBackend.ts` **尚未创建**） |
 | `src/services/authoringV2Patches.ts` | 文本、节点、选项、表格、热点等 patch | 可复用的良好基础 | 收敛为稳定的 EditorCommand 协议 |
 | `src/services/runtimeViewModelV2.ts` | 从同一 V2 DS 构建 runtime view/interaction model | 符合“同源渲染”方向 | 保留并移入 exam-canvas 领域层 |
-| `src/styles.css` | 整个应用所有布局和组件样式，约 64 KB | 固定栏宽、全局耦合、溢出难定位 | 拆分为 tokens/layout/library/workspace/canvas/settings |
+| `src/styles.css` | **已拆分**：现为 13 行分层 `@import` 入口（**582 字节**），样式移入 `src/styles/*.css`（10 个分片） | 分层已完成；但分片中含未列出的 `src/styles/legacy.css`（**约 63 KB、1406 行**旧页面样式），仍进入生产 CSS | 删除死选择器与 `legacy.css`，加 `test:layout` 回归门 |
 
 ### 1.3 后端模块清单与当前职责
 
@@ -135,7 +139,7 @@ message: fix: harden AI import review and V2 publishing
 - `DocumentIRV2` 的 glyph/span/line/region/vector/table/asset/reading-order 模型。
 - `pdf_ingest` 中的坐标统一、行构建、区域构建、表格检测和 OCR merge。
 - `IeltsAuthoringIRV2` 的 task、response group、option bank、answer slot、ContentDoc、asset 等语义模型。
-- `ExamCanvasV2` 的 student/author 双模式和表格、图形、热点、答案槽渲染框架。
+- `src/exam-canvas/ExamCanvas.tsx`（原 `ExamCanvasV2`，已改名迁移）的 student/author 双模式和表格、图形、热点、答案槽渲染框架。
 - `authoringV2Patches.ts` 的细粒度 patch 概念。
 - `runtimeViewModelV2.ts` 和 `reading_source_v2.rs` 的“同一作者稿生成预览和运行时”方向。
 - `llm_gateway.rs` 已有的请求超时、部分重试、Retry-After、平衡 JSON 提取和 OpenAI-compatible 路由。
@@ -143,26 +147,26 @@ message: fix: harden AI import review and V2 publishing
 
 ### 1.5 当前 P0/P1/P2 缺口矩阵
 
-| ID | 优先级 | 缺口 | 用户影响 | 根因 |
-|---|---:|---|---|---|
-| UX-001 | P0 | 入口与流程页面过多 | 用户不知道该点哪里、哪一步才是最终结果 | 历史 Phase 页面直接成为产品导航 |
-| UX-002 | P0 | 固定三栏/多栏 CSS 导致溢出和裁切 | 1100px 窗口、Windows 缩放、长文本下不可用 | 大量固定 240/360/380/420px 列宽，主 surface 还设置 overflow hidden |
-| UX-003 | P0 | 编辑、预览、题库详情不是同一界面 | 改完仍不确定学生端效果 | ExamCanvas、Tiptap、UnifiedPreview、V1 HTML 多套 renderer |
-| REC-001 | P0 | 新本地识别仍绕回 V1 candidate | 简单题型也可能缺题干/选项 | DocumentIRV2 几何没有直接驱动 QuestionBlock |
-| REC-002 | P0 | 题号/题干/选项仍以行序和字符串为主 | 题号独立一行、折行、多栏时丢失 | anchor/prompt/option run 是一维 line-first |
-| REC-003 | P0 | 复杂表格/流程图语义结构无法完整闭包 | 题面信息丢失 | semantic line 没有直接消费 physical table/visual object |
-| CLD-001 | P0 | 云端只返回 outline，不返回完整可渲染 DS | 无法作为真正第二识别候选 | CloudReadingOutlineV1 contract 太窄 |
-| CLD-002 | P0 | 云端队列在 React 页面 localStorage 中 | 退出/多窗口/崩溃后任务状态不可靠 | 后台编排没有归属到 Rust/DB |
-| CLD-003 | P0 | Prompt/Skill 硬编码在 Rust | 难版本化、测试、回滚和同步给模型 | 没有独立 skill bundle |
-| CLD-004 | P0 | 云端畸形 JSON 不能形成分组级 salvage | 用户可能只看到失败，丢掉部分正确结果 | 只有 JSON 提取，没有完整 schema repair pipeline |
-| LIB-001 | P0 | job.json、authoring JSON、legacy exams、library_items 多事实源 | 状态/内容可短时分叉，bug 难定位 | best-effort 双写与回写 |
-| LIB-002 | P0 | 清理后仍保留大量 job 项目文件 | 题库和 AppData 越用越复杂 | Artifact layout 以研发审计为中心 |
-| BAT-001 | P0 | 批量导入本地循环串行，随后跳进第一题 | 用户看不到全部任务整体状态 | ImportWizard 是表单页，不是任务中心 |
-| PUB-001 | P1 | 发布独立页面且门禁错误是长字符串 | 用户操作多、错误难理解 | 校验/发布模块与 UI 直接耦合 |
-| SET-001 | P1 | 设置展示过多高级字段和不一致 Provider | 普通用户配置困难，部分配置必然运行失败 | Profile schema 比 gateway 协议更宽 |
-| TEST-001 | P1 | UI E2E 主要运行 Vite + dev fallback | 不能证明真实 Tauri/Rust/SQLite/文件链路 | 测试替身复制后端过多 |
-| CODE-001 | P1 | 多个 100KB-500KB 单文件 | 修改容易引发跨功能回归 | 长期追加式开发，没有按领域拆分 |
-| OBS-001 | P2 | 用户主界面暴露过多置信度、hash、source review 和内部状态 | 噪声大，真实错误反而不突出 | 研发诊断直接进入产品表面 |
+| ID | 优先级 | 缺口 | 用户影响 | 根因 | 状态（2026-09-12 复核） |
+|---|---:|---|---|---|---|
+| UX-001 | P0 | 入口与流程页面过多 | 用户不知道该点哪里、哪一步才是最终结果 | 历史 Phase 页面直接成为产品导航 | **已修复**：`App.tsx` 仅分发 library/workspace/settings（+`legacy/writing`），`AppShell` 仅 2 个入口 |
+| UX-002 | P0 | 固定三栏/多栏 CSS 导致溢出和裁切 | 1100px 窗口、Windows 缩放、长文本下不可用 | 大量固定 240/360/380/420px 列宽，主 surface 还设置 overflow hidden | **根因不成立**：活跃表面无溢出；`.editor-grid`/`.llm-grid`/`.settings-grid` 不存在，`.review-grid`/`.metric-row`/`.surface` 仅服务不可达旧页；实测 72 项 0 溢出，真实问题是死 CSS（详见 §10.1） |
+| UX-003 | P0 | 编辑、预览、题库详情不是同一界面 | 改完仍不确定学生端效果 | ExamCanvas、Tiptap、UnifiedPreview、V1 HTML 多套 renderer | **部分**：主表面已统一到 `ExamWorkspacePage` + `ExamCanvas`；旧 renderer 仍存在但不可达 |
+| REC-001 | P0 | 新本地识别仍绕回 V1 candidate | 简单题型也可能缺题干/选项 | DocumentIRV2 几何没有直接驱动 QuestionBlock | **仍成立**（M4 未交付，主链仍走 V1） |
+| REC-002 | P0 | 题号/题干/选项仍以行序和字符串为主 | 题号独立一行、折行、多栏时丢失 | anchor/prompt/option run 是一维 line-first | **仍成立** |
+| REC-003 | P0 | 复杂表格/流程图语义结构无法完整闭包 | 题面信息丢失 | semantic line 没有直接消费 physical table/visual object | **仍成立** |
+| CLD-001 | P0 | 云端只返回 outline，不返回完整可渲染 DS | 无法作为真正第二识别候选 | CloudReadingOutlineV1 contract 太窄 | **仍成立**（云端仍只产 `CloudReadingOutlineV1`） |
+| CLD-002 | P0 | 云端队列在 React 页面 localStorage 中 | 退出/多窗口/崩溃后任务状态不可靠 | 后台编排没有归属到 Rust/DB | **已缓解**：主链已改 Rust `processing` 队列 + `processingClient`/`libraryStore` 订阅；仅不可达的 `UnifiedPreview` 仍残留 localStorage |
+| CLD-003 | P0 | Prompt/Skill 硬编码在 Rust | 难版本化、测试、回滚和同步给模型 | 没有独立 skill bundle | **仍成立** |
+| CLD-004 | P0 | 云端畸形 JSON 不能形成分组级 salvage | 用户可能只看到失败，丢掉部分正确结果 | 只有 JSON 提取，没有完整 schema repair pipeline | **仍成立** |
+| LIB-001 | P0 | job.json、authoring JSON、legacy exams、library_items 多事实源 | 状态/内容可短时分叉，bug 难定位 | best-effort 双写与回写 | **仍成立**（`job.json`↔DB 双写、legacy `exams` 未除） |
+| LIB-002 | P0 | 清理后仍保留大量 job 项目文件 | 题库和 AppData 越用越复杂 | Artifact layout 以研发审计为中心 | **仍成立** |
+| BAT-001 | P0 | 批量导入本地循环串行，随后跳进第一题 | 用户看不到全部任务整体状态 | ImportWizard 是表单页，不是任务中心 | **已缓解**：导入已走后端 `importFiles` 入队（`processingClient`），非"串行+跳转" |
+| PUB-001 | P1 | 发布独立页面且门禁错误是长字符串 | 用户操作多、错误难理解 | 校验/发布模块与 UI 直接耦合 | **部分**：批量发布已并入题库（`publishClient`）；`ExportPage` 仍存在但不可达 |
+| SET-001 | P1 | 设置展示过多高级字段和不一致 Provider | 普通用户配置困难，部分配置必然运行失败 | Profile schema 比 gateway 协议更宽 | **已修复**：`SettingsPage` 已收敛为单 Profile、仅 OpenAI 兼容/Ollama |
+| TEST-001 | P1 | UI E2E 主要运行 Vite + dev fallback | 不能证明真实 Tauri/Rust/SQLite/文件链路 | 测试替身复制后端过多 | **部分**：已新增 `e2e:tauri`（真实 Tauri）；`e2e:library-workspace` 仍为浏览器+devFallback |
+| CODE-001 | P1 | 多个 100KB-500KB 单文件 | 修改容易引发跨功能回归 | 长期追加式开发，没有按领域拆分 | **仍成立且被低估**：`authoring_pipeline.rs` **547 KB**（13848 行）、`lib.rs` 约 11.2k 行，已突破本文自设的"100KB-500KB"上界 |
+| OBS-001 | P2 | 用户主界面暴露过多置信度、hash、source review 和内部状态 | 噪声大，真实错误反而不突出 | 研发诊断直接进入产品表面 | **部分**：活动题库行已不暴露 hash/技术字段；不可达旧页仍暴露置信度 |
 
 ---
 
@@ -1774,20 +1778,30 @@ Hybrid 图形在 Author Mode 下支持：
 ---
 ## 10. 前端视觉和溢出专项整改
 
-### 10.1 当前溢出的直接技术原因
+### 10.1 溢出问题的真实情况（原题：当前溢出的直接技术原因）
 
-当前 `src/styles.css` 同时存在：
+> **2026-09-12 校正**：本节原先把下列 6 条选择器列为"当前溢出的直接技术原因"。经逐条精确核对（已排除 `settings-editor-grid`、`phase5-editor-grid`、`slot-editor-grid` 等**子串误匹配**），该前提**不成立**。
 
-```css
-.review-grid   { grid-template-columns: 360px minmax(0,1fr) 380px; }
-.editor-grid   { grid-template-columns: 240px minmax(0,1fr) 420px; }
-.llm-grid      { grid-template-columns: minmax(0,1fr) minmax(0,1fr) 320px; }
-.settings-grid { grid-template-columns: minmax(460px,1.35fr) minmax(320px,.9fr) 340px; }
-.metric-row    { grid-template-columns: repeat(6,1fr); }
-.surface       { overflow: hidden; }
-```
+逐条核实结果：
 
-这些列宽在 1100px Tauri 最小窗口中无法同时容纳 workspace padding、sidebar、gap、border 和 Windows 缩放后的逻辑像素。`overflow:hidden` 又将溢出内容裁掉，而不是让布局自适应。
+| 选择器 | 定义位置 | 组件使用点 | 可达性 |
+|---|---|---|---|
+| `.editor-grid` | **不存在** | — | — |
+| `.llm-grid` | 仅 `src/styles/legacy.css:8` 注释 | 无 | — |
+| `.settings-grid` | 仅 `src/styles/legacy.css:8` 注释 | 无 | — |
+| `.review-grid` | `src/styles/legacy.css:61` | `src/pages/DocumentReview.tsx:97` | **不可达** |
+| `.metric-row` | `src/styles/legacy.css:54` | `src/pages/Dashboard.tsx:33,51`、`src/pages/LibraryPage.tsx:102` | **不可达** |
+| `.surface`（`overflow:hidden`） | `src/styles/legacy.css:36` | 无任何 TSX 使用点 | — |
+
+即：3 条选择器根本不存在，其余只服务**不可达的旧页面**（这些页面为何不可达见 §16 顶部说明）。项目自身 Phase 0 实测（`Plan With Files/Dual_Recognition/task_plan.md:92-94`）在受支持窗口范围内 **72 项检查 0 溢出**，结论是"**死 CSS 才是真实问题**"。
+
+因此当前真实问题不是"线上溢出缺陷"，而是：
+
+1. `src/styles/legacy.css`（约 **63 KB、1406 行**）仍被 `src/styles.css` 导入，整套旧页面样式进入生产 CSS；
+2. `src/pages/` 下的旧页面（Dashboard、DocumentReview、UnifiedPreview、StructuredAuthoringEditorV2、ExportPage 等）仍在源码树中参与 `tsc` 编译，虽已不可达；
+3. 缺少可持续的横向溢出回归门。
+
+后续整改目标不变（拆分样式、删除死选择器、加 `test:layout` 回归门），但定位应为"**删除死代码 + 建立回归门**"，而不是"修复线上缺陷"。
 
 ### 10.2 样式目录重构
 
@@ -2450,9 +2464,13 @@ request_id=...
 ---
 ## 16. 前端逐文件改造清单
 
+> **2026-09-12 校正**：本章是**改造清单（目标态）**。经逐文件复核，当前实际落地情况为：**完全达成 1 项（§16.3 AppShell）、部分 13 项、未动 2 项（§16.9 UnifiedPreview、§16.17 runtimeViewModelV2）、与计划路径不符 1 项（§16.6）**。退休页面（Dashboard / DocumentReview / UnifiedPreview / StructuredAuthoringEditorV2 / ExportPage / 旧 Settings / LibraryExamDetail / JobList / ImportWizard）在源码树中**全部仍在**，但**均不可达**：`src/app/App.tsx` 只渲染 library / workspace / settings 与 `legacy/writing`，`src/app/router.ts` 把其余 legacy 路径一律重定向；承载它们的 `src/app/legacyRoutes.tsx` 自身**没有任何 importer（真孤儿）**。因此 `npm run check` 仍会编译整套退休 UI。未开工项以 §20.2 / P10 为准，不应按本节目标态误读为已完成。
+>
+> **计划路径 vs 实际路径**：§16.6 `src/pages/ExamWorkspacePage.tsx` → 实际 `src/features/editor/ExamWorkspacePage.tsx`；§16.7 `src/components/ExamCanvasV2.tsx` → 实际 `src/exam-canvas/ExamCanvas.tsx`；§16.16 `EditorCommandV1` → 实际定义在 `src/exam-canvas/editorCommands.ts`（不在 `authoringV2Patches.ts`）。按计划原文路径直接定位会失败。
+
 ### 16.1 `src/app/App.tsx`
 
-**现状**：直接分发 Dashboard、JobList、ImportWizard、DocumentReview、UnifiedPreview、ExportPage、WritingStudio、LibraryPage、LibraryExamDetail、StructuredAuthoringEditorV2。
+**现状（2026-09-12 复核）**：已收敛为 library / workspace / settings 三路由 + `legacy/writing` 的 WritingStudio；不再 import 其余退休页面，也不再读取全局 job。下列"改造"除移除对 `WritingStudio` 的直接引用外均已达成。
 
 **改造**：
 
@@ -2573,6 +2591,8 @@ closeDrawer();
 
 ### 16.6 `src/pages/ExamWorkspacePage.tsx`（新建）
 
+> **实际路径**：已落地于 `src/features/editor/ExamWorkspacePage.tsx`（`src/pages/` 下无此文件）。职责已实现（加载/保存/发布/drawer + Canvas）。
+
 取代 `LibraryExamDetail`、`UnifiedPreview`、`StructuredAuthoringEditorV2` 的主职责：
 
 ```tsx
@@ -2601,7 +2621,9 @@ function ExamWorkspacePage({ itemId }: { itemId: string }) {
 - SourceDrawer 只读源 PDF。
 - Issues 以 targetId 定位，不做独立问题清单页。
 
-### 16.7 `src/components/ExamCanvasV2.tsx`
+### 16.7 `src/exam-canvas/ExamCanvas.tsx`（原 `src/components/ExamCanvasV2.tsx`，已改名迁移）
+
+> **实际落地 3/11**：现仅 `ExamCanvas.tsx`、`editorCommands.ts`、`renderers/MatchingMatrix.tsx`、`editors/InlineTextEditor.tsx`、`structureActions.ts`；`ContentNodeRenderer.tsx`、`ChoiceTask/CompletionTask/TableTask/VisualTask`、`OptionEditor/TableCellEditor/SlotPlacementEditor` **均缺失**，renderer 仍内联于 `ExamCanvas.tsx`。旧名以别名保留：`export const ExamCanvasV2 = ExamCanvas`。
 
 迁移为：
 
@@ -2717,6 +2739,8 @@ normalizeAppError(error)
 
 ### 16.16 `src/services/authoringV2Patches.ts`
 
+> **实际归属**：`EditorCommandV1` 已定义在 `src/exam-canvas/editorCommands.ts`（含 `set_text`），**不在** `authoringV2Patches.ts`；后者仍导出 19 op 的 `AuthoringPatchV2`。计划要求的共享 JSON Schema `contracts/editor-command-v1.schema.json` **不存在**。
+
 - 保留纯函数节点定位和结构操作。
 - 对外协议改名为 `EditorCommandV1`。
 - 新增 `set_text`，避免 Unicode 字符下标错误。
@@ -2740,6 +2764,8 @@ normalizeAppError(error)
 ---
 
 ## 17. 后端逐文件改造清单
+
+> **2026-09-12 校正**：本章核心文件**几乎零推进**。`src-tauri/src/lib.rs` 仍约 **11152 行**并注册约 120 个命令；`src-tauri/src/authoring_pipeline.rs` 仍 **13848 行（约 547 KB）**，仍在根目录且被 `auto_pipeline.rs`、`lib.rs`、`parser.rs` 等 V1 主链调用。`legacy_commands.rs`、`src-tauri/src/legacy/`、`recognition/cloud`、`recognition/reconcile`、`src-tauri/src/editor/`、`src-tauri/src/publish/` **均不存在**；§17.25 要求的 7 个新 contract schema 为 **0/7**。本章各节以目标态书写，实际进度见 `audit-2026-09-12/A10-ch16-17-file-checklist.md`。
 
 ### 17.1 `src-tauri/src/lib.rs`
 
@@ -3985,7 +4011,9 @@ Crash/restart recovery rate
 
 ## 26. 四轮对抗审计记录
 
-> 以下不是形式化附录。每一轮都以“假设该计划会失败”为前提，重新对照用户需求和当前代码，记录发现的矛盾并将修订写回正文。
+> 以下不是形式化附录。每一轮以“假设该计划会失败”为前提，记录发现的矛盾并将修订写回正文。
+>
+> **2026-09-12 校正（重要）**：经对抗审计复核，以下四轮实际验证的是**文档内部自洽性**，**不是实现**。29 条修订中 26 条只写进了正文文本；§26.3 的 5 条云端修订（§7.9/§7.11/§7.12/§7.13/§17.9）在代码中**零实现**；本章**全章没有一条 `file:line` 代码证据**。因此本章结论应读作“四轮**文档自洽复核**通过”，**不等于**“四轮对抗审计通过”，更**不构成**实现层验收。修订记录本身保留（见下），但其“通过”仅指正文可查到修订文本。
 
 ### 26.1 第一轮：产品简化对抗审计
 
@@ -4023,7 +4051,7 @@ Crash/restart recovery rate
 - 第 13.3 将发布门缩为当前业务闭包。
 - 第 14 章将环境和诊断移入高级/开发者模式。
 
-**第一轮结论**：通过。三主表面已经落实到 route、组件、命令和退休文件清单，而不是视觉改名。
+**第一轮结论（文档自洽复核通过）**：三主表面的设计已落实到正文的 route/组件/命令/退休文件清单，而不是视觉改名。**实现层复核**：路由与外壳收敛已落地（`App.tsx`/`router.ts`/`AppShell.tsx`），但 §20.2 的退休文件**全部仍在源码树中**，删除归 P10。
 
 ---
 
@@ -4066,7 +4094,7 @@ Crash/restart recovery rate
 - 第 17.15 采用分阶段策略：先保留旧 revision 读取，停止新编辑写深层 revision；稳定后再删除目录结构。
 - 第 18 Phase 2 明确迁移幂等和回滚。
 
-**第二轮结论**：通过。计划从“概念简化”修正为短事务、阻塞任务隔离、有界恢复和渐进迁移。
+**第二轮结论（文档自洽复核通过）**：设计已修正为短事务、阻塞任务隔离、有界恢复和渐进迁移。**实现层复核**：§5.5 伪代码的 local/cloud 并发承诺与实现不符——`processing/scheduler.rs` 实为"本地 await 完成后再进入云端"的**顺序执行**，本地失败时云端根本不运行；"§18 Phase 2 明确回滚"在正文中落空（§18 Phase 2 无"回滚"）。
 
 ---
 
@@ -4121,7 +4149,7 @@ Crash/restart recovery rate
 - 第 7.6 定义一次 repair，之后按 group 逐个验证。
 - UI 只显示未采用 group 数，不显示 serde/schema 原始错误。
 
-**第三轮结论**：通过。Cloud 已从“outline + 一次 JSON 解析”变成 versioned full candidate、证据重绑定、一次修复、分组 salvage 和条件式 proofreader。
+**第三轮结论（文档自洽复核通过；实现层全部落空）**：上述云端设计**只存在于正文**。代码中 `CloudRecognitionCandidateV1`、`resolve_cloud_evidence`、`salvage_valid_task_groups`、`SalvageResult`、`LlmTransport`、`CloudResponseState` 等**全部零实现**，云端仍只产 `CloudReadingOutlineV1`（M5 pending）。另：攻击 D 的前提“当前 `Mutex<FnMut>`”在代码中字面不成立（实为 `&mut FnMut` 回调串行），属稻草人。
 
 ---
 
@@ -4177,32 +4205,43 @@ Crash/restart recovery rate
 - 第 10.5 将验收定义为信息架构、左右栏、题型交互、字号密度、题号导航、作答反馈的功能/视觉同构。
 - 使用客户批准的参考截图做视觉门，不复制品牌标识。
 
-**第四轮结论**：通过。WYSIWYG 不再只依赖“同一数据”的口头承诺，而是加入实际 NAS renderer parity、IME 编辑策略和真实 Tauri/UI 截图门。
+**第四轮结论（文档自洽复核部分通过）**：IME 安全 textarea 策略已实现（`InlineTextEditor.tsx`）。**实现层复核**：攻击 A 的 cross-repo NAS 截图 parity **未写进任何被指向章节**（§9.1/§13/§19.6/§21 PR-07/PR-14 均无该定义），属修订落空；"真实 Tauri smoke 设为启动门"**未接入任何 CI workflow**；devFallback 已由 `import.meta.env.DEV` 移出生产 bundle。
+
+---
+
+### 26.5 审计层校正（2026-09-12）
+
+- 本章 29 条修订中：26 条确实写进正文、2 条部分落空（26.2 D 的"回滚"、26.4 D 的"启动门"）、1 条完全落空（26.4 A 的 cross-repo parity）。
+- 但"写进正文"≠"实现"。§26.3 全部 5 条、§8 的 reconcile 设计、后端 `ActionableIssueV1` 在代码中**零实现**。
+- 本章全章无 `file:line` 证据；多数攻击是对既定方向的重述，缺少可失败判据。
+- **可信表述**：四轮**文档自洽审计**通过；其中第一、二轮对应设计已在 M1–M3 部分落地，第三轮（云端）与 §8 合并设计**尚未实现**，第四轮 A 的跨仓 parity 修订**未写回正文**。
 
 ---
 
 ## 27. 用户需求到任务的追踪矩阵
 
-| 用户需求 | 设计章节 | 实施任务 |
-|---|---|---|
-| PDF 放入后本地 V2 识别 | 5、6 | P4-T01~T06 |
-| 云端并发识别完整 PDF | 5、7 | P5-T01~T05、P6-T01~T02 |
-| 同步 prompt/skill/题型/schema | 7.2~7.5 | P5-T01~T03 |
-| 云端 JSON 无法解析时内部处理 | 7.6~7.9 | P5-T04~T05 |
-| 第二条云端校对链 | 7.10、8 | P5-T06、P6-T03 |
-| 本地 JSON/云端 JSON 比对 | 8 | P6-T03 |
-| 编辑不应是独立技术页面 | 3、9 | P3-T01~T06 |
-| 最终渲染即编辑界面 | 9 | P3-T02~T05 |
-| 改一个字符同步最终输出 | 9.4~9.6 | P3-T03、P2-T03 |
-| 只保留题库/编辑/设置 | 3、16 | P1-T01~T04、P8-T01 |
-| 题库只保留最终 DS | 4、11 | P2-T01~T04、P7-T05 |
-| 关闭后清理过程文件 | 11.5 | P7-T05 |
-| 批量 PDF 任务列表和转圈状态 | 3.3、12 | P1-T02~T03、P6-T01 |
-| 返回题库后任务继续 | 5、12.5 | P6-T01、P6-T04 |
-| 前端简洁美观、解决溢出 | 10、16 | P1-T04、P3、P8-T01 |
-| 不暴露大量 hash/安全诊断 | 3.4、13、14 | P7-T02~T04 |
-| 深入代码并指出改哪些模块 | 1、16、17 | 全部 PR |
-| 至少三轮对抗审计 | 26 | 本文四轮 |
+> **2026-09-12 校正**：原矩阵只有"设计章节 + 实施任务"，**没有完成状态列**，会把"有设计章节"误读为"有交付"（例如 §7/§8 整章未实现却与已实现章节并列）。下表新增 `实现状态（2026-09-12 复核）` 列，区分 已实现 / 部分 / 未实现。
+
+| 用户需求 | 设计章节 | 实施任务 | 实现状态（2026-09-12 复核） |
+|---|---|---|---|
+| PDF 放入后本地 V2 识别 | 5、6 | P4-T01~T06 | **未实现**：主链仍走 V1；`recognition/local` 仅起步且未接入主链 |
+| 云端并发识别完整 PDF | 5、7 | P5-T01~T05、P6-T01~T02 | **未实现**：云端仍只产 outline；§5.5 并发设计未落，实为顺序执行 |
+| 同步 prompt/skill/题型/schema | 7.2~7.5 | P5-T01~T03 | **未实现** |
+| 云端 JSON 无法解析时内部处理 | 7.6~7.9 | P5-T04~T05 | **未实现** |
+| 第二条云端校对链 | 7.10、8 | P5-T06、P6-T03 | **未实现** |
+| 本地 JSON/云端 JSON 比对 | 8 | P6-T03 | **未实现** |
+| 编辑不应是独立技术页面 | 3、9 | P3-T01~T06 | **已实现** |
+| 最终渲染即编辑界面 | 9 | P3-T02~T05 | **已实现** |
+| 改一个字符同步最终输出 | 9.4~9.6 | P3-T03、P2-T03 | **部分**：保存链已落；`EditorCommandV1` 仅 3/9 op |
+| 只保留题库/编辑/设置 | 3、16 | P1-T01~T04、P8-T01 | **已实现**（产品面）；退休页面代码未删 |
+| 题库只保留最终 DS | 4、11 | P2-T01~T04、P7-T05 | **部分**：Canonical DS 权威稿已建；过程文件 TTL 清理未实现 |
+| 关闭后清理过程文件 | 11.5 | P7-T05 | **未实现**（§11.5 三函数、四触发点缺失） |
+| 批量 PDF 任务列表和转圈状态 | 3.3、12 | P1-T02~T03、P6-T01 | **已实现**（Rust 队列 + 事件订阅） |
+| 返回题库后任务继续 | 5、12.5 | P6-T01、P6-T04 | **部分** |
+| 前端简洁美观、解决溢出 | 10、16 | P1-T04、P3、P8-T01 | **部分**：三表面已收敛；溢出实测 0，真实问题是死 CSS（§10.1） |
+| 不暴露大量 hash/安全诊断 | 3.4、13、14 | P7-T02~T04 | **已实现**（活动表面）；不可达旧页仍暴露 |
+| 深入代码并指出改哪些模块 | 1、16、17 | 全部 PR | **部分**：§16/§17 为清单，落地率极低 |
+| 至少三轮对抗审计 | 26 | 本文四轮 | **文档层**：四轮文档自洽复核；实现层未覆盖（见 §26.5） |
 
 ---
 
@@ -4230,6 +4269,8 @@ devFallbackBackend.ts
 
 这些文件应进入“只修阻断 bug、不加新功能”的冻结状态，所有新能力按本计划的新领域模块落地。否则每次增加一个识别或 UI 功能，都会继续扩大当前最主要的复杂度来源。
 
+> **2026-09-12 校正**：上述“冻结”目前**只是文字建议，没有任何强制手段**——仓库无 `CODEOWNERS`，CI（`product-convergence-gates.yml`、`windows-smoke.yml`）也不识别“在这些文件中新增业务功能”。经复核，6 个“冻结”文件中已有 **4 个在计划编制后被改动**（`auto_pipeline.rs`、`lib.rs`、`devFallbackBackend.ts`、`styles.css`）；其中多为计划内工作，但“冻结”本身**不可验证、不可阻止**。若要真正生效，需加 `CODEOWNERS` 或一条“冻结文件 diff 需显式标注理由”的 CI 检查。
+
 ---
 
 ## 附录 A：审计证据索引（按当前提交）
@@ -4239,8 +4280,8 @@ devFallbackBackend.ts
 | 路由和页面过多 | `src/app/App.tsx`、`src/app/router.ts`、`src/components/AppShell.tsx` |
 | 固定列宽和 overflow 风险 | `src/styles.css`、`src-tauri/tauri.conf.json` |
 | 导入 localOnly + browser cloud queue | `src/pages/ImportWizard.tsx`、`src/pages/UnifiedPreview.tsx` |
-| 作者端多套编辑/渲染 | `ExamCanvasV2.tsx`、`authoringTiptap.tsx`、`UnifiedPreview.tsx`、`LibraryExamDetail.tsx` |
-| current ExamCanvas 可复用 | `src/components/ExamCanvasV2.tsx` |
+| 作者端多套编辑/渲染 | `src/exam-canvas/ExamCanvas.tsx`、`src/editor/authoringTiptap.tsx`、`src/pages/UnifiedPreview.tsx`、`src/pages/LibraryExamDetail.tsx` |
+| current ExamCanvas 可复用 | `src/exam-canvas/ExamCanvas.tsx`（原 `src/components/ExamCanvasV2.tsx`，已改名迁移） |
 | V2 runtime 同源投影 | `src/services/runtimeViewModelV2.ts`、`src-tauri/src/reading_source_v2.rs` |
 | V1-first 识别残留 | `parser.rs`、`authoring_pipeline.rs`、`ielts_grammar/mod.rs` |
 | 题号/题干/选项 line-first | `ielts_grammar/anchors.rs`、`prompt_assembler.rs`、`option_run.rs` |
@@ -4255,39 +4296,36 @@ devFallbackBackend.ts
 
 ## 附录 B：交付物清单
 
-完成本计划后，仓库应至少新增或形成：
+完成本计划后，仓库应至少新增或形成。**下表由"应形成清单"改为逐项真实状态**（2026-09-12 复核）——未产出的不得按已交付阅读：
 
-```text
-recognition/skills/ielts-reading-v1/*
-contracts/processing-item-v1.schema.json
-contracts/recognition-candidate-v1.schema.json
-contracts/cloud-recognition-candidate-v1.schema.json
-contracts/reconciliation-proposal-v1.schema.json
-contracts/actionable-issue-v1.schema.json
-contracts/editor-command-v1.schema.json
-contracts/publish-check-result-v1.schema.json
-
-src/features/library/*
-src/features/import/*
-src/features/editor/*
-src/features/settings/*
-src/exam-canvas/*
-src/api/{transport,libraryClient,processingClient,workspaceClient,publishClient,settingsClient}.ts
-src/styles/*
-
-src-tauri/src/processing/*
-src-tauri/src/recognition/local/*
-src-tauri/src/recognition/cloud/*
-src-tauri/src/recognition/reconcile/*
-src-tauri/src/library/*
-src-tauri/src/editor/*
-src-tauri/src/publish/*
-
-scripts/e2e/tauri-library-import.mjs
-scripts/e2e/tauri-workspace-edit.mjs
-scripts/e2e/tauri-publish.mjs
-scripts/ui/layout-matrix.mjs
-```
+| 交付物 | 计划 | 实际状态（2026-09-12 复核） |
+|---|---|---|
+| `recognition/skills/ielts-reading-v1/*` | 应形成 | **不存在**（仓库无 `recognition/` 目录） |
+| `contracts/processing-item-v1.schema.json` | 应形成 | **不存在** |
+| `contracts/recognition-candidate-v1.schema.json` | 应形成 | **不存在** |
+| `contracts/cloud-recognition-candidate-v1.schema.json` | 应形成 | **不存在** |
+| `contracts/reconciliation-proposal-v1.schema.json` | 应形成 | **不存在** |
+| `contracts/actionable-issue-v1.schema.json` | 应形成 | **不存在** |
+| `contracts/editor-command-v1.schema.json` | 应形成 | **不存在** |
+| `contracts/publish-check-result-v1.schema.json` | 应形成 | **不存在**（7 个新 contract 合计 **0/7**） |
+| `src/features/library/*` | 应形成 | **已存在**（7 文件） |
+| `src/features/import/*` | 应形成 | **已存在**（2 文件） |
+| `src/features/editor/*` | 应形成 | **已存在**（4 文件） |
+| `src/features/settings/*` | 应形成 | **已存在**（2 文件） |
+| `src/exam-canvas/*` | 应形成 | **已存在**（5 文件；renderer/editor 拆分未完成） |
+| `src/api/{transport,libraryClient,processingClient,workspaceClient,publishClient,settingsClient}.ts` | 应形成 | **3/6 存在**；缺 `transport.ts`、`libraryClient.ts`、`settingsClient.ts` |
+| `src/styles/*` | 应形成 | **已存在**（10 文件） |
+| `src-tauri/src/processing/*` | 应形成 | **已存在**（4 文件） |
+| `src-tauri/src/recognition/local/*` | 应形成 | **已存在**（4 文件；未接入主链） |
+| `src-tauri/src/recognition/cloud/*` | 应形成 | **不存在** |
+| `src-tauri/src/recognition/reconcile/*` | 应形成 | **不存在** |
+| `src-tauri/src/library/*` | 应形成 | **已存在**（5 文件） |
+| `src-tauri/src/editor/*` | 应形成 | **不存在** |
+| `src-tauri/src/publish/*` | 应形成 | **不存在** |
+| `scripts/e2e/tauri-library-import.mjs` | 应形成 | **不存在**（等价物 `tauri-import-edit-publish.mjs` 存在） |
+| `scripts/e2e/tauri-workspace-edit.mjs` | 应形成 | **不存在** |
+| `scripts/e2e/tauri-publish.mjs` | 应形成 | **不存在** |
+| `scripts/ui/layout-matrix.mjs` | 应形成 | **已存在** |
 
 ## 附录 C：最终决策摘要
 
