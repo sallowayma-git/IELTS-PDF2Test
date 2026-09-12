@@ -61,3 +61,30 @@
 - 未改动：设计意图、架构承诺与待办事项；`src-tauri/` 全程只读。
 - 已跳过：A13-F12（§28 "最先启动的 PR" 已过时）等不在授权清单内的项；`tauriCommands.ts` "过大" 判断（A1 断言 2-16）未列入本次修正。
 - 未纳入：附录 A 第 10 行 `llm_gateway.rs`→`llm_suggestions.rs` 的指向偏差（任务书只要求修 2 条 `ExamCanvasV2` 路径，已记录待办）。
+
+## 2026-09-12 修复轮（三路并行派发 + 主线程集成）
+
+按用户指示"针对逐章节出现的问题开始修复和优化"，在**另一 agent 并发写入 `src-tauri/` 的前提下**，按文件边界切分派发 3 路 agent，全部避开 `src-tauri/`。
+
+**边界约束**（并发避让）：禁止触碰 `src-tauri/**`、`contracts/**`、`scripts/verify-schema-contract.mjs`、`Plan With Files/Dual_Recognition/{task_plan.md,repair-2026-09-07/progress.md}`、`.workbuddy/**`；禁止任何写入型 git 命令（`add/commit/stash/checkout/restore/reset/clean`），改动留在工作区由主线程统一提交。同文件唯一写入者：计划文档→A1，`src/**` 非测试文件→A2，`scripts/**`+`package.json`+测试→A3。
+
+| 路 | 范围 | 结果 |
+|---|---|---|
+| A1 | 计划文档事实层 | 已修正 §0/§1/§10.1/§16/§17/§26/§27/§28/附录 A/B（详见上节）。A10-F02 的 import 归属按主线程裁定纠正：`legacyRoutes.tsx` 是真孤儿，**不得**写成"退休页面由它统一 import" |
+| A2 | 前端死代码与错误呈现 | 从 `src/main.tsx` 计算传递导入闭包，删除闭包外且零引用者 13 个文件；`legacy.css` 1406 行→336 行（63KB→17.9KB）；新增 `src/utils/userFacingError.ts` 类型化错误层并接入 7 个调用点。`npm run check` / `npm run build` 均通过 |
+| A3 | 验收门与前端测试 | 新增 `scripts/e2e/{tauri-workspace-edit,tauri-publish}.mjs` + 共享 `lib/tauri-harness.mjs`（退出码 0/1/2/3/4，CANNOT-RUN=3，质量门阻止=blocked 而非 passed）；新增 vitest + 62 个测试 |
+
+**A3 对 A11-F01 的重新诊断（推翻了审计原文的归因）**：`title-persists` 失败**不是持久化缺陷**——隔离库中标题已于 `11:34:24.601Z` 正确落库，早于 `11:34:24.650Z` 的断言；真实原因是被测 `exe` 早于 M1 的题库读取改动（陈旧构建）。`publish` 是它的级联（驱动仍停在 `#/library`）。已加入构建新鲜度守卫。
+
+**前端退休引发的连带修复**（主线程执行）：`verify-phase5-editor.mjs`、`verify-phase6-runtime.mjs` 原先 `readFileSync` 已删页面会直接崩溃；已退休针对这些文件的断言、保留全部目标仍存在的断言。`verify-product-baseline.mjs` 的 `appPages()` 不再扫描已删的 `legacyRoutes.tsx`。修复后 `verify:phase5:editor` 与 `verify:phase6:runtime` 均 **exit 0**。
+
+**提交**（仅暂存本轮路径，并发 agent 的改动零卷入）：
+- `36aa11c` docs(plan): correct the factual layer against HEAD 06005a5
+- `0a9f0a9` refactor(frontend): retire dead pages and dead CSS, route errors through a typed layer
+- `951f921` test(gates): add Tauri e2e drivers and frontend test infrastructure
+
+**基线门禁现为红色，且刻意不重录**：漂移由两部分组成——本轮的 `appPages`（8 页退休）与两处 `fileSizes` 删除，**以及并发 agent 在飞的** `schemaHash`（`contracts/*` + `src-tauri/src/schema/*`）与 `src-tauri/src/ielts_grammar/mod.rs` 体积变化。此时重录会把对方未完成的工作固化成"产品面"，故留待其落地后再录。
+
+**验证结论（本轮）**：`npm run check` PASS；`npm run build` PASS（1901 模块，产物 CSS 31.8KB）；`npm test` PASS（5 文件 / 62 用例）；`verify:phase5:editor` / `verify:phase6:runtime` exit 0；`verify:phase0` 红（缺 `fixtures/golden/private-real/*.pdf`，即 A11-F03）与 `verify:phase1:schema` 红（缺跨仓 `../NAS/developer/contracts/`）均为**环境性既有问题**，与本轮改动无关。
+
+**未做（需用户决策或依赖对方落地）**：`src-tauri/` 侧的数据正确性缺陷（A4-F01 导入失败孤儿、A4-F02 取消被吞、A4-F03 恢复谎报、A4-F05 lease 覆盖 `local_status`、A3-F04 空操作开关）与 `user_edited` 护栏（A7-F02）、M4 主链接入——均在并发 agent 作业面内，避让未动。
