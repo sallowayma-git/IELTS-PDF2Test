@@ -122,6 +122,11 @@ async function main() {
     await recordStep(driver, "cancel-latest-item-via-workspace-menu", async () => {
       // 打开尚未完成的条目（并发 3，靠后条目必然仍在排队）→ 菜单「停止识别」。
       const target = await pickUnfinishedItem(driver, workerIds);
+      const targetText = await rowText(driver, target);
+      if (/待检查|可发布|失败|已发布/.test(targetText ?? "")) {
+        // 全部已完成时取消是无操作：如实记 blocked，不制造假红也不算通过。
+        return { outcome: "blocked_by_quality_gate", note: "导入全部在取消前完成，无未完成项可取消", targetText };
+      }
       await cancelViaWorkspaceMenu(driver, target);
       cancelledId = target;
       // 断言发生在题库页：工作区里没有题库行可轮询。
@@ -200,6 +205,18 @@ async function main() {
       return { total: pending.length, stabilized: Object.keys(finalTexts).length, finalTexts };
     });
 
+    await recordStep(driver, "durable-cancel-final-recheck", async () => {
+      // 复核 A：恢复步骤结束后对取消行做末次复核——首见"已取消"之后的
+      // 复活（如恢复逻辑把 cancelled 改回 queued）在此处兜底捕获。
+      if (!cancelledId) return { skipped: "no cancelled item" };
+      const text = await rowText(driver, cancelledId);
+      if (text === null) throw new Error("取消行在最终复核时消失");
+      if (!text.includes("已取消")) {
+        throw new Error(`取消行在恢复完成后状态漂移：${text}`);
+      }
+      return { cancelledId, finalState: "已取消" };
+    });
+
     const failed = steps.filter((step) => step.status === "failed");
     const report = {
       runId: path.basename(session.runDir),
@@ -226,7 +243,11 @@ async function main() {
   } finally {
     const finalSession = session.__relaunched ?? session;
     try { await finalSession.cleanup(); } catch {}
-    try { fs.rmSync(session.runDir, { recursive: true, force: true }); } catch {}
+    // cleanup 已按 keep 决定是否删目录；这里的兜底删除只在非 keep 时执行，
+    // 否则会把 --keep 保留的现场连同 report.json 一起删掉。
+    if (!keepRun) {
+      try { fs.rmSync(session.runDir, { recursive: true, force: true }); } catch {}
+    }
   }
 }
 

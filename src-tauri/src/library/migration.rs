@@ -352,4 +352,51 @@ mod tests {
         assert_eq!(version_after_replay, 2);
         let _ = fs::remove_dir_all(&root);
     }
+
+    /// 复核 B/D：真实"迟到识别"是覆写 job 目录的 shadow 文件
+    /// （auto_pipeline 写 AUTHORING_V2_SHADOW_FILE），不走 append_revision。
+    /// 用户编辑后 shadow 被迟到覆写，迁移必须拒绝把 shadow 内容写回 canonical。
+    #[test]
+    fn late_shadow_overwrite_does_not_reach_user_edited_canonical() {
+        use crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE;
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        seed_job(&root, "job-a", true);
+        migrate_existing_items(&root).unwrap();
+
+        // 用户编辑标题（版本推进到 2）。
+        let conn = super::super::repository::open_library_connection(&root).unwrap();
+        let input = crate::library::repository::ApplyEditorCommandsInput {
+            item_id: "job-a".into(),
+            base_version: 1,
+            request_id: None,
+            commands: vec![],
+            title: Some("用户改的标题".into()),
+        };
+        let mut tx_conn = conn;
+        crate::library::repository::apply_editor_commands_tx(
+            &mut tx_conn,
+            &input,
+            &|_, _| Ok(()),
+            &|_| Ok(()),
+        )
+        .unwrap();
+
+        // 迟到识别覆写 shadow 文件（不同内容）。
+        let mut late_shadow = get_canonical_ds(&tx_conn, "job-a").unwrap().unwrap().0;
+        late_shadow["exam"]["title"] = serde_json::json!("迟到识别覆写的 shadow");
+        let shadow_path = crate::util::job_dir(&root, "job-a").join(AUTHORING_V2_SHADOW_FILE);
+        fs::write(&shadow_path, serde_json::to_vec(&late_shadow).unwrap()).unwrap();
+
+        // 迟到收尾：迁移重跑，canonical 必须保持用户编辑。
+        let _ = migrate_single_item(&root, "job-a").unwrap();
+        let (ds, version) = get_canonical_ds(&tx_conn, "job-a").unwrap().unwrap();
+        assert_eq!(
+            ds.pointer("/exam/title").and_then(Value::as_str),
+            Some("用户改的标题"),
+            "迟到覆写的 shadow 不得写回用户编辑过的 canonical"
+        );
+        assert_eq!(version, 2);
+        let _ = fs::remove_dir_all(&root);
+    }
 }

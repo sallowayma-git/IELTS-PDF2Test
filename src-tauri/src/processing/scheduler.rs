@@ -499,7 +499,7 @@ async fn fail_job(app: &AppHandle, state: &Arc<ProcessingState>, job_id: &str, e
     // 只保留稳定错误码；完整错误在应用日志里。
     let code = error.split(':').next().unwrap_or("processing_failed").to_string();
     let code = code.chars().take(80).collect::<String>();
-    if advance(
+    let advanced = advance(
         app,
         state,
         job_id,
@@ -510,9 +510,14 @@ async fn fail_job(app: &AppHandle, state: &Arc<ProcessingState>, job_id: &str, e
         None,
         Some(&code),
     )
-    .await
-    .is_some()
-    {
+    .await;
+    // 复核 B/E：advance 可能因 durable 取消标记把行强制落 cancelled；
+    // 此时 library item 不得标成 failed（持久化列不一致，且取消不是失败）。
+    let effective_cancelled = advanced
+        .as_ref()
+        .map(|(_, stage)| stage == queue::STAGE_CANCELLED)
+        .unwrap_or(false);
+    if advanced.is_some() && !effective_cancelled {
         if let Ok(root) = app_root(app) {
             let job_id = job_id.to_string();
             let _ = tauri::async_runtime::spawn_blocking(move || {

@@ -142,18 +142,25 @@ fn compensate_failed_import(root: &std::path::Path, job_id: &str) {
             eprintln!("[import] compensate: remove job dir {job_id} failed: {error}");
         }
     }
-    if let Ok(conn) = open_library_connection(root) {
-        if let Err(error) = conn.execute(
-            "DELETE FROM processing_jobs_v2 WHERE id = ?1",
-            [job_id],
-        ) {
+    if let Ok(mut conn) = open_library_connection(root) {
+        // 复核 B/F：两条 DELETE 包同一事务——第一条成功、第二条失败会留下
+        // 无 job 的 item 壳，状态永远"排队中"且无兜底清理。
+        let tx = conn.transaction();
+        let tx = match tx {
+            Ok(tx) => tx,
+            Err(error) => {
+                eprintln!("[import] compensate: db transaction failed for {job_id}: {error}");
+                return;
+            }
+        };
+        if let Err(error) = tx.execute("DELETE FROM processing_jobs_v2 WHERE id = ?1", [job_id]) {
             eprintln!("[import] compensate: delete queue row {job_id} failed: {error}");
         }
-        if let Err(error) = conn.execute(
-            "DELETE FROM library_items_v2 WHERE id = ?1",
-            [job_id],
-        ) {
+        if let Err(error) = tx.execute("DELETE FROM library_items_v2 WHERE id = ?1", [job_id]) {
             eprintln!("[import] compensate: delete item shell {job_id} failed: {error}");
+        }
+        if let Err(error) = tx.commit() {
+            eprintln!("[import] compensate: commit {job_id} failed: {error}");
         }
     }
 }

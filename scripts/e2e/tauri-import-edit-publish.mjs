@@ -18,6 +18,7 @@
 //   npm run e2e:tauri
 
 import { spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -535,11 +536,24 @@ async function main() {
     const failed = steps.filter((step) => step.status === "failed");
     const publishStep = steps.find((step) => step.name === "publish-via-workspace-button");
     const publishBlocked = publishStep?.details?.outcome === "blocked_by_quality_gate";
+    // 构建身份（与其他套件一致）：报告钉 HEAD / 工作树 / exe SHA256。
+    const gitShow = (args) => {
+      const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });
+      return result.status === 0 ? String(result.stdout).trim() : "(git unavailable)";
+    };
+    const exeHash = crypto.createHash("sha256").update(fs.readFileSync(exePath)).digest("hex");
+    const identity = {
+      headSha: gitShow(["rev-parse", "HEAD"]),
+      headSubject: gitShow(["log", "-1", "--format=%s"]),
+      worktreeStatus: (gitShow(["status", "--porcelain"]) || "clean"),
+      exeSha256: exeHash
+    };
     const report = {
       runId,
       coverage: "real-tauri-process+webview2+sqlite+filesystem",
       evidenceLevel: "product",
       exe: exePath,
+      ...identity,
       exeMtime: new Date(exeMtimeMs).toISOString(),
       newestSourceMtime: new Date(newestSourceMtimeMs).toISOString(),
       staleBuild,

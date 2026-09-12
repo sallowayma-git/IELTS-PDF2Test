@@ -171,6 +171,9 @@ export function buildFreshness(exePath) {
     "src-tauri/Cargo.toml",
     "src-tauri/Cargo.lock",
     "src-tauri/tauri.conf.json",
+    "src-tauri/build.rs",
+    "index.html",
+    "vite.config.ts",
     "package.json",
     "package-lock.json"
   ];
@@ -181,6 +184,15 @@ export function buildFreshness(exePath) {
     if (mtime > newestSourceMtimeMs) {
       newestSourceMtimeMs = mtime;
       newestSource = label;
+    }
+  }
+  // capabilities 决定运行时权限面，递归纳入（目录 mtime 不反映内部文件修改）。
+  const capsDir = path.join(repoRoot, "src-tauri", "capabilities");
+  if (fs.existsSync(capsDir)) {
+    const capsMtime = newestMtimeMs(capsDir);
+    if (capsMtime > newestSourceMtimeMs) {
+      newestSourceMtimeMs = capsMtime;
+      newestSource = "src-tauri/capabilities";
     }
   }
   for (const file of buildFiles) {

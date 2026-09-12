@@ -254,12 +254,13 @@ async function main() {
         }
       });
       await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 30000);
+      const navigatedOnce = (await driver.getCurrentUrl()).includes("#/library");
       const versionAfter = editVersionOf(db, itemId);
       const delta = versionAfter - versionBefore;
       if (delta !== 1) {
         throw new Error(`双击产生 ${delta} 批保存（期望恰 1 批）：edit_version ${versionBefore} -> ${versionAfter}`);
       }
-      return { saveBatches: delta, singleNavigation: true };
+      return { saveBatches: delta, navigatedOnce };
     });
 
     // ── 可控保存失败（真实 busy 超时）：不导航、错误可见、无 unhandledrejection ──
@@ -283,7 +284,7 @@ async function main() {
           const notices = await driver.findElements(By.css(".workspace-notice"));
           for (const notice of notices) {
             const text = await notice.getText();
-            if (/保存失败|失败|稍后/.test(text)) return text;
+            if (/保存失败|修改已保留|稍后重试|锁定/.test(text)) return text;
           }
           return false;
         }, 20000).catch(() => false);
