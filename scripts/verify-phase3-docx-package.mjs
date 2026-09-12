@@ -4,7 +4,6 @@ import { spawnSync } from "node:child_process";
 const requiredFiles = [
   "src-tauri/src/docx_ingest/mod.rs",
   "src-tauri/src/docx_ingest/package.rs",
-  "Files/IELTS_Document_Recognition_Phase_3_C001_Completion_CN.md",
 ];
 
 for (const file of requiredFiles) {

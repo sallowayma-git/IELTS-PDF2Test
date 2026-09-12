@@ -11,7 +11,6 @@ const requiredFiles = [
   "src-tauri/src/pdf_ingest/ocr_router.rs",
   "src-tauri/src/pdf_ingest/ocr_merge.rs",
   "src-tauri/src/pdf_ingest/compare_report.rs",
-  "Files/IELTS_Document_Recognition_Phase_2_Completion_CN.md",
 ];
 
 for (const file of requiredFiles) {

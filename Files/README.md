@@ -1,7 +1,7 @@
 # Files/ 文档索引
 
 > 最后整理：2026-09-12
-> 目的：区分**当前权威文档**、**历史（已被取代）**与**另一主题参考**，避免复审者被旧世代文档误导。
+> 目的：只保留**当前权威文档**与**另一主题参考**，旧世代（文档识别 Phase 0–7 / Overhaul Plan）文档已全部清理。
 
 ---
 
@@ -19,42 +19,7 @@
 
 ---
 
-## 2. 历史文档（已被当前计划取代）
-
-> 依据：当前计划 §0.1 明确"不是对历史 Phase 0-7 完成记录的复述"，并重新裁剪了产品边界（V2 由 shadow 转为权威稿）。
-> **本目录下的历史文档一律不再作为实施依据。**
-
-### 2.1 留在 `Files/` 根目录（**不可移动：被工具链钉住**）
-
-这些文档仍被脚本或 golden 语料溯源引用，**移动或删除会打断校验链**，因此保留原位。
-
-| 文档 | 被谁引用 | 引用方式 |
-|---|---|---|
-| `IELTS_Document_Recognition_Overhaul_Plan_CN.md` | `scripts/register-phase0-plan-corpus.mjs`、`fixtures/golden/metadata/*.json`（8 个文件 × 2 处） | 溯源引用 `…Plan_CN.md#2.1` / `#23.2` |
-| `IELTS_Document_Recognition_Phase_2_Completion_CN.md` | `scripts/verify-phase2-shadow.mjs` | `readFileSync` 硬依赖，缺失即 `exit(1)` |
-| `IELTS_Document_Recognition_Phase_3_C001_Completion_CN.md` | `scripts/verify-phase3-docx-package.mjs`、`scripts/verify-phase3-docx.mjs` | 同上 |
-| `IELTS_Document_Recognition_Phase_3_Completion_CN.md` | `scripts/verify-phase3-docx.mjs` | 同上 |
-| `IELTS_Document_Recognition_Phase_4_Completion_CN.md` | `scripts/verify-phase4-grammar.mjs` | 同上 |
-| `IELTS_Document_Recognition_Phase_5_Progress_CN.md` | 根 `task_plan.md`（散文引用） | 无硬依赖，但属同一世代，一并留档 |
-| `IELTS_Document_Recognition_Phase_6_Progress_CN.md` | `scripts/verify-phase6-runtime.mjs` | `readFileSync` 硬依赖 |
-| `IELTS_Document_Recognition_Phase_7_Progress_CN.md` | `scripts/verify-phase7-listening-contract.mjs` | 同上 |
-
-> 如需彻底移出 `Files/`，必须同时改 7 个校验脚本 + 8 个 golden metadata 的引用路径。该动作会触碰 golden 语料，按仓库 `AGENTS.md` 的基线漂移规则应单独评审，不在本次整理范围内。
-
-### 2.2 已归档到 `Files/archive/`
-
-零外部工具链引用，可安全移动：
-
-| 文档 | 归档理由 |
-|---|---|
-| `IELTS_Document_Recognition_Phase_0_4_Audit_CN.md` | 2026-08-10/12 历史审计（基线 `06f2ddf`，当时判定"V1 仍 authoritative"），结论已被当前计划取代；无外部引用 |
-| `IELTS_Document_Recognition_Phase_0_Plan_CN.md` | 旧世代阶段计划 |
-| `IELTS_Document_Recognition_Phase_1_Completion_CN.md` | 旧世代完成记录 |
-| `IELTS_Document_Recognition_Phase_4_8_PDF_Acceptance_CN.md` | 旧世代验收门记录（其结论自称"仍只证明 shadow acceptance，不等于 V2 已进入生产"） |
-
----
-
-## 3. 另一主题参考（**非过时**，未纳入本次整理）
+## 2. 另一主题参考（**非过时**）
 
 | 文档 | 说明 |
 |---|---|
@@ -63,12 +28,50 @@
 | `Windows包体与兼容规划.md` | Windows 打包与兼容规划 |
 | `Windows包体与兼容任务追踪.md` | 同上（追踪） |
 
-> 这 4 份属另一主题，未被当前计划取代。如确认同样过时，可再归档。
+> 这 4 份属另一主题，未被当前计划取代。如确认同样过时，可再归档或删除。
 
 ---
 
-## 4. 相关但位于仓库根目录的旧追踪文档
+## 3. 相关但位于仓库根目录的旧追踪文档
 
 | 文档 | 状态 |
 |---|---|
-| `task_plan.md` / `findings.md` / `progress.md`（仓库根） | 多世代累积的旧追踪文档（各约 180–195 KB），含已作废的 "Current Active Goal"。当前追踪以 `Plan With Files/Dual_Recognition/` 为准 |
+| `task_plan.md` / `findings.md` / `progress.md`（仓库根） | 多世代累积的旧追踪文档，含已作废的 "Current Active Goal"。当前追踪以 `Plan With Files/Dual_Recognition/` 为准 |
+
+---
+
+## 4. 已清理文档（2026-09-12 删除，可追溯）
+
+以下文档属旧世代（文档识别 Phase 0–7 与 Overhaul Plan），已被当前计划取代。它们此前分别被 6 个校验脚本、1 个 golden 注册脚本与 8 个 golden metadata 以**纯溯源方式**引用（无行为依赖）。
+
+2026-09-12 已先解耦全部引用，再删除文档本体：
+
+- 校验脚本 `requiredFiles` 中移除文档条目：`verify-phase2-shadow` / `verify-phase3-docx` / `verify-phase3-docx-package` / `verify-phase4-grammar` / `verify-phase6-runtime` / `verify-phase7-listening-contract`
+- `scripts/register-phase0-plan-corpus.mjs` 的 `review.method` 由 `source-text-and-overhaul-plan-evidence` 改为 `source-text-evidence`，并移除 2 条 Overhaul Plan 证据行
+- 8 个 golden metadata（`chili-peppers` / `conformity` / `fishbourne-roman-palace` / `listening-to-the-ocean` / `organisational-design` / `petri-dish` / `sleep-study` / `western-celebrity`）同步做相同调整
+
+**恢复方式**：这些文件在删除前的最后一个提交中完整存在，可用 `git show <sha>:<path>` 取回。删除前的 HEAD 为 `e33d20a`。
+
+| 文档 | 删除前最后提交 |
+|---|---|
+| `IELTS_Document_Recognition_Overhaul_Plan_CN.md` | `87b7747` |
+| `IELTS_Document_Recognition_Phase_2_Completion_CN.md` | `ac0a68c` |
+| `IELTS_Document_Recognition_Phase_3_C001_Completion_CN.md` | `ac0a68c` |
+| `IELTS_Document_Recognition_Phase_3_Completion_CN.md` | `ac0a68c` |
+| `IELTS_Document_Recognition_Phase_4_Completion_CN.md` | `15cf526` |
+| `IELTS_Document_Recognition_Phase_5_Progress_CN.md` | `36cd3f1` |
+| `IELTS_Document_Recognition_Phase_6_Progress_CN.md` | `8806272` |
+| `IELTS_Document_Recognition_Phase_7_Progress_CN.md` | `8806272` |
+| `archive/IELTS_Document_Recognition_Phase_0_4_Audit_CN.md` | `e33d20a` |
+| `archive/IELTS_Document_Recognition_Phase_0_Plan_CN.md` | `e33d20a` |
+| `archive/IELTS_Document_Recognition_Phase_1_Completion_CN.md` | `e33d20a` |
+| `archive/IELTS_Document_Recognition_Phase_4_8_PDF_Acceptance_CN.md` | `e33d20a` |
+| `archive/README.md` | `e33d20a` |
+
+> 注意：`Files/archive/` 目录（含其 `README.md`）已一并删除，目录不再存在。
+
+---
+
+## 5. 复审建议
+
+复审者应**只以第 1 节**的文档作为实施依据。第 2 节属另一主题，与当前计划不冲突但也不构成依据。若在历史审计材料中看到对第 4 节所列文档的引用，请注意那些引用已随文档清理而失效，结论应以当前计划与 `audit-2026-09-12/` 为准。

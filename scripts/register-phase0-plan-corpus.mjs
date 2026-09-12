@@ -169,10 +169,8 @@ for (const spec of cases) {
       status: "approved",
       reviewedBy: "phase0-source-audit",
       reviewedAt: "2026-08-10",
-      method: "source-text-and-overhaul-plan-evidence",
+      method: "source-text-evidence",
       evidence: [
-        "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#2.1",
-        "Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md#23.2",
         "fixtures/golden/private/legacy-reference.json"
       ]
     },

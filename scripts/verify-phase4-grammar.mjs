@@ -27,7 +27,6 @@ const requiredFiles = [
   "fixtures/golden/phase4-eight-pdf-acceptance.json",
   "scripts/verify-phase4-eight-pdf-acceptance.mjs",
   "src-tauri/src/ielts_grammar/real_pdf_acceptance.rs",
-  "Files/IELTS_Document_Recognition_Phase_4_Completion_CN.md",
 ];
 
 for (const file of requiredFiles) {

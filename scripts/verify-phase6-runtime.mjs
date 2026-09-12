@@ -93,8 +93,7 @@ const requiredFiles = [
   "src-tauri/src/lib.rs",
   "src/api/tauriCommands.ts",
   "src/pages/ExportPage.tsx",
-  "src/pages/StructuredAuthoringEditorV2.tsx",
-  "Files/IELTS_Document_Recognition_Phase_6_Progress_CN.md"
+  "src/pages/StructuredAuthoringEditorV2.tsx"
 ];
 for (const file of requiredFiles) assert(existsSync(join(repoRoot, file)), `Phase 6 required file missing: ${file}`);
 

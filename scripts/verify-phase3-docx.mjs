@@ -20,8 +20,6 @@ const requiredFiles = [
   "fixtures/golden/synthetic/docx/phase3-bad-word-fixtures.json",
   "fixtures/golden/synthetic/docx/render-assisted-two-column-options.docx",
   "fixtures/golden/synthetic/docx/render-assisted-two-column-options.provider-output.pdf",
-  "Files/IELTS_Document_Recognition_Phase_3_C001_Completion_CN.md",
-  "Files/IELTS_Document_Recognition_Phase_3_Completion_CN.md",
 ];
 
 for (const file of requiredFiles) {

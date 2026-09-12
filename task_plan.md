@@ -2,7 +2,7 @@
 
 ## Goal
 
-依据 [Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md](Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md) 第 16.6、20.4、24.10 和 24.11 节，完成结构化编辑器 Phase 5 全部范围：普通用户可直接编辑 V2 内容节点、题组、共享答案位、选项库、表格、资源、热点和答案；问题可定位到源锚点；同一份草稿可切换学生预览；编辑具备防抖 patch、immutable revision、版本冲突、本地崩溃恢复、undo/redo 和 V2 bundle export；真实 PDF 从导入到导出通过端到端验收。
+依据 `Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md`（该旧世代文档已于 2026-09-12 清理，可用 `git show 87b7747:Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md` 取回）第 16.6、20.4、24.10 和 24.11 节，完成结构化编辑器 Phase 5 全部范围：普通用户可直接编辑 V2 内容节点、题组、共享答案位、选项库、表格、资源、热点和答案；问题可定位到源锚点；同一份草稿可切换学生预览；编辑具备防抖 patch、immutable revision、版本冲突、本地崩溃恢复、undo/redo 和 V2 bundle export；真实 PDF 从导入到导出通过端到端验收。
 
 - [complete] S1 建立 Phase 5 V2 session、patch 协议与 immutable revision 保存；保留 V1 文件可读。
 - [complete] S2 完成结构化编辑器页面、题组/共享答案位/选项库/答案编辑与 issue rail/source overlay。
@@ -20,8 +20,11 @@
 
 ## Tracking Files
 
-- [Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md](Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md)
-- [Files/IELTS_Document_Recognition_Phase_5_Progress_CN.md](Files/IELTS_Document_Recognition_Phase_5_Progress_CN.md)
+> 下列旧世代追踪文档已于 2026-09-12 清理（`Files/` 下已不存在）。Phase 5 已 `[complete]`，当前追踪以 `Plan With Files/Dual_Recognition/` 为准。
+> 取回方式：`git show 87b7747:Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md` / `git show 36cd3f1:Files/IELTS_Document_Recognition_Phase_5_Progress_CN.md`
+
+- `Files/IELTS_Document_Recognition_Overhaul_Plan_CN.md`（已清理）
+- `Files/IELTS_Document_Recognition_Phase_5_Progress_CN.md`（已清理）
 
 # Previous Active Goal: Settings Preflight Slimdown + 100-PDF Live LLM Regression
 

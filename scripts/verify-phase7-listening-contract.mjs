@@ -415,8 +415,7 @@ const requiredFiles = [
   "src-tauri/src/schema/listening_audio_probe_v1.rs",
   fixturePath,
   audioProbeFixturePath,
-  familiesFixturePath,
-  "Files/IELTS_Document_Recognition_Phase_7_Progress_CN.md"
+  familiesFixturePath
 ];
 for (const file of requiredFiles) assert(existsSync(requiredFilePath(file)), `Phase 7 required file missing: ${file}`);
 
