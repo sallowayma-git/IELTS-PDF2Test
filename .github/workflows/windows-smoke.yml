@@ -54,3 +54,43 @@ jobs:
       - name: Audit Windows signatures
         shell: pwsh
         run: ./scripts/audit-windows-signatures.ps1
+
+  # G0-T06：最小真实 Tauri 产品 smoke（真实进程 + WebView2 + SQLite + 文件系统）。
+  # 环境缺失时 harness 以 CANNOT-RUN（退出码 3）显式失败，绝不静默记为通过。
+  tauri-e2e-smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Fetch pdfium
+        run: npm run fetch:pdfium
+
+      - name: Build debug executable
+        run: npx tauri build --debug --no-bundle
+
+      - name: Real Tauri smoke (workspace-edit)
+        run: npm run e2e:tauri:workspace-edit
+
+      - name: Upload E2E artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-tauri-artifacts
+          path: artifacts/e2e-tauri/
+          retention-days: 7

@@ -89,7 +89,18 @@ async function main() {
         const noticeText = (await notice.getText()).replace(/\s+/g, " ").trim();
 
         if (noticeText.includes("发布完成")) {
-          const files = fs.existsSync(session.publishDir) ? fs.readdirSync(session.publishDir) : [];
+          // 产品把 destination 当题库根，产物落在其 reading-exams 子树；
+          // 递归枚举而不是只看一层。
+          const files = [];
+          const walk = (dir) => {
+            if (!fs.existsSync(dir)) return;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walk(full);
+              else files.push(path.relative(session.publishDir, full));
+            }
+          };
+          walk(session.publishDir);
           if (!files.length) throw new Error(`发布显示成功但导出目录为空：${session.publishDir}`);
           return { outcome: "published", notice: noticeText, publishedFiles: files.slice(0, 20), countedAsPass: true };
         }

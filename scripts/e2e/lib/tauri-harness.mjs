@@ -182,12 +182,14 @@ export function buildFreshness(exePath) {
 export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix = "tauri" }) {
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const runDir = path.join(repoRoot, "artifacts", "e2e-tauri", `run-${runPrefix}-${runId}`);
-  for (const sub of ["appdata/roaming", "appdata/local", "appdata/data", "appdata/webview", "pdfs", "publish"]) {
+  for (const sub of ["appdata/roaming", "appdata/local", "appdata/data", "appdata/webview", "pdfs", "nas-library"]) {
     fs.mkdirSync(path.join(runDir, sub), { recursive: true });
   }
   fs.copyFileSync(pdfPath, path.join(runDir, "pdfs", path.basename(pdfPath)));
   const pdfDir = path.join(runDir, "pdfs");
-  const publishDir = path.join(runDir, "publish");
+  // 目标目录名不能叫 "publish"：产品约定 destination 是题库根，名为 publish 的
+  // 目录会被 normalize_nas_library_root 改写到父目录，破坏隔离断言。
+  const publishDir = path.join(runDir, "nas-library");
   const dataDir = path.join(runDir, "appdata", "data");
 
   const driverDir = await ensureMsedgedriver();
@@ -340,12 +342,27 @@ export async function waitForRowText(driver, itemId, predicate, timeoutMs) {
   throw new Error(`行 ${itemId} 未在限时内满足判据；最后文本：${lastText || "(无行)"}`);
 }
 
-/** 打开指定条目的工作区并等待工作区外壳出现。 */
+/** 打开指定条目的工作区并等待工作区外壳出现。
+ * 行点击与 processing 事件刷新竞态会产生 stale element（行重渲染），
+ * 最多重试 3 次，每次重新定位——产品断言本身不变。 */
 export async function openWorkspaceForItem(driver, itemId) {
-  const row = await driver.wait(until.elementLocated(By.css(`[data-item-id="${itemId}"] .library-row-main`)), 15000);
-  await row.click();
-  await driver.wait(until.elementLocated(By.css('[data-testid="exam-workspace"]')), 15000);
-  return itemId;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const row = await driver.wait(
+        until.elementLocated(By.css(`[data-item-id="${itemId}"] .library-row-main`)),
+        15000
+      );
+      await row.click();
+      await driver.wait(until.elementLocated(By.css('[data-testid="exam-workspace"]')), 15000);
+      return itemId;
+    } catch (error) {
+      lastError = error;
+      if (!/stale element/i.test(String(error?.message ?? error))) throw error;
+      await sleep(1000);
+    }
+  }
+  throw lastError;
 }
 
 /** 导入目录内 PDF 并返回新行 id（集合差分，兼容乐观插入与事件刷新两种时序）。 */

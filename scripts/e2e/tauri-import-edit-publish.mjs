@@ -250,13 +250,15 @@ async function main() {
 
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const runDir = path.join(repoRoot, "artifacts", "e2e-tauri", `run-${runId}`);
-  for (const sub of ["appdata/roaming", "appdata/local", "appdata/data", "appdata/webview", "pdfs", "publish"]) {
+  for (const sub of ["appdata/roaming", "appdata/local", "appdata/data", "appdata/webview", "pdfs", "nas-library"]) {
     fs.mkdirSync(path.join(runDir, sub), { recursive: true });
   }
   artifacts.dir = runDir;
   fs.copyFileSync(pdfPath, path.join(runDir, "pdfs", path.basename(pdfPath)));
   const pdfDir = path.join(runDir, "pdfs");
-  const publishDir = path.join(runDir, "publish");
+  // 目标目录名不能叫 "publish"：产品约定 destination 是题库根，名为 publish 的
+  // 目录会被 normalize_nas_library_root 改写到父目录，破坏隔离断言。
+  const publishDir = path.join(runDir, "nas-library");
   const dataDir = path.join(runDir, "appdata", "data");
 
   const driverDir = await ensureMsedgedriver();
@@ -485,6 +487,8 @@ async function main() {
       await recordStep("publish-via-workspace-button", async () => {
         // 本步骤自带前置导航：上一步无论成败，都先确保停在本题工作区再点发布。
         // 否则「上一步失败 -> 停在题库 -> 找不到发布按钮」会被误记为发布失败（见 audit A11-F01 诊断）。
+        await driver.executeScript("location.hash = '#/library';");
+        await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 15000);
         await openWorkspaceForItem(driver, itemId);
         await driver.findElement(By.css('[data-testid="workspace-publish"]')).click();
         const notice = await driver.wait(
@@ -493,15 +497,29 @@ async function main() {
         );
         await driver.wait(async () => {
           const text = await notice.getText();
-          return text.includes("发布完成") || text.includes("失败") || text.includes("未完成");
+          // GATE_BLOCK_PATTERN 与 tauri-publish.mjs 一致：门禁文案也要能结束等待。
+          return /发布完成|失败|未完成|补齐|还没有|请先|待确认|需要确认/.test(text);
         }, 60000);
+        // 与 tauri-publish.mjs 的 GATE_BLOCK_PATTERN 保持一致：
+        // 被产品质量门阻止是如实记录的产品行为，不算发布失败也不算通过。
+        const GATE_BLOCK_PATTERN = /补齐|未完成|还没有|请先|待确认|需要确认/;
         const noticeText = (await notice.getText()).replace(/\s+/g, " ").trim();
         if (!noticeText.includes("发布完成")) {
           // 仓库现有语料 PDF 达不到 ready 质量门（product_chain.rs 头注释）：
           // 被门禁阻止是如实记录的产品行为，不计为通过。
           return { outcome: "blocked_by_quality_gate", notice: noticeText, countedAsPass: false };
         }
-        const files = fs.existsSync(publishDir) ? fs.readdirSync(publishDir) : [];
+        // 产品把 destination 当题库根，产物落在其 reading-exams 子树；递归枚举。
+        const files = [];
+        const walk = (dir) => {
+          if (!fs.existsSync(dir)) return;
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) walk(full);
+            else files.push(path.relative(publishDir, full));
+          }
+        };
+        walk(publishDir);
         if (!files.length) throw new Error(`发布显示成功但导出目录为空：${publishDir}`);
         return { outcome: "published", notice: noticeText, publishedFiles: files.slice(0, 20) };
       });

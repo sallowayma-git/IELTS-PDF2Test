@@ -528,21 +528,45 @@ async fn finish_cancelled(app: &AppHandle, state: &Arc<ProcessingState>, job_id:
 async fn set_item_status_ready(app: &AppHandle, job_id: &str) {
     let Ok(root) = app_root(app) else { return };
     let job_id = job_id.to_string();
-    let _ = tauri::async_runtime::spawn_blocking(move || {
-        // G1 对抗审计：advance 可能因 durable 取消标记被强制落 cancelled；
-        // 已取消/失败的任务不得再把 library item 推成 ready/action_required。
-        let conn0 = open_library_connection(&root)?;
-        if let Some(job) = queue::get_job(&conn0, &job_id)? {
-            if matches!(job.stage.as_str(), "cancelled" | "failed") {
-                return Ok(());
+    let _ = tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        let job_id = job_id.clone();
+        move || {
+            // G1 对抗审计：advance 可能因 durable 取消标记被强制落 cancelled；
+            // 已取消/失败的任务不得再把 library item 推成 ready/action_required。
+            let conn0 = open_library_connection(&root)?;
+            if let Some(job) = queue::get_job(&conn0, &job_id)? {
+                if matches!(job.stage.as_str(), "cancelled" | "failed") {
+                    return Ok::<(), String>(());
+                }
             }
+            crate::library::migration::migrate_single_item(&root, &job_id)?;
+            let conn = open_library_connection(&root)?;
+            let status = crate::library::repository::get_canonical_ds(&conn, &job_id)?
+                .filter(|(ds, _)| ds.pointer("/quality/state").and_then(Value::as_str) == Some("ready"))
+                .map(|_| "ready").unwrap_or("action_required");
+            crate::library::repository::set_item_status(&conn, &job_id, status)?;
+            // library 状态是前端行渲染的输入之一：推进 stateVersion，
+            // 否则补发事件会因 event_seq 相同被前端去重丢弃。
+            conn.execute(
+                "UPDATE processing_jobs_v2 SET event_seq = event_seq + 1 WHERE id = ?1",
+                [&job_id],
+            )
+            .map_err(|error| format!("processing_status_seq:{error}"))?;
+            Ok(())
         }
-        crate::library::migration::migrate_single_item(&root, &job_id)?;
+    })
+    .await;
+    // G0/E2E 发现的竞态：advance 的事件先于本函数的 library 状态提交到达，
+    // 前端据其刷新会看到 status 仍是 processing（行永远显示"排队中"）。
+    // 状态落库后补发一次事件，让 UI 以最终状态收尾。
+    let app = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
         let conn = open_library_connection(&root)?;
-        let status = crate::library::repository::get_canonical_ds(&conn, &job_id)?
-            .filter(|(ds, _)| ds.pointer("/quality/state").and_then(Value::as_str) == Some("ready"))
-            .map(|_| "ready").unwrap_or("action_required");
-        crate::library::repository::set_item_status(&conn, &job_id, status)
+        if let Some(job) = queue::get_job(&conn, &job_id)? {
+            emit_row(&app, &job);
+        }
+        Ok::<(), String>(())
     })
     .await;
 }
