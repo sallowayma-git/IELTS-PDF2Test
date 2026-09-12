@@ -124,6 +124,9 @@ async function main() {
       const target = await pickUnfinishedItem(driver, workerIds);
       await cancelViaWorkspaceMenu(driver, target);
       cancelledId = target;
+      // 断言发生在题库页：工作区里没有题库行可轮询。
+      await driver.executeScript("location.hash = '#/library';");
+      await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 15000);
       // 行必须显示「已取消」（诚实状态文案，见 libraryTypes detailFor）。
       const outcome = await pollRowText(driver, target, (text) => text.includes("已取消"), 30000);
       if (outcome.timedOut) {

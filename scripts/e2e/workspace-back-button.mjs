@@ -1,26 +1,27 @@
 #!/usr/bin/env node
-// 真实 Tauri 产品回归：工作区返回按钮（D0）。
+// 真实 Tauri 产品回归：工作区返回按钮（D0 强化版）。
 //
-// 覆盖（D0 复核后的强化版）：
-//   1. aria/结构 + computed style 未被 header 通用选择器覆盖（40×40 / 8px / 非 56px）。
-//   2. flush 链证明：待保存编辑 → 立即点击返回 → 保存完成后才导航 → 重开 marker 仍在。
-//      使用 invoke 闸门把 apply_editor_commands 挂起，点击返回后断言"未导航"，
-//      释放闸门后才导航——证明返回按钮真的等待 flush，而不是碰巧被防抖先保存。
-//   3. 可控保存失败：拦截 apply_editor_commands 直接 reject → 点击返回 →
-//      不导航、错误可见、无 unhandledrejection。
-//   4. 键盘可达：Tab 聚焦、:focus-visible 轮廓可见、Enter 触发返回。
-//   5. 双击防护：busy 窗口内第二次点击不产生第二次保存请求。
+// 拦截注入方案不可行（__TAURI_INTERNALS__.invoke 非 writable/configurable，
+// 见 probe-internals 结论），本套件改用**真实后端失败路径**：
+//   - node:sqlite 对隔离库持写锁（BEGIN IMMEDIATE）：短锁 = 保存被真实阻塞，
+//     证明返回按钮等待 in-flight 保存完成后才导航；
+//   - 锁超过 busy_timeout（5s）= 真实保存失败（database is locked），
+//     验证失败阻断导航、用户可见错误、无 unhandledrejection；
+//   - current_edit_version 差值 = 编辑只保存一批，双击不产生重复保存。
 //
+// 另覆盖：aria/test-id、computed style（40×40 / 8px / 非 56px）、
+// Tab 聚焦 :focus-visible 轮廓 + Enter 导航。
 // 证据层级：product（真实进程 + WebView2 + SQLite + 文件系统）。
 
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { DatabaseSync } from "node:sqlite";
 import { By, Key, until } from "selenium-webdriver";
 import {
   DEFAULT_EXE, DEFAULT_PDF, CannotRunError, assertPrerequisites, assertFreshBuild, buildFreshness,
   buildIdentity, launchTauriApp, createStepRecorder, importPdfViaFolderHook, waitForRowStage,
-  openWorkspaceForItem, writeReport, exitCodeForVerdict, logCannotRun, logHarnessError
+  openWorkspaceForItem, writeReport, exitCodeForVerdict, logCannotRun, logHarnessError, sleep
 } from "./lib/tauri-harness.mjs";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((all, arg, index, list) => {
@@ -32,48 +33,24 @@ const pdfPath = path.resolve(args.pdf ?? DEFAULT_PDF);
 const keepRun = Boolean(args.keep);
 const takeScreenshots = args.screenshot !== false;
 
-/** 安装 invoke 拦截器。mode: "hold"（挂起 apply_editor_commands，放行时真实重发）/
- * "reject"（直接拒绝）/ "passthrough"。记录每次拦截，供双击防护断言计数。 */
-const INSTALL_INTERCEPTOR = `
-  const mode = arguments[0];
-  window.__e2eRejections = window.__e2eRejections || [];
-  if (!window.__e2eRejectionHooked) {
-    window.__e2eRejectionHooked = true;
-    window.addEventListener("unhandledrejection", (event) => window.__e2eRejections.push(String(event.reason)));
-  }
-  if (!window.__e2eOriginalInvoke) window.__e2eOriginalInvoke = window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__);
-  window.__e2eHeld = [];
-  window.__e2eSaveRequests = 0;
-  window.__e2eInvokeMode = mode;
-  window.__TAURI_INTERNALS__.invoke = (cmd, args, options) => {
-    if (cmd === "apply_editor_commands" && window.__e2eInvokeMode !== "passthrough") {
-      window.__e2eSaveRequests += 1;
-      if (window.__e2eInvokeMode === "reject") {
-        return Promise.reject(new Error("E2E_SAVE_FAILURE_INJECTED"));
-      }
-      const pending = { args, options, resolve: null, reject: null };
-      const gate = new Promise((resolve, reject) => { pending.resolve = resolve; pending.reject = reject; });
-      window.__e2eHeld.push(pending);
-      return gate;
-    }
-    return window.__e2eOriginalInvoke(cmd, args, options);
-  };
-  return "installed:" + mode;
-`;
+function openDb(dataDir) {
+  return new DatabaseSync(path.join(dataDir, "authoring_hub.db"));
+}
 
-/** 放行：把挂起的保存请求原样发给真实后端（保证持久化真的发生）。 */
-const RELEASE_HELD = `
-  const held = window.__e2eHeld || [];
-  window.__e2eInvokeMode = "passthrough";
-  for (const pending of held) {
-    window.__e2eOriginalInvoke("apply_editor_commands", pending.args, pending.options).then(
-      (result) => pending.resolve(result),
-      (error) => pending.reject(error)
-    );
+function editVersionOf(db, itemId) {
+  const row = db.prepare("SELECT current_edit_version FROM library_items_v2 WHERE id = ?").get(itemId);
+  return row ? Number(row.current_edit_version) : null;
+}
+
+/** 在持写锁期间执行 fn（应用的保存 UPDATE 会真实阻塞/失败）。 */
+async function withWriteLockHeld(db, fn) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    return await fn();
+  } finally {
+    try { db.exec("COMMIT"); } catch { try { db.exec("ROLLBACK"); } catch {} }
   }
-  window.__e2eHeld = [];
-  return held.length;
-`;
+}
 
 /** 在 passage 原位编辑器里写入 marker（与 tauri-workspace-edit 同一产品路径）。 */
 async function typeMarkerIntoPassage(driver, marker) {
@@ -122,6 +99,7 @@ async function main() {
   const artifacts = { dir: session.runDir, screenshotErrors: [] };
   const { steps, recordStep } = createStepRecorder({ artifacts, takeScreenshots });
   const driver = session.driver;
+  const db = openDb(session.dataDir);
   const marker = "E2E BACK FLUSH 77";
   let itemId = null;
 
@@ -130,6 +108,8 @@ async function main() {
       await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 30000);
       await driver.executeScript(`
         window.localStorage.setItem("ielts-author-studio.app-settings.v1", JSON.stringify({ cloudEnabled: false }));
+        window.__e2eRejections = [];
+        window.addEventListener("unhandledrejection", (event) => window.__e2eRejections.push(String(event.reason)));
         location.hash = "#/library";
       `);
       await driver.navigate().refresh();
@@ -192,30 +172,28 @@ async function main() {
       return { styles };
     });
 
-    // ── flush 链证明：挂起保存 → 待保存编辑 → 点击返回 → 未导航 → 放行 → 导航 ──
-    await recordStep(driver, "back-button-holds-until-flush-completes", async () => {
-      await driver.executeScript(INSTALL_INTERCEPTOR, "hold");
-      await typeMarkerIntoPassage(driver, marker);
-      // 等防抖（450ms）触发 persist，请求被闸门挂起。
-      await driver.sleep(900);
-      const backButton = await driver.findElement(By.css(".workspace-back-button"));
-      await backButton.click();
-      // flush 被挂起：断言短时间内不导航（证明返回按钮等待保存完成）。
-      await driver.sleep(2500);
-      const stillInWorkspace = await currentUrlIncludes(driver, "#/items/");
-      if (!stillInWorkspace) {
-        throw new Error("flush 未完成就发生了导航——返回按钮没有等待 flush（假绿风险）");
-      }
-      const heldCount = await driver.executeScript("return window.__e2eHeld.length;");
-      if (heldCount < 1) {
-        throw new Error("闸门上没有挂起的 apply_editor_commands——待保存编辑没有在保存链路上");
-      }
-      // 放行（真实重发到后端）→ flush 完成 → 导航到题库。
-      await driver.executeScript(RELEASE_HELD);
-      await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 20000);
+    // ── flush 等待证明：DB 写锁真实阻塞保存 → 点击返回 → 未导航 → 解锁 → 保存完成才导航 ──
+    await recordStep(driver, "back-button-waits-for-in-flight-save", async () => {
+      const versionBefore = editVersionOf(db, itemId);
+      await withWriteLockHeld(db, async () => {
+        await typeMarkerIntoPassage(driver, marker);
+        const backButton = await driver.findElement(By.css(".workspace-back-button"));
+        await backButton.click();
+        // 保存 UPDATE 被写锁阻塞（busy 等待中）：返回按钮必须停在原地等它。
+        await sleep(2000);
+        if (!(await currentUrlIncludes(driver, "#/items/"))) {
+          throw new Error("保存尚未完成就发生了导航——返回按钮没有等待 in-flight 保存（假绿风险）");
+        }
+      });
+      // 解锁 → 阻塞中的保存完成 → flush 返回 → 导航。
+      await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 30000);
       const url = await driver.getCurrentUrl();
       if (!url.includes("#/library")) throw new Error(`未导航回题库，当前 URL: ${url}`);
-      return { saveRequestsHeld: heldCount, finalUrl: url, proof: "back-button awaited in-flight flush before navigating" };
+      const versionAfter = editVersionOf(db, itemId);
+      if (!(versionAfter > versionBefore)) {
+        throw new Error(`返回前编辑未被保存：edit_version ${versionBefore} -> ${versionAfter}`);
+      }
+      return { heldThenNavigated: true, versionBefore, versionAfter, finalUrl: url };
     });
 
     await recordStep(driver, "flushed-marker-persists-after-reopen", async () => {
@@ -225,14 +203,13 @@ async function main() {
         "return document.querySelector('.v2-passage-pane') ? document.querySelector('.v2-passage-pane').innerText : '';"
       );
       if (!String(passageText).includes(marker)) {
-        throw new Error(`重开后未找到 flush 保存的 marker "${marker}"，实际开头：${String(passageText).slice(0, 200)}`);
+        throw new Error(`重开后未找到返回前保存的 marker "${marker}"，实际开头：${String(passageText).slice(0, 200)}`);
       }
       return { marker, persisted: true };
     });
 
     // ── 键盘可达性：Tab 聚焦 + focus-visible + Enter 返回 ──
     await recordStep(driver, "back-button-keyboard-focus-visible-and-enter", async () => {
-      await driver.executeScript(INSTALL_INTERCEPTOR, "passthrough");
       // 焦点回到文档起点后按 Tab：back button 是工作区第一个可聚焦元素。
       await driver.executeScript("if (document.activeElement) document.activeElement.blur();");
       await driver.actions().sendKeys(Key.TAB).perform();
@@ -246,8 +223,7 @@ async function main() {
           focused: true,
           focusVisible: el.matches(":focus-visible"),
           outlineWidth: computed.outlineWidth,
-          outlineStyle: computed.outlineStyle,
-          outlineColor: computed.outlineColor
+          outlineStyle: computed.outlineStyle
         };
       `);
       if (!state.focused) {
@@ -263,63 +239,74 @@ async function main() {
       return { ...state, enterNavigates: true };
     });
 
-    // ── 双击防护：busy 窗口内第二次点击不得产生第二次保存请求 ──
+    // ── 双击防护：两连击只产生一批保存（edit_version 恰好 +1）且只导航一次 ──
     await recordStep(driver, "back-button-double-click-single-save", async () => {
       await openWorkspaceForItem(driver, itemId);
-      await driver.executeScript(INSTALL_INTERCEPTOR, "hold");
-      await typeMarkerIntoPassage(driver, "E2E BACK FLUSH 88");
-      await driver.sleep(900);
-      const backButton = await driver.findElement(By.css(".workspace-back-button"));
-      await backButton.click();
-      await backButton.click().catch(() => {}); // 第二次点击：busy 期间应被忽略
-      await driver.sleep(800);
-      // 期望恰一次挂起的保存请求（防抖批次）；busy 锁必须吞掉第二次点击，
-      // 不得再产生新的保存调用。
-      const saveRequests = await driver.executeScript("return window.__e2eSaveRequests || 0;");
-      const stillHeld = await driver.executeScript("return window.__e2eHeld.length;");
-      if (Number(saveRequests) !== 1 || Number(stillHeld) !== 1) {
-        throw new Error(`双击产生了 ${saveRequests} 次保存请求（挂起 ${stillHeld}）——busy 锁未生效`);
+      const versionBefore = editVersionOf(db, itemId);
+      await withWriteLockHeld(db, async () => {
+        await typeMarkerIntoPassage(driver, "E2E BACK FLUSH 88");
+        const backButton = await driver.findElement(By.css(".workspace-back-button"));
+        await backButton.click();
+        await backButton.click().catch(() => {}); // 第二击：保存挂起期间应被忽略
+        await sleep(1200);
+        if (!(await currentUrlIncludes(driver, "#/items/"))) {
+          throw new Error("保存挂起期间发生了导航");
+        }
+      });
+      await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 30000);
+      const versionAfter = editVersionOf(db, itemId);
+      const delta = versionAfter - versionBefore;
+      if (delta !== 1) {
+        throw new Error(`双击产生 ${delta} 批保存（期望恰 1 批）：edit_version ${versionBefore} -> ${versionAfter}`);
       }
-      await driver.executeScript(RELEASE_HELD);
-      await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 20000);
-      return { saveRequests, singleNavigation: true };
+      return { saveBatches: delta, singleNavigation: true };
     });
 
-    // ── 可控保存失败：不导航、错误可见、无 unhandledrejection ──
+    // ── 可控保存失败（真实 busy 超时）：不导航、错误可见、无 unhandledrejection ──
     await recordStep(driver, "save-failure-blocks-navigation-with-visible-error", async () => {
       await openWorkspaceForItem(driver, itemId);
-      await driver.executeScript(INSTALL_INTERCEPTOR, "reject");
       const failureMarker = "E2E BACK FLUSH FAIL 99";
-      await typeMarkerIntoPassage(driver, failureMarker);
-      await driver.sleep(900);
-      const backButton = await driver.findElement(By.css(".workspace-back-button"));
-      await backButton.click();
-      // flush reject：必须留在工作区，并给出用户可理解的错误。
-      await driver.sleep(2500);
-      if (!(await currentUrlIncludes(driver, "#/items/"))) {
-        throw new Error("保存失败后发生了导航——失败必须阻断返回");
-      }
-      const errorVisible = await driver.wait(async () => {
-        const notices = await driver.findElements(By.css(".workspace-notice"));
-        for (const notice of notices) {
-          const text = await notice.getText();
-          if (/保存失败|失败/.test(text)) return text;
+      let failureSeen = false;
+      // 持锁超过应用 busy_timeout（5s）：保存真实失败（database is locked）。
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        await typeMarkerIntoPassage(driver, failureMarker);
+        const backButton = await driver.findElement(By.css(".workspace-back-button"));
+        await backButton.click();
+        // 失败在 busy 超时后落地（约 5-7s）；期间不得导航。
+        await sleep(2500);
+        if (!(await currentUrlIncludes(driver, "#/items/"))) {
+          throw new Error("保存失败前就发生了导航");
         }
-        return false;
-      }, 10000).catch(() => false);
-      if (!errorVisible) throw new Error("保存失败后未见用户可理解的错误提示（.workspace-notice）");
-      const rejections = await driver.executeScript("return window.__e2eRejections || [];");
-      if (rejections.length) {
-        throw new Error(`出现 unhandledrejection ${rejections.length} 条：${rejections[0]}`);
+        const failureSeenResult = await driver.wait(async () => {
+          if (!(await currentUrlIncludes(driver, "#/items/"))) return false;
+          const notices = await driver.findElements(By.css(".workspace-notice"));
+          for (const notice of notices) {
+            const text = await notice.getText();
+            if (/保存失败|失败|稍后/.test(text)) return text;
+          }
+          return false;
+        }, 20000).catch(() => false);
+        failureSeen = Boolean(failureSeenResult);
+        if (!failureSeenResult) throw new Error("保存失败后未见用户可理解的错误提示（.workspace-notice）");
+        if (!(await currentUrlIncludes(driver, "#/items/"))) {
+          throw new Error("保存失败后发生了导航——失败必须阻断返回");
+        }
+        const rejections = await driver.executeScript("return window.__e2eRejections || [];");
+        if (rejections.length) {
+          throw new Error(`出现 unhandledrejection ${rejections.length} 条：${rejections[0]}`);
+        }
+      } finally {
+        try { db.exec("COMMIT"); } catch { try { db.exec("ROLLBACK"); } catch {} }
       }
-      // 恢复：解除拦截后再次点击返回，flush 重试成功并导航（失败批次保留语义）。
-      await driver.executeScript(INSTALL_INTERCEPTOR, "passthrough");
+      // 恢复：解锁后再次返回，flush 重试失败批次成功并导航（失败批次保留语义）。
+      const backButton = await driver.findElement(By.css(".workspace-back-button"));
       await backButton.click().catch(async () => {
         const fresh = await driver.findElement(By.css(".workspace-back-button"));
         await fresh.click();
       });
-      await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 20000);
-      return { blockedNavigation: true, errorShown: String(errorVisible), unhandledRejections: 0 };
+      await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 30000);
+      return { blockedNavigation: true, errorShown: String(failureSeen), unhandledRejections: 0 };
     });
 
     await recordStep(driver, "no-unhandledrejections-collected", async () => {
@@ -352,6 +339,7 @@ async function main() {
     }, null, 2));
     process.exitCode = 2;
   } finally {
+    try { db.close(); } catch {}
     await session.cleanup();
   }
 }
