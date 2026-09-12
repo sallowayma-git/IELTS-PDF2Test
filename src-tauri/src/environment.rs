@@ -228,6 +228,21 @@ pub(crate) fn quality_gate_v2_enabled() -> bool {
     true
 }
 
+/// §6.8 / §6.11: whether the local recognition graph's hard closures are allowed to
+/// block publication.
+///
+/// The graph's verdict is always derived and recorded on the authoring document
+/// (`recognitionBlockers`), so it is visible and diffable. This switch only decides
+/// whether it becomes a blocking quality issue.
+///
+/// Default false on purpose: the Phase 4 acceptance metrics (option-label recall,
+/// statement completeness, matching exact structure) have not been measured against
+/// the golden corpus, and an unmeasured heuristic must not silently block real jobs.
+/// Flipping this default is the deliberate last step of the M4 main-chain switch.
+pub(crate) fn recognition_blockers_gate_enabled() -> bool {
+    env_flag_enabled("LOCAL_RECOGNITION_BLOCKERS_GATE", false)
+}
+
 pub(crate) fn pdf_renderer_setting() -> String {
     env::var("EPIC8_PDF_RENDERER")
         .ok()

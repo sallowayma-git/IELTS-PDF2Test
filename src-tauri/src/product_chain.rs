@@ -31,6 +31,7 @@ use crate::auto_pipeline::run_auto_pipeline_core;
 use crate::job_store::{load_job, make_job, save_job};
 use crate::nas_package_v2::publish_nas_package_v2_core;
 use crate::pdf_facts_shadow::SHADOW_ARTIFACT_FILE as DOCUMENT_V2_SHADOW_FILE;
+use crate::recognition::QUESTION_LAYOUT_GRAPH_ARTIFACT_FILE as QUESTION_LAYOUT_GRAPH_FILE;
 use crate::util::{
     ensure_app_dirs, ensure_job_dirs, file_type_from_name, hash_file_or_path, job_dir,
     sanitize_filename, write_bytes, write_json,
@@ -113,6 +114,107 @@ fn assert_shadow(dir: &Path, shadow_file: &str, stage: &str) {
     panic!(
         "{stage}: {} missing after the pipeline; writer error was: {detail}",
         shadow.display()
+    );
+}
+
+/// P4-T02: the auto import path must derive `QuestionLayoutGraphV1` from the same physical
+/// `DocumentIRV2` the authoring layer consumes.
+///
+/// Deliberately format-agnostic and invoked from both the PDF and the DOCX chain test: the P4-T01
+/// defect was exactly a PDF-only branch, so a new physical-derived artifact must be asserted on
+/// both branches through one helper rather than re-created per format.
+fn assert_question_layout_graph(dir: &Path, job: &ImportJob, physical: &Value) {
+    let path = dir.join(QUESTION_LAYOUT_GRAPH_FILE);
+    assert!(
+        path.is_file(),
+        "the auto pipeline must materialize the question layout graph at {}",
+        path.display()
+    );
+    let graph: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        graph.get("schemaVersion").and_then(Value::as_str),
+        Some("QuestionLayoutGraphV1"),
+        "the layout graph must be schema-gated: {graph}"
+    );
+    assert_eq!(
+        graph.get("jobId").and_then(Value::as_str),
+        Some(job.job_id.as_str()),
+        "the layout graph must be bound to the originating job"
+    );
+
+    // Derived, not fabricated: page geometry must be the physical page geometry.
+    let graph_pages = graph
+        .get("pages")
+        .and_then(Value::as_array)
+        .expect("layout graph pages");
+    let physical_pages = physical
+        .get("pages")
+        .and_then(Value::as_array)
+        .expect("physical pages");
+    assert_eq!(
+        graph.get("documentId").and_then(Value::as_str),
+        physical.get("documentId").and_then(Value::as_str),
+        "the layout graph must be derived from the same physical document"
+    );
+    assert_eq!(graph_pages.len(), physical_pages.len());
+    for (graph_page, physical_page) in graph_pages.iter().zip(physical_pages) {
+        assert_eq!(
+            graph_page.get("pageIndex").and_then(Value::as_u64),
+            physical_page.get("pageIndex").and_then(Value::as_u64)
+        );
+        assert_eq!(
+            graph_page.get("widthPt").and_then(Value::as_f64),
+            physical_page.get("widthPt").and_then(Value::as_f64)
+        );
+        assert_eq!(
+            graph_page.get("heightPt").and_then(Value::as_f64),
+            physical_page.get("heightPt").and_then(Value::as_f64)
+        );
+    }
+
+    // Every question block must trace back to a number token the page reported, and no block may
+    // silently carry an empty stem: either it has physical nodes or it declares PROMPT_EMPTY.
+    let token_values: Vec<u64> = graph_pages
+        .iter()
+        .flat_map(|page| {
+            page.get("numberTokens")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .filter_map(|token| token.get("value").and_then(Value::as_u64))
+        .collect();
+    let blocks = graph
+        .get("questionBlocks")
+        .and_then(Value::as_array)
+        .expect("question blocks");
+    for block in blocks {
+        let number = block
+            .get("questionNumber")
+            .and_then(Value::as_u64)
+            .expect("question number");
+        assert!(
+            token_values.contains(&number),
+            "block {number} has no matching number token on any page"
+        );
+        let stem_empty = block
+            .get("stemNodeIds")
+            .and_then(Value::as_array)
+            .is_some_and(|ids| ids.is_empty());
+        let declares_empty = block
+            .get("ambiguities")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|code| code.as_str() == Some("PROMPT_EMPTY"));
+        assert!(
+            !stem_empty || declares_empty,
+            "an empty stem must be reported as PROMPT_EMPTY, never silently: {block}"
+        );
+    }
+    assert!(
+        graph.get("unassignedEvidence").is_some_and(Value::is_array),
+        "the layout graph must carry its unassigned-evidence ledger: {graph}"
     );
 }
 
@@ -325,6 +427,8 @@ fn product_chain_docx_import_materializes_the_physical_document_ir_v2() {
             .is_some_and(|pages| !pages.is_empty()),
         "DOCX physical ingest must produce at least one page: {physical}"
     );
+    // P4-T02: the layout graph is format-agnostic, so the DOCX branch must produce it too.
+    assert_question_layout_graph(&dir, &job, &physical);
 
     // The point of the fix: without a physical layer the authoring V2 shadow is never produced, so a
     // DOCX job can never open an editable session and can never become ready/publishable. Assert the
@@ -384,6 +488,12 @@ fn product_chain_pdf_import_reaches_editable_session_and_persists_one_character_
     );
     assert_shadow(&dir, DOCUMENT_V2_SHADOW_FILE, "stage 1 physical shadow");
     assert_shadow(&dir, AUTHORING_V2_SHADOW_FILE, "stage 1 authoring shadow");
+
+    // P4-T02: the PDF branch of the unified physical ingest must also yield the geometric
+    // question layout graph, derived from those physical facts.
+    let physical: Value =
+        serde_json::from_slice(&fs::read(dir.join(DOCUMENT_V2_SHADOW_FILE)).unwrap()).unwrap();
+    assert_question_layout_graph(&dir, &job, &physical);
 
     // The pipeline must have gone through the real SQLite dual write.
     assert!(

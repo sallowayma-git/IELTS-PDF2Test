@@ -79,7 +79,7 @@ fn line_text_of<'a>(page: &'a PageNodeV2, line_id: &str) -> Option<&'a str> {
         .map(|line| line.text.as_str())
 }
 
-fn region_text(page: &PageNodeV2, region: &RegionNodeV2) -> String {
+pub(super) fn region_text(page: &PageNodeV2, region: &RegionNodeV2) -> String {
     region
         .child_line_ids
         .iter()
@@ -492,6 +492,7 @@ fn detect_instruction_zones(
                 question_range,
                 expected_numbers,
                 task_hint: task_hint_from_text(&text),
+                text,
                 source_anchor: first_source_anchor(page, &region.child_line_ids),
                 confidence: region.role_confidence,
             }
@@ -898,6 +899,17 @@ fn collect_option_banks(
                 .iter()
                 .find(|candidate| candidate.id == region.region_id)?;
             let options = detect_option_run_from_lines(region_lines(page, source))?;
+            // Lines above the first option label are the bank's heading ("List of
+            // Headings"). §6.9 needs it to separate a heading bank from a feature bank.
+            let first_label_line = options.first().map(|option| option.label_node_id.as_str());
+            let title = region_lines(page, source)
+                .into_iter()
+                .take_while(|line| Some(line.id.as_str()) != first_label_line)
+                .map(|line| line.text.trim())
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let title = (!title.is_empty()).then_some(title);
             for option in &options {
                 for node_id in &option.text_node_ids {
                     consumed.insert(node_id.clone());
@@ -907,6 +919,7 @@ fn collect_option_banks(
                 bank_id: format!("bank-{}-{}", page.page_index, index + 1),
                 page_index: page.page_index,
                 region_id: Some(region.region_id.clone()),
+                title,
                 labels: options.iter().map(|option| option.label.clone()).collect(),
                 options,
                 confidence: region.role_confidence,
@@ -942,6 +955,11 @@ fn collect_visual_stimuli(
                 bbox: region.bbox.clone(),
                 confidence: region.role_confidence,
                 question_refs,
+                // Crop and slot overlay are resolved by `stimulus::build_stimulus`,
+                // which needs the settled question blocks.
+                asset_id: None,
+                hotspots: Vec::new(),
+                issues: Vec::new(),
             }
         })
         .collect()
@@ -1001,6 +1019,7 @@ fn collect_unassigned_evidence(
             page_index: page.page_index,
             reason: "not_assigned_to_a_question_boundary".to_string(),
             text_preview: line.text.trim().chars().take(80).collect::<String>(),
+            text_char_count: line.text.trim().chars().count(),
             bbox: line.bbox.clone(),
         })
         .collect()
@@ -1038,6 +1057,7 @@ pub(super) fn build_layout(document: &DocumentIRV2) -> LayoutBuild {
     let mut question_blocks = Vec::new();
     let mut option_banks = Vec::new();
     let mut visual_stimuli = Vec::new();
+    let mut table_stimuli = Vec::new();
     let mut unassigned_evidence = Vec::new();
 
     for page in &document.pages {
@@ -1055,7 +1075,6 @@ pub(super) fn build_layout(document: &DocumentIRV2) -> LayoutBuild {
         let mut consumed: BTreeSet<String> = BTreeSet::new();
         let mut blocks = assemble_blocks(page, &tokens, &reserved, &mut consumed);
         let banks = collect_option_banks(page, &regions, &mut consumed);
-        let visuals = collect_visual_stimuli(page, &regions, &tokens);
         let unassigned = collect_unassigned_evidence(page, &regions, &banks, &consumed);
 
         // A page with exactly one shared bank lets a matching block point at it
@@ -1069,6 +1088,11 @@ pub(super) fn build_layout(document: &DocumentIRV2) -> LayoutBuild {
             }
         }
 
+        // §6.10 stimulus is compiled from the settled blocks: a hotspot is slot
+        // geometry, so it must see the same block objects the graph exports.
+        let region_visuals = collect_visual_stimuli(page, &regions, &tokens);
+        let stimulus = super::stimulus::build_stimulus(page, &blocks, region_visuals);
+
         pages.push(PageLayoutGraph {
             page_index: page.page_index,
             width_pt: page.width_pt,
@@ -1081,16 +1105,31 @@ pub(super) fn build_layout(document: &DocumentIRV2) -> LayoutBuild {
         instruction_zones.extend(zones);
         question_blocks.extend(blocks);
         option_banks.extend(banks);
-        visual_stimuli.extend(visuals);
+        visual_stimuli.extend(stimulus.visuals);
+        table_stimuli.extend(stimulus.tables);
         unassigned_evidence.extend(unassigned);
     }
+
+    // §6.8 classification and the §6.8/§6.11 hard closures run once the whole
+    // document is segmented: a declarative range may span pages, so a per-page pass
+    // cannot decide whether a group is complete.
+    let task_groups = super::task_groups::build_task_groups(
+        &pages,
+        &instruction_zones,
+        &question_blocks,
+        &option_banks,
+        &visual_stimuli,
+        &unassigned_evidence,
+    );
 
     LayoutBuild {
         pages,
         instruction_zones,
         question_blocks,
+        task_groups,
         option_banks,
         visual_stimuli,
+        table_stimuli,
         unassigned_evidence,
     }
 }

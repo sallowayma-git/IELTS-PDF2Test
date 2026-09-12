@@ -12,9 +12,12 @@
 //!   exist in this crate and the existing vocabulary is the single source of truth.
 
 mod question_blocks;
+mod stimulus;
+mod task_groups;
 
 use crate::schema::common::{RectV2, SourceAnchorV2};
 use crate::schema::document_ir_v2::{DocumentIRV2, PhysicalRegionKindV2};
+use crate::schema::ielts_authoring_v2::{RecognitionBlockerTargetV2, TaskTypeV2};
 use crate::CommandResult;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,6 +75,9 @@ pub(crate) struct InstructionZoneCandidate {
     pub question_range: Option<[u32; 2]>,
     pub expected_numbers: Vec<u32>,
     pub task_hint: Option<String>,
+    /// Raw instruction text, kept so classification (§6.8) and the compile stage
+    /// can read the wording instead of re-deriving it from the region.
+    pub text: String,
     pub source_anchor: Option<SourceAnchorV2>,
     pub confidence: f64,
 }
@@ -102,8 +108,60 @@ pub(crate) struct OptionBankCandidateV1 {
     pub bank_id: String,
     pub page_index: u32,
     pub region_id: Option<String>,
+    /// The bank's heading, e.g. "List of Headings". §6.9 needs the wording to tell a
+    /// heading bank apart from a feature bank.
+    pub title: Option<String>,
     pub labels: Vec<String>,
     pub options: Vec<OptionCandidateV2>,
+    pub confidence: f64,
+}
+
+/// One physical table cell (§6.10). Spans come from the physical table, never from
+/// a per-question reconstruction, so a cell that spans rows stays a spanning cell.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TableCellCandidateV1 {
+    pub cell_id: String,
+    pub row: u32,
+    pub col: u32,
+    pub row_span: u32,
+    pub col_span: u32,
+    pub text: String,
+    pub bbox: RectV2,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TableRowCandidateV1 {
+    pub row: u32,
+    pub cells: Vec<TableCellCandidateV1>,
+}
+
+/// A stimulus compiled from `DocumentIRV2.pages[].tables[]` (§6.10). §6.10 forbids
+/// rebuilding a table as one question per row, so this is a faithful projection of
+/// the physical table plus the issues that make it unusable as-is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TableStimulusCandidateV1 {
+    pub stimulus_id: String,
+    pub page_index: u32,
+    pub table_id: String,
+    pub bbox: RectV2,
+    pub rows: Vec<TableRowCandidateV1>,
+    /// Physical fallback crop, when the table's cell text is not trustworthy.
+    pub asset_id: Option<String>,
+    pub confidence: f64,
+    pub issues: Vec<String>,
+}
+
+/// A figure/diagram slot overlaid on the source crop (§6.10). Coordinates are
+/// normalized to the stimulus bbox, matching the plan's `normalizedRect` contract.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VisualHotspotCandidateV1 {
+    pub slot_id: String,
+    pub question_number: u32,
+    pub normalized_rect: [f64; 4],
     pub confidence: f64,
 }
 
@@ -118,6 +176,13 @@ pub(crate) struct VisualStimulusCandidateV1 {
     pub confidence: f64,
     /// Question numbers whose search interval overlaps this stimulus.
     pub question_refs: Vec<u32>,
+    /// Source crop backing the hybrid (§6.10). `None` when the figure is vector
+    /// drawn with no raster asset; the slot geometry is still reported.
+    pub asset_id: Option<String>,
+    /// Slot overlays. Empty when no question could be attached.
+    pub hotspots: Vec<VisualHotspotCandidateV1>,
+    /// Stable issue codes: an unattachable slot must be reported, not dropped.
+    pub issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -127,6 +192,9 @@ pub(crate) struct UnassignedEvidence {
     pub page_index: u32,
     pub reason: String,
     pub text_preview: String,
+    /// Full character count of the line, kept separately because `text_preview` is
+    /// truncated and the §6.11 blocker is a size threshold.
+    pub text_char_count: usize,
     pub bbox: RectV2,
 }
 
@@ -151,6 +219,31 @@ pub(crate) struct QuestionBlockCandidateV1 {
     pub ambiguities: Vec<String>,
 }
 
+/// One recognised task group: a declared question range, the physical blocks that
+/// satisfy it, and the task family inferred from the wording (§6.8) and geometry
+/// (§6.9). Carries its own blocking issues so the Ready gate has a single place to
+/// read (§6.8) instead of re-deriving them from block-level fields.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskGroupCandidateV1 {
+    pub group_id: String,
+    pub page_indices: Vec<u32>,
+    /// First and last question number of the group, as declared by the instruction.
+    pub display_range: Option<[u32; 2]>,
+    pub question_numbers: Vec<u32>,
+    /// `None` means the wording could not be resolved to a task family. The group
+    /// still carries its blocks so nothing is lost; the Ready gate blocks on
+    /// `INSTRUCTION_SIGNATURE_UNRESOLVED`.
+    pub task_type: Option<TaskTypeV2>,
+    pub task_hint: Option<String>,
+    pub block_ids: Vec<String>,
+    pub option_bank_ref: Option<String>,
+    pub stimulus_refs: Vec<String>,
+    /// Stable issue codes from `ielts_grammar::issue_codes`.
+    pub issues: Vec<String>,
+    pub confidence: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PageLayoutGraph {
@@ -172,14 +265,74 @@ pub(crate) struct QuestionLayoutGraphV1 {
     pub pages: Vec<PageLayoutGraph>,
     pub instruction_zones: Vec<InstructionZoneCandidate>,
     pub question_blocks: Vec<QuestionBlockCandidateV1>,
+    pub task_groups: Vec<TaskGroupCandidateV1>,
     pub option_banks: Vec<OptionBankCandidateV1>,
     pub visual_stimuli: Vec<VisualStimulusCandidateV1>,
+    pub table_stimuli: Vec<TableStimulusCandidateV1>,
     pub unassigned_evidence: Vec<UnassignedEvidence>,
 }
 
 impl QuestionLayoutGraphV1 {
     pub(crate) fn is_supported_schema_version(&self) -> bool {
         self.schema_version == QUESTION_LAYOUT_GRAPH_SCHEMA_VERSION
+    }
+
+    /// The Ready gate for local recognition (§6.8 simple-task closure plus the
+    /// §6.11 unassigned-evidence blocker).
+    ///
+    /// Deduplicated and sorted so the result is comparable across runs and can be
+    /// used to decide publishability without depending on discovery order.
+    pub(crate) fn blocking_issues(&self) -> Vec<String> {
+        let mut codes: Vec<String> = self
+            .question_blocks
+            .iter()
+            .flat_map(|block| block.ambiguities.iter().cloned())
+            .chain(
+                self.task_groups
+                    .iter()
+                    .flat_map(|group| group.issues.iter().cloned()),
+            )
+            .chain(
+                self.table_stimuli
+                    .iter()
+                    .flat_map(|stimulus| stimulus.issues.iter().cloned()),
+            )
+            .chain(
+                self.visual_stimuli
+                    .iter()
+                    .flat_map(|stimulus| stimulus.issues.iter().cloned()),
+            )
+            .collect();
+        codes.sort();
+        codes.dedup();
+        codes
+    }
+
+    /// Blocking issues with the questions each one applies to, for review surfaces.
+    pub(crate) fn blocking_issue_targets(&self) -> Vec<RecognitionBlockerTargetV2> {
+        let mut targets: Vec<RecognitionBlockerTargetV2> = self
+            .question_blocks
+            .iter()
+            .flat_map(|block| {
+                block.ambiguities.iter().map(|code| RecognitionBlockerTargetV2 {
+                    code: code.clone(),
+                    target: format!("q{}", block.question_number),
+                })
+            })
+            .chain(self.task_groups.iter().flat_map(|group| {
+                group.issues.iter().map(|code| RecognitionBlockerTargetV2 {
+                    code: code.clone(),
+                    target: group.group_id.clone(),
+                })
+            }))
+            .collect();
+        targets.sort_by(|left, right| {
+            left.code
+                .cmp(&right.code)
+                .then(left.target.cmp(&right.target))
+        });
+        targets.dedup();
+        targets
     }
 }
 
@@ -193,8 +346,10 @@ pub(crate) fn build_question_layout_graph(document: &DocumentIRV2) -> QuestionLa
         pages: build.pages,
         instruction_zones: build.instruction_zones,
         question_blocks: build.question_blocks,
+        task_groups: build.task_groups,
         option_banks: build.option_banks,
         visual_stimuli: build.visual_stimuli,
+        table_stimuli: build.table_stimuli,
         unassigned_evidence: build.unassigned_evidence,
     }
 }
@@ -244,7 +399,9 @@ pub(crate) struct LayoutBuild {
     pub pages: Vec<PageLayoutGraph>,
     pub instruction_zones: Vec<InstructionZoneCandidate>,
     pub question_blocks: Vec<QuestionBlockCandidateV1>,
+    pub task_groups: Vec<TaskGroupCandidateV1>,
     pub option_banks: Vec<OptionBankCandidateV1>,
     pub visual_stimuli: Vec<VisualStimulusCandidateV1>,
+    pub table_stimuli: Vec<TableStimulusCandidateV1>,
     pub unassigned_evidence: Vec<UnassignedEvidence>,
 }

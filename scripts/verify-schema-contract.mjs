@@ -191,6 +191,23 @@ async function validateStableContractFixtures(compiled, verificationErrors, veri
   }
   const authoring = values.get("IeltsAuthoringIRV2");
   if (authoring) {
+    // Phase 4 recognition increments record their hard closures on the document as
+    // `recognitionBlockers`. The contract must accept a well-formed blocked document,
+    // otherwise a job whose recognition could not confirm the question structure
+    // could never be published for human review.
+    const withRecognitionVerdict = structuredClone(authoring);
+    withRecognitionVerdict.recognitionBlockers = ["PROMPT_EMPTY"];
+    withRecognitionVerdict.recognitionBlockerTargets = [
+      { code: "PROMPT_EMPTY", target: "q1" }
+    ];
+    validateFixtureValue(
+      compiled,
+      "IeltsAuthoringIRV2",
+      withRecognitionVerdict,
+      "derived:early-approaches:authoring-recognition-blockers",
+      verificationErrors,
+      verificationResults
+    );
     const runtime = buildReadingRuntimeSource(authoring);
     if (validateFixtureValue(compiled, "ReadingExamSourceV2", runtime, "derived:early-approaches:reading-source-v2", verificationErrors, verificationResults)) {
       values.set("ReadingExamSourceV2", runtime);
@@ -313,6 +330,23 @@ function runNegativeContractProbes(compiled, stableValues, verificationErrors, v
         const group = value.taskGroups.find((candidate) => candidate.optionBank);
         if (!group) throw new Error("stable authoring fixture has no option bank");
         group.optionBank.title = null;
+      }
+    },
+    {
+      id: "authoring-rejects-unknown-recognition-blocker-target-field",
+      schemaName: "IeltsAuthoringIRV2",
+      mutate(value) {
+        value.recognitionBlockers = ["PROMPT_EMPTY"];
+        value.recognitionBlockerTargets = [
+          { code: "PROMPT_EMPTY", target: "q1", unexpected: true }
+        ];
+      }
+    },
+    {
+      id: "authoring-rejects-empty-recognition-blocker-code",
+      schemaName: "IeltsAuthoringIRV2",
+      mutate(value) {
+        value.recognitionBlockers = [""];
       }
     },
     {

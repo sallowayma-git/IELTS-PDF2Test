@@ -16,6 +16,7 @@
 pub(crate) mod local;
 
 use crate::artifact_store::write_canonical_json_atomic;
+use crate::schema::ielts_authoring_v2::RecognitionBlockerTargetV2;
 use crate::util::read_json_opt;
 use crate::CommandResult;
 use serde_json::Value;
@@ -46,4 +47,38 @@ pub(crate) fn write_question_layout_graph_artifact(
     let persisted = read_json_opt(output_path)?
         .ok_or_else(|| "QUESTION_LAYOUT_GRAPH_ARTIFACT_MISSING_AFTER_WRITE".to_string())?;
     local::question_layout_graph_from_value(&persisted)
+}
+
+/// The §6.8 / §6.11 hard-closure verdict, derived directly from a physical
+/// `DocumentIRV2` value.
+///
+/// This is how the main chain consumes the graph: `build_authoring_v2_shadow`
+/// calls it and records the result on the authoring document, so the Ready gate
+/// reads the same recognition verdict the artifact reports.
+///
+/// Returns an empty verdict when there is no physical document, or when it fails
+/// the producer gate. Silence is deliberate: without trustworthy physical facts
+/// there is nothing for local recognition to assert, and the physical shadow's own
+/// validators already report a malformed document.
+pub(crate) fn blocking_issues_from_physical(physical_shadow: Option<&Value>) -> Vec<String> {
+    let Some(value) = physical_shadow else {
+        return Vec::new();
+    };
+    match local::question_layout_graph_from_document_value(value) {
+        Ok(graph) => graph.blocking_issues(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Blocking issues paired with the question or task group each one applies to.
+pub(crate) fn blocking_issue_targets_from_physical(
+    physical_shadow: Option<&Value>,
+) -> Vec<RecognitionBlockerTargetV2> {
+    let Some(value) = physical_shadow else {
+        return Vec::new();
+    };
+    match local::question_layout_graph_from_document_value(value) {
+        Ok(graph) => graph.blocking_issue_targets(),
+        Err(_) => Vec::new(),
+    }
 }

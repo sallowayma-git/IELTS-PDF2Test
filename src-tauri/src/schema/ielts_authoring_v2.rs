@@ -518,6 +518,17 @@ pub struct AuthoringAuditV2 {
     pub notes: Vec<String>,
 }
 
+/// A `recognitionBlockers` code paired with the question or task group it applies
+/// to, so a review surface can point at the thing that must be corrected.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct RecognitionBlockerTargetV2 {
+    pub code: String,
+    /// `q{number}` for a question block, or the task group id.
+    pub target: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -535,6 +546,15 @@ pub struct IeltsAuthoringIRV2 {
     pub answer_key: BTreeMap<String, AnswerValueV2>,
     pub assets: Vec<AssetDescriptorV2>,
     pub source_document_id: String,
+    /// Hard closures from local recognition (plan §6.8 / §6.11), as stable issue
+    /// codes. Recorded here so the quality gate and review surfaces read one
+    /// document instead of re-running recognition. Empty for jobs recognised by the
+    /// V1 path or when no physical document was available.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recognition_blockers: Vec<String>,
+    /// The same blockers with their question/group target, for review surfaces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recognition_blocker_targets: Vec<RecognitionBlockerTargetV2>,
     pub quality: QualityReportV2,
     pub audit: AuthoringAuditV2,
 }

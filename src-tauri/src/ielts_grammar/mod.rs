@@ -351,6 +351,14 @@ pub(crate) fn build_authoring_v2_shadow(
 
     let mut answer_key_v2 = answer_slots_answer_key(&answer_slots, &answer_key_v1);
     align_answer_key_assignments(&mut answer_key_v2, &task_groups);
+    // P4-T02/P4-T04: consume the local recognition graph. It is derived from the same
+    // physical facts, and its §6.8/§6.11 hard closures are recorded on the document so
+    // the Ready gate reads one recognition verdict instead of re-deriving it. The gate
+    // is staged separately (`recognition_blockers_gate_enabled`), so recording the
+    // verdict never changes publishability on its own.
+    let recognition_blockers = crate::recognition::blocking_issues_from_physical(physical_shadow);
+    let recognition_blocker_targets =
+        crate::recognition::blocking_issue_targets_from_physical(physical_shadow);
     let mut authoring = json!({
         "schemaVersion": "IeltsAuthoringIRV2",
         "jobId": job.job_id,
@@ -372,6 +380,12 @@ pub(crate) fn build_authoring_v2_shadow(
             "notes": ["Phase 4 grammar shadow; V1 remains authoritative."]
         }
     });
+    if !recognition_blockers.is_empty() {
+        authoring["recognitionBlockers"] = json!(recognition_blockers);
+    }
+    if !recognition_blocker_targets.is_empty() {
+        authoring["recognitionBlockerTargets"] = json!(recognition_blocker_targets);
+    }
     let quality = quality::evaluate_quality(&authoring, physical_shadow);
     authoring["quality"] = quality.clone();
     refresh_group_quality(&mut authoring);

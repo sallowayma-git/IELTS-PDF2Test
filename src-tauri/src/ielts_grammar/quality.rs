@@ -2,6 +2,7 @@ use chrono::Utc;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::environment::recognition_blockers_gate_enabled;
 use crate::reading_source::ReadingExamSourceV1;
 use crate::reading_source_v2::{compile_reading_source_v2, CompilerIssueV2};
 use crate::schema::IeltsAuthoringIRV2;
@@ -25,6 +26,23 @@ struct SourceCoverageSummary {
 }
 
 pub(crate) fn evaluate_quality(authoring: &Value, physical_shadow: Option<&Value>) -> Value {
+    evaluate_quality_with_gate(
+        authoring,
+        physical_shadow,
+        recognition_blockers_gate_enabled(),
+    )
+}
+
+/// `evaluate_quality` with the §6.8/§6.11 recognition gate passed explicitly.
+///
+/// The staging decision is an environment flag in production, but tests must not
+/// mutate process-global state, so the decision is a parameter here and the
+/// production wrapper supplies the flag.
+pub(crate) fn evaluate_quality_with_gate(
+    authoring: &Value,
+    physical_shadow: Option<&Value>,
+    recognition_gate_enabled: bool,
+) -> Value {
     let groups = authoring
         .get("taskGroups")
         .and_then(Value::as_array)
@@ -53,6 +71,12 @@ pub(crate) fn evaluate_quality(authoring: &Value, physical_shadow: Option<&Value
     validate_provenance(authoring, &mut issues, &mut hard_failures);
     validate_scoring_semantics(authoring, &mut issues, &mut hard_failures);
     validate_source_ownership(authoring, physical_shadow, &mut issues, &mut hard_failures);
+    validate_recognition_blockers(
+        authoring,
+        recognition_gate_enabled,
+        &mut issues,
+        &mut hard_failures,
+    );
 
     if groups.is_empty() {
         push_issue(
@@ -3645,6 +3669,45 @@ fn issue(
     })
 }
 
+/// §6.8 / §6.11: the local recognition graph's hard closures, carried on the
+/// document as `recognitionBlockers`.
+///
+/// `build_authoring_v2_shadow` derives the graph from the physical facts and records
+/// its verdict here, so the main chain consumes the recognition result instead of
+/// leaving it as a write-only artifact. This function decides whether that verdict
+/// is allowed to block publication; see `recognition_blockers_gate_enabled`.
+fn validate_recognition_blockers(
+    authoring: &Value,
+    gate_enabled: bool,
+    issues: &mut Vec<Value>,
+    hard_failures: &mut Vec<String>,
+) {
+    if !gate_enabled {
+        return;
+    }
+    let Some(codes) = authoring
+        .get("recognitionBlockers")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    for code in codes.iter().filter_map(Value::as_str) {
+        push_issue(
+            issues,
+            hard_failures,
+            issue(
+                code,
+                "blocking",
+                "本地识别未能确认完整题面结构，发布前需人工核对。",
+                "document",
+                "recognition",
+                Vec::new(),
+                vec!["assign_role", "edit_text"],
+            ),
+        );
+    }
+}
+
 fn push_issue(issues: &mut Vec<Value>, hard_failures: &mut Vec<String>, value: Value) {
     let code = value
         .get("code")
@@ -4483,5 +4546,45 @@ mod tests {
             .unwrap()
             .iter()
             .any(|code| code == ASSET_HASH_MISMATCH));
+    }
+
+    #[test]
+    fn recognition_blockers_are_consumed_but_only_block_when_the_gate_is_open() {
+        let mut authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+
+        // The graph's verdict is carried on the document; without the gate the
+        // main chain still records it but publication is not held back.
+        authoring["recognitionBlockers"] = json!(["PROMPT_EMPTY"]);
+        authoring["recognitionBlockerTargets"] = json!([
+            { "code": "PROMPT_EMPTY", "target": "question-block-1" }
+        ]);
+
+        let staged_off = evaluate_quality_with_gate(&authoring, Some(&physical), false);
+        assert_eq!(staged_off["state"], "ready", "{staged_off:#}");
+        assert!(
+            !staged_off["hardFailures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|code| code.as_str() == Some("PROMPT_EMPTY")),
+            "gate closed must not surface the recognition blocker as a hard failure"
+        );
+
+        let staged_on = evaluate_quality_with_gate(&authoring, Some(&physical), true);
+        assert_eq!(staged_on["state"], "blocked", "{staged_on:#}");
+        assert!(staged_on["hardFailures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|code| code.as_str() == Some("PROMPT_EMPTY")));
+        assert!(issue_for_target(&staged_on, "PROMPT_EMPTY", "recognition"));
+
+        // An absent verdict must never be read as "clean": the gate is a
+        // publication decision, not a substitute for the recognition result.
+        let mut silent = early_approaches();
+        silent.as_object_mut().unwrap().remove("recognitionBlockers");
+        let report = evaluate_quality_with_gate(&silent, Some(&physical), true);
+        assert_eq!(report["state"], "ready", "{report:#}");
     }
 }
