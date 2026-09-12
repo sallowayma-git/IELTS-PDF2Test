@@ -72,6 +72,36 @@
   flex: 0 0 auto;
 }
 
+/* Back button */
+.workspace-back-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--workspace-muted-ink);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.workspace-back-button:hover {
+  background: var(--workspace-hover-overlay);
+}
+
+.workspace-back-button:active {
+  background: var(--workspace-active-overlay);
+}
+
+.workspace-back-button:focus-visible {
+  outline: 2px solid var(--workspace-focus);
+  outline-offset: 1px;
+}
+
 /* Brand wordmark */
 .workspace-brand {
   font-size: 20px;
@@ -148,7 +178,7 @@
   min-width: 0;
 }
 
-.workspace-header button {
+.workspace-header button:not(.workspace-back-button) {
   position: relative;
   display: flex;
   align-self: stretch;
@@ -165,15 +195,15 @@
   gap: 6px;
 }
 
-.workspace-header button:hover {
+.workspace-header button:not(.workspace-back-button):hover {
   background: var(--workspace-hover-overlay);
 }
 
-.workspace-header button:active {
+.workspace-header button:not(.workspace-back-button):active {
   background: var(--workspace-active-overlay);
 }
 
-.workspace-header button:focus-visible {
+.workspace-header button:not(.workspace-back-button):focus-visible {
   outline: 2px solid var(--workspace-focus);
   outline-offset: -2px;
 }

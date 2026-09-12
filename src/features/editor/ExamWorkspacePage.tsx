@@ -122,6 +122,17 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     <section className="workspace-page" data-testid="exam-workspace">
       <header className="workspace-header">
         <div className="workspace-header-left">
+          <button
+            className="workspace-back-button"
+            onClick={() => withBusy("leave", async () => {
+              await editor.flush();
+              go(libraryPath());
+            })}
+            aria-label="返回题库"
+            title="返回题库"
+          >
+            <ArrowLeft size={16} />
+          </button>
           <span className="workspace-brand">IELTS</span>
           <div className="workspace-title">
             <EditableTitle
