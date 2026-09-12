@@ -47,6 +47,22 @@
 
 **仍存在的动态性**：提交后 `src-tauri/src/product_chain.rs` 又被并行写入者改写。该改动属于 `6affc57` **之后**的新基线，本报告全部结论以 `6affc57` 为准。
 
+### 0.2 旧世代文档清理（2026-09-12 已执行）
+
+按用户指示，删除已被当前计划取代的旧世代文档（文档识别 Overhaul Plan + Phase 0–7 记录），**先解耦全部引用再删除本体**。
+
+| 项 | 结果 |
+|---|---|
+| 清理提交 | **`be68d4a`** — `chore(docs): remove superseded recognition docs and decouple their tooling references` |
+| 删除文档 | 13 份（`Files/` 根 8 份 + `Files/archive/` 4 份 + `archive/README.md`），`Files/archive/` 目录一并移除 |
+| 脚本解耦 | 6 个 phase 校验脚本的 `requiredFiles` 移除文档条目；`register-phase0-plan-corpus.mjs` 移除 2 条 Overhaul Plan 证据行并把 `review.method` 改为 `source-text-evidence` |
+| golden 解耦 | 8 个 metadata JSON 同步做相同的 `method`/`evidence` 调整 |
+| 安全性依据 | `review.evidence` / `review.method` **零消费者**；`verify-product-baseline.mjs` 的 `corpusManifest()` **不读** metadata JSON → 编辑不产生基线漂移 |
+| 校验 | `verify:product-baseline:strict` → **`no drift`**（exit 0）；6 个 phase 脚本越过 `requiredFiles` 抵达各自**原本就存在**的断言（feature flag / contract hash 红，均在循环之后）；全部 metadata JSON 可解析；7 个脚本 `node --check` 通过 |
+| 可恢复性 | 全部文档删除前完整存在于 `e33d20a`，恢复点见 `Files/README.md` §4 |
+
+> 说明：这 6 个 phase 校验脚本在本次清理**之前**即为红色（feature flag 默认值已随主链切换改变、contract hash 过期）。本次清理只消除了它们**最先**触发的「文档缺失」失败，未引入新失败——源码顺序可证（`requiredFiles` 循环行号均小于断言行号）。
+
 ---
 
 ## 1. 主线程独立校验结果

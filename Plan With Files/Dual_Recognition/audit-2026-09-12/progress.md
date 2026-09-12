@@ -42,3 +42,14 @@
 - Phase：0 complete / 6 partial / 3 not started
 - DoD：30 项中满足 0 / 部分 10 / 不满足 15 / 无法验证 5
 - 第 26 章"四轮对抗审计通过"裁定：**不可信**（文档自洽通过，实现层落空）
+
+## 2026-09-12 旧世代文档清理（用户授权后执行）
+
+- 目标：删除已被当前计划取代的旧世代文档（Overhaul Plan + Phase 0–7 记录），但先解耦全部工具链引用。
+- 引用清点：6 个 phase 校验脚本的 `requiredFiles`（phase2/phase3-docx/phase3-docx-package/phase4-grammar/phase6-runtime/phase7-listening-contract）+ `register-phase0-plan-corpus.mjs` 的 2 条证据行 + 8 个 golden metadata × 2 条证据行。
+- 安全性前置核实：`review.evidence` / `review.method` **零消费者**（全仓 grep 仅命中生成器自身）；`verify-product-baseline.mjs` 的 `corpusManifest()` **不读** metadata JSON。
+- 执行：先改 7 个脚本 + 8 个 metadata（`review.method` 由 `source-text-and-overhaul-plan-evidence` 改为 `source-text-evidence`），再 `git rm` 13 份文档（`Files/` 根 8 + `Files/archive/` 5），`Files/archive/` 目录随之消失。
+- 校验：`verify:product-baseline:strict` → **`no drift`**（exit 0）；6 个 phase 脚本越过 `requiredFiles` 抵达各自的**既有**断言失败（源码顺序可证：循环行号 < 断言行号）；全部 metadata JSON 可解析；7 个脚本 `node --check` 通过。
+- 提交：**`be68d4a`**（30 文件，-8128 行），只暂存本次清理路径。
+- **重要观察**：工作树中存在**另一个并发 agent** 的未提交工作（`src-tauri/src/product_chain.rs` P4-T02、`Plan With Files/Dual_Recognition/repair-2026-09-07/progress.md`、`Plan With Files/Dual_Recognition/task_plan.md`，mtime 11:52–11:56）。已**刻意排除**在本次提交之外。该并发写入也是本审计期间 `recognition/` 目录"凭空出现"（A1-F01 基线漂移）与 `Files/` 目录瞬时消失的原因。
+- 顺带修复：根 `task_plan.md` 中指向已删文档的悬空链接改为可追溯的 `git show <sha>:<path>` 形式。
