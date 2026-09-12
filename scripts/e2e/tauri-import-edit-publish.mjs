@@ -183,6 +183,48 @@ async function waitForRowStage(driver, itemId, timeoutMs) {
   throw new Error(`行 ${itemId} 未在限时内进入稳定阶段；最后文本：${lastText || "(无行)"}`);
 }
 
+/** 轮询题库行文本直到满足判据；题库列表是异步重载的，单次即时读取会与刷新竞态。 */
+async function waitForRowText(driver, itemId, predicate, timeoutMs) {
+  const selector = `[data-item-id="${itemId}"]`;
+  const deadline = Date.now() + timeoutMs;
+  let lastText = "";
+  while (Date.now() < deadline) {
+    const rows = await driver.findElements(By.css(selector));
+    if (rows.length) {
+      lastText = (await rows[0].getText()).replace(/\s+/g, " ").trim();
+      if (predicate(lastText)) return lastText;
+    }
+    await sleep(500);
+  }
+  throw new Error(`行 ${itemId} 未在限时内满足判据；最后文本：${lastText || "(无行)"}`);
+}
+
+/** 被测 exe 内嵌构建时的前端产物；若源码比 exe 新，该次运行不能证明当前源码。 */
+function newestMtimeMs(dir) {
+  let newest = 0;
+  const stack = [dir];
+  while (stack.length) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else if (entry.isFile()) {
+        try {
+          const mtime = fs.statSync(full).mtimeMs;
+          if (mtime > newest) newest = mtime;
+        } catch {}
+      }
+    }
+  }
+  return newest;
+}
+
 async function openWorkspaceForItem(driver, itemId) {
   const row = await driver.wait(until.elementLocated(By.css(`[data-item-id="${itemId}"] .library-row-main`)), 15000);
   await row.click();
@@ -194,6 +236,17 @@ async function main() {
   if (process.platform !== "win32") fail("真实 Tauri E2E 目前仅在 Windows（WebView2）上运行。");
   if (!fs.existsSync(exePath)) fail(`被测应用不存在：${exePath}（先运行 npx tauri build --debug --no-bundle）`);
   if (!fs.existsSync(pdfPath)) fail(`测试 PDF 不存在：${pdfPath}`);
+
+  // 构建新鲜度：exe 内嵌构建时的前端产物；若 src 比 exe 新，本次结果不能证明当前源码（A11-F01 的根因之一）。
+  const exeMtimeMs = fs.statSync(exePath).mtimeMs;
+  const newestSourceMtimeMs = newestMtimeMs(path.join(repoRoot, "src"));
+  const staleBuild = newestSourceMtimeMs > exeMtimeMs;
+  if (staleBuild) {
+    console.warn(
+      `[e2e:tauri] WARNING 被测 exe 早于 src 最新改动（exe=${new Date(exeMtimeMs).toISOString()} src=${new Date(newestSourceMtimeMs).toISOString()}）——` +
+      "本次结果不能证明当前源码，请先重新构建再作为验收证据。"
+    );
+  }
 
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   const runDir = path.join(repoRoot, "artifacts", "e2e-tauri", `run-${runId}`);
@@ -249,6 +302,14 @@ async function main() {
 
     const windowHandle = (await driver.getAllWindowHandles())[0];
     await driver.switchTo().window(windowHandle);
+
+    // 会话健康检查：WebView2 若在建立后立即断开（例如被测 exe 为过期/不可用构建），
+    // 后续步骤会以 "invalid session id" 失败——那是 harness/环境问题，不是产品断言失败。
+    try {
+      await driver.getCurrentUrl();
+    } catch (error) {
+      throw new Error(`WebView2 会话建立后立即断开，无法驱动产品链路（应用可能未成功启动或 exe 为过期构建）：${error.message}`);
+    }
 
     const editedMarker = "E2E EDIT CHECK 42";
 
@@ -381,7 +442,7 @@ async function main() {
       await recordStep("edit-title-and-save", async () => {
         // 计划 §9.10「标题（可编辑）」：M1 起标题随命令批次进同一保存事务。
         const newTitle = "E2E 标题 42";
-        const titleSpan = driver.wait(until.elementLocated(By.css('[data-testid="workspace-title"] [role="button"]')), 10000);
+        const titleSpan = await driver.wait(until.elementLocated(By.css('[data-testid="workspace-title"] [role="button"]')), 10000);
         await driver.executeScript("arguments[0].click()", titleSpan);
         const titleInput = await driver.wait(until.elementLocated(By.css('[data-testid="workspace-title-input"]')), 10000);
         await titleInput.sendKeys(Key.chord(Key.CONTROL, "a"));
@@ -402,11 +463,12 @@ async function main() {
       await recordStep("title-persists-in-library", async () => {
         await driver.executeScript("location.hash = '#/library';");
         await driver.wait(until.elementLocated(By.css('[data-testid="library-page"]')), 15000);
-        const row = await driver.wait(until.elementLocated(By.css(`[data-item-id="${itemId}"]`)), 15000);
-        const rowText = (await row.getText()).replace(/\s+/g, " ").trim();
-        if (!rowText.includes("E2E 标题 42")) {
-          throw new Error(`题库行未显示新标题，实际：${rowText.slice(0, 120)}`);
-        }
+        // 题库列表异步重载：轮询到新标题出现为止，而不是导航后立即单读（会与刷新竞态）。
+        const rowText = await waitForRowText(driver, itemId, (text) => text.includes("E2E 标题 42"), 20000);
+        return { title: "E2E 标题 42", persisted: true, rowText: rowText.slice(0, 200) };
+      });
+
+      await recordStep("title-persists-in-workspace", async () => {
         // 回到工作区，标题也应保持（DB 权威，工作区从仓库读）。
         await openWorkspaceForItem(driver, itemId);
         // 加载完成后标题才来自 V2 仓库；轮询等待，避免读到 job.json 回退值。
@@ -421,6 +483,9 @@ async function main() {
       });
 
       await recordStep("publish-via-workspace-button", async () => {
+        // 本步骤自带前置导航：上一步无论成败，都先确保停在本题工作区再点发布。
+        // 否则「上一步失败 -> 停在题库 -> 找不到发布按钮」会被误记为发布失败（见 audit A11-F01 诊断）。
+        await openWorkspaceForItem(driver, itemId);
         await driver.findElement(By.css('[data-testid="workspace-publish"]')).click();
         const notice = await driver.wait(
           until.elementLocated(By.css(".workspace-notice")),
@@ -448,7 +513,11 @@ async function main() {
     const report = {
       runId,
       coverage: "real-tauri-process+webview2+sqlite+filesystem",
+      evidenceLevel: "product",
       exe: exePath,
+      exeMtime: new Date(exeMtimeMs).toISOString(),
+      newestSourceMtime: new Date(newestSourceMtimeMs).toISOString(),
+      staleBuild,
       pdf: pdfPath,
       driverPort: port,
       workspaceLoadBlocker: loadErrorText,

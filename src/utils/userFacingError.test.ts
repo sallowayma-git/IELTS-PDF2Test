@@ -1,0 +1,108 @@
+import { describe, expect, it } from "vitest";
+import { toUserFacingError, userMessageOf } from "./userFacingError";
+
+// 证据层级：pure unit（计划 §19.1 层 1）。断言「机器码 -> 人话」的稳定映射，
+// 一旦分类回归（例如又把原始机器码直送 UI）这些用例会失败。
+
+describe("toUserFacingError — 已知机器码分类", () => {
+  it("把 EDIT_VERSION_CONFLICT 归为 conflict 并给出刷新提示", () => {
+    const result = toUserFacingError(new Error("EDIT_VERSION_CONFLICT:current=2:base=1"));
+    expect(result.category).toBe("conflict");
+    expect(result.userMessage).toContain("刷新");
+    expect(result.internalDetail).toBe("EDIT_VERSION_CONFLICT:current=2:base=1");
+    expect(result.code).toBe("EDIT_VERSION_CONFLICT");
+  });
+
+  it("把 ITEM_DS_NOT_SEEDED / AUTHORING_V2_NOT_AVAILABLE 归为 not_ready", () => {
+    expect(toUserFacingError("ITEM_DS_NOT_SEEDED:import-1").category).toBe("not_ready");
+    expect(toUserFacingError("AUTHORING_V2_NOT_AVAILABLE:shadow_missing").category).toBe("not_ready");
+  });
+
+  it("把 ITEM_NOT_FOUND 归为 not_found", () => {
+    expect(toUserFacingError("ITEM_NOT_FOUND:abc").category).toBe("not_found");
+  });
+
+  it("把 authoring_v2_export_blocked 归为 validation", () => {
+    const result = toUserFacingError("authoring_v2_export_blocked:missing_options");
+    expect(result.category).toBe("validation");
+    expect(result.userMessage).toContain("发布");
+  });
+
+  it("把 requires_tauri_runtime 归为 runtime", () => {
+    expect(toUserFacingError("requires_tauri_runtime").category).toBe("runtime");
+  });
+
+  it("把 source_file_too_large 归为 too_large", () => {
+    expect(toUserFacingError("source_file_too_large:12345").category).toBe("too_large");
+  });
+
+  it("把权限类英文串归为 permission", () => {
+    expect(toUserFacingError("EACCES: permission denied").category).toBe("permission");
+    expect(toUserFacingError("filesystem is read-only").category).toBe("permission");
+  });
+
+  it("把 library_v2_tx 前缀归为 unknown 且给出可重试文案", () => {
+    const result = toUserFacingError("library_v2_tx_commit_failed");
+    expect(result.category).toBe("unknown");
+    expect(result.userMessage).toContain("保存");
+  });
+});
+
+describe("toUserFacingError — publish_check_failed 的结构化文案", () => {
+  it("提取 blockers 中第一条 userMessage", () => {
+    const payload = JSON.stringify({
+      blockers: [
+        { userMessage: "第 3 题缺少选项。" },
+        { userMessage: "第 4 题没有答案。" }
+      ]
+    });
+    const result = toUserFacingError(`publish_check_failed:${payload}`);
+    expect(result.category).toBe("validation");
+    expect(result.userMessage).toBe("第 3 题缺少选项。");
+    expect(result.code).toBe("publish_check_failed");
+  });
+
+  it("payload 无 userMessage 时退回通用发布提示", () => {
+    const result = toUserFacingError(`publish_check_failed:${JSON.stringify({ blockers: [{ code: "X" }] })}`);
+    expect(result.category).toBe("validation");
+    expect(result.userMessage).toContain("未完成");
+  });
+
+  it("payload 非法 JSON 时不抛出，退回通用发布提示", () => {
+    const result = toUserFacingError("publish_check_failed:{not json");
+    expect(result.category).toBe("validation");
+    expect(result.userMessage).toContain("未完成");
+    expect(result.internalDetail).toBe("publish_check_failed:{not json");
+  });
+});
+
+describe("toUserFacingError — 透传与兜底", () => {
+  it("已是中文人话的错误原样透传", () => {
+    const message = "这个选项已用作本题答案。";
+    const result = toUserFacingError(message);
+    expect(result.userMessage).toBe(message);
+    expect(result.internalDetail).toBe(message);
+  });
+
+  it("无法识别的纯 ASCII 机器串用兜底文案，但保留 internalDetail", () => {
+    const raw = "weird_internal_failure_mode";
+    const result = toUserFacingError(raw);
+    expect(result.category).toBe("unknown");
+    expect(result.userMessage).toBe("操作没有完成，请稍后重试。");
+    expect(result.internalDetail).toBe(raw);
+  });
+
+  it("支持自定义兜底文案", () => {
+    expect(toUserFacingError("opaque_ascii_code", "导入失败，请重试。").userMessage).toBe("导入失败，请重试。");
+  });
+
+  it("接受非 Error 值（字符串 / 对象）", () => {
+    expect(toUserFacingError("ITEM_NOT_FOUND").category).toBe("not_found");
+    expect(toUserFacingError({ toString: () => "ITEM_NOT_FOUND" }).category).toBe("not_found");
+  });
+
+  it("userMessageOf 只返回用户文案", () => {
+    expect(userMessageOf(new Error("EDIT_VERSION_CONFLICT"))).toContain("刷新");
+    expect(userMessageOf("plain_ascii_code")).toBe("操作没有完成，请稍后重试。");
+  });
+});
