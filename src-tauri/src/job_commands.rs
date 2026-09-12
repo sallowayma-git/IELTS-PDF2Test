@@ -15,10 +15,66 @@ use crate::{
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
-use std::{env, fs, path::PathBuf};
+use std::{env, fs, path::PathBuf, time::SystemTime};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
+
+/// Cleanup orphaned staged files that have no corresponding job reference.
+/// Files older than 24 hours in uploads directories matching the staging pattern
+/// are considered orphaned and removed.
+pub(crate) fn cleanup_orphaned_staged_files(root: &std::path::Path) -> CommandResult<u32> {
+    let jobs_root = root.join("jobs");
+    if !jobs_root.exists() {
+        return Ok(0);
+    }
+
+    // G1 对抗审计 P2：系统时钟早于 epoch+24h 时 checked_sub 防下溢回绕
+    // （回绕会把 24h 窗口变成巨大正值，误删活跃 staging 文件）。
+    let now_secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let cutoff = now_secs
+        .checked_sub(24 * 60 * 60)
+        .ok_or("orphan_cleanup_clock_before_window")?;
+
+    let mut cleaned = 0;
+
+    for entry in fs::read_dir(jobs_root).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let uploads_dir = entry.path().join("uploads");
+        if !uploads_dir.exists() {
+            continue;
+        }
+
+        for file_entry in fs::read_dir(&uploads_dir).map_err(|error| error.to_string())? {
+            let file_entry = file_entry.map_err(|error| error.to_string())?;
+            let file_path = file_entry.path();
+
+            // Only process files matching the staging pattern
+            if let Some(name) = file_path.file_name().and_then(|n| n.to_str()) {
+                if !name.starts_with(".staging-") {
+                    continue;
+                }
+
+                if let Ok(metadata) = fs::metadata(&file_path) {
+                    if let Ok(modified) = metadata.modified() {
+                        if let Ok(duration) = modified.duration_since(SystemTime::UNIX_EPOCH) {
+                            if duration.as_secs() < cutoff {
+                                if fs::remove_file(&file_path).is_ok() {
+                                    cleaned += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(cleaned)
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -193,7 +249,10 @@ pub(crate) fn stage_source_file(
     let (hash, size) = stage_file_with_hash(&input, &staging_path)?;
     let stored_name = format!("{}-{}", &hash[..8], sanitize_filename(&original_name));
     let final_path = uploads_dir.join(&stored_name);
-    if final_path.exists() {
+    // G1 对抗审计 P1-2：final_path 已存在（同 hash 重导复用既有文件）时，
+    // 该文件属于此前导入的 job——补偿删除只能针对本次新建的文件。
+    let created_final = !final_path.exists();
+    if !created_final {
         let _ = fs::remove_file(&staging_path);
     } else if let Err(error) = fs::rename(&staging_path, &final_path) {
         let _ = fs::remove_file(&staging_path);
@@ -213,11 +272,19 @@ pub(crate) fn stage_source_file(
         role: role.to_string(),
         imported_at: Utc::now(),
     };
-    update_job(&root, &job_id, |job| {
+
+    // Fix A4-F01: If update_job fails, delete the staged file to prevent orphans
+    if let Err(error) = update_job(&root, &job_id, |job| {
         job.source_files.push(source.clone());
         job.status = JobStatus::Working;
         job.current_step = WorkflowStep::DocumentReview;
-    })?;
+    }) {
+        if created_final {
+            let _ = fs::remove_file(&final_path);
+        }
+        return Err(error);
+    }
+
     Ok(source)
 }
 
@@ -307,4 +374,53 @@ pub(crate) async fn save_diagnostics_settings_core(
     let root = app_root(&app)?;
     ensure_app_dirs(&root)?;
     crate::diagnostics::write_diagnostics_settings(&root, &settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+    use uuid::Uuid;
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!("orphan-cleanup-{}", Uuid::new_v4().simple()))
+    }
+
+    /// G1/A4-F01：启动期孤儿清理只删超过 24h 的 `.staging-` 遗留文件，
+    /// 活跃导入（新 mtime）与非 staging 产物不受影响。
+    #[test]
+    fn cleanup_removes_only_stale_staging_files() {
+        let root = temp_root();
+        let uploads = root.join("jobs").join("job-1").join("uploads");
+        fs::create_dir_all(&uploads).unwrap();
+
+        let stale = uploads.join(".staging-old-deadbeef.pdf");
+        fs::write(&stale, b"stale").unwrap();
+        let fresh = uploads.join(".staging-fresh-cafebabe.pdf");
+        fs::write(&fresh, b"fresh").unwrap();
+        let kept = uploads.join("abcd1234-final.pdf");
+        fs::write(&kept, b"final").unwrap();
+        // 非 uploads 目录下的同名文件不受影响。
+        let stray = root.join("jobs").join("job-1").join(".staging-elsewhere.pdf");
+        fs::write(&stray, b"stray").unwrap();
+
+        // 把 stale 的 mtime 拨回 2 天前（std FileTimes，无需额外依赖）。
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let stale_time = std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(now_secs - 2 * 24 * 60 * 60);
+        let file = fs::OpenOptions::new().write(true).open(&stale).unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(stale_time)).unwrap();
+
+        let removed = cleanup_orphaned_staged_files(&root).unwrap();
+        assert_eq!(removed, 1, "只清理超过 24h 的 .staging- 文件");
+        assert!(!stale.exists());
+        assert!(fresh.exists(), "新 staged 文件不得误删");
+        assert!(kept.exists(), "非 staging 产物不得误删");
+        assert!(stray.exists(), "uploads 之外的文件不在清理范围");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

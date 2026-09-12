@@ -1513,6 +1513,18 @@ pub fn run() {
             ));
             app.manage(processing_state.clone());
             processing::scheduler::start(app.handle().clone(), processing_state);
+            // G1/A4-F01：启动期清理崩溃/断电遗留的孤儿 staged 文件
+            // （只删超过 24h 的 `.staging-` 遗留，不影响活跃导入；失败不阻断启动）。
+            {
+                let root = root.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    match job_commands::cleanup_orphaned_staged_files(&root) {
+                        Ok(0) => {}
+                        Ok(count) => eprintln!("[jobs] startup orphan cleanup removed {count} staged files"),
+                        Err(error) => eprintln!("[jobs] startup orphan cleanup failed: {error}"),
+                    }
+                });
+            }
             // M1：把旧题迁移到 library_items_v2（幂等；阻塞线程池里跑，不占 setup）。
             {
                 let root = root.clone();

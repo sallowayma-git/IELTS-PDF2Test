@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 2;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 3;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let transaction = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
@@ -42,6 +42,18 @@ fn migrations() -> Vec<(i64, &'static str)> {
         // v2：事件序号（M2）。`processing://item-updated` 携带可比较的状态版本，
         // 前端据此丢弃重复/乱序事件（计划 §3 接口契约）。
         (2, "ALTER TABLE processing_jobs_v2 ADD COLUMN event_seq INTEGER NOT NULL DEFAULT 0;"),
+        // v3：durable 取消标记（G1/A4-F02 + P0-2）。运行中任务的取消此前只存在
+        // 内存 HashSet，重启即丢并被恢复逻辑重新入队；现在落库，启动恢复时兑现。
+        // 同时修正旧版存量数据：旧恢复逻辑对"重试耗尽"路径也写 interrupted，
+        // 导致 UI 谎称已自动重试（stage=ready_for_review + action_required 组合
+        // 只可能来自旧耗尽路径；新代码该路径写 retry_exhausted）。
+        (
+            3,
+            "ALTER TABLE processing_jobs_v2 ADD COLUMN cancel_requested_at TEXT;
+             UPDATE processing_jobs_v2 SET last_error_code = 'retry_exhausted'
+             WHERE stage = 'ready_for_review' AND local_status = 'action_required'
+               AND last_error_code = 'interrupted';",
+        ),
     ]
 }
 

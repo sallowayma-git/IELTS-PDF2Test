@@ -37,12 +37,14 @@ pub(crate) struct ProcessingJobRow {
     pub retry_count: i64,
     pub lease_owner: Option<String>,
     pub lease_expires_at: Option<String>,
+    /// durable 取消标记（G1/P0-2）：运行中取消必须落库，重启后不再复活。
+    pub cancel_requested_at: Option<String>,
     pub event_seq: i64,
 }
 
 const JOB_COLUMNS: &str = "id, library_item_id, source_asset_id, stage, local_status, cloud_status, \
      reconcile_status, progress_json, actionable_count, last_error_code, retry_count, \
-     lease_owner, lease_expires_at, event_seq";
+     lease_owner, lease_expires_at, cancel_requested_at, event_seq";
 
 fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProcessingJobRow> {
     let progress_json: String = row.get("progress_json")?;
@@ -60,6 +62,7 @@ fn row_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProcessingJobRow> {
         retry_count: row.get("retry_count")?,
         lease_owner: row.get("lease_owner")?,
         lease_expires_at: row.get("lease_expires_at")?,
+        cancel_requested_at: row.get("cancel_requested_at")?,
         event_seq: row.get("event_seq")?,
     })
 }
@@ -96,12 +99,18 @@ pub(crate) fn claim_next(
     conn.execute_batch("BEGIN IMMEDIATE;")
         .map_err(|error| format!("processing_claim_begin:{error}"))?;
     let claimed = (|| -> CommandResult<Option<ProcessingJobRow>> {
+        // G1/A4-F05：lease 过期的 reclaim 不得复活任一阶段已成功的任务——
+        // 成功结果一旦落库，reclaim 重跑会覆盖它（数据损坏路径）。
+        // G1/P0-2：带 durable 取消标记的任务不得被认领，取消必须兑现。
         let job_id: Option<String> = conn
             .query_row(
                 "SELECT id FROM processing_jobs_v2
                  WHERE stage = 'queued'
                     OR (stage IN ('running', 'local_recognition', 'cloud_recognition', 'reconciling')
-                        AND (lease_expires_at IS NULL OR lease_expires_at < ?1))
+                        AND (lease_expires_at IS NULL OR lease_expires_at < ?1)
+                        AND cancel_requested_at IS NULL
+                        AND (local_status IS NULL OR local_status != 'succeeded')
+                        AND (cloud_status IS NULL OR cloud_status != 'succeeded'))
                  ORDER BY created_at LIMIT 1",
                 params![now],
                 |row| row.get(0),
@@ -175,17 +184,26 @@ pub(crate) fn advance_stage(
 ) -> CommandResult<Option<i64>> {
     let now = Utc::now().to_rfc3339();
     let lease_expires = (Utc::now() + Duration::seconds(LEASE_SECONDS)).to_rfc3339();
+    // G1/P0-1：终态（ready_for_review/failed/cancelled）释放 lease，避免
+    // 完成的任务残留过期 lease，也杜绝终态行被后续 renew/advance 命中。
+    let clear_lease = matches!(
+        stage,
+        STAGE_READY_FOR_REVIEW | STAGE_FAILED | STAGE_CANCELLED
+    );
+    // G1 对抗审计 P1-1（取消 TOCTOU）：内存取消检查与 advance 提交之间存在
+    // 窗口；durable 标记与推进在同一条 UPDATE 内判定——带取消标记的行推进
+    // 任何阶段时强制落 cancelled 并释放 lease，取消不可能被迟到结果穿透。
     let updated = conn
         .execute(
             "UPDATE processing_jobs_v2
-             SET stage = ?3,
+             SET stage = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE ?3 END,
                  local_status = COALESCE(?4, local_status),
                  cloud_status = COALESCE(?5, cloud_status),
                  reconcile_status = COALESCE(?6, reconcile_status),
                  actionable_count = COALESCE(?7, actionable_count),
                  last_error_code = COALESCE(?8, last_error_code),
-                 lease_owner = ?2,
-                 lease_expires_at = ?9,
+                 lease_owner = CASE WHEN ?11 OR cancel_requested_at IS NOT NULL THEN NULL ELSE ?2 END,
+                 lease_expires_at = CASE WHEN ?11 OR cancel_requested_at IS NOT NULL THEN NULL ELSE ?9 END,
                  event_seq = event_seq + 1,
                  updated_at = ?10
              WHERE id = ?1 AND lease_owner = ?2 AND lease_expires_at >= ?10",
@@ -199,7 +217,8 @@ pub(crate) fn advance_stage(
                 actionable_count,
                 last_error_code,
                 lease_expires,
-                now
+                now,
+                clear_lease
             ],
         )
         .map_err(|error| format!("processing_advance:{error}"))?;
@@ -227,10 +246,50 @@ pub(crate) fn get_job(conn: &Connection, job_id: &str) -> CommandResult<Option<P
     .map_err(|error| format!("processing_get:{error}"))
 }
 
+/// G1 对抗审计 P1-3：lease 丢失后的终态收尾。本地已成功 + 仍在运行阶段时，
+/// reclaim 守卫保证没有其他 worker 能接手（不会与在跑 worker 竞争），允许
+/// 免 lease 提交 ready_for_review，避免任务在"云端识别中"悬挂到重启。
+/// 带 durable 取消标记的行拒绝收尾（取消优先）。返回 false = 条件不满足。
+pub(crate) fn finalize_ready_without_lease(
+    conn: &Connection,
+    job_id: &str,
+    cloud_status: &str,
+    reconcile_status: &str,
+) -> CommandResult<bool> {
+    let now = Utc::now().to_rfc3339();
+    let updated = conn
+        .execute(
+            "UPDATE processing_jobs_v2
+             SET stage = 'ready_for_review',
+                 cloud_status = COALESCE(?2, cloud_status),
+                 reconcile_status = COALESCE(?3, reconcile_status),
+                 lease_owner = NULL, lease_expires_at = NULL,
+                 event_seq = event_seq + 1, updated_at = ?4
+             WHERE id = ?1
+               AND stage IN ('running', 'local_recognition', 'cloud_recognition', 'reconciling')
+               AND local_status = 'succeeded'
+               AND cancel_requested_at IS NULL",
+            params![job_id, cloud_status, reconcile_status, now],
+        )
+        .map_err(|error| format!("processing_finalize:{error}"))?;
+    Ok(updated > 0)
+}
+
 /// 启动恢复（计划 §12.5）：running 任务标记 interrupted；
 /// retry_count < 上限则重新入队，否则转入 action_required 等用户重试。
+/// G1/A4-F03：恢复上限路径的文案必须是"已达重试上限"，不得谎称已自动重试。
+/// G1/P0-2：用户已取消（durable 标记）的任务直接落 cancelled，不复活。
 pub(crate) fn recover_on_startup(conn: &Connection, max_auto_recovery: i64) -> CommandResult<usize> {
     let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE processing_jobs_v2
+         SET stage = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
+             last_error_code = 'cancelled', event_seq = event_seq + 1, updated_at = ?1
+         WHERE stage IN ('running', 'local_recognition', 'cloud_recognition', 'reconciling')
+           AND cancel_requested_at IS NOT NULL",
+        params![now],
+    )
+    .map_err(|error| format!("processing_recovery_cancelled:{error}"))?;
     let requeued = conn
         .execute(
             "UPDATE processing_jobs_v2
@@ -244,7 +303,7 @@ pub(crate) fn recover_on_startup(conn: &Connection, max_auto_recovery: i64) -> C
     conn.execute(
         "UPDATE processing_jobs_v2
          SET stage = 'ready_for_review', local_status = 'action_required',
-             last_error_code = 'interrupted', lease_owner = NULL, lease_expires_at = NULL,
+             last_error_code = 'retry_exhausted', lease_owner = NULL, lease_expires_at = NULL,
              event_seq = event_seq + 1, updated_at = ?2
          WHERE stage IN ('running', 'local_recognition', 'cloud_recognition', 'reconciling') AND retry_count >= ?1",
         params![max_auto_recovery, now],
@@ -261,6 +320,7 @@ pub(crate) fn retry(conn: &Connection, job_id: &str) -> CommandResult<bool> {
             "UPDATE processing_jobs_v2
              SET stage = 'queued', local_status = 'not_started', cloud_status = 'not_started',
                  reconcile_status = 'not_started', last_error_code = NULL,
+                 cancel_requested_at = NULL,
                  retry_count = retry_count + 1, lease_owner = NULL, lease_expires_at = NULL,
                  event_seq = event_seq + 1, updated_at = ?2
              WHERE id = ?1 AND stage IN ('failed', 'ready_for_review', 'cancelled')",
@@ -270,19 +330,33 @@ pub(crate) fn retry(conn: &Connection, job_id: &str) -> CommandResult<bool> {
     Ok(updated > 0)
 }
 
-/// 用户取消：queued 立即取消；running 由 worker 在阶段边界检查取消标记后收尾。
+/// 用户取消：queued 立即取消；running 落 durable 取消标记，由 worker 在阶段
+/// 边界检查后收尾（G1/P0-2：标记落库，重启恢复时也必须兑现，不得复活）。
 pub(crate) fn request_cancel(conn: &Connection, job_id: &str) -> CommandResult<bool> {
     let now = Utc::now().to_rfc3339();
-    let updated = conn
+    let cancelled = conn
         .execute(
             "UPDATE processing_jobs_v2
              SET stage = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
+                 cancel_requested_at = ?2,
                  event_seq = event_seq + 1, updated_at = ?2
              WHERE id = ?1 AND stage = 'queued'",
             params![job_id, now],
         )
         .map_err(|error| format!("processing_cancel:{error}"))?;
-    Ok(updated > 0)
+    if cancelled > 0 {
+        return Ok(true);
+    }
+    // running 阶段：只落标记，stage 仍由持有 lease 的 worker 推进到终态。
+    let marked = conn
+        .execute(
+            "UPDATE processing_jobs_v2
+             SET cancel_requested_at = ?2, event_seq = event_seq + 1, updated_at = ?2
+             WHERE id = ?1 AND stage IN ('running', 'local_recognition', 'cloud_recognition', 'reconciling')",
+            params![job_id, now],
+        )
+        .map_err(|error| format!("processing_cancel_mark:{error}"))?;
+    Ok(marked > 0)
 }
 
 #[cfg(test)]
@@ -373,5 +447,169 @@ mod tests {
         assert!(retry(&conn, "job-1").unwrap());
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.stage, STAGE_QUEUED);
+        assert!(row.cancel_requested_at.is_none(), "retry 必须清除 durable 取消标记");
+    }
+
+    // ── G1 数据安全护栏回归 ────────────────────────────────────────────
+
+    /// G1/A4-F05：lease 过期的 reclaim 不得复活任一阶段已成功的任务。
+    #[test]
+    fn reclaim_never_resurrects_succeeded_stages() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-a").unwrap();
+        // 本地已成功、推进到云端阶段后 worker 死亡、lease 过期。
+        advance_stage(&conn, "job-1", "worker-a", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None).unwrap();
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET lease_expires_at = '2020-01-01T00:00:00Z' WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
+        assert!(
+            claim_next(&conn, "worker-b").unwrap().is_none(),
+            "local 已成功的任务不得被 reclaim 重跑"
+        );
+        // 云端也成功（worker 在收尾前死亡）：恢复 lease 后收尾，终态必须释放 lease。
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET lease_expires_at = '2099-01-01T00:00:00Z' WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
+        advance_stage(&conn, "job-1", "worker-a", STAGE_READY_FOR_REVIEW, None, Some("succeeded"), Some("succeeded"), None, None).unwrap();
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.lease_owner, None, "G1/P0-1：终态必须释放 lease");
+        // 对照：两个阶段都未成功的过期任务仍可 reclaim（恢复路径不受影响）。
+        enqueue(&conn, "job-2", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-c").unwrap();
+        advance_stage(&conn, "job-2", "worker-c", STAGE_LOCAL_RECOGNITION, Some("running"), None, None, None, None).unwrap();
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET lease_expires_at = '2020-01-01T00:00:00Z' WHERE id = 'job-2'",
+            [],
+        )
+        .unwrap();
+        assert!(claim_next(&conn, "worker-d").unwrap().is_some());
+    }
+
+    /// G1/A4-F03：恢复上限路径必须写 retry_exhausted（UI 据此停止谎报"已自动重试"）。
+    #[test]
+    fn recover_on_startup_marks_retry_exhausted() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-a").unwrap();
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET retry_count = 3 WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
+        let requeued = recover_on_startup(&conn, 3).unwrap();
+        assert_eq!(requeued, 0);
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_READY_FOR_REVIEW);
+        assert_eq!(row.local_status, "action_required");
+        assert_eq!(
+            row.last_error_code.as_deref(),
+            Some("retry_exhausted"),
+            "恢复上限后不得保留 interrupted（谎称已自动重试）"
+        );
+    }
+
+    /// G1 对抗审计 P1-1（取消 TOCTOU）：内存取消检查与 advance 提交之间
+    /// 发生的取消必须被 advance 原子捕获——带 durable 标记的行推进任何
+    /// 阶段都强制落 cancelled 并释放 lease，迟到结果不得穿透到 ready。
+    #[test]
+    fn advance_with_durable_cancel_marker_lands_cancelled() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-a").unwrap();
+        advance_stage(&conn, "job-1", "worker-a", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None).unwrap();
+
+        // 用户在检查之后、提交之前取消（落 durable 标记，不动 stage）。
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET cancel_requested_at = '2026-09-12T00:00:00Z' WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
+
+        // worker 按原计划推进 ready：必须被强制落 cancelled。
+        let seq = advance_stage(&conn, "job-1", "worker-a", STAGE_READY_FOR_REVIEW, Some("succeeded"), Some("succeeded"), Some("succeeded"), None, None)
+            .unwrap()
+            .expect("lease 仍有效时推进必须成功（但落 cancelled）");
+        assert!(seq > 0);
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_CANCELLED, "迟到结果不得穿透取消");
+        assert_eq!(row.lease_owner, None);
+    }
+
+    /// G1 对抗审计 P1-3：lease 丢失后的免 lease 终态收尾；取消标记优先、
+    /// 未完成阶段拒绝收尾。
+    #[test]
+    fn finalize_ready_without_lease_only_for_succeeded_local() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-a").unwrap();
+        advance_stage(&conn, "job-1", "worker-a", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None).unwrap();
+
+        // local 未成功时拒绝收尾。
+        conn.execute("UPDATE processing_jobs_v2 SET local_status = 'running' WHERE id = 'job-1'", []).unwrap();
+        assert!(!finalize_ready_without_lease(&conn, "job-1", "succeeded", "succeeded").unwrap());
+
+        // local 成功后允许收尾（模拟 lease 已丢、advance 返回 None 的场景）。
+        conn.execute("UPDATE processing_jobs_v2 SET local_status = 'succeeded' WHERE id = 'job-1'", []).unwrap();
+        assert!(finalize_ready_without_lease(&conn, "job-1", "succeeded", "succeeded").unwrap());
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_READY_FOR_REVIEW);
+        assert_eq!(row.cloud_status, "succeeded");
+        assert_eq!(row.lease_owner, None);
+
+        // 带 durable 取消标记的行拒绝收尾（取消优先于迟到结果）。
+        enqueue(&conn, "job-2", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-b").unwrap();
+        advance_stage(&conn, "job-2", "worker-b", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None).unwrap();
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET cancel_requested_at = '2026-09-12T00:00:00Z' WHERE id = 'job-2'",
+            [],
+        )
+        .unwrap();
+        assert!(!finalize_ready_without_lease(&conn, "job-2", "succeeded", "succeeded").unwrap());
+    }
+
+    /// G1/A4-F02 + P0-2：运行中取消必须落 durable 标记；重启恢复兑现取消，
+    /// 不得把已取消任务重新入队；认领路径不得捡起带取消标记的任务。
+    #[test]
+    fn durable_cancel_survives_restart() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-a").unwrap();
+        advance_stage(&conn, "job-1", "worker-a", STAGE_LOCAL_RECOGNITION, Some("running"), None, None, None, None).unwrap();
+
+        // 用户取消运行中任务：stage 不变（worker 收尾），但标记落库。
+        assert!(request_cancel(&conn, "job-1").unwrap());
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_LOCAL_RECOGNITION);
+        assert!(row.cancel_requested_at.is_some(), "运行中取消必须持久化");
+
+        // lease 过期后也不得被其他 worker 认领（取消必须兑现）。
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET lease_expires_at = '2020-01-01T00:00:00Z' WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
+        assert!(claim_next(&conn, "worker-b").unwrap().is_none());
+
+        // 重启恢复：带取消标记的任务直接落 cancelled，不复活。
+        recover_on_startup(&conn, 3).unwrap();
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_CANCELLED);
+
+        // 用户重试后标记清除，任务可重新入队。
+        assert!(retry(&conn, "job-1").unwrap());
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_QUEUED);
+        assert!(row.cancel_requested_at.is_none());
     }
 }

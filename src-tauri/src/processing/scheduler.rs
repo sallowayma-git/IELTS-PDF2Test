@@ -17,8 +17,9 @@ use tauri::{AppHandle, Emitter};
 
 
 use super::queue::{
-    self, advance_stage, claim_next, get_job, renew_lease, request_cancel, retry,
-    STAGE_CLOUD_RECOGNITION, STAGE_FAILED, STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
+    self, advance_stage, claim_next, finalize_ready_without_lease, get_job, renew_lease,
+    request_cancel, retry, STAGE_CLOUD_RECOGNITION, STAGE_FAILED, STAGE_LOCAL_RECOGNITION,
+    STAGE_READY_FOR_REVIEW,
 };
 use crate::auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
 use crate::library::repository::open_library_connection;
@@ -89,6 +90,10 @@ fn display_message(stage: &str, error: Option<&str>) -> String {
     if let Some(code) = error {
         return match code {
             "interrupted" => "上次运行被中断，已自动排队重试。".to_string(),
+            // G1/A4-F03：恢复上限路径不得谎称"已自动排队重试"。
+            "retry_exhausted" => "已达到自动恢复上限，请手动重试。".to_string(),
+            // G1 对抗审计 P2：恢复兑现的取消不得显示成"识别失败"。
+            "cancelled" => "已取消。".to_string(),
             _ => "识别失败，可以重试。".to_string(),
         };
     }
@@ -171,7 +176,7 @@ pub(crate) async fn cancel(state: Arc<ProcessingState>, app: AppHandle, job_id: 
     state.cancelled.write().await.insert(job_id.to_string());
     let root = app_root(&app)?;
     let job_id_owned = job_id.to_string();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let conn = open_library_connection(&root)?;
         request_cancel(&conn, &job_id_owned)?;
         if let Some(job) = get_job(&conn, &job_id_owned)? {
@@ -180,7 +185,14 @@ pub(crate) async fn cancel(state: Arc<ProcessingState>, app: AppHandle, job_id: 
         Ok(())
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
+    .and_then(|inner| inner);
+    if result.is_err() {
+        // G1 对抗审计 P2：durable 标记落库失败时不得残留内存取消标记，
+        // 否则下次同 id 重试会被幽灵取消吞掉。
+        state.cancelled.write().await.remove(job_id);
+    }
+    result
 }
 
 pub(crate) async fn retry_job(state: Arc<ProcessingState>, app: AppHandle, job_id: &str) -> Result<(), String> {
@@ -290,6 +302,12 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         fail_job(&app, &state, &job_id, &error).await;
         return;
     }
+    // G1/A4-F02：本地识别期间发生的取消必须在此兑现；否则无云端路径会
+    // 直接推进 ready_for_review，取消被静默吞掉。
+    if state.cancelled.read().await.contains(&job_id) {
+        finish_cancelled(&app, &state, &job_id).await;
+        return;
+    }
 
     // ── 云端识别（可选；独立 permit；失败不取消本地结果）──────────────
     let cloud_enabled = job
@@ -341,7 +359,13 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             Ok(Ok(_)) => "succeeded",
             Ok(Err(_)) | Err(_) => "failed",
         };
-        if advance(
+        // G1/A4-F02：云端执行期间发生的取消必须在推进 ready 之前兑现，
+        // 迟到的云端结果不得把已取消的任务推进到可检查状态。
+        if state.cancelled.read().await.contains(&job_id) {
+            finish_cancelled(&app, &state, &job_id).await;
+            return;
+        }
+        let advance_result = advance(
             &app,
             &state,
             &job_id,
@@ -352,11 +376,28 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             None,
             None,
         )
-        .await
-        .is_some()
-        {
-            set_item_status_ready(&app, &job_id).await;
+        .await;
+        if advance_result.is_none() {
+            // G1 对抗审计 P1-3：lease 丢失（如睡眠唤醒、心跳瞬断）时允许
+            // 免 lease 终态收尾——local 已成功 + reclaim 守卫保证无人接手。
+            let finalized = tauri::async_runtime::spawn_blocking({
+                let root = root.clone();
+                let job_id = job_id.clone();
+                let cloud_status = cloud_status.to_string();
+                move || {
+                    let conn = open_library_connection(&root)?;
+                    finalize_ready_without_lease(&conn, &job_id, &cloud_status, "succeeded")
+                }
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|inner| inner)
+            .unwrap_or(false);
+            if !finalized {
+                return;
+            }
         }
+        set_item_status_ready(&app, &job_id).await;
         return;
     }
 
@@ -488,6 +529,14 @@ async fn set_item_status_ready(app: &AppHandle, job_id: &str) {
     let Ok(root) = app_root(app) else { return };
     let job_id = job_id.to_string();
     let _ = tauri::async_runtime::spawn_blocking(move || {
+        // G1 对抗审计：advance 可能因 durable 取消标记被强制落 cancelled；
+        // 已取消/失败的任务不得再把 library item 推成 ready/action_required。
+        let conn0 = open_library_connection(&root)?;
+        if let Some(job) = queue::get_job(&conn0, &job_id)? {
+            if matches!(job.stage.as_str(), "cancelled" | "failed") {
+                return Ok(());
+            }
+        }
         crate::library::migration::migrate_single_item(&root, &job_id)?;
         let conn = open_library_connection(&root)?;
         let status = crate::library::repository::get_canonical_ds(&conn, &job_id)?

@@ -270,4 +270,45 @@ mod tests {
         assert_eq!(get_canonical_ds(&conn, "job-a").unwrap().unwrap().0, saved);
         let _ = fs::remove_dir_all(root);
     }
+
+    /// G1/A7-F02 故障注入：用户编辑 canonical 之后，迟到的识别收尾
+    /// （调度器 set_item_status_ready 会重跑 migrate_single_item）与迟到的
+    /// 云端候选都不得覆盖用户编辑。锁定「user_edited 只增不覆盖」不变量。
+    #[test]
+    fn late_pipeline_completion_preserves_user_edited_canonical() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        seed_job(&root, "job-a", true);
+        migrate_existing_items(&root).unwrap();
+
+        // 用户编辑标题（真实编辑事务路径，版本推进）。
+        let conn = super::super::repository::open_library_connection(&root).unwrap();
+        let input = crate::library::repository::ApplyEditorCommandsInput {
+            item_id: "job-a".into(),
+            base_version: 1,
+            request_id: None,
+            commands: vec![],
+            title: Some("用户改的标题".into()),
+        };
+        let mut tx_conn = conn;
+        crate::library::repository::apply_editor_commands_tx(
+            &mut tx_conn,
+            &input,
+            &|_, _| Ok(()),
+            &|_| Ok(()),
+        )
+        .unwrap();
+
+        // 迟到的识别收尾：调度器在 ready 阶段会再次调用 migrate_single_item
+        // （返回值 false = 无需修复，不表示失败；关键是不覆盖 canonical）。
+        let _ = migrate_single_item(&root, "job-a").unwrap();
+        let (ds, version) = get_canonical_ds(&tx_conn, "job-a").unwrap().unwrap();
+        assert_eq!(
+            ds.pointer("/exam/title").and_then(Value::as_str),
+            Some("用户改的标题"),
+            "迟到收尾不得覆盖用户编辑"
+        );
+        assert_eq!(version, 2, "用户编辑推进的版本不得被重置");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

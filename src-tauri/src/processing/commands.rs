@@ -118,17 +118,43 @@ pub(crate) fn import_files_at_root(root: &std::path::Path, input: ImportFilesInp
             input.cloud_profile_id.as_deref(),
         );
         if let Err(error) = queue_result {
-            // 文件已落地但队列失败：明确失败状态，不留「永远 Processing」的悬挂行（计划 §12.2）。
+            // G1/A4-F01：queue 失败必须补偿——磁盘 job 目录（含 staged 文件）
+            // 与可能残留的 DB 行一并清除，不留「磁盘有 job、DB 无可见行」的孤儿；
+            // 以 rejected 明确告知用户（原始文件未被移动或修改）。
             rejected.push(ImportRejectedFile { name: file.name.clone(), reason: error });
-            if let Ok(conn) = open_library_connection(&root) {
-                let _ = set_item_status(&conn, &job_id, "failed");
-            }
+            compensate_failed_import(root, &job_id);
             continue;
         }
         created.push(ImportCreatedItem { item_id: job_id, title });
     }
 
     Ok(ImportFilesResult { created, rejected })
+}
+
+/// G1/A4-F01 补偿删除：queue_import 失败后清空本次导入的痕迹。
+/// queue_import 是单事务，正常失败时 DB 无行；commit 歧义时可能有行残留，
+/// 因此 DB 清理尽力而为。job 目录（job.json + uploads staged 文件）一并删除。
+fn compensate_failed_import(root: &std::path::Path, job_id: &str) {
+    let dir = crate::util::job_dir(root, job_id);
+    if dir.exists() {
+        if let Err(error) = std::fs::remove_dir_all(&dir) {
+            eprintln!("[import] compensate: remove job dir {job_id} failed: {error}");
+        }
+    }
+    if let Ok(conn) = open_library_connection(root) {
+        if let Err(error) = conn.execute(
+            "DELETE FROM processing_jobs_v2 WHERE id = ?1",
+            [job_id],
+        ) {
+            eprintln!("[import] compensate: delete queue row {job_id} failed: {error}");
+        }
+        if let Err(error) = conn.execute(
+            "DELETE FROM library_items_v2 WHERE id = ?1",
+            [job_id],
+        ) {
+            eprintln!("[import] compensate: delete item shell {job_id} failed: {error}");
+        }
+    }
 }
 
 /// 数据库收尾：library 外壳 + 处理任务入队（独立短写）。
@@ -182,4 +208,48 @@ fn format_bytes(bytes: u64) -> String {
 /// import_files 的返回转 Value 供 Tauri 命令层使用。
 pub(crate) fn import_files_result_to_value(result: ImportFilesResult) -> Value {
     serde_json::to_value(result).unwrap_or(json!({"created": [], "rejected": []}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!("import-comp-{}", Uuid::new_v4().simple()))
+    }
+
+    /// G1/A4-F01：queue 失败（DB 打不开）时补偿删除 job 目录与 DB 残留，
+    /// 不留「磁盘有 job、DB 无可见行」的孤儿；用户拿到明确的 rejected 结果。
+    #[test]
+    fn queue_failure_compensates_and_rejects() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+        // 失败注入：把 authoring_hub.db 占位成目录 → Connection::open 必然失败。
+        fs::create_dir_all(root.join("authoring_hub.db")).unwrap();
+        let source = root.join("sample.pdf");
+        fs::write(&source, b"%PDF-1.4 fake").unwrap();
+
+        let input = ImportFilesInput {
+            files: vec![ImportFileInput {
+                path: source.to_string_lossy().to_string(),
+                name: "sample.pdf".to_string(),
+                size_bytes: 13,
+                title_hint: None,
+            }],
+            cloud_enabled: Some(false),
+            cloud_profile_id: None,
+        };
+        let result = import_files_at_root(&root, input).unwrap();
+        assert!(result.created.is_empty(), "queue 失败的文件不得计入 created");
+        assert_eq!(result.rejected.len(), 1, "失败必须以 rejected 明确告知");
+        let jobs_dir = root.join("jobs");
+        let leftover = fs::read_dir(&jobs_dir)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(leftover, 0, "queue 失败后不得留下 job 目录孤儿");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

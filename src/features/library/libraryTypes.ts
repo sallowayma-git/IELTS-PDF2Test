@@ -124,13 +124,28 @@ export function deriveStage(job: ImportJob | undefined, summary: LibraryExamSumm
   }
 }
 
-function detailFor(stage: LibraryStageV1, job: ImportJob | undefined, actionable: number): string | undefined {
+function detailFor(
+  stage: LibraryStageV1,
+  job: ImportJob | undefined,
+  actionable: number,
+  v2?: LibraryItemSummaryV2
+): string | undefined {
   if (stage === "local") return "正在读取原文件并识别题目";
   if (stage === "cloud") return "本地识别完成 · 云端识别中";
   if (stage === "reconciling") return "正在合并本地与云端结果";
   if (stage === "queued") return "等待开始识别";
-  if (stage === "action_required") return actionable > 0 ? `${actionable} 处需要确认` : "有内容需要确认";
-  if (stage === "failed") return "识别失败，可以重试";
+  if (stage === "action_required") {
+    // G1/A4-F03：恢复上限路径不得谎称"已自动排队重试"，按真实错误码给出人话。
+    const errorCode = v2?.processing?.lastErrorCode;
+    if (errorCode === "retry_exhausted") return "已达到自动恢复上限，请手动重试";
+    if (errorCode === "interrupted") return "已自动排队重试";
+    return actionable > 0 ? `${actionable} 处需要确认` : "有内容需要确认";
+  }
+  if (stage === "failed") {
+    // G1 对抗审计：用户主动取消的行不得显示成"识别失败，可以重试"。
+    if (v2?.processing?.stage === "cancelled") return "已取消";
+    return "识别失败，可以重试";
+  }
   if (stage === "published") return job?.status === "Cleaned" ? "已发布并清理过程文件" : "已发布";
   return undefined;
 }
@@ -150,7 +165,15 @@ export function buildRow(
     ready: "ready", action_required: "action_required", published: "published", failed: "failed",
     processing: "queued", migration_required: "action_required"
   };
-  const stage = (v2?.processing ? processingStage[v2.processing.stage] : undefined)
+  // G1/A4-F03：重启恢复把任务停在 ready_for_review + action_required，但
+  // library_items_v2.status 仍是 processing；不识别这个组合会把重试耗尽的
+  // 条目显示成"排队中"。识别后按真实状态展示并让 detailFor 读错误码。
+  const stage: LibraryStageV1 =
+    (v2?.processing
+      ? v2.processing.stage === "ready_for_review" && v2.processing.localStatus === "action_required"
+        ? ("action_required" as LibraryStageV1)
+        : processingStage[v2.processing.stage]
+      : undefined)
     ?? (v2 ? itemStage[v2.status] : undefined) ?? deriveStage(job, summary);
   const actionable = actionableFrom(job?.issueCounts) || (summary?.issueErrors ?? 0);
   return {
@@ -159,7 +182,7 @@ export function buildRow(
     title: v2?.title ?? job?.title ?? summary?.title ?? id,
     modality: summary?.subject === "writing" ? "writing" : "reading",
     stage,
-    detail: detailFor(stage, job, actionable),
+    detail: detailFor(stage, job, actionable, v2),
     progressPercent: job && isProcessingStage(stage) ? STEP_PROGRESS[job.currentStep] : undefined,
     actionableCount: actionable,
     category: summary?.category ?? job?.category,
