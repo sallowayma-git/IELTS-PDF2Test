@@ -2,7 +2,8 @@
 
 > 权威计划：`../IELTS_PDF2Test_Product_Simplification_Dual_Recognition_WYSIWYG_Plan_CN.md`
 > 汇总报告：`./00-CONSOLIDATED-REPORT.md`；发现登记：`./findings.md`
-> 审计基线：`47a3806` + 43 项未提交改动（**基线未冻结，见 findings §0/R6**）
+> 审计基线（审计期间）：`47a3806` + 43 项未提交改动（审计过程中工作树被并发修改，见 findings §0/R6）
+> **已固化基线**：`6affc571f43b175ffdb5a13d1823ba6f2d4962a3`（2026-09-12 冻结，`npm run check` / `cargo check --locked` 均通过）
 
 ## 本轮目标
 
@@ -25,7 +26,7 @@
 
 | # | 行动 | 依赖 | 风险 |
 |---|---|---|---|
-| 1 | **固化基线**：`git add -A && git commit`，记录 SHA | 需用户确认（工作树含他人进行中改动） | 与并行写入者冲突 |
+| 1 | ~~**固化基线**~~ **已完成**：提交为 `6affc57`，并重录 `fixtures/product-baseline.json`（`--reason` 门已过，strict 校验 `no drift`） | — | — |
 | 2 | **修正计划文档事实层**：§1.2 前端清单、§1.5 缺口矩阵、§10.1 前提、§16/§17 路径、附录 A 失效路径、§26 结论措辞 | 无 | 低（文档） |
 | 3 | **补产品级验收门**：修 `title-persists` / `publish` 两个失败步骤；补 `tauri-workspace-edit.mjs`、`tauri-publish.mjs`；接入 CI | 需真实 Tauri 运行环境 | 中 |
 | 4 | **修数据正确性缺陷**：A4-F01 导入失败孤儿、A4-F02 取消被吞、A3-F04 空操作开关、A7-F04 原始错误码直送 UI | 无 | 中（产品代码） |

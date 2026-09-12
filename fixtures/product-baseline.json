@@ -1,10 +1,10 @@
 {
-  "recordedAt": "2026-09-05T11:42:30.631Z",
+  "recordedAt": "2026-09-12T10:52:34.854Z",
   "surface": {
-    "commitSha": "401ca76f44d6b2a1f0d76cfcc2ca2d94e629fd87",
+    "commitSha": "6affc571f43b175ffdb5a13d1823ba6f2d4962a3",
     "schemaHash": {
       "files": 40,
-      "sha256": "13096e6130b9831fb89a00c5c743ea02e266372795a4dc0ac5b006f1a6b4be81"
+      "sha256": "640a09516984ef44583c79b0b60679516ed8b1b0a895d9fe991f68db77ab7ec0"
     },
     "corpus": {
       "publicSyntheticPdf": [
@@ -97,6 +97,7 @@
       "apply_vision_answer_candidates",
       "apply_vision_transcription",
       "build_authoring_ir",
+      "cancel_processing",
       "choose_export_dir",
       "create_import_job",
       "create_writing_job",
@@ -119,6 +120,7 @@
       "get_library_stats",
       "get_workspace_item",
       "get_writing_job",
+      "import_files",
       "import_source_file",
       "list_jobs",
       "list_library_exams",
@@ -128,14 +130,17 @@
       "list_writing_jobs",
       "llm_classify_group",
       "llm_extract_group",
+      "open_source_file",
       "parse_document",
       "pick_pdf_folder_sources",
+      "publish_items",
       "publish_nas_package_v2",
       "render_group_html",
       "rerun_ocr",
       "resolve_authoring_asset_preview",
       "resolve_source_review",
       "restore_library_exam",
+      "retry_processing",
       "reveal_job_folder",
       "run_auto_pipeline",
       "run_cloud_review",
@@ -232,23 +237,23 @@
       }
     },
     "productModules": {
-      "src/features": 14,
-      "src/exam-canvas": 4,
+      "src/features": 15,
+      "src/exam-canvas": 5,
       "src/styles": 10
     },
     "fileSizes": {
       "src/styles.css": 582,
-      "src/app/App.tsx": 1452,
-      "src/app/router.ts": 5305,
+      "src/app/App.tsx": 1468,
+      "src/app/router.ts": 5481,
       "src/components/AppShell.tsx": 2145,
       "src/exam-canvas/ExamCanvas.tsx": 29680,
       "src/pages/UnifiedPreview.tsx": 66337,
       "src/pages/StructuredAuthoringEditorV2.tsx": 55479,
-      "src/services/devFallbackBackend.ts": 172978,
-      "src-tauri/src/lib.rs": 452742,
+      "src/services/devFallbackBackend.ts": 176325,
+      "src-tauri/src/lib.rs": 455095,
       "src-tauri/src/authoring_pipeline.rs": 547026,
-      "src-tauri/src/auto_pipeline.rs": 116127,
-      "src-tauri/src/ielts_grammar/mod.rs": 112627
+      "src-tauri/src/auto_pipeline.rs": 116076,
+      "src-tauri/src/ielts_grammar/mod.rs": 112649
     }
   },
   "changeLog": [
@@ -270,6 +275,24 @@
         "  fileSizes.src/services/devFallbackBackend.ts: 173269 -> 172978 B (-291, -0.2%)",
         "  commitSha: 5daa04f4be3d0cce4fe4a45756da1d780e367789 -> 401ca76f44d6b2a1f0d76cfcc2ca2d94e629fd87",
         "  schemaHash: 39bea98acf45 (39 files) -> 13096e6130b9 (40 files)"
+      ]
+    },
+    {
+      "at": "2026-09-12T10:52:34.844Z",
+      "commit": "6affc571f43b175ffdb5a13d1823ba6f2d4962a3",
+      "reason": "冻结 2026-09-12 审计基线（6affc57）：M2 持久化处理队列上线（新增 cancel_processing/import_files/open_source_file/publish_items/retry_processing 五条命令，前端 2 秒轮询改为 processing://item-updated 事件订阅）；M4 起步引入 recognition/local QuestionLayoutGraphV1（仅附加 artifact，未接入识别主链）；新增结构编辑模块 exam-canvas/structureActions 与 features/editor/SelectionInspector；schemaHash 随 contracts 更新。",
+      "driftSummary": [
+        "  tauriCommands: added cancel_processing, import_files, open_source_file, publish_items, retry_processing",
+        "  fileSizes.src-tauri/src/auto_pipeline.rs: 116127 -> 116076 B (-51, -0.0%)",
+        "  fileSizes.src-tauri/src/ielts_grammar/mod.rs: 112627 -> 112649 B (+22, 0.0%)",
+        "  fileSizes.src-tauri/src/lib.rs: 452742 -> 455095 B (+2353, 0.5%)",
+        "  fileSizes.src/app/App.tsx: 1452 -> 1468 B (+16, 1.1%)",
+        "  fileSizes.src/app/router.ts: 5305 -> 5481 B (+176, 3.3%)",
+        "  fileSizes.src/services/devFallbackBackend.ts: 172978 -> 176325 B (+3347, 1.9%)",
+        "  productModules.src/features: 14 -> 15 files",
+        "  productModules.src/exam-canvas: 4 -> 5 files",
+        "  commitSha: 401ca76f44d6b2a1f0d76cfcc2ca2d94e629fd87 -> 6affc571f43b175ffdb5a13d1823ba6f2d4962a3",
+        "  schemaHash: 13096e6130b9 (40 files) -> 640a09516984 (40 files)"
       ]
     }
   ]

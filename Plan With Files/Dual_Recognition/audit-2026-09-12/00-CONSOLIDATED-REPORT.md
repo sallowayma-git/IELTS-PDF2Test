@@ -32,6 +32,21 @@
 
 **建议**：任何后续审计或施工前，先 `git add -A && git commit` 固化基线并记录 SHA。当前状态下，"计划 vs 代码"的逐条比对**不可复现**——这正是 A1-F01、A12-F11 指出的问题在工作树层面的重演。
 
+### 0.1 处置结果（2026-09-12 已执行）
+
+基线已按用户确认固化：
+
+| 项 | 结果 |
+|---|---|
+| 固化提交 | **`6affc571f43b175ffdb5a13d1823ba6f2d4962a3`** |
+| 提交信息 | `chore(baseline): freeze reproducible baseline for the 2026-09-12 audit` |
+| 提交前校验 | `npm run check` 通过；`cargo check --locked` 通过（88 warnings，0 errors） |
+| 密钥扫描 | 仅命中测试夹具 `lib.rs:2292` `"apiKey": "sk-profile-secret"`，非真实凭据 |
+| 基线记录重录 | `fixtures/product-baseline.json`：`401ca76` → `6affc57`（修掉 A11-F12 的 `commitSha` 过期）；`--strict` 校验 **`no drift`** |
+| 刻意排除 | `.workbuddy/memory/*`（并行会话草稿）未入库 |
+
+**仍存在的动态性**：提交后 `src-tauri/src/product_chain.rs` 又被并行写入者改写。该改动属于 `6affc57` **之后**的新基线，本报告全部结论以 `6affc57` 为准。
+
 ---
 
 ## 1. 主线程独立校验结果

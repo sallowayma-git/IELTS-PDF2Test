@@ -24,6 +24,15 @@
 - 产出汇总报告 `00-CONSOLIDATED-REPORT.md`、发现登记 `findings.md`、本文件与 `task_plan.md`。
 - 未修改任何产品代码、配置或计划正文；未提交工作树。
 
+## 2026-09-12 基线固化（用户确认后执行）
+
+- 安全前置检查：对全部待入库文件做密钥扫描，命中仅 `lib.rs:2292` 的测试夹具 `"apiKey": "sk-profile-secret"`，非真实凭据；`.workbuddy/memory/*` 判定为并行会话草稿，**刻意排除在提交之外**。
+- 提交前复核：`npm run check` 通过、`cargo check --locked` 通过（88 warnings，0 errors）；确认 `question_blocks.rs` 在 11:46 后仍被并行改写，但当前瞬间可编译。
+- 固化提交：**`6affc571f43b175ffdb5a13d1823ba6f2d4962a3`**（`chore(baseline): freeze reproducible baseline for the 2026-09-12 audit`），含 M2 处理队列、M1 数据层与修复、M4 起步模块、结构编辑模块、三轮审计追踪目录。
+- 基线记录重录：`fixtures/product-baseline.json` 由 `401ca76` 更新至 `6affc57`（修掉 A11-F12 的 `commitSha` 过期问题），`--reason` 门通过。
+- 复核：`npm run verify:product-baseline:strict` → **`no drift from the recorded product surface.`**（exit 0）。
+- 观察：提交后 `src-tauri/src/product_chain.rs` 又被并行写入者改写——该改动属 `6affc57` 之后的新基线，未纳入本次冻结。
+
 ## 统计
 
 - 断言核对：437 条

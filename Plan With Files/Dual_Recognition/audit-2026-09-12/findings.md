@@ -54,6 +54,9 @@
 
 审计窗口内新增未跟踪模块 `src-tauri/src/recognition/local/`（mtime 11:44:30 / 11:47:02），`auto_pipeline.rs`（11:43:48）同时被改写以引用它。**结论具有时序性，且当前工作树不可复现。**
 
+**后续处置（2026-09-12）**：已按用户确认固化基线为 **`6affc571f43b175ffdb5a13d1823ba6f2d4962a3`**，并重录 `fixtures/product-baseline.json`（`--reason` 门通过，`--strict` 校验 `no drift`）。
+并行写入者在本轮期间持续活动（提交后 `src-tauri/src/product_chain.rs` 仍被改写），因此**该 SHA 之后的新改动属于新基线**，本报告所有结论以 `6affc57` 为准。
+
 ### R7. 构建校验 —— **确认 F01 已修复**
 
 `npm run check` 通过；`cargo check --manifest-path src-tauri/Cargo.toml --locked` 通过（12.49s，88 warnings）。
