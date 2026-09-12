@@ -15,6 +15,7 @@
 // 全部落到本次运行的临时目录，不污染真实用户数据。
 
 import { spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -160,32 +161,108 @@ export function assertPrerequisites({ exePath, pdfPath }) {
 
 export function buildFreshness(exePath) {
   const exeMtimeMs = fs.statSync(exePath).mtimeMs;
-  const newestSourceMtimeMs = newestMtimeMs(path.join(repoRoot, "src"));
+  // D0 复核（缺口 2）：exe 内嵌前端产物 + Rust 静态链接，仅看 src/ 会漏掉
+  // src-tauri 源码、构建配置与锁文件的漂移。全部纳入后再判定。
+  const sourceScopes = [
+    ["src", path.join(repoRoot, "src")],
+    ["src-tauri/src", path.join(repoRoot, "src-tauri", "src")]
+  ];
+  const buildFiles = [
+    "src-tauri/Cargo.toml",
+    "src-tauri/Cargo.lock",
+    "src-tauri/tauri.conf.json",
+    "package.json",
+    "package-lock.json"
+  ];
+  let newestSourceMtimeMs = 0;
+  let newestSource = "(none)";
+  for (const [label, dir] of sourceScopes) {
+    const mtime = newestMtimeMs(dir);
+    if (mtime > newestSourceMtimeMs) {
+      newestSourceMtimeMs = mtime;
+      newestSource = label;
+    }
+  }
+  for (const file of buildFiles) {
+    const full = path.join(repoRoot, file);
+    if (!fs.existsSync(full)) continue;
+    const mtime = fs.statSync(full).mtimeMs;
+    if (mtime > newestSourceMtimeMs) {
+      newestSourceMtimeMs = mtime;
+      newestSource = file;
+    }
+  }
   const staleBuild = newestSourceMtimeMs > exeMtimeMs;
   if (staleBuild) {
     console.warn(
-      `[e2e:tauri] WARNING 被测 exe 早于 src 最新改动（exe=${new Date(exeMtimeMs).toISOString()} src=${new Date(newestSourceMtimeMs).toISOString()}）——` +
+      `[e2e:tauri] WARNING 被测 exe 早于源码/构建配置最新改动（exe=${new Date(exeMtimeMs).toISOString()} newest=${new Date(newestSourceMtimeMs).toISOString()} @${newestSource}）——` +
       "本次结果不能证明当前源码，请先重新构建再作为验收证据。"
     );
   }
   return {
     exeMtime: new Date(exeMtimeMs).toISOString(),
     newestSourceMtime: new Date(newestSourceMtimeMs).toISOString(),
+    newestSource,
     staleBuild
   };
 }
 
+/** D0 复核（缺口 2）：陈旧构建不得只告警后仍得出"当前源码通过"。
+ * 各 E2E 在 buildFreshness 之后必须调用本函数，stale 即 CANNOT-RUN。 */
+export function assertFreshBuild(freshness) {
+  if (freshness?.staleBuild) {
+    throw new CannotRunError(
+      `被测 exe 是陈旧构建（exe=${freshness.exeMtime} < 最新源码/配置 ${freshness.newestSourceMtime} @${freshness.newestSource}）。` +
+      "拒绝以陈旧构建冒充当前源码验收；先运行 npx tauri build --debug --no-bundle 再跑本套件。"
+    );
+  }
+}
+
+/** 构建身份：把每份报告钉到确切产物上（HEAD、工作树、exe 哈希）。 */
+export function buildIdentity(exePath) {
+  const sha256 = (file) => {
+    const hash = crypto.createHash("sha256");
+    hash.update(fs.readFileSync(file));
+    return hash.digest("hex");
+  };
+  const git = (args) => {
+    const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8" });
+    return result.status === 0 ? String(result.stdout).trim() : "(git unavailable)";
+  };
+  const status = git(["status", "--porcelain"]);
+  return {
+    headSha: git(["rev-parse", "HEAD"]),
+    headSubject: git(["log", "-1", "--format=%s"]),
+    worktreeStatus: status === "" ? "clean" : status,
+    exeSha256: sha256(exePath)
+  };
+}
+
+/** 断电式重启模拟：强杀被测应用（套件顺序执行，同时只有一个实例）。 */
+export function killAppProcess() {
+  const result = spawnSync("taskkill", ["/F", "/IM", "ielts-author-studio.exe"], { encoding: "utf8" });
+  return result.status === 0;
+}
+
 /**
  * 启动一次隔离的真实 Tauri 会话。
+ * `runDirOverride`：重启场景（取消跨重启/中断恢复）复用上一次运行的目录
+ * （同一 dataDir/publishDir），产品以相同数据重新启动。
  * @returns {Promise<{driver, runDir, dataDir, publishDir, pdfDir, driverStderr:()=>string, cleanup:()=>Promise<void>}>}
  */
-export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix = "tauri" }) {
-  const runId = new Date().toISOString().replace(/[:.]/g, "-");
-  const runDir = path.join(repoRoot, "artifacts", "e2e-tauri", `run-${runPrefix}-${runId}`);
-  for (const sub of ["appdata/roaming", "appdata/local", "appdata/data", "appdata/webview", "pdfs", "nas-library"]) {
-    fs.mkdirSync(path.join(runDir, sub), { recursive: true });
+export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix = "tauri", runDirOverride = null }) {
+  let runDir;
+  if (runDirOverride) {
+    runDir = runDirOverride;
+    console.log(`[e2e:tauri] reusing run dir: ${runDir}`);
+  } else {
+    const runId = new Date().toISOString().replace(/[:.]/g, "-");
+    runDir = path.join(repoRoot, "artifacts", "e2e-tauri", `run-${runPrefix}-${runId}`);
+    for (const sub of ["appdata/roaming", "appdata/local", "appdata/data", "appdata/webview", "pdfs", "nas-library"]) {
+      fs.mkdirSync(path.join(runDir, sub), { recursive: true });
+    }
+    fs.copyFileSync(pdfPath, path.join(runDir, "pdfs", path.basename(pdfPath)));
   }
-  fs.copyFileSync(pdfPath, path.join(runDir, "pdfs", path.basename(pdfPath)));
   const pdfDir = path.join(runDir, "pdfs");
   // 目标目录名不能叫 "publish"：产品约定 destination 是题库根，名为 publish 的
   // 目录会被 normalize_nas_library_root 改写到父目录，破坏隔离断言。
@@ -259,12 +336,12 @@ export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix
     publishDir,
     pdfDir,
     driverStderr: () => driverStderr,
-    async cleanup() {
+    async cleanup({ removeRunDir = !keep } = {}) {
       if (driver) {
         try { await driver.quit(); } catch {}
       }
       driverProcess.kill();
-      if (!keep) {
+      if (removeRunDir) {
         await sleep(1500);
         try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {}
         console.log("[e2e:tauri] run dir cleaned (use --keep to inspect artifacts)");

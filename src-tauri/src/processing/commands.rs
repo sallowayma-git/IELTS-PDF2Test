@@ -86,27 +86,28 @@ pub(crate) fn import_files_at_root(root: &std::path::Path, input: ImportFilesInp
             });
             continue;
         }
-        let result: CommandResult<String> = (|| {
-            // 1. 建 job（元数据落 job.json，与既有链共用）。
-            let job = make_job(CreateJobInput {
-                title: Some(title.clone()),
-                category: None,
-                frequency: None,
-                tags: None,
-                llm_profile_id: None,
-            });
+        // 1. 建 job（元数据落 job.json，与既有链共用）。
+        let job = make_job(CreateJobInput {
+            title: Some(title.clone()),
+            category: None,
+            frequency: None,
+            tags: None,
+            llm_profile_id: None,
+        });
+        let job_id = job.job_id.clone();
+        let staged = (|| -> CommandResult<()> {
             save_job(&root, &job)?;
             // 2. 文件落地：staging + hash 全部同步完成（数据库事务外，计划 §12.2）。
-            crate::job_commands::stage_source_file(root, &job.job_id, &file.path, "MainQuestion")?;
-            Ok(job.job_id)
+            crate::job_commands::stage_source_file(root, &job_id, &file.path, "MainQuestion")?;
+            Ok(())
         })();
-        let job_id = match result {
-            Ok(job_id) => job_id,
-            Err(error) => {
-                rejected.push(ImportRejectedFile { name: file.name.clone(), reason: error });
-                continue;
-            }
-        };
+        if let Err(error) = staged {
+            // G1 边界：save_job/staging 失败同样会留下 job 壳（目录 + job.json），
+            // 与 queue 失败同口径补偿清理，不留磁盘孤儿。
+            rejected.push(ImportRejectedFile { name: file.name.clone(), reason: error });
+            compensate_failed_import(root, &job_id);
+            continue;
+        }
 
         // 3. 数据库：library 外壳 + 处理任务入队（两个独立短写，文件操作已在外完成）。
         let queue_result: CommandResult<()> = queue_import(
@@ -250,6 +251,34 @@ mod tests {
             .map(|entries| entries.count())
             .unwrap_or(0);
         assert_eq!(leftover, 0, "queue 失败后不得留下 job 目录孤儿");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// G1 边界：staging 本身失败（源文件不存在）时，save_job 已写下的
+    /// job 壳同样要被补偿清理——与 queue 失败同口径，不留磁盘孤儿。
+    #[test]
+    fn staging_failure_compensates_job_shell() {
+        let root = temp_root();
+        fs::create_dir_all(&root).unwrap();
+
+        let input = ImportFilesInput {
+            files: vec![ImportFileInput {
+                path: root.join("missing-source.pdf").to_string_lossy().to_string(),
+                name: "missing-source.pdf".to_string(),
+                size_bytes: 0,
+                title_hint: None,
+            }],
+            cloud_enabled: Some(false),
+            cloud_profile_id: None,
+        };
+        let result = import_files_at_root(&root, input).unwrap();
+        assert!(result.created.is_empty());
+        assert_eq!(result.rejected.len(), 1, "staging 失败必须以 rejected 明确告知");
+        let jobs_dir = root.join("jobs");
+        let leftover = fs::read_dir(&jobs_dir)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(leftover, 0, "staging 失败后不得留下 job 壳目录");
         let _ = fs::remove_dir_all(&root);
     }
 }

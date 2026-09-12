@@ -19,7 +19,7 @@ import path from "node:path";
 import process from "node:process";
 import { Key } from "selenium-webdriver";
 import {
-  DEFAULT_EXE, DEFAULT_PDF, By, CannotRunError, assertPrerequisites, buildFreshness,
+  DEFAULT_EXE, DEFAULT_PDF, By, CannotRunError, assertPrerequisites, buildFreshness, assertFreshBuild, buildIdentity,
   createStepRecorder, exitCodeForVerdict, importPdfViaFolderHook, launchTauriApp,
   logCannotRun, logHarnessError, openWorkspaceForItem, parseArgs, sleep, until, waitForRowStage, writeReport
 } from "./lib/tauri-harness.mjs";
@@ -33,6 +33,8 @@ const takeScreenshots = args.screenshot !== false;
 async function main() {
   assertPrerequisites({ exePath, pdfPath });
   const freshness = buildFreshness(exePath);
+  assertFreshBuild(freshness);
+  const identity = buildIdentity(exePath);
 
   const session = await launchTauriApp({ exePath, pdfPath, keep: keepRun, runPrefix: "workspace-edit" });
   const artifacts = { dir: session.runDir, screenshotErrors: [] };
@@ -150,6 +152,7 @@ async function main() {
       coverage: "real-tauri-process+webview2+sqlite+filesystem",
       evidenceLevel: "product",
       exe: exePath,
+      ...identity,
       ...freshness,
       pdf: pdfPath,
       workspaceLoadBlocker: loadErrorText,

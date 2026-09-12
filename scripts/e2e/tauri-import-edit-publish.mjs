@@ -237,14 +237,21 @@ async function main() {
   if (!fs.existsSync(exePath)) fail(`被测应用不存在：${exePath}（先运行 npx tauri build --debug --no-bundle）`);
   if (!fs.existsSync(pdfPath)) fail(`测试 PDF 不存在：${pdfPath}`);
 
-  // 构建新鲜度：exe 内嵌构建时的前端产物；若 src 比 exe 新，本次结果不能证明当前源码（A11-F01 的根因之一）。
+  // 构建新鲜度：exe 内嵌构建时的前端产物 + 静态链接的 Rust；若 src/src-tauri
+  // 比 exe 新，本次结果不能证明当前源码（A11-F01 的根因之一）。
+  // D0 复核：陈旧构建按 CANNOT-RUN 处理，不得只告警后继续记"当前源码通过"。
   const exeMtimeMs = fs.statSync(exePath).mtimeMs;
-  const newestSourceMtimeMs = newestMtimeMs(path.join(repoRoot, "src"));
+  let newestSourceMtimeMs = newestMtimeMs(path.join(repoRoot, "src"));
+  newestSourceMtimeMs = Math.max(newestSourceMtimeMs, newestMtimeMs(path.join(repoRoot, "src-tauri", "src")));
+  for (const buildFile of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json", "package.json", "package-lock.json"]) {
+    const full = path.join(repoRoot, buildFile);
+    if (fs.existsSync(full)) newestSourceMtimeMs = Math.max(newestSourceMtimeMs, fs.statSync(full).mtimeMs);
+  }
   const staleBuild = newestSourceMtimeMs > exeMtimeMs;
   if (staleBuild) {
-    console.warn(
-      `[e2e:tauri] WARNING 被测 exe 早于 src 最新改动（exe=${new Date(exeMtimeMs).toISOString()} src=${new Date(newestSourceMtimeMs).toISOString()}）——` +
-      "本次结果不能证明当前源码，请先重新构建再作为验收证据。"
+    fail(
+      `被测 exe 是陈旧构建（exe=${new Date(exeMtimeMs).toISOString()} < 最新源码/配置 ${new Date(newestSourceMtimeMs).toISOString()}）。` +
+      "先运行 npx tauri build --debug --no-bundle 再跑本套件（CANNOT-RUN，不记通过）。"
     );
   }
 

@@ -17,9 +17,9 @@ use tauri::{AppHandle, Emitter};
 
 
 use super::queue::{
-    self, advance_stage, claim_next, finalize_ready_without_lease, get_job, renew_lease,
-    request_cancel, retry, STAGE_CLOUD_RECOGNITION, STAGE_FAILED, STAGE_LOCAL_RECOGNITION,
-    STAGE_READY_FOR_REVIEW,
+    self, advance_stage, claim_next, finalize_cancelled_without_lease, finalize_ready_without_lease,
+    get_job, renew_lease, request_cancel, retry, STAGE_CLOUD_RECOGNITION, STAGE_FAILED,
+    STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
 };
 use crate::auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
 use crate::library::repository::open_library_connection;
@@ -267,6 +267,14 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     // ── 本地识别（阻塞线程池；持 local permit）───────────────────────
     let local_permit = state.local_permits.clone().acquire_owned().await;
     let advanced = advance(&app, &state, &job_id, STAGE_LOCAL_RECOGNITION, Some("running"), None, None, None, None).await;
+    // G1 边界：带 durable 取消标记的行会被 advance 强制落 cancelled；
+    // 以有效阶段为准，取消后不再继续识别流程。
+    if let Some((_, effective)) = &advanced {
+        if effective == queue::STAGE_CANCELLED {
+            state.cancelled.write().await.remove(&job_id);
+            return;
+        }
+    }
     if advanced.is_none() {
         return; // lease 丢失 / 已取消
     }
@@ -333,7 +341,10 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             return;
         }
         let _cloud_permit = state.cloud_permits.clone().acquire_owned().await;
-        if advance(
+        // G1 边界（复核 B）：等待 cloud permit / 推进期间落下的取消会被
+        // advance 强制落 cancelled（返回有效阶段）。此时必须直接退出，
+        // 不得再启动云调用；持久化状态已由 advance 落库并广播。
+        let cloud_advanced = advance(
             &app,
             &state,
             &job_id,
@@ -344,9 +355,14 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             None,
             None,
         )
-        .await
-        .is_none()
-        {
+        .await;
+        if let Some((_, effective)) = &cloud_advanced {
+            if effective == queue::STAGE_CANCELLED {
+                state.cancelled.write().await.remove(&job_id);
+                return;
+            }
+        }
+        if cloud_advanced.is_none() {
             return;
         }
         let cloud_result = tauri::async_runtime::spawn_blocking({
@@ -430,7 +446,7 @@ async fn advance(
     reconcile_status: Option<&str>,
     actionable_count: Option<i64>,
     last_error_code: Option<&str>,
-) -> Option<i64> {
+) -> Option<(i64, String)> {
     let Ok(root) = app_root(app) else { return None };
     let worker_id = state.worker_id.clone();
     let job_id_owned = job_id.to_string();
@@ -459,7 +475,7 @@ async fn advance(
     })
     .await;
     match result {
-        Ok(Ok(Some(seq))) => {
+        Ok(Ok(Some((seq, effective_stage)))) => {
             // 发事件用最新行（advance 已带 event_seq+1）。
             if let Ok(root) = app_root(app) {
                 let app = app.clone();
@@ -473,7 +489,7 @@ async fn advance(
                 })
                 .await;
             }
-            Some(seq)
+            Some((seq, effective_stage))
         }
         _ => None,
     }
@@ -509,7 +525,19 @@ async fn fail_job(app: &AppHandle, state: &Arc<ProcessingState>, job_id: &str, e
 }
 
 async fn finish_cancelled(app: &AppHandle, state: &Arc<ProcessingState>, job_id: &str) {
-    advance(app, state, job_id, queue::STAGE_CANCELLED, None, None, None, None, None).await;
+    let advanced = advance(app, state, job_id, queue::STAGE_CANCELLED, None, None, None, None, None).await;
+    if advanced.is_none() {
+        // G1 边界（复核 B）：lease 已丢（心跳瞬断/休眠唤醒）时 advance 无法
+        // 提交。durable 取消标记仍在且 reclaim 守卫保证没有 worker 会接手，
+        // 免 lease 收尾为 cancelled——取消不得只能靠重启兑现。
+        let Ok(root) = app_root(app) else { return };
+        let job_id_owned = job_id.to_string();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let conn = open_library_connection(&root)?;
+            finalize_cancelled_without_lease(&conn, &job_id_owned)
+        })
+        .await;
+    }
     state.cancelled.write().await.remove(job_id);
     if let Ok(root) = app_root(app) {
         let app = app.clone();

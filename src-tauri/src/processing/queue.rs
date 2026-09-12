@@ -171,6 +171,9 @@ pub(crate) fn renew_lease(conn: &Connection, job_id: &str, worker_id: &str) -> C
 }
 
 /// 阶段推进 + 事件序号自增。只有当前 lease 持有者可以推进。
+/// 返回 `Some((event_seq, 有效阶段))`：带 durable 取消标记的行会被强制落
+/// cancelled（G1 取消 TOCTOU），调用方必须以返回的有效阶段为准决定后续
+/// 动作（例如不得再启动云调用），不得假设 stage 就是入参。
 pub(crate) fn advance_stage(
     conn: &Connection,
     job_id: &str,
@@ -181,7 +184,7 @@ pub(crate) fn advance_stage(
     reconcile_status: Option<&str>,
     actionable_count: Option<i64>,
     last_error_code: Option<&str>,
-) -> CommandResult<Option<i64>> {
+) -> CommandResult<Option<(i64, String)>> {
     let now = Utc::now().to_rfc3339();
     let lease_expires = (Utc::now() + Duration::seconds(LEASE_SECONDS)).to_rfc3339();
     // G1/P0-1：终态（ready_for_review/failed/cancelled）释放 lease，避免
@@ -225,14 +228,14 @@ pub(crate) fn advance_stage(
     if updated == 0 {
         return Ok(None);
     }
-    let seq: i64 = conn
+    let (seq, effective_stage): (i64, String) = conn
         .query_row(
-            "SELECT event_seq FROM processing_jobs_v2 WHERE id = ?1",
+            "SELECT event_seq, stage FROM processing_jobs_v2 WHERE id = ?1",
             [job_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|error| format!("processing_advance_seq:{error}"))?;
-    Ok(Some(seq))
+    Ok(Some((seq, effective_stage)))
 }
 
 /// 读取一行（事件 payload 与调度器用）。
@@ -272,6 +275,30 @@ pub(crate) fn finalize_ready_without_lease(
             params![job_id, cloud_status, reconcile_status, now],
         )
         .map_err(|error| format!("processing_finalize:{error}"))?;
+    Ok(updated > 0)
+}
+
+/// G1 边界（复核 B）：lease 丢失后取消的收尾。带 durable 取消标记的运行中
+/// 行免 lease 落 cancelled——reclaim 守卫保证带标记的行不会被任何 worker
+/// 认领，迟到提交不会与在跑 worker 竞争；没有这一步，取消只能靠重启恢复
+/// 兑现。返回 false = 条件不满足。
+pub(crate) fn finalize_cancelled_without_lease(
+    conn: &Connection,
+    job_id: &str,
+) -> CommandResult<bool> {
+    let now = Utc::now().to_rfc3339();
+    let updated = conn
+        .execute(
+            "UPDATE processing_jobs_v2
+             SET stage = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
+                 last_error_code = 'cancelled',
+                 event_seq = event_seq + 1, updated_at = ?2
+             WHERE id = ?1
+               AND stage IN ('running', 'local_recognition', 'cloud_recognition', 'reconciling')
+               AND cancel_requested_at IS NOT NULL",
+            params![job_id, now],
+        )
+        .map_err(|error| format!("processing_finalize_cancelled:{error}"))?;
     Ok(updated > 0)
 }
 
@@ -395,10 +422,11 @@ mod tests {
         assert!(claim_next(&conn, "worker-b").unwrap().is_none());
 
         // 阶段推进：只有持有者可以。
-        let seq = advance_stage(&conn, "job-1", worker_a, STAGE_LOCAL_RECOGNITION, Some("succeeded"), None, None, None, None)
+        let (seq, effective) = advance_stage(&conn, "job-1", worker_a, STAGE_LOCAL_RECOGNITION, Some("succeeded"), None, None, None, None)
             .unwrap()
             .expect("holder must advance");
         assert_eq!(seq, 2);
+        assert_eq!(effective, STAGE_LOCAL_RECOGNITION, "无取消标记时有效阶段即目标阶段");
         // 他人推进被拒。
         assert!(advance_stage(&conn, "job-1", "worker-b", STAGE_FAILED, Some("failed"), None, None, None, None)
             .unwrap()
@@ -534,13 +562,67 @@ mod tests {
         .unwrap();
 
         // worker 按原计划推进 ready：必须被强制落 cancelled。
-        let seq = advance_stage(&conn, "job-1", "worker-a", STAGE_READY_FOR_REVIEW, Some("succeeded"), Some("succeeded"), Some("succeeded"), None, None)
+        let (seq, effective) = advance_stage(&conn, "job-1", "worker-a", STAGE_READY_FOR_REVIEW, Some("succeeded"), Some("succeeded"), Some("succeeded"), None, None)
             .unwrap()
             .expect("lease 仍有效时推进必须成功（但落 cancelled）");
         assert!(seq > 0);
+        assert_eq!(effective, STAGE_CANCELLED, "调用方拿到的必须是有效阶段");
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.stage, STAGE_CANCELLED, "迟到结果不得穿透取消");
         assert_eq!(row.lease_owner, None);
+    }
+
+    /// G1 边界（复核 B）：等待 cloud permit / 推进期间取消——advance 返回的
+    /// 有效阶段是 cancelled，调度器据此退出且不再启动云调用（数据层语义）。
+    #[test]
+    fn cloud_stage_advance_reports_coerced_cancel() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-a").unwrap();
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET cancel_requested_at = '2026-09-12T00:00:00Z' WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
+        let (_, effective) = advance_stage(&conn, "job-1", "worker-a", STAGE_CLOUD_RECOGNITION, Some("succeeded"), Some("running"), None, None, None)
+            .unwrap()
+            .expect("lease 仍有效");
+        assert_eq!(effective, STAGE_CANCELLED);
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_CANCELLED);
+        assert_eq!(row.lease_owner, None);
+    }
+
+    /// G1 边界（复核 B）：lease 过期后取消——advance 无法提交时，免 lease
+    /// 收尾必须能落 cancelled（取消不必等重启兑现）；无 durable 标记则拒绝。
+    #[test]
+    fn finalize_cancelled_without_lease_requires_durable_marker() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-a").unwrap();
+        advance_stage(&conn, "job-1", "worker-a", STAGE_LOCAL_RECOGNITION, Some("running"), None, None, None, None).unwrap();
+
+        // 无 durable 标记：拒绝收尾（内存标记丢失时不得凭空取消）。
+        assert!(!finalize_cancelled_without_lease(&conn, "job-1").unwrap());
+
+        // 用户取消（durable 标记落库）后 worker 的 lease 过期、advance 失败：
+        // 免 lease 收尾兑现取消。
+        assert!(request_cancel(&conn, "job-1").unwrap());
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET lease_expires_at = '2020-01-01T00:00:00Z' WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
+        assert!(advance_stage(&conn, "job-1", "worker-a", STAGE_CANCELLED, None, None, None, None, None)
+            .unwrap()
+            .is_none());
+        assert!(finalize_cancelled_without_lease(&conn, "job-1").unwrap());
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_CANCELLED);
+        assert_eq!(row.lease_owner, None);
+        assert_eq!(row.last_error_code.as_deref(), Some("cancelled"));
     }
 
     /// G1 对抗审计 P1-3：lease 丢失后的免 lease 终态收尾；取消标记优先、

@@ -91,8 +91,11 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     try {
       await work();
     } catch (error) {
+      // work() 的所有后续步骤（导航/发布等）都排在失败 await 点之后，失败时
+      // 本就不会执行，防导航靠的是这个结构而不是 re-throw；onClick 产生的
+      // promise 无人接住，re-throw 只会变成 unhandledrejection（5548f7a 的
+      // 错误归因，D0 复核修正）。这里只负责把失败暴露给用户。
       showError(error);
-      throw error; // Re-throw to prevent navigation on flush failure
     } finally {
       setBusyAction(undefined);
     }

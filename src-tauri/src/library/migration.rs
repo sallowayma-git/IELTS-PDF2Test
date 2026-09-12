@@ -274,6 +274,8 @@ mod tests {
     /// G1/A7-F02 故障注入：用户编辑 canonical 之后，迟到的识别收尾
     /// （调度器 set_item_status_ready 会重跑 migrate_single_item）与迟到的
     /// 云端候选都不得覆盖用户编辑。锁定「user_edited 只增不覆盖」不变量。
+    /// 强化版：先有真实 current revision（内容不同），用户编辑带 request_id
+    /// （journal 落库），再跑迟到迁移——canonical、version、journal 全部保留。
     #[test]
     fn late_pipeline_completion_preserves_user_edited_canonical() {
         let root = temp_root();
@@ -281,12 +283,12 @@ mod tests {
         seed_job(&root, "job-a", true);
         migrate_existing_items(&root).unwrap();
 
-        // 用户编辑标题（真实编辑事务路径，版本推进）。
+        // 用户编辑标题（真实编辑事务路径，带 request_id → journal 落库）。
         let conn = super::super::repository::open_library_connection(&root).unwrap();
         let input = crate::library::repository::ApplyEditorCommandsInput {
             item_id: "job-a".into(),
             base_version: 1,
-            request_id: None,
+            request_id: Some("e2e-journal-1".into()),
             commands: vec![],
             title: Some("用户改的标题".into()),
         };
@@ -299,6 +301,20 @@ mod tests {
         )
         .unwrap();
 
+        // 迟到的识别收尾（模拟）：追加一条内容不同的 current revision——
+        // 与 canonical 不一致的迟到结果同样不得改写权威稿。
+        let mut late_revision = get_canonical_ds(&tx_conn, "job-a").unwrap().unwrap().0;
+        late_revision["exam"]["title"] = serde_json::json!("迟到识别的不同内容");
+        crate::artifact_store::append_revision(
+            &root,
+            "job-a",
+            0,
+            crate::artifact_store::RevisionSourceV2::AutoExtract,
+            &late_revision,
+            &[],
+        )
+        .unwrap();
+
         // 迟到的识别收尾：调度器在 ready 阶段会再次调用 migrate_single_item
         // （返回值 false = 无需修复，不表示失败；关键是不覆盖 canonical）。
         let _ = migrate_single_item(&root, "job-a").unwrap();
@@ -306,9 +322,34 @@ mod tests {
         assert_eq!(
             ds.pointer("/exam/title").and_then(Value::as_str),
             Some("用户改的标题"),
-            "迟到收尾不得覆盖用户编辑"
+            "迟到收尾/迟到 revision 不得覆盖用户编辑"
         );
         assert_eq!(version, 2, "用户编辑推进的版本不得被重置");
+
+        // journal 保留：编辑事务的幂等重放记录不得被迟到迁移清掉。
+        use rusqlite::OptionalExtension;
+        let journal: Option<(String, i64)> = tx_conn
+            .query_row(
+                "SELECT command_json, base_version FROM editor_journal_v1 WHERE request_id = 'e2e-journal-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .unwrap();
+        let (_, journal_base) = journal.expect("迟到迁移必须保留 editor journal");
+        assert_eq!(journal_base, 1, "journal 的 base_version 不得被改写");
+
+        // 幂等重放仍生效：同一 request_id 重放命中，不产生新版本。
+        let replay = crate::library::repository::apply_editor_commands_tx(
+            &mut tx_conn,
+            &input,
+            &|_, _| Ok(()),
+            &|_| Ok(()),
+        )
+        .unwrap();
+        assert!(replay.replayed, "迟到迁移后 journal 幂等重放必须仍可用");
+        let (_, version_after_replay) = get_canonical_ds(&tx_conn, "job-a").unwrap().unwrap();
+        assert_eq!(version_after_replay, 2);
         let _ = fs::remove_dir_all(&root);
     }
 }
