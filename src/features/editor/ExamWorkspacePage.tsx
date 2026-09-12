@@ -150,8 +150,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               className={blockers ? "has-blockers" : ""}
               data-testid="workspace-issues"
               onClick={() => setIssuesOpen((open) => !open)}
+              aria-label={blockers ? `问题 ${issues.length} 项，其中阻断问题 ${blockers} 项` : `问题 ${issues.length} 项`}
             >
-              问题 {issues.length}
+              问题 {issues.length}{blockers ? ` · 阻断 ${blockers}` : ""}
             </button>
             <button title="撤销" aria-label="撤销" disabled={!editor.canUndo} onClick={editor.undo}><Undo2 size={16} /></button>
             <button title="重做" aria-label="重做" disabled={!editor.canRedo} onClick={editor.redo}><Redo2 size={16} /></button>
@@ -198,12 +199,13 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           {issues.length ? (
             <ul>
               {issues.map((issue) => (
-                <li key={issue.issueId} className={issue.severity}>
+                <li key={issue.issueId} className={issue.severity} data-severity={issue.severity}>
                   <button onClick={() => {
                     setSelectedId(issue.targetId);
                     document.querySelector(`[data-editor-id="${issue.targetId}"], [data-question-id="${issue.targetId}"], [data-response-group-id="${issue.targetId}"]`)
                       ?.scrollIntoView({ block: "center", behavior: "smooth" });
                   }}>
+                    {issue.severity === "blocker" ? <span className="severity-badge" aria-label="阻断问题">⚠</span> : null}
                     {issue.userMessage}
                   </button>
                 </li>
