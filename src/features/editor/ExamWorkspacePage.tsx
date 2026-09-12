@@ -92,6 +92,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       await work();
     } catch (error) {
       showError(error);
+      throw error; // Re-throw to prevent navigation on flush failure
     } finally {
       setBusyAction(undefined);
     }

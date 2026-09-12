@@ -20,6 +20,7 @@
     "e2e:tauri": "node scripts/e2e/tauri-import-edit-publish.mjs",
     "e2e:tauri:workspace-edit": "node scripts/e2e/tauri-workspace-edit.mjs",
     "e2e:tauri:publish": "node scripts/e2e/tauri-publish.mjs",
+    "e2e:tauri:workspace-back": "node scripts/e2e/workspace-back-button.mjs",
     "e2e:nas-contract": "node scripts/e2e/nas-student-contract.mjs",
     "dump:nas-fixture": "cargo test --manifest-path src-tauri/Cargo.toml dump_published_package_for_nas_contract -- --ignored --nocapture",
     "test:product-chain": "cargo test --manifest-path src-tauri/Cargo.toml product_chain -- --nocapture",
