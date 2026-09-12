@@ -71,7 +71,12 @@ pub(crate) fn resolve_authoring_asset_preview_core(
 ) -> CommandResult<Value> {
     let job_root = fs::canonicalize(safe_job_dir(root, job_id)?)
         .map_err(|error| format!("authoring_asset_root_unavailable:{error}"))?;
-    let (authoring_value, _) = load_current_authoring(root, job_id)?;
+    let canonical = crate::library::repository::open_library_connection(root)
+        .and_then(|conn| crate::library::repository::get_canonical_ds(&conn, job_id))?;
+    let authoring_value = match canonical {
+        Some((ds, _)) => ds,
+        None => load_current_authoring(root, job_id)?.0,
+    };
     let authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value)
         .map_err(|error| format!("AUTHORING_SCHEMA_INVALID:{error}"))?;
     let descriptor = authoring
@@ -567,8 +572,22 @@ fn json_value_is_nonempty(value: &Value) -> bool {
 }
 
 pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResult<Value> {
-    let input: ExportAuthoringV2Input = serde_json::from_value(input)
+    let mut input: ExportAuthoringV2Input = serde_json::from_value(input)
         .map_err(|error| format!("authoring_v2_invalid_export_request:{error}"))?;
+    if input.authoring.is_some() || input.edit_version.is_some() {
+        let conn = crate::library::repository::open_library_connection(root)?;
+        let (ds, version) = crate::library::repository::get_canonical_ds(&conn, &input.job_id)?
+            .ok_or("ITEM_DS_NOT_SEEDED")?;
+        if input.edit_version.is_some_and(|expected| expected != version as u64) {
+            return Err(format!("EDIT_VERSION_CONFLICT:current={version}"));
+        }
+        input.authoring = Some(ds);
+        input.edit_version = Some(version as u64);
+    }
+    export_authoring_snapshot(root, input)
+}
+
+pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Input) -> CommandResult<Value> {
     safe_job_dir(root, &input.job_id)?;
     let artifact_layout = ensure_job_artifact_layout(root, &input.job_id)?;
     let export_lock_path = artifact_layout
@@ -878,12 +897,27 @@ fn build_editor_session(root: &Path, job_id: &str) -> CommandResult<Value> {
     }))
 }
 
+/// 读取当前权威稿。
+///
+/// M1 起唯一权威稿是数据库里的 canonical DS。revision 文件树与 shadow 都是旧的工件形态：
+/// revision 只在没有 DB 权威稿时作为来源，shadow 只是导入期写出的缓存。
+///
+/// 早期实现无条件优先文件，导致「DB 里已保存的编辑」被编辑前的缓存盖住——
+/// 与 audit-2026-09-07 F04 同一类根因（派生物凌驾于权威稿之上）。
 fn load_current_authoring(root: &Path, job_id: &str) -> CommandResult<(Value, u64)> {
     let current = recover_current_revision(root, job_id)?;
     if current.revision > 0 {
         let value = read_revision(root, job_id, current.revision)?;
         validate_authoring(&value)?;
         return Ok((value, current.revision));
+    }
+
+    // DB 权威稿存在时优先；shadow 只服务尚未迁移的 job。
+    if let Some((ds, _version)) = crate::library::repository::open_library_connection(root)
+        .and_then(|conn| crate::library::repository::get_canonical_ds(&conn, job_id))?
+    {
+        validate_authoring(&ds)?;
+        return Ok((ds, 0));
     }
 
     let path = job_dir(root, job_id).join(AUTHORING_V2_SHADOW_FILE);
@@ -2083,6 +2117,10 @@ fn is_safe_node_attribute(key: &str) -> bool {
             | "slotIds"
             | "display"
             | "crop"
+            | "assetId"
+            | "rowSpan"
+            | "colSpan"
+            | "headerScope"
     )
 }
 

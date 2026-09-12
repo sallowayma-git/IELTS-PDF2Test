@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { getJob, runAutoPipeline, runCloudReview } from "../../api/tauriCommands";
+import { ArrowLeft, Undo2, Redo2, MoreHorizontal, FileSearch, X } from "lucide-react";
+import { command, getJob } from "../../api/tauriCommands";
+import { retryProcessing, cancelProcessing, subscribeProcessing } from "../../api/processingClient";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { describePublishError, publishItem } from "../../api/publishClient";
-import { go, legacyPath, libraryPath, type LibraryIntent } from "../../app/router";
+import { go, libraryPath, type LibraryIntent } from "../../app/router";
 import { ExamCanvas } from "../../exam-canvas/ExamCanvas";
+import { compileStructureAction } from "../../exam-canvas/structureActions";
+import { SelectionInspector } from "./SelectionInspector";
 import type { JobDetail } from "../../types";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { blockerCount, deriveActionableIssues } from "./actionableIssues";
@@ -21,6 +25,17 @@ const SAVE_LABEL = {
   conflict: "保存冲突"
 } as const;
 
+/** 降级文案分层（计划 §9.10 / findings F-M0-3）：普通用户只看到人话，
+ *  原始错误码与路径只在开发者模式下作为附注出现。 */
+function describeLoadError(raw?: string): string {
+  if (!raw) return "这道题还没有可编辑的题稿。";
+  if (raw.includes("AUTHORING_V2_NOT_AVAILABLE") || raw.includes("ITEM_DS_NOT_SEEDED")) {
+    return "这道题还没有生成可编辑的题稿。运行本地识别后就能编辑。";
+  }
+  if (raw.includes("ITEM_NOT_FOUND")) return "这道题已不在题库中，请返回题库刷新。";
+  return "这道题暂时打不开，请稍后重试。";
+}
+
 export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?: LibraryIntent }) {
   const editor = useCanonicalEditor(itemId);
   const [detail, setDetail] = useState<JobDetail | undefined>();
@@ -37,6 +52,17 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   useEffect(() => {
     getJob(itemId).then(setDetail).catch(() => setDetail(undefined));
   }, [itemId]);
+
+  useEffect(() => {
+    let stopped = false;
+    let stop: (() => void) | undefined;
+    subscribeProcessing((id) => {
+      if (id !== itemId) return;
+      getJob(itemId).then(setDetail).catch(() => {});
+      if (!editor.pendingCount) editor.reload();
+    }).then((unlisten) => { if (stopped) unlisten(); else stop = unlisten; }).catch(console.error);
+    return () => { stopped = true; stop?.(); };
+  }, [itemId, editor.pendingCount, editor.reload]);
 
   const issues = useMemo(() => deriveActionableIssues(editor.draft), [editor.draft]);
   const blockers = blockerCount(issues);
@@ -81,7 +107,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   return (
     <section className="workspace-page" data-testid="exam-workspace">
       <header className="workspace-header">
-        <button className="ghost small" onClick={() => go(libraryPath())}>← 返回题库</button>
+        <button className="ghost small" onClick={() => withBusy("leave", async () => { await editor.flush(); go(libraryPath()); })}><ArrowLeft size={16} />返回题库</button>
 
         <div className="workspace-title">
           <EditableTitle
@@ -103,7 +129,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               {SAVE_LABEL[editor.saveState]}
             </span>
           ) : null}
-          <button className="ghost small" onClick={() => setSourceOpen(true)}>查看原文件</button>
+          <button className="ghost small" onClick={() => setSourceOpen(true)}><FileSearch size={16} />查看原文件</button>
           <button
             className={`ghost small ${blockers ? "has-blockers" : ""}`}
             data-testid="workspace-issues"
@@ -111,29 +137,25 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           >
             问题 {issues.length}
           </button>
-          <button className="ghost small" disabled={!editor.canUndo} onClick={editor.undo}>撤销</button>
-          <button className="ghost small" disabled={!editor.canRedo} onClick={editor.redo}>重做</button>
+          <button className="ghost small" title="撤销" aria-label="撤销" disabled={!editor.canUndo} onClick={editor.undo}><Undo2 size={16} /></button>
+          <button className="ghost small" title="重做" aria-label="重做" disabled={!editor.canRedo} onClick={editor.redo}><Redo2 size={16} /></button>
           <button className="primary small" data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
             {busyAction === "publish" ? "正在发布…" : "发布"}
           </button>
-          <button className="ghost small" aria-label="更多操作" onClick={() => setMenuOpen((open) => !open)}>⋯</button>
+          <button className="ghost small" aria-label="更多操作" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
         </div>
 
         {menuOpen ? (
           <div className="workspace-menu" role="menu">
             <button role="menuitem" onClick={() => withBusy("local", async () => {
-              await runAutoPipeline(itemId, { executionMode: "localOnly", target: "editableDraft", allowOverwrite: true });
-              editor.reload();
-              setNotice("已重新运行本地识别。");
-            })}>重新运行本地识别</button>
-            <button role="menuitem" onClick={() => withBusy("cloud", async () => {
-              await runCloudReview(itemId);
-              editor.reload();
-              setNotice("已重新运行云端识别。");
-            })}>重新运行云端识别</button>
-            <button role="menuitem" onClick={() => go(legacyPath("preview", itemId))}>
-              打开旧版确认与编辑页（兼容）
-            </button>
+              await editor.flush();
+              await retryProcessing(itemId);
+              setNotice("已加入识别队列。");
+            })}>重新识别</button>
+            <button role="menuitem" onClick={() => withBusy("cancel", async () => {
+              await cancelProcessing(itemId);
+              setNotice("已请求停止识别。");
+            })}>停止识别</button>
           </div>
         ) : null}
       </header>
@@ -177,15 +199,16 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         {editor.loading ? <p className="empty">正在打开这道题…</p> : null}
         {editor.loadError ? (
           <div className="workspace-load-error">
-            <p className="error-text">这道题还没有可编辑的题稿：{editor.loadError}</p>
+            <p className="error-text">{describeLoadError(editor.loadError)}</p>
+            {readAppSettings().developerMode && editor.loadError ? (
+              <p className="empty compact"><small>技术详情：{editor.loadError}</small></p>
+            ) : null}
             <div className="button-row">
               <button className="primary small" onClick={() => withBusy("local", async () => {
-                await runAutoPipeline(itemId, { executionMode: "localOnly", target: "editableDraft" });
-                editor.reload();
+                await retryProcessing(itemId);
               })}>
                 运行本地识别
               </button>
-              <button className="ghost small" onClick={() => go(legacyPath("preview", itemId))}>打开旧版页面（兼容）</button>
             </div>
           </div>
         ) : null}
@@ -199,9 +222,17 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               editor.applyCommand({ op: "set_text", nodeId, expectedText, text })
             }
             onAnswerChange={(slotId, value) => editor.applyCommand({ op: "set_answer", slotId, value })}
+            onStructureAction={(action) => {
+              try {
+                const patch = compileStructureAction(editor.draft!, action);
+                if (patch) editor.applyPatch(patch);
+              } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
+            }}
           />
         ) : null}
       </div>
+
+      {editor.draft ? <SelectionInspector draft={editor.draft} selectedId={selectedId} onPatch={editor.applyPatch} onClose={() => setSelectedId(undefined)} /> : null}
 
       {sourceOpen ? (
         <div className="drawer-scrim" role="presentation" onClick={() => setSourceOpen(false)}>
@@ -217,6 +248,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                     <li key={file.fileId}>
                       <span className="file-name">{file.originalName}</span>
                       <span>{file.role === "AnswerKey" ? "答案文件" : "主文件"}</span>
+                      <button className="ghost small" onClick={() => withBusy("source", async () => { await command("open_source_file", { itemId, fileId: file.fileId }); })}>打开原文件</button>
                     </li>
                   ))}
                 </ul>
@@ -233,11 +265,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                   ))}
                 </div>
               ) : null}
-              <p className="drawer-hint">
-                需要逐页比对 bbox 或补录题面时，可以打开
-                <button className="ghost small" onClick={() => go(legacyPath("document", itemId))}>旧版源文档确认页</button>
-                （兼容期保留）。
-              </p>
             </div>
           </aside>
         </div>

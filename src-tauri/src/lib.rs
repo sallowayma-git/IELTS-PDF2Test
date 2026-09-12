@@ -35,6 +35,7 @@ use preview_commands::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use std::{
     collections::HashSet,
     env, fs,
@@ -64,6 +65,7 @@ mod ielts_grammar;
 mod job_commands;
 mod job_store;
 mod library;
+mod processing;
 mod library_commands;
 mod llm_commands;
 mod llm_gateway;
@@ -80,6 +82,7 @@ mod product_chain;
 mod reading_runtime_v2;
 mod reading_source;
 mod reading_source_v2;
+mod recognition;
 mod runtime_compiler;
 mod runtime_validation;
 pub mod schema;
@@ -952,6 +955,51 @@ async fn list_library_items(include_deleted: Option<bool>, app: AppHandle) -> Co
     .map_err(|error| format!("library_v2_join:{error}"))?
 }
 
+// ── M2：后端接管调度（processing/commands.rs 的薄壳，计划 §5.3 命令收敛）──
+
+#[tauri::command]
+async fn open_source_file(item_id: String, file_id: String, app: AppHandle) -> CommandResult<()> {
+    let root = app_root(&app)?;
+    let job = job_store::load_job(&root, &item_id)?;
+    let source = job.source_files.iter().find(|file| file.file_id == file_id).ok_or("SOURCE_NOT_FOUND")?;
+    let path = util::job_dir(&root, &item_id).join("uploads").join(&source.stored_name);
+    tauri_plugin_opener::open_path(path.to_string_lossy().to_string(), None::<String>).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn publish_items(input: nas_package_v2::PublishItemsInput, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || nas_package_v2::publish_items_core(&root, input))
+        .await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn import_files(
+    input: processing::commands::ImportFilesInput,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let result = processing::commands::import_files_core(&app, input).await?;
+    Ok(processing::commands::import_files_result_to_value(result))
+}
+
+#[tauri::command]
+async fn cancel_processing(
+    item_id: String,
+    state: tauri::State<'_, Arc<processing::scheduler::ProcessingState>>,
+    app: AppHandle,
+) -> CommandResult<()> {
+    processing::scheduler::cancel((*state).clone(), app, &item_id).await
+}
+
+#[tauri::command]
+async fn retry_processing(
+    item_id: String,
+    state: tauri::State<'_, Arc<processing::scheduler::ProcessingState>>,
+    app: AppHandle,
+) -> CommandResult<()> {
+    processing::scheduler::retry_job((*state).clone(), app, &item_id).await
+}
+
 #[tauri::command]
 async fn parse_document(
     job_id: String,
@@ -1459,6 +1507,12 @@ pub fn run() {
             ensure_app_dirs(&root).map_err(Box::<dyn std::error::Error>::from)?;
             // 初始化题库 DB schema + 首次启动迁移既有 job 数据（幂等，失败不阻断启动）。
             let _ = library_commands::migrate_existing_into_library(&root);
+            // M2：托管调度状态并启动调度循环（含启动恢复）。
+            let processing_state = std::sync::Arc::new(processing::scheduler::ProcessingState::new(
+                processing::scheduler::ProcessingSettings::defaults(),
+            ));
+            app.manage(processing_state.clone());
+            processing::scheduler::start(app.handle().clone(), processing_state);
             // M1：把旧题迁移到 library_items_v2（幂等；阻塞线程池里跑，不占 setup）。
             {
                 let root = root.clone();
@@ -1477,6 +1531,11 @@ pub fn run() {
             get_workspace_item,
             apply_editor_commands,
             list_library_items,
+            import_files,
+            publish_items,
+            open_source_file,
+            cancel_processing,
+            retry_processing,
             list_jobs,
             get_job,
             update_job_meta,

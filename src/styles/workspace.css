@@ -1,9 +1,8 @@
 /* 题目工作区（计划 §9.7 / §9.10）：全宽、不套大圆角卡片、两栏考试题面。 */
 
 .workspace-page {
-  display: grid;
-  /* header / notice / issues / pane-tabs 都是 auto，题面占满剩余高度。 */
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   width: 100%;
   min-width: 0;
   height: 100dvh;
@@ -110,7 +109,14 @@
 .workspace-issues li.blocker button { border-color: var(--danger); }
 .workspace-issues li.warning button { border-color: var(--accent-2); }
 
-.workspace-body { min-width: 0; min-height: 0; overflow: auto; }
+.workspace-body { flex: 1; min-width: 0; min-height: 200px; overflow: auto; }
+.workspace-header button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.workspace-selection { flex: 0 0 auto; max-height: 34dvh; overflow: auto; border-top: 1px solid var(--line); padding: 12px 20px; background: #f6f8f7; }
+.workspace-selection header { display: flex; align-items: center; justify-content: space-between; }
+.workspace-selection label { display: inline-flex; flex-direction: column; gap: 4px; margin: 6px; max-width: 100%; }
+.workspace-selection input, .workspace-selection select { width: 150px; max-width: 100%; }
+.workspace-selection .crop-grid { display: flex; flex-wrap: wrap; }
+.workspace-selection fieldset { border: 1px solid var(--line); margin: 8px 0; }
 .workspace-load-error { display: grid; gap: 10px; padding: clamp(16px, 3vw, 32px); }
 .source-pages { display: grid; gap: 6px; margin-top: 12px; }
 .source-pages pre { max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }

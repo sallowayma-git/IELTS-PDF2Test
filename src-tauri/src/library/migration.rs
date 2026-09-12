@@ -26,23 +26,15 @@ pub(crate) struct MigrationReportV1 {
 }
 
 /// 读取一个 job 的迁移候选稿：优先 current revision，其次 V2 shadow。
-fn candidate_authoring(job_path: &Path) -> Option<(Value, &'static str)> {
-    let revision_path = job_path.join("authoring").join("current-revision.json");
-    if let Ok(bytes) = fs::read(&revision_path) {
-        if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
-            // current-revision.json 是 `{ "authoring": ..., "current": ... }` 形态时取 authoring；
-            // 否则假定它本身就是 authoring 稿。
-            let authoring = value
-                .get("authoring")
-                .cloned()
-                .filter(|candidate| candidate.is_object())
-                .unwrap_or(value);
+fn candidate_authoring(root: &Path, job_id: &str) -> Option<(Value, &'static str)> {
+    if let Ok(current) = crate::artifact_store::read_current_revision(root, job_id) {
+        if let Ok(authoring) = crate::artifact_store::read_revision(root, job_id, current.revision) {
             if is_authoring_shape(&authoring) {
                 return Some((authoring, "revision"));
             }
         }
     }
-    let shadow_path = job_path.join(AUTHORING_V2_SHADOW_FILE);
+    let shadow_path = job_dir(root, job_id).join(AUTHORING_V2_SHADOW_FILE);
     if let Ok(bytes) = fs::read(&shadow_path) {
         if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
             if is_authoring_shape(&value) {
@@ -81,6 +73,23 @@ fn status_of(job_json: &Value, has_ds: bool) -> &'static str {
     }
 }
 
+fn repair_shadow_seed(conn: &rusqlite::Connection, root: &Path, job_id: &str) -> CommandResult<bool> {
+    let Some((revision, "revision")) = candidate_authoring(root, job_id) else { return Ok(false) };
+    let shadow: Option<Value> = fs::read(job_dir(root, job_id).join(AUTHORING_V2_SHADOW_FILE))
+        .ok().and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    let Some((current, 1)) = super::repository::get_canonical_ds(conn, job_id)? else { return Ok(false) };
+    if shadow.as_ref() != Some(&current) || current == revision { return Ok(false); }
+    let updated = conn.execute(
+        "UPDATE library_items_v2 SET canonical_ds_json = ?2,
+         title = CASE WHEN title = ?3 THEN ?4 ELSE title END
+         WHERE id = ?1 AND current_edit_version = 1 AND canonical_ds_json = ?5
+         AND NOT EXISTS (SELECT 1 FROM editor_journal_v1 WHERE library_item_id = ?1)",
+        rusqlite::params![job_id, revision.to_string(), current.pointer("/exam/title").and_then(Value::as_str),
+            revision.pointer("/exam/title").and_then(Value::as_str), current.to_string()],
+    ).map_err(|error| format!("library_migration_repair:{error}"))?;
+    Ok(updated > 0)
+}
+
 /// 扫描 `<root>/jobs/` 并迁移。幂等：可重复执行；已存在行与已有权威稿不会被覆盖。
 pub(crate) fn migrate_existing_items(root: &Path) -> CommandResult<MigrationReportV1> {
     let jobs_root = root.join("jobs");
@@ -105,6 +114,7 @@ pub(crate) fn migrate_existing_items(root: &Path) -> CommandResult<MigrationRepo
         // Writing 与未来 modality 各有独立目录；本迁移只处理 reading 的 jobs/。
         if let Ok(existing) = get_item(&conn, &job_id) {
             if existing.is_some() {
+                if repair_shadow_seed(&conn, root, &job_id)? { report.seeded_ds += 1; }
                 report.skipped_existing += 1;
                 report.scanned_jobs += 1;
                 continue;
@@ -117,7 +127,7 @@ pub(crate) fn migrate_existing_items(root: &Path) -> CommandResult<MigrationRepo
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or(Value::Null);
         let title = title_of(&job_json, &job_id);
-        let candidate = candidate_authoring(&job_path);
+        let candidate = candidate_authoring(root, &job_id);
         let status = status_of(&job_json, candidate.is_some());
         upsert_item_shell(
             &conn,
@@ -147,10 +157,10 @@ pub(crate) fn migrate_single_item(root: &Path, job_id: &str) -> CommandResult<bo
     let conn = super::repository::open_library_connection(root)?;
     if let Some(existing) = get_item(&conn, job_id)? {
         if existing.has_canonical_ds {
-            return Ok(false);
+            return repair_shadow_seed(&conn, root, job_id);
         }
     }
-    let Some((authoring, _source)) = candidate_authoring(&job_path) else {
+    let Some((authoring, _source)) = candidate_authoring(root, job_id) else {
         return Ok(false);
     };
     if get_item(&conn, job_id)?.is_none() {
@@ -240,5 +250,24 @@ mod tests {
         let (_, version) = get_canonical_ds(&conn, "job-a").unwrap().unwrap();
         assert_eq!(version, 7, "迁移后版本保持用户编辑后的值，不重置");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migration_resolves_saved_revision_and_repairs_unedited_shadow_seed() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        seed_job(&root, "job-a", true);
+        migrate_existing_items(&root).unwrap();
+        let conn = super::super::repository::open_library_connection(&root).unwrap();
+        let (mut saved, _) = get_canonical_ds(&conn, "job-a").unwrap().unwrap();
+        saved["exam"]["title"] = serde_json::json!("Saved revision");
+        crate::artifact_store::append_revision(&root, "job-a", 0,
+            crate::artifact_store::RevisionSourceV2::User, &saved, &[]).unwrap();
+        assert!(migrate_single_item(&root, "job-a").unwrap());
+        assert_eq!(get_canonical_ds(&conn, "job-a").unwrap().unwrap().0, saved);
+        conn.execute("DELETE FROM library_items_v2 WHERE id = 'job-a'", []).unwrap();
+        migrate_existing_items(&root).unwrap();
+        assert_eq!(get_canonical_ds(&conn, "job-a").unwrap().unwrap().0, saved);
+        let _ = fs::remove_dir_all(root);
     }
 }

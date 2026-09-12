@@ -74,6 +74,7 @@
     "@tiptap/react": "3.30.0",
     "@tiptap/starter-kit": "3.30.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "lucide-react": "^1.42.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.3",

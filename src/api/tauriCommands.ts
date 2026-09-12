@@ -64,7 +64,9 @@ function devFallbackRequested(): boolean {
 }
 
 async function devFallbackInvokeLazy<T>(name: string, args?: Record<string, unknown>): Promise<T> {
-  if (!devFallbackRequested()) {
+  // 生产构建里 `import.meta.env.DEV` 静态为 false，动态 import 会被摇树移除，
+  // 测试替身不会进入 bundle；运行时开关只用于开发预览与浏览器冒烟。
+  if (!import.meta.env.DEV || !devFallbackRequested()) {
     throw new Error(`requires_tauri_runtime:${name}`);
   }
   const backend = await import("../services/devFallbackBackend");

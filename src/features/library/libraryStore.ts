@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { subscribeProcessing } from "../../api/processingClient";
 import { deleteLibraryExam, listJobs, listLibraryExams, listTrashedExams, restoreLibraryExam } from "../../api/tauriCommands";
 import { listLibraryItems, type LibraryItemSummaryV2 } from "../../api/workspaceClient";
 import type { ImportJob, LibraryExamSummary } from "../../types";
-import { buildRow, isProcessingStage, type LibraryRowV1 } from "./libraryTypes";
+import { buildRow, type LibraryRowV1 } from "./libraryTypes";
 
 // 题库行 = 处理任务（ImportJob）与题库条目（LibraryExamSummary）按 id 合并。
 // 当前数据模型下 library item id 与 job id 相同（见 findings F12），所以 id 可以直接做合并键。
 //
-// 后端还没有 `processing://item-updated` 事件（计划 §5.4 / P5），因此这里只在存在处理中行时
-// 做 2 秒轮询；一旦事件通道落地，把 pollWhileProcessing 换成 listen() 订阅即可，其余不变。
-const POLL_INTERVAL_MS = 2000;
+// 处理中的阶段由后端持久队列给出（`list_library_items` 附带 processing 状态），
+// 进度靠 `processing://item-updated` 事件驱动刷新；原先的 2 秒轮询已删除。
 
 function mergeRows(
   jobs: ImportJob[],
@@ -25,7 +25,7 @@ function mergeRows(
   const rows: LibraryRowV1[] = [];
   const seen = new Set<string>();
   // 活动条目：job 与 summary 的并集，两边都可能单独存在（写作没有 job；刚建的 job 还没有 summary）。
-  for (const id of [...jobById.keys(), ...summaryById.keys()]) {
+  for (const id of [...jobById.keys(), ...summaryById.keys(), ...v2ById.keys()]) {
     if (seen.has(id) || trashedById.has(id)) continue;
     seen.add(id);
     rows.push(buildRow(id, jobById.get(id), summaryById.get(id), {}, v2ById.get(id)));
@@ -100,13 +100,15 @@ export function useLibraryStore(): LibraryStore {
     };
   }, [load, tick]);
 
-  const hasProcessing = useMemo(() => rows.some((row) => isProcessingStage(row.stage)), [rows]);
-
   useEffect(() => {
-    if (!hasProcessing) return;
-    const timer = window.setInterval(refresh, POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [hasProcessing, refresh]);
+    let stopped = false;
+    let unlisten: (() => void) | undefined;
+    subscribeProcessing(refresh).then((stop) => {
+      if (stopped) stop(); else { unlisten = stop; refresh(); }
+    }).catch(console.error);
+    window.addEventListener("focus", refresh);
+    return () => { stopped = true; unlisten?.(); window.removeEventListener("focus", refresh); };
+  }, [refresh]);
 
   const prependOptimistic = useCallback((next: LibraryRowV1[]) => {
     optimistic.current = [...next, ...optimistic.current];

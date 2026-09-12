@@ -262,13 +262,94 @@ fn physical_shadow_for(authoring: &Value) -> Value {
     })
 }
 
+/// P4-T01: the auto import path must materialize the same physical DocumentIRV2 evidence for a
+/// DOCX main source as the manual parse command. Before this, `run_auto_pipeline_core` filtered the
+/// physical writer to `file_type == "pdf"`, so an auto-imported DOCX reached authoring and quality
+/// evaluation with no physical layer at all.
+#[test]
+fn product_chain_docx_import_materializes_the_physical_document_ir_v2() {
+    let root = temp_root("docx-physical");
+    ensure_app_dirs(&root).unwrap();
+    let mut job = chain_job("Product chain DOCX physical ingest");
+    attach_source(
+        &root,
+        &mut job,
+        "fixtures/parser/complex-reading.docx",
+        "MainQuestion",
+    );
+    save_job(&root, &job).unwrap();
+
+    let report = run_auto_pipeline_core(
+        &root,
+        &job.job_id,
+        Some(AutoPipelineInput {
+            profile_id: None,
+            confidence_threshold: Some(0.85),
+            parse_mode: None,
+            execution_mode: Some("localOnly".to_string()),
+            target: Some("editableDraft".to_string()),
+            allow_overwrite: Some(true),
+        }),
+    )
+    .expect("local pipeline must complete for a DOCX main source");
+    assert!(
+        report.get("status").and_then(Value::as_str).is_some(),
+        "pipeline report must carry a job status: {report}"
+    );
+
+    let dir = job_dir(&root, &job.job_id);
+    assert!(
+        dir.join("authoring-ir.json").is_file(),
+        "DOCX import must produce the V1 editable draft"
+    );
+    assert_shadow(&dir, DOCUMENT_V2_SHADOW_FILE, "docx stage 1 physical shadow");
+    let physical: Value =
+        serde_json::from_slice(&fs::read(dir.join(DOCUMENT_V2_SHADOW_FILE)).unwrap()).unwrap();
+    assert_eq!(
+        physical.get("schemaVersion").and_then(Value::as_str),
+        Some("DocumentIRV2"),
+        "DOCX physical ingest must still produce a schema-gated DocumentIRV2"
+    );
+    assert_eq!(
+        physical.get("jobId").and_then(Value::as_str),
+        Some(job.job_id.as_str()),
+        "the physical document must be bound to the originating job"
+    );
+    // A DOCX physical layer is OOXML-structural (pages/regions from the document model) unless
+    // EPIC8_DOCX_RENDER_ASSIST turns on rendered geometry. Either way it must carry real pages,
+    // not an empty shell.
+    assert!(
+        physical
+            .get("pages")
+            .and_then(Value::as_array)
+            .is_some_and(|pages| !pages.is_empty()),
+        "DOCX physical ingest must produce at least one page: {physical}"
+    );
+
+    // The point of the fix: without a physical layer the authoring V2 shadow is never produced, so a
+    // DOCX job can never open an editable session and can never become ready/publishable. Assert the
+    // session end to end, not just the physical artifact.
+    assert_shadow(&dir, AUTHORING_V2_SHADOW_FILE, "docx stage 1 authoring shadow");
+    let session = get_authoring_v2_core(&root, &job.job_id)
+        .expect("a DOCX import must be able to open the authoring V2 session");
+    assert_eq!(
+        session.get("schemaVersion").and_then(Value::as_str),
+        Some("AuthoringEditorSessionV1")
+    );
+    let authoring = session
+        .get("authoring")
+        .cloned()
+        .expect("session must carry the authoring document");
+    first_text_node(&authoring).expect("DOCX draft must contain at least one text node");
+}
+
 #[test]
 fn product_chain_pdf_import_reaches_editable_session_and_persists_one_character_edit() {
     let root = temp_root("edit");
     ensure_app_dirs(&root).unwrap();
     let mut job = chain_job("Product chain PDF import");
-    // A PDF main source is mandatory: the physical DocumentIRV2 shadow is only written for PDFs,
-    // and without it the authoring V2 session can never be produced.
+    // A PDF main source exercises the PDF branch of the unified physical ingest. The DOCX branch is
+    // covered by `product_chain_docx_import_materializes_the_physical_document_ir_v2`.
     attach_source(
         &root,
         &mut job,
@@ -872,22 +953,32 @@ fn library_v2_workspace_api_persists_edits_without_new_revisions() {
         "DB 编辑不得追加 revision 文件树"
     );
 
-    // 5. shadow 缓存同步（canonical → 派生），现有 export/publish 链可读。
-    let synced: Value =
+    // 5. 权威稿唯一（F04 修复）：DB 编辑不再回写 shadow 派生缓存。
+    //    提交后再读一次权威稿、另行刷新质量并整份覆盖 DB 的派生写入曾是丢稿竞态来源，
+    //    现已并入同一事务；文件缓存不再参与保存结果判定。
+    let cached: Value =
         serde_json::from_slice(&fs::read(dir.join(AUTHORING_V2_SHADOW_FILE)).unwrap()).unwrap();
+    assert_ne!(
+        cached.pointer("/exam/title").and_then(Value::as_str),
+        Some("Library v2 title"),
+        "DB 编辑不得回写 shadow 缓存；否则过期的派生写入会重新出现并可覆盖较新的保存"
+    );
+    let reloaded = crate::library::commands::get_workspace_item_core(&root, &job.job_id)
+        .expect("product workspace API must keep serving the DB draft");
     assert_eq!(
-        synced.pointer("/exam/title").and_then(Value::as_str),
-        Some("Library v2 title")
+        reloaded.pointer("/ds/exam/title").and_then(Value::as_str),
+        Some("Library v2 title"),
+        "产品工作区 API 必须从权威稿读取最新内容"
     );
 
-    // 6. DB 直通发布：authoring 覆盖 + typed preflight（无历史痕迹门禁）+ NAS 提交。
+    // 6. DB 直通发布：只给 editVersion，后端自行从 canonical DS 解析权威稿
+    //    （typed preflight 无历史痕迹门禁 + NAS 原子提交）。
     let exported = crate::authoring_v2_commands::export_authoring_v2_core(
         &root,
         json!({
             "jobId": job.job_id,
             "exportDir": root.join("exports").join("library-v2"),
-            "editVersion": 2,
-            "authoring": synced
+            "editVersion": 2
         }),
     )
     .expect("DB direct export must pass the typed preflight");
@@ -943,6 +1034,181 @@ fn library_v2_workspace_api_persists_edits_without_new_revisions() {
         Some(true),
         "publish probe must pass: {published}"
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 批量发布必须整批原子（F10 修复），且绑定数据库冻结快照（F12 修复）：
+///
+/// 1. 中途失败时，任何一题都不得出现在 NAS 清单里——不允许「发了一半」；
+/// 2. 全部通过时，一次清单替换让整批同时可见，条目只指向不可变的 releases 文件；
+/// 3. 发布读取的是 canonical DS 冻结快照，不依赖可变的 shadow 缓存文件。
+#[test]
+fn publish_items_is_all_or_nothing_across_a_batch() {
+    let root = temp_root("publish-items-batch");
+    ensure_app_dirs(&root).unwrap();
+
+    // 两道题：各自写入 ready 授权稿 + 匹配的物理 shadow，再按需迁移成权威稿。
+    let mut item_ids = Vec::new();
+    for index in 0..2 {
+        let job = chain_job(&format!("Batch publish {index}"));
+        save_job(&root, &job).unwrap();
+        let dir = job_dir(&root, &job.job_id);
+        ensure_job_dirs(&dir).unwrap();
+        let mut authoring: Value = serde_json::from_slice(
+            &fs::read(workspace_path(READY_AUTHORING_FIXTURE))
+                .expect("ready authoring fixture must exist"),
+        )
+        .expect("ready authoring fixture must be valid JSON");
+        let object = authoring
+            .as_object_mut()
+            .expect("authoring fixture must be an object");
+        object.insert("jobId".to_string(), json!(job.job_id));
+        object
+            .get_mut("exam")
+            .and_then(Value::as_object_mut)
+            .expect("fixture must carry an exam object")
+            .insert("examId".to_string(), json!(format!("batch-{index}")));
+        write_json(&dir.join(AUTHORING_V2_SHADOW_FILE), &authoring).unwrap();
+        write_json(
+            &dir.join(DOCUMENT_V2_SHADOW_FILE),
+            &physical_shadow_for(&authoring),
+        )
+        .unwrap();
+        crate::library::commands::get_workspace_item_core(&root, &job.job_id)
+            .expect("on-demand migration must seed the canonical draft");
+        item_ids.push(job.job_id);
+    }
+
+    let destination = root.join("nas").join("publish");
+    let reading_root = crate::export_nas_library::nas_reading_exams_dir(
+        &crate::export_nas_library::normalize_nas_library_root(&destination),
+    );
+    let manifest_path = reading_root.join("manifest.js");
+    let batch_input = |fault: Option<&str>| crate::nas_package_v2::PublishItemsInput {
+        item_ids: item_ids.clone(),
+        destination: destination.to_string_lossy().into_owned(),
+        fault: fault.map(str::to_string),
+    };
+
+    // 1. 第一题之后中断：整批回滚，清单与 releases 都不得留下痕迹。
+    let interrupted =
+        crate::nas_package_v2::publish_items_core(&root, batch_input(Some("after_item_1")));
+    assert!(
+        interrupted.is_err(),
+        "注入的批量中断必须向上报错，而不是静默返回部分成功：{interrupted:?}"
+    );
+    assert!(
+        !manifest_path.exists(),
+        "批量中断后不得留下 NAS 清单：{}",
+        manifest_path.display()
+    );
+    assert!(
+        !reading_root.join("releases").exists(),
+        "批量中断后不得留下已提交的 release 目录"
+    );
+
+    // 2. 全部通过：一次原子清单替换让两题同时可见。
+    let published = crate::nas_package_v2::publish_items_core(&root, batch_input(None))
+        .expect("a batch whose items all pass must publish");
+    assert_eq!(
+        published
+            .get("succeeded")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2),
+        "整批通过时两题都应发布：{published}"
+    );
+    assert_eq!(
+        published.get("failed").and_then(Value::as_array).map(Vec::len),
+        Some(0)
+    );
+    let manifest = fs::read_to_string(&manifest_path).expect("batch manifest must exist");
+    for index in 0..2 {
+        assert!(
+            manifest.contains(&format!("\"batch-{index}\"")),
+            "清单必须包含 batch-{index}：{manifest}"
+        );
+    }
+    assert!(
+        manifest.contains("./releases/"),
+        "发布条目必须指向不可变的 release 文件，而不是可被下一次发布覆盖的根目录文件"
+    );
+
+    // 3. 发布后把库里条目标记为已发布，且不推进编辑版本（后续编辑仍是未发布状态）。
+    let conn = crate::library::repository::open_library_connection(&root).unwrap();
+    for item_id in &item_ids {
+        let item = crate::library::repository::get_item(&conn, item_id)
+            .unwrap()
+            .expect("item row must exist");
+        assert_eq!(item.status, "published", "{item_id} 应标记为已发布");
+        assert_eq!(item.current_edit_version, 1, "发布不得推进编辑版本");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 旧工件读取链不得凌驾于权威稿之上。
+///
+/// `get_authoring_v2` 面向仍未退休的旧页面。DB 编辑后 shadow 不再回写（F04 修复），
+/// 如果读取仍优先 shadow，旧页面就会显示编辑前的内容。
+#[test]
+fn legacy_authoring_session_reads_the_db_draft_not_the_stale_shadow() {
+    let root = temp_root("legacy-session-db-first");
+    ensure_app_dirs(&root).unwrap();
+    let job = chain_job("Legacy session reads DB");
+    save_job(&root, &job).unwrap();
+    let dir = job_dir(&root, &job.job_id);
+    ensure_job_dirs(&dir).unwrap();
+
+    let mut authoring: Value = serde_json::from_slice(
+        &fs::read(workspace_path(READY_AUTHORING_FIXTURE))
+            .expect("ready authoring fixture must exist"),
+    )
+    .expect("ready authoring fixture must be valid JSON");
+    authoring
+        .as_object_mut()
+        .expect("authoring fixture must be an object")
+        .insert("jobId".to_string(), json!(job.job_id));
+    let shadow_title = authoring
+        .pointer("/exam/title")
+        .and_then(Value::as_str)
+        .expect("fixture must carry a title")
+        .to_string();
+    write_json(&dir.join(AUTHORING_V2_SHADOW_FILE), &authoring).unwrap();
+    write_json(
+        &dir.join(DOCUMENT_V2_SHADOW_FILE),
+        &physical_shadow_for(&authoring),
+    )
+    .unwrap();
+
+    // 按需迁移填充 DB 权威稿，然后通过工作区保存链改标题。
+    crate::library::commands::get_workspace_item_core(&root, &job.job_id)
+        .expect("on-demand migration must seed the canonical draft");
+    crate::library::commands::apply_editor_commands_core(
+        &root,
+        crate::library::repository::ApplyEditorCommandsInput {
+            item_id: job.job_id.clone(),
+            base_version: 1,
+            request_id: Some(format!("legacy-{}", job.job_id)),
+            commands: vec![],
+            title: Some("权威稿标题".to_string()),
+        },
+    )
+    .expect("DB title edit must succeed");
+
+    let session = get_authoring_v2_core(&root, &job.job_id).expect("session must load");
+    assert_eq!(
+        session.pointer("/authoring/exam/title").and_then(Value::as_str),
+        Some("权威稿标题"),
+        "旧读取链必须返回 DB 权威稿，而不是过期 shadow"
+    );
+    let on_disk: Value =
+        serde_json::from_slice(&fs::read(dir.join(AUTHORING_V2_SHADOW_FILE)).unwrap()).unwrap();
+    assert_eq!(
+        on_disk.pointer("/exam/title").and_then(Value::as_str),
+        Some(shadow_title.as_str()),
+        "shadow 仍是编辑前缓存，用于证明上面读取的确实是 DB 权威稿"
+    );
+
     let _ = fs::remove_dir_all(root);
 }
 

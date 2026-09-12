@@ -26,12 +26,36 @@
 |---|---|---|---|
 | **M0** 真实验收基础 | P0-T01/T02/T03 | 基线固化（commit/schema/语料 + --reason 强制）；真实 Tauri E2E（tauri-driver）；AUTHORING_V2_NOT_AVAILABLE 复现结论；跨仓 NAS 契约入口；追踪口径修正 | **complete** |
 | **M1** 唯一权威稿 | P2-T01~T04、P3-T03、P7-T02 | library_items_v2 等五张表 + user_version 迁移；Repository 事务编辑；按需迁移（revision→shadow）；typed preflight + export authoring 直通发布；devFallback 出生产（显式开启）；题库标题改读 V2 仓库 | **complete** |
-| **M2** 后端接管调度 | P6-T01/T02/T04/T05 | import_files + Rust scheduler + lease/取消/启动恢复 + `processing://item-updated`；删前端队列与 2s 轮询 | next |
-| **M3** 完整结构编辑 | P3-T01~T06 剩余 | 9 类 EditorCommandV1 全量；renderer/editor 按题型拆分；SourceDrawer/手工补录/热点调整；NAS renderer parity | pending |
-| **M4** 本地识别主链替换 | P4-T01~T06 | DocumentIRV2 直通、Question Layout Graph、题号 token-first、硬闭包、physical table、未分配账本 | pending |
-| **M5** 云端完整候选与合并 | P5-T01~T06、P6-T03 | skill bundle、CloudRecognitionCandidateV1、repair/salvage、三方合并与 user_edited 保护 | pending |
-| **M6** 批量原子发布与清理 | P7-T03/T05、P7-T02 收尾 | publish_library_items 整批原子提交、发布恢复记录、引用集合清理、NAS Electron 实测 | pending |
+| **M2** 后端接管调度 | P6-T01/T02/T04/T05 | import_files + Rust scheduler + lease/取消/启动恢复 + `processing://item-updated`；删前端队列与 2s 轮询 | **complete**（2026-09-11 修复轮确认：认领 SQL 绑定、源文件登记、全阶段启动恢复、lease 续租、前端改订阅事件） |
+| **M3** 完整结构编辑 | P3-T01~T06 剩余 | 9 类 EditorCommandV1 全量；renderer/editor 按题型拆分；SourceDrawer/手工补录/热点调整；NAS renderer parity | 部分完成（结构操作已接入工作区：选项增删移动、表格行列、答案位插删、资源替换/裁剪/热点、单元格跨行跨列与表头；renderer 按题型拆分与 NAS parity 未做） |
+| **M4** 本地识别主链替换 | P4-T01~T06 | DocumentIRV2 直通、Question Layout Graph、题号 token-first、硬闭包、physical table、未分配账本 | 部分完成（2026-09-11/12：P4-T01 起点——统一物理提取入口，自动导入路径对 DOCX 也物化物理 DocumentIRV2（此前仅 PDF，导致自动导入 DOCX 无法产出 V2 会话、永远到不了 ready/发布）。DOCX 用例已断言到 `get_authoring_v2_core` 打开 `AuthoringEditorSessionV1`，并用回退过滤条件做过差异化验证（旧逻辑下该用例失败）。未动：主链仍走 `make_dynamic_split_candidates` → V1 IR → 编译 V2 authoring shadow，DocumentIRV2 目前只是 `build_authoring_v2_shadow` 的辅助输入；DOCX 物理层默认是 OOXML 结构级而非渲染几何（需 `EPIC8_DOCX_RENDER_ASSIST`）；P4-T02~T06 未开始） |
+| **M5** 云端完整候选与合并 | P5-T01~T06、P6-T03 | skill bundle、CloudRecognitionCandidateV1、repair/salvage、三方合并与 user_edited 保护 | pending（未动：云端仍只产出对照提纲） |
+| **M6** 批量原子发布与清理 | P7-T03/T05、P7-T02 收尾 | publish_library_items 整批原子提交、发布恢复记录、引用集合清理、NAS Electron 实测 | 部分完成（2026-09-11：`publish_items` 整批冻结快照 + 单次原子清单替换 + 中途失败全量回滚，已有故障注入测试；引用集合清理与 NAS 实测未做） |
 | **M7** 旧链退出与统一交付 | P8-T01~T05 | 删退休页面/双写/前端调度/旧预览发布；超大文件迁移；Windows 安装包 + 100 PDF 语料 + 故障矩阵验收 | pending |
+
+## 2026-09-11 审计修复轮（audit → repair）
+
+上一轮只读审计（`audit-2026-09-07/report.md`，13 项发现）暴露「计划未完成」与「已标 complete 的 M1 存在丢稿缺陷」两件事。随后按用户要求「只做修复、不做过度安全工程」推进，逐项关闭：
+
+| 发现 | 修复结果 |
+|---|---|
+| F01 Rust 无法编译（6 个错误） | 已恢复：`cargo check --locked` 通过 |
+| F02 迁移读版本指针当题稿 | 已改走 `read_current_revision` → `read_revision`，并对仍等于 shadow 的未编辑 v1 行做保守修复 |
+| F03 多窗口 request id 相同 | 改为每批命令一个 UUID，重试沿用；后端复用编号时比对稿件与载荷 |
+| F04 提交后整份覆盖 DB（丢稿竞态） | 质量重算移入同一事务；删除提交后的整份写回与 shadow 回写 |
+| F05 慢保存期间的编辑不发送 | 保存队列改为循环排空，直到没有待发批次才报告「已保存」 |
+| F06 保存失败仍继续发布 | `flush()` 失败向上抛；发布前置等待并中断 |
+| F07 队列认领 SQL 绑错参数 | 已分别绑定 id 与时间戳 |
+| F08 导入未登记源文件 | `import_files` 与 `stage_source_file` 统一登记 `SourceFile` |
+| F09 恢复只覆盖 `running` | 恢复与过期 lease 覆盖全部非终态阶段 |
+| F10 批量发布非原子 | `publish_items` 整批冻结快照 + 单次原子清单替换；中途失败全量回滚（新增故障注入测试） |
+| F11 结构修复未接入工作区 | 选项/表格/答案位/资源/裁剪/热点/单元格属性已接入工作区 |
+| F12 发布绑定 mutable shadow | `authoringSource=canonical_ds` 时不再读 shadow 绑定 |
+| F13 生产包含测试替身与退休 UI | 测试替身移出生产 bundle（chunk 消失）；`App.tsx` 不再渲染退休路由集合 |
+
+验证层级：`cargo test` 565 通过 / 0 失败；`npm run check`、`npm run build` 通过；浏览器冒烟 13 步通过；保存链故障回归 3 项通过。**真实 Tauri 与 NAS 运行时刻未在本环境执行，不计为验收通过。**
+
+**2026-09-11 续修**：关闭审计轮遗留的最后两处——`load_current_authoring` 改为「revision → DB 权威稿 → shadow」解析顺序（旧行为在无 revision 时优先读 shadow，DB 编辑后 shadow 陈旧，旧页面会读到改前内容）；新增回归测试。并起步 M4/P4-T01：自动导入路径统一物理提取入口，DOCX 主源也物化 DocumentIRV2（此前仅 PDF，导致自动导入的 DOCX 永远无法产出 V2 会话、无法 ready/发布），新增 DOCX 回归测试。`cargo test` 566 → 567 通过 / 0 失败；`npm run check` 通过。
 
 ## Phase Map（本地执行阶段 ↔ 计划 PR，历史记录）
 

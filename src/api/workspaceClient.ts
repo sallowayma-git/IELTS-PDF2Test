@@ -1,4 +1,5 @@
 import { command } from "./tauriCommands";
+import type { ProcessingState } from "./processingClient";
 
 // Workspace API client（M1 / 计划 §16.14 拆分的第一片）：
 // 工作区与题库列表从 library_items_v2 读取，编辑保存走 apply_editor_commands 事务。
@@ -35,6 +36,7 @@ export interface LibraryItemSummaryV2 {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  processing?: ProcessingState | null;
 }
 
 export interface ApplyEditorCommandsResultV1 {
@@ -44,7 +46,7 @@ export interface ApplyEditorCommandsResultV1 {
   appliedCount: number;
   replayed: boolean;
   recoverySnapshotSaved: boolean;
-  status: string;
+  status?: string;
 }
 
 export async function getWorkspaceItem(itemId: string): Promise<WorkspaceItemV1> {

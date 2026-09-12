@@ -34,6 +34,10 @@ export type AuthoringContentTargetV2 =
   | { kind: "node"; nodeId: string };
 
 export type AuthoringNodeAttributeV2 = {
+  assetId?: string;
+  rowSpan?: number;
+  colSpan?: number;
+  headerScope?: "none" | "row" | "column" | "both";
   align?: "left" | "center" | "right" | "justify";
   indentLevel?: number;
   level?: number;

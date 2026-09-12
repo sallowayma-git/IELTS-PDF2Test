@@ -142,19 +142,28 @@ export function buildRow(
   options: { inTrash?: boolean } = {},
   v2?: LibraryItemSummaryV2
 ): LibraryRowV1 {
-  const stage = deriveStage(job, summary);
+  const processingStage: Record<string, LibraryStageV1> = {
+    queued: "queued", running: "local", local_recognition: "local", cloud_recognition: "cloud",
+    reconciling: "reconciling", failed: "failed", cancelled: "failed"
+  };
+  const itemStage: Record<string, LibraryStageV1> = {
+    ready: "ready", action_required: "action_required", published: "published", failed: "failed",
+    processing: "queued", migration_required: "action_required"
+  };
+  const stage = (v2?.processing ? processingStage[v2.processing.stage] : undefined)
+    ?? (v2 ? itemStage[v2.status] : undefined) ?? deriveStage(job, summary);
   const actionable = actionableFrom(job?.issueCounts) || (summary?.issueErrors ?? 0);
   return {
     id,
     // M1：V2 仓库是标题的权威（工作区改名写 library_items_v2）；只在已填充权威稿时覆盖。
-    title: (v2?.hasCanonicalDs ? v2.title : undefined) ?? job?.title ?? summary?.title ?? id,
+    title: v2?.title ?? job?.title ?? summary?.title ?? id,
     modality: summary?.subject === "writing" ? "writing" : "reading",
     stage,
     detail: detailFor(stage, job, actionable),
     progressPercent: job && isProcessingStage(stage) ? STEP_PROGRESS[job.currentStep] : undefined,
     actionableCount: actionable,
     category: summary?.category ?? job?.category,
-    updatedAt: job?.updatedAt ?? summary?.updatedAt ?? "",
+    updatedAt: v2?.updatedAt ?? job?.updatedAt ?? summary?.updatedAt ?? "",
     inTrash: Boolean(options.inTrash),
     raw: {
       jobStatus: job?.status,

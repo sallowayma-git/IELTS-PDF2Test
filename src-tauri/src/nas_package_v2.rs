@@ -151,6 +151,7 @@ fn validate_v2_export_binding(
         return Err("nas_package_v2_export_receipt_hash_mismatch".to_string());
     }
 
+    if manifest.get("authoringSource").and_then(Value::as_str) != Some("canonical_ds") {
     let paths = JobArtifactPaths::for_job(root, job_id)?;
     let persisted_path = if revision == 0 {
         paths.job_dir.join(AUTHORING_V2_SHADOW_FILE)
@@ -184,6 +185,7 @@ fn validate_v2_export_binding(
         || persisted_binding != exported_binding
     {
         return Err("nas_package_v2_export_binding_detached".to_string());
+    }
     }
     let bound_authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value.clone())
         .map_err(|error| format!("nas_package_v2_export_binding_invalid:authoring:{error}"))?;
@@ -246,6 +248,107 @@ struct PackageReceipt {
     asset_count: usize,
     probe: StudentProbeReportV2,
     manifest_sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PublishItemsInput {
+    pub item_ids: Vec<String>,
+    pub destination: String,
+    pub fault: Option<String>,
+}
+
+pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> CommandResult<Value> {
+    use crate::library::repository::{get_canonical_ds, open_library_connection};
+    if input.item_ids.is_empty() { return Err("PUBLISH_ITEMS_REQUIRED".to_string()); }
+    let ids: BTreeSet<_> = input.item_ids.iter().collect();
+    for id in &ids { crate::library::migration::migrate_single_item(root, id)?; }
+    let mut conn = open_library_connection(root)?;
+    let transaction = conn.transaction().map_err(|error| error.to_string())?;
+    let snapshots = ids.iter().map(|id| {
+        let (ds, version) = get_canonical_ds(&transaction, id)?.ok_or_else(|| format!("ITEM_DS_NOT_SEEDED:{id}"))?;
+        Ok(((*id).clone(), ds, version))
+    }).collect::<CommandResult<Vec<_>>>()?;
+    transaction.commit().map_err(|error| error.to_string())?;
+
+    let library_root = normalize_nas_library_root(&absolute_path("library_root", &input.destination)?);
+    let reading_root = nas_reading_exams_dir(&library_root);
+    let paths = make_paths(&library_root, &reading_root, "batch")?;
+    fs::create_dir_all(paths.lock_path.parent().unwrap()).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&reading_root).map_err(|error| error.to_string())?;
+    let lock = OpenOptions::new().create(true).read(true).write(true).open(&paths.lock_path)
+        .map_err(|error| error.to_string())?;
+    lock.try_lock_exclusive().map_err(|error| format!("nas_package_v2_lock_busy:{error}"))?;
+    recover_incomplete_transactions(&paths)?;
+    let base_hash = manifest_sha256(&paths.manifest_path)?;
+    let mut manifest = load_existing_manifest(&paths.manifest_path)?;
+    let batch_id = Uuid::new_v4().simple().to_string();
+    write_lock_metadata(&paths, &batch_id)?;
+    let staging = reading_root.join(format!(".batch-staging-{batch_id}"));
+    let release = reading_root.join("releases").join(&batch_id);
+    let result = (|| -> CommandResult<Value> {
+        fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
+        let mut outcomes = Vec::new();
+        let mut exam_ids = BTreeSet::new();
+        for (index, (item_id, ds, version)) in snapshots.iter().enumerate() {
+            let materialized = crate::authoring_v2_commands::export_authoring_snapshot(root,
+                crate::authoring_v2_commands::ExportAuthoringV2Input {
+                    job_id: item_id.clone(), export_dir: staging.join("snapshots").to_string_lossy().into_owned(),
+                    revision: None, authoring: Some(ds.clone()), edit_version: Some(*version as u64),
+                })?;
+            let source_path = PathBuf::from(materialized.pointer("/receipt/runtimePath").and_then(Value::as_str).ok_or("PUBLISH_RUNTIME_MISSING")?);
+            let source_value: Value = crate::util::read_json(&source_path)?;
+            let source: ReadingExamSourceV2 = serde_json::from_value(source_value.clone()).map_err(|error| error.to_string())?;
+            let exam_id = safe_exam_id(&source_value)?;
+            if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
+            let mut staged_paths = paths.clone();
+            staged_paths.staging_root = staging.clone();
+            staged_paths.staging_exam_path = staging.join(format!("{exam_id}.js"));
+            staged_paths.staging_resource_path = staging.join("resources").join(&exam_id);
+            let package_input = NasPackagePublishInput {
+                library_root: input.destination.clone(), source_path: source_path.to_string_lossy().into_owned(),
+                asset_root: None, exam_id: Some(exam_id.clone()), minimum_runtime_version: None,
+                expected_manifest_sha256: None, fault: None, job_id: None, revision: None,
+            };
+            let mut staged = stage_package_files(&package_input, &source, &source_value, &source_path, &staged_paths)?;
+            for field in ["script", "resourcesBase", "assetManifest"] {
+                let relative = staged.entry[field].as_str().ok_or("PUBLISH_PATH_MISSING")?.trim_start_matches("./");
+                staged.entry[field] = json!(format!("./releases/{batch_id}/{relative}"));
+            }
+            manifest.insert(exam_id.clone(), staged.entry);
+            outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id,
+                "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": source.assets.assets.len()}));
+            if input.fault.as_deref() == Some(&format!("after_item_{}", index + 1)) {
+                return Err("PUBLISH_BATCH_INTERRUPTED".to_string());
+            }
+        }
+        manifest.remove("_meta");
+        manifest.insert("_meta".to_string(), json!({"schemaVersion": "ReadingExamManifestV2",
+            "assetCount": manifest.len(), "generatedAt": Utc::now().to_rfc3339(), "batchId": batch_id}));
+        let candidate = staging.join("manifest.js");
+        write_synced_file(&candidate, format!("window.__READING_EXAM_MANIFEST__ = {};\n",
+            serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?).as_bytes())?;
+        verify_manifest_compare_and_swap(&paths.manifest_path, &base_hash)?;
+        fs::create_dir_all(release.parent().unwrap()).map_err(|error| error.to_string())?;
+        fs::rename(&staging, &release).map_err(|error| error.to_string())?;
+        if input.fault.as_deref() == Some("before_manifest") { return Err("PUBLISH_BATCH_INTERRUPTED".to_string()); }
+        // Published entries point only at immutable files. One manifest replacement exposes the batch.
+        atomic_replace_file(&release.join("manifest.js"), &paths.manifest_path)?;
+        Ok(json!({"destination": input.destination, "succeeded": outcomes, "failed": []}))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+        let _ = fs::remove_dir_all(&release);
+    } else {
+        for (id, _, version) in snapshots {
+            // A later edit remains unpublished; metadata failure cannot undo a committed NAS manifest.
+            if let Err(error) = conn.execute("UPDATE library_items_v2 SET status = 'published' WHERE id = ?1 AND current_edit_version = ?2", rusqlite::params![id, version]) {
+                eprintln!("[publish] status update: {error}");
+            }
+        }
+    }
+    let _ = fs::remove_file(&paths.lock_metadata_path);
+    result
 }
 
 pub(crate) fn publish_nas_package_v2_core(root: &Path, input: Value) -> CommandResult<Value> {
@@ -355,15 +458,20 @@ pub(crate) fn publish_nas_package_v2_core(root: &Path, input: Value) -> CommandR
     result
 }
 
-fn stage_and_commit(
-    _app_root: &Path,
+struct StagedPackage {
+    entry: Value,
+    probe: StudentProbeReportV2,
+    runtime_sha256: String,
+    minimum_runtime_version: String,
+}
+
+fn stage_package_files(
     input: &NasPackagePublishInput,
     source: &ReadingExamSourceV2,
     source_value: &Value,
     source_path: &Path,
     paths: &PackagePaths,
-    export_id: &str,
-) -> CommandResult<Value> {
+) -> CommandResult<StagedPackage> {
     fs::create_dir_all(&paths.staging_resource_path)
         .map_err(|error| format!("nas_package_v2_staging_create:{error}"))?;
     let asset_root = input
@@ -445,17 +553,13 @@ fn stage_and_commit(
     let runtime_sha256 = sha256_hex(&runtime_bytes);
     let asset_manifest_sha256 = sha256_hex(&asset_manifest_bytes);
     let script_sha256 = sha256_hex(wrapper.as_bytes());
-    verify_manifest_compare_and_swap(&paths.manifest_path, &paths.base_manifest_sha256)?;
-    let mut manifest = load_existing_manifest(&paths.manifest_path)?;
     let minimum_runtime_version = input
         .minimum_runtime_version
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("0.2.0");
     validate_minimum_runtime_version(minimum_runtime_version)?;
-    manifest.insert(
-        source.exam_id.clone(),
-        json!({
+    let entry = json!({
             "examId": source.exam_id,
             "dataKey": source.exam_id,
             "script": format!("./{}.js", source.exam_id),
@@ -471,8 +575,24 @@ fn stage_and_commit(
                 "assetManifestSha256": asset_manifest_sha256,
                 "runtimeSha256": runtime_sha256
             }
-        }),
-    );
+        });
+    Ok(StagedPackage { entry, probe, runtime_sha256, minimum_runtime_version: minimum_runtime_version.to_string() })
+}
+
+fn stage_and_commit(
+    _app_root: &Path,
+    input: &NasPackagePublishInput,
+    source: &ReadingExamSourceV2,
+    source_value: &Value,
+    source_path: &Path,
+    paths: &PackagePaths,
+    export_id: &str,
+) -> CommandResult<Value> {
+    let StagedPackage { entry, probe, runtime_sha256, minimum_runtime_version } =
+        stage_package_files(input, source, source_value, source_path, paths)?;
+    verify_manifest_compare_and_swap(&paths.manifest_path, &paths.base_manifest_sha256)?;
+    let mut manifest = load_existing_manifest(&paths.manifest_path)?;
+    manifest.insert(source.exam_id.clone(), entry);
     let mut metadata = manifest
         .remove("_meta")
         .unwrap_or_else(|| json!({"schemaVersion": "ReadingExamManifestV1"}));
@@ -1112,22 +1232,23 @@ fn copy_file_verified(source: &Path, destination: &Path) -> CommandResult<()> {
 }
 
 /// Replace a destination file with a staged file in the same directory.
-/// `rename` is an atomic replacement on Unix.  Windows refuses to rename
-/// over an existing file, so use the platform-compatible remove/rename
-/// fallback; the old file is always present in the durable backup before this
-/// helper is called, allowing recovery if the second operation is interrupted.
+/// Keep the old discovery manifest visible until its replacement is ready.
 fn atomic_replace_file(source: &Path, destination: &Path) -> CommandResult<()> {
-    match fs::rename(source, destination) {
-        Ok(()) => Ok(()),
-        Err(rename_error) if destination.exists() => {
-            fs::remove_file(destination).map_err(|error| {
-                format!("replace_remove_destination:{error};rename={rename_error}")
-            })?;
-            fs::rename(source, destination)
-                .map_err(|error| format!("replace_rename_source:{error};initial={rename_error}"))
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "kernel32")]
+        extern "system" { fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32; }
+        let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+        let destination: Vec<u16> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
+        // Both buffers are NUL-terminated and live for the duration of the call.
+        if unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), 0x1 | 0x8) } == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
         }
-        Err(error) => Err(error.to_string()),
+        Ok(())
     }
+    #[cfg(not(windows))]
+    { fs::rename(source, destination).map_err(|error| error.to_string()) }
 }
 
 fn validate_backup_contents(

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { publishItems } from "../../api/publishClient";
-import { go, workspacePath, type LibraryIntent } from "../../app/router";
+import { go, legacyPath, workspacePath, type LibraryIntent } from "../../app/router";
 import { ImportDrawer } from "../import/ImportDrawer";
 import { useImportFiles, type ImportRejection } from "../import/useImportFiles";
 import { LibraryBatchBar } from "./LibraryBatchBar";
@@ -129,7 +129,7 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
         tab={tab}
         counts={counts}
         search={search}
-        backgroundCount={importer.backgroundCount}
+        backgroundCount={counts.processing}
         onTabChange={setTab}
         onSearchChange={setSearch}
         onImport={() => {
@@ -153,7 +153,7 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
         tab={tab}
         selectedIds={selectedIds}
         onToggleSelect={toggleSelect}
-        onOpen={(id) => go(workspacePath(id))}
+        onOpen={(id) => go(store.rows.find((row) => row.id === id)?.modality === "writing" ? legacyPath("writing", id) : workspacePath(id))}
         onTrash={trash}
         onRestore={restore}
       />

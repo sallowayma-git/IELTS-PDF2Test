@@ -44,6 +44,9 @@ export function legacyRedirect(hash: string): string | undefined {
   const parts = value.split(/[/?]/).filter(Boolean);
   if (!parts.length) return "/library";
   const [head, second, third] = parts;
+  if (head === "legacy" && second !== "writing") {
+    return third ? `/items/${third}` : second === "import" ? "/library?import=1" : "/library";
+  }
   if (head === "dashboard" || head === "phase5") return "/library";
   if (head === "jobs") {
     if (!second) return "/library";
@@ -108,7 +111,7 @@ export function applyLegacyRedirect(hash = window.location.hash): boolean {
   const raw = hash.replace(/^#\/?/, "");
   const parts = raw.split(/[/?]/).filter(Boolean);
   // 新路由与显式 legacy 逃生通道都不重定向。
-  if (parts[0] === "items" || parts[0] === "settings" || parts[0] === "legacy") return false;
+  if (parts[0] === "items" || parts[0] === "settings" || (parts[0] === "legacy" && parts[1] === "writing")) return false;
   if (parts[0] === "library" && !parts[1]) return false;
   const target = legacyRedirect(hash);
   if (!target) return false;

@@ -213,7 +213,9 @@ export async function chooseExportDirectory(): Promise<string | null> {
     return invoke<string | null>("choose_export_dir");
   }
 
-  if (!devFallbackRequested()) return null;
+  // 生产构建里 `import.meta.env.DEV` 会被静态替换为 false，整条分支随之消失，
+  // 测试替身因此不会进入 bundle；运行时开关只用于开发预览。
+  if (!import.meta.env.DEV || !devFallbackRequested()) return null;
   const backend = await import("../services/devFallbackBackend");
   const fallback = await backend.devFallbackInvoke<string | null>("choose_export_dir");
   return fallback ?? "local://exports";

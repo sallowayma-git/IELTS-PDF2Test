@@ -2489,6 +2489,55 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
   const store = load();
 
   switch (command) {
+    case "get_workspace_item": {
+      const itemId = args.itemId as string;
+      const session = phase5Session(store, itemId);
+      save(store);
+      return { schemaVersion: "WorkspaceItemV1", ds: session.authoring, editVersion: session.revision,
+        item: { itemId, title: session.authoring.exam.title, modality: "reading", status: "ready",
+          editVersion: session.revision, hasCanonicalDs: true, updatedAt: now() }, issues: session.authoring.quality.issues } as T;
+    }
+    case "list_library_items": {
+      return Object.entries(store.authoringV2).map(([itemId, ds]) => ({ id: itemId, title: ds.exam.title,
+        modality: "reading", status: ds.quality.state === "ready" ? "ready" : "action_required",
+        currentEditVersion: store.authoringV2Revisions[itemId] ?? 0, hasCanonicalDs: true,
+        createdAt: now(), updatedAt: now(), deletedAt: null, sourceAssetId: null })) as T;
+    }
+    case "apply_editor_commands": {
+      const input = args.input as { itemId: string; baseVersion: number; commands: ApplyAuthoringV2PatchesInput["patches"]; title?: string; requestId?: string };
+      const journalKey = `dev-editor-request:${input.requestId}`;
+      const previous = input.requestId ? localStorage.getItem(journalKey) : null;
+      if (previous) {
+        const replay = JSON.parse(previous) as { input: typeof input; editVersion: number };
+        if (JSON.stringify(replay.input) !== JSON.stringify(input)) throw new Error("EDIT_REQUEST_ID_REUSED");
+        return { editVersion: replay.editVersion, replayed: true, appliedCount: 0 } as T;
+      }
+      const session = phase5Session(store, input.itemId);
+      if (input.baseVersion !== session.revision) throw new Error("EDIT_VERSION_CONFLICT");
+      const next = applyAuthoringV2Patches(session.authoring, input.commands);
+      if (input.title !== undefined) next.exam.title = input.title;
+      store.authoringV2[input.itemId] = next;
+      store.authoringV2Revisions[input.itemId] = session.revision + 1;
+      save(store);
+      if (input.requestId) localStorage.setItem(journalKey, JSON.stringify({ input, editVersion: session.revision + 1 }));
+      return { editVersion: session.revision + 1, replayed: false, appliedCount: input.commands.length } as T;
+    }
+    case "publish_items":
+      throw new Error("requires_tauri_runtime:publish_items");
+    case "import_files": {
+      const input = args.input as { files: Array<{ name: string; path: string; titleHint?: string; sizeBytes?: number; textContent?: string; binaryContentBase64?: string }> };
+      const created: Array<{ itemId: string; title: string }> = [];
+      const rejected: Array<{ name: string; reason: string }> = [];
+      for (const file of input.files) {
+        try {
+          const job = await devFallbackInvoke<ImportJob>("create_import_job", { input: { title: file.titleHint || file.name } });
+          await devFallbackInvoke("import_source_file", { jobId: job.jobId, filePath: file.path, role: "MainQuestion", ...file });
+          await devFallbackInvoke("run_auto_pipeline", { jobId: job.jobId, input: { executionMode: "localOnly", target: "editableDraft" } });
+          created.push({ itemId: job.jobId, title: job.title });
+        } catch (error) { rejected.push({ name: file.name, reason: String(error) }); }
+      }
+      return { created, rejected } as T;
+    }
     case "create_import_job": {
       const input = (args.input ?? {}) as { title?: string; category?: ImportJob["category"]; frequency?: ImportJob["frequency"]; tags?: string[]; llmProfileId?: string };
       const job: ImportJob = {

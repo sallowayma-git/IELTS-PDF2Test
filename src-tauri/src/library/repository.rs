@@ -1,8 +1,9 @@
 //! M1（原 P2-T03/P2-T04）：Canonical DS 仓库与事务编辑。
 //!
 //! 计划 §9.5 的保存链在 Rust 侧落地：单事务内完成版本校验、命令应用、
-//! 版本递增、journal 与有界恢复快照。旧 artifact 文件树只作为派生缓存
-//! 回写（canonical → shadow 方向），不再是新编辑的事实源。
+//! 版本递增、journal 与有界恢复快照。旧 artifact 文件树（revision/shadow）
+//! 只在导入与按需迁移时作为**来源**读取；数据库编辑不再回写派生文件，
+//! canonical DS 是唯一权威稿。
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -137,7 +138,7 @@ pub(crate) fn get_canonical_ds(
 ) -> CommandResult<Option<(Value, i64)>> {
     let row: Option<(String, i64)> = conn
         .query_row(
-            "SELECT canonical_ds_json, current_edit_version FROM library_items_v2 WHERE id = ?1",
+            "SELECT canonical_ds_json, current_edit_version FROM library_items_v2 WHERE id = ?1 AND canonical_ds_json IS NOT NULL",
             [item_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -245,36 +246,40 @@ pub(crate) fn apply_editor_commands_tx(
     conn: &mut Connection,
     input: &ApplyEditorCommandsInput,
     apply_patch: &dyn Fn(&mut Value, &Value) -> CommandResult<()>,
-    validate_ds: &dyn Fn(&Value) -> CommandResult<()>,
+    prepare_ds: &dyn Fn(&mut Value) -> CommandResult<()>,
 ) -> CommandResult<ApplyEditorCommandsResult> {
     if input.commands.is_empty() && input.title.is_none() {
         return Err("EDITOR_COMMANDS_REQUIRED".to_string());
     }
 
-    // 幂等重放：同一 request_id 直接返回上次结果，不重复应用。
+    let transaction = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| format!("library_v2_tx:{error}"))?;
+    let payload = serde_json::json!({"commands": input.commands, "title": input.title});
+    // Retries must identify the same item, base version and payload.
     if let Some(request_id) = input.request_id.as_deref() {
-        let replay: Option<i64> = conn
+        let replay: Option<(String, i64, String)> = transaction
             .query_row(
-                "SELECT base_version + 1 FROM editor_journal_v1 WHERE request_id = ?1",
+                "SELECT library_item_id, base_version, command_json FROM editor_journal_v1 WHERE request_id = ?1",
                 [request_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(|error| format!("library_v2_journal_lookup:{error}"))?;
-        if let Some(version) = replay {
+        if let Some((item_id, base_version, command_json)) = replay {
+            let previous: Value = serde_json::from_str(&command_json).map_err(|error| error.to_string())?;
+            if item_id != input.item_id || base_version != input.base_version || previous != payload {
+                return Err("EDIT_REQUEST_ID_REUSED".to_string());
+            }
             return Ok(ApplyEditorCommandsResult {
                 item_id: input.item_id.clone(),
-                edit_version: version,
+                edit_version: base_version + 1,
                 applied_count: 0,
                 recovery_snapshot_saved: false,
                 replayed: true,
             });
         }
     }
-
-    let transaction = conn
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(|error| format!("library_v2_tx:{error}"))?;
 
     let row: Option<(Option<String>, i64)> = transaction
         .query_row(
@@ -309,21 +314,27 @@ pub(crate) fn apply_editor_commands_tx(
             exam.insert("title".to_string(), Value::String(trimmed.to_string()));
         }
     }
-    validate_ds(&ds)?;
+    prepare_ds(&mut ds)?;
+    let status = if ds.pointer("/quality/state").and_then(Value::as_str) == Some("ready") {
+        "ready"
+    } else {
+        "action_required"
+    };
 
     let next_version = current_version + 1;
     let now = Utc::now().to_rfc3339();
     transaction
         .execute(
             "UPDATE library_items_v2
-             SET canonical_ds_json = ?2, current_edit_version = ?3, updated_at = ?4
+             SET canonical_ds_json = ?2, current_edit_version = ?3, updated_at = ?4, status = ?6
              WHERE id = ?1 AND current_edit_version = ?5",
             params![
                 &input.item_id,
                 ds.to_string(),
                 next_version,
                 now,
-                current_version
+                current_version,
+                status
             ],
         )
         .map_err(|error| format!("library_v2_tx_update:{error}"))?;
@@ -343,8 +354,7 @@ pub(crate) fn apply_editor_commands_tx(
                 &input.item_id,
                 input.base_version,
                 input.request_id,
-                serde_json::to_string(&input.commands)
-                    .map_err(|error| format!("library_v2_journal_encode:{error}"))?,
+                payload.to_string(),
                 now
             ],
         )
@@ -367,6 +377,12 @@ pub(crate) fn apply_editor_commands_tx(
     } else {
         false
     };
+
+    transaction.execute(
+        "DELETE FROM editor_journal_v1 WHERE library_item_id = ?1 AND id NOT IN
+         (SELECT id FROM editor_journal_v1 WHERE library_item_id = ?1 ORDER BY id DESC LIMIT 200)",
+        [&input.item_id],
+    ).map_err(|error| format!("library_v2_journal_prune:{error}"))?;
 
     transaction
         .commit()
@@ -407,7 +423,7 @@ mod tests {
         })
     }
 
-    fn noop_validate(_: &Value) -> CommandResult<()> {
+    fn noop_validate(_: &mut Value) -> CommandResult<()> {
         Ok(())
     }
 

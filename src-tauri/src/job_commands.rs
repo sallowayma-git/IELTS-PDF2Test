@@ -162,7 +162,20 @@ pub(crate) async fn import_source_file_core(
     app: AppHandle,
 ) -> CommandResult<SourceFile> {
     let root = app_root(&app)?;
-    let dir = job_dir(&root, &job_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        stage_source_file(&root, &job_id, &file_path, &role)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) fn stage_source_file(
+    root: &std::path::Path,
+    job_id: &str,
+    file_path: &str,
+    role: &str,
+) -> CommandResult<SourceFile> {
+    let dir = job_dir(root, job_id);
     ensure_job_dirs(&dir)?;
     let input = PathBuf::from(&file_path);
     let original_name = input
@@ -197,7 +210,7 @@ pub(crate) async fn import_source_file_core(
         file_type: file_type_from_name(&file_path).to_string(),
         sha256: hash,
         size_bytes: size,
-        role,
+        role: role.to_string(),
         imported_at: Utc::now(),
     };
     update_job(&root, &job_id, |job| {

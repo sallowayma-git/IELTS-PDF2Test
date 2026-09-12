@@ -172,7 +172,7 @@ function patchText(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2
 function patchNodeAttrs(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "setNodeAttrs" }>): void {
   const node = findObjectById(document, patch.nodeId);
   if (!node) throw new Error(`AUTHORING_PATCH_NODE_NOT_FOUND:${patch.nodeId}`);
-  const allowed = new Set(["provenanceStatus", "align", "indentLevel", "level", "altText", "placeholder", "displayLabel", "inline", "label", "slotIds", "display", "crop"]);
+  const allowed = new Set(["assetId", "rowSpan", "colSpan", "headerScope", "provenanceStatus", "align", "indentLevel", "level", "altText", "placeholder", "displayLabel", "inline", "label", "slotIds", "display", "crop"]);
   for (const key of Object.keys(patch.attrs)) {
     if (!allowed.has(key)) throw new Error(`AUTHORING_PATCH_ATTR_NOT_ALLOWED:${key}`);
     node[key] = patch.attrs[key as keyof typeof patch.attrs];

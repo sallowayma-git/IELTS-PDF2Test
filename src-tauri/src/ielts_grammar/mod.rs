@@ -13,12 +13,12 @@ mod diagram;
 mod evidence;
 mod instruction_signature;
 mod instruction_zone;
-mod issue_codes;
+pub(crate) mod issue_codes;
 mod option_bank;
 mod option_run;
 mod prompt_assembler;
 mod quality;
-mod question_number;
+pub(crate) mod question_number;
 mod reading;
 #[cfg(test)]
 mod real_pdf_acceptance;

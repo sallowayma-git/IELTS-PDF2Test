@@ -12,9 +12,11 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 1;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 2;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
+    let transaction = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| format!("library_v2_migrate_begin:{error}"))?;
     let current: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| format!("library_v2_user_version:{error}"))?;
@@ -30,12 +32,17 @@ pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
         conn.execute_batch(&format!("PRAGMA user_version = {applied};"))
             .map_err(|error| format!("library_v2_set_user_version:{error}"))?;
     }
-    Ok(())
+    transaction.commit().map_err(|error| format!("library_v2_migrate_commit:{error}"))
 }
 
 /// 版本化迁移步骤：`(target_version, DDL)`。只追加，不修改历史步骤。
 fn migrations() -> Vec<(i64, &'static str)> {
-    vec![(LIBRARY_V2_SCHEMA_VERSION, LIBRARY_V2_SCHEMA_SQL)]
+    vec![
+        (1, LIBRARY_V2_SCHEMA_SQL),
+        // v2：事件序号（M2）。`processing://item-updated` 携带可比较的状态版本，
+        // 前端据此丢弃重复/乱序事件（计划 §3 接口契约）。
+        (2, "ALTER TABLE processing_jobs_v2 ADD COLUMN event_seq INTEGER NOT NULL DEFAULT 0;"),
+    ]
 }
 
 const LIBRARY_V2_SCHEMA_SQL: &str = r#"

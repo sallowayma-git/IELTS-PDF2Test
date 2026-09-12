@@ -5,6 +5,7 @@ use crate::{
     },
     authoring_review::refresh_authoring_review_state,
     cleanup::minimize_process_artifacts_after_authoring,
+    docx_facts_shadow::write_docx_facts_shadow_with_v1,
     environment::{authoring_v2_shadow_enabled, quality_gate_v2_enabled},
     ielts_grammar::{
         build_authoring_v2_shadow, write_authoring_v2_shadow,
@@ -31,6 +32,10 @@ use crate::{
     },
     reading_source::{
         answer_key_from_authoring, display_map_from_authoring, question_order_from_authoring,
+    },
+    recognition::{
+        write_question_layout_graph_artifact, QUESTION_LAYOUT_GRAPH_ARTIFACT_FILE,
+        QUESTION_LAYOUT_GRAPH_ERROR_FILE,
     },
     runtime_validation::validate_for_runtime_gate,
     source_review::{
@@ -270,6 +275,40 @@ fn current_physical_shadow(dir: &Path, job: &ImportJob) -> Option<Value> {
         .ok()
         .flatten()
         .filter(|shadow| physical_shadow_matches_source(shadow, job))
+}
+
+/// P4-T02: derive `QuestionLayoutGraphV1` from the job's physical `DocumentIRV2`.
+///
+/// The recognition main path reads `DocumentIRV2` directly instead of the V1
+/// `questionGroupCandidates`, so the geometric layout graph has to be produced
+/// with the physical document, not reconstructed later from split candidates.
+///
+/// Deliberately non-fatal: the import has already produced a valid physical
+/// document, and the graph is additive evidence. A failure is recorded beside
+/// the artifact rather than failing the job.
+fn materialize_question_layout_graph(dir: &Path, job: &ImportJob) {
+    let Some(document) = current_physical_shadow(dir, job) else {
+        return;
+    };
+    let graph_path = dir.join(QUESTION_LAYOUT_GRAPH_ARTIFACT_FILE);
+    let error_path = dir.join(QUESTION_LAYOUT_GRAPH_ERROR_FILE);
+    match write_question_layout_graph_artifact(&document, &graph_path) {
+        Ok(graph) => {
+            let _ = fs::remove_file(&error_path);
+            let _ = graph;
+        }
+        Err(error) => {
+            let _ = write_json(
+                &error_path,
+                &json!({
+                    "schemaVersion": "QuestionLayoutGraphErrorV1",
+                    "jobId": job.job_id,
+                    "error": error,
+                    "recordedAt": Utc::now().to_rfc3339()
+                }),
+            );
+        }
+    }
 }
 
 fn write_pipeline_authoring_v2_shadow(
@@ -1486,20 +1525,36 @@ where
         // region evidence.
         if current_physical_shadow(&dir, &job).is_none() {
             if let (Some(source), Some(document)) = (
-                main_source_file(&job).filter(|source| source.file_type == "pdf"),
+                main_source_file(&job)
+                    .filter(|source| matches!(source.file_type.as_str(), "pdf" | "docx")),
                 read_json_opt(&dir.join("document-ir.json"))?,
             ) {
                 let upload_path = dir.join("uploads").join(&source.stored_name);
                 if upload_path.exists() {
                     let shadow_path = dir.join(DOCUMENT_V2_SHADOW_ARTIFACT_FILE);
                     let error_path = dir.join(DOCUMENT_V2_SHADOW_ERROR_FILE);
-                    match write_pdf_facts_shadow_with_v1(
-                        &job,
-                        source,
-                        &upload_path,
-                        &shadow_path,
-                        Some(&document),
-                    ) {
+                    // One physical-ingest entry for both formats: the auto import path
+                    // must materialize the same DocumentIRV2 evidence as the manual parse
+                    // command, otherwise DOCX jobs reach authoring/quality without a
+                    // physical layer (see P4-T01 "unify the physical extraction entry").
+                    let shadow_result = if source.file_type == "pdf" {
+                        write_pdf_facts_shadow_with_v1(
+                            &job,
+                            source,
+                            &upload_path,
+                            &shadow_path,
+                            Some(&document),
+                        )
+                    } else {
+                        write_docx_facts_shadow_with_v1(
+                            &job,
+                            source,
+                            &upload_path,
+                            &shadow_path,
+                            Some(&document),
+                        )
+                    };
+                    match shadow_result {
                         Ok(_) => {
                             let _ = fs::remove_file(error_path);
                         }
@@ -1519,6 +1574,11 @@ where
                 }
             }
         }
+
+        // P4-T02: the geometric question-layout graph is derived from the same
+        // physical document the authoring layer consumes, so recognition stops
+        // starting from V1 split candidates.
+        materialize_question_layout_graph(&dir, &job);
 
         let mut vision_transcription = json!({
             "attempted": false,
