@@ -121,58 +121,66 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   return (
     <section className="workspace-page" data-testid="exam-workspace">
       <header className="workspace-header">
-        <button className="ghost small" onClick={() => withBusy("leave", async () => { await editor.flush(); go(libraryPath()); })}><ArrowLeft size={16} />返回题库</button>
-
-        <div className="workspace-title">
-          <EditableTitle
-            title={editor.title ?? title}
-            editing={titleEditing}
-            onBegin={() => setTitleEditing(true)}
-            onCommit={(next) => {
-              setTitleEditing(false);
-              editor.setTitle(next);
-            }}
-            onCancel={() => setTitleEditing(false)}
-          />
-          {processingNote ? <small>{processingNote}</small> : null}
-        </div>
-
-        <div className="workspace-header-actions">
-          {editor.saveState !== "idle" ? (
-            <span className={`save-state ${editor.saveState}`} data-testid="workspace-save-state">
-              {SAVE_LABEL[editor.saveState]}
-            </span>
-          ) : null}
-          <button className="ghost small" onClick={() => setSourceOpen(true)}><FileSearch size={16} />查看原文件</button>
-          <button
-            className={`ghost small ${blockers ? "has-blockers" : ""}`}
-            data-testid="workspace-issues"
-            onClick={() => setIssuesOpen((open) => !open)}
-          >
-            问题 {issues.length}
-          </button>
-          <button className="ghost small" title="撤销" aria-label="撤销" disabled={!editor.canUndo} onClick={editor.undo}><Undo2 size={16} /></button>
-          <button className="ghost small" title="重做" aria-label="重做" disabled={!editor.canRedo} onClick={editor.redo}><Redo2 size={16} /></button>
-          <button className="primary small" data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
-            {busyAction === "publish" ? "正在发布…" : "发布"}
-          </button>
-          <button className="ghost small" aria-label="更多操作" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
-        </div>
-
-        {menuOpen ? (
-          <div className="workspace-menu" role="menu">
-            <button role="menuitem" onClick={() => withBusy("local", async () => {
-              await editor.flush();
-              await retryProcessing(itemId);
-              setNotice("已加入识别队列。");
-            })}>重新识别</button>
-            <button role="menuitem" onClick={() => withBusy("cancel", async () => {
-              await cancelProcessing(itemId);
-              setNotice("已请求停止识别。");
-            })}>停止识别</button>
+        <div className="workspace-header-left">
+          <span className="workspace-brand">IELTS</span>
+          <div className="workspace-title">
+            <EditableTitle
+              title={editor.title ?? title}
+              editing={titleEditing}
+              onBegin={() => setTitleEditing(true)}
+              onCommit={(next) => {
+                setTitleEditing(false);
+                editor.setTitle(next);
+              }}
+              onCancel={() => setTitleEditing(false)}
+            />
+            {processingNote ? <small>{processingNote}</small> : null}
           </div>
-        ) : null}
+        </div>
+
+        <div className="workspace-header-right">
+          <div className="workspace-header-actions">
+            {editor.saveState !== "idle" ? (
+              <span className={`save-state ${editor.saveState}`} data-testid="workspace-save-state">
+                {SAVE_LABEL[editor.saveState]}
+              </span>
+            ) : null}
+            <button onClick={() => setSourceOpen(true)}><FileSearch size={16} /></button>
+            <button
+              className={blockers ? "has-blockers" : ""}
+              data-testid="workspace-issues"
+              onClick={() => setIssuesOpen((open) => !open)}
+            >
+              问题 {issues.length}
+            </button>
+            <button title="撤销" aria-label="撤销" disabled={!editor.canUndo} onClick={editor.undo}><Undo2 size={16} /></button>
+            <button title="重做" aria-label="重做" disabled={!editor.canRedo} onClick={editor.redo}><Redo2 size={16} /></button>
+            <button data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
+              {busyAction === "publish" ? "正在发布…" : "发布"}
+            </button>
+            <button aria-label="更多操作" title="更多操作" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></button>
+          </div>
+
+          {menuOpen ? (
+            <div className="workspace-menu" role="menu">
+              <button role="menuitem" onClick={() => withBusy("local", async () => {
+                await editor.flush();
+                await retryProcessing(itemId);
+                setNotice("已加入识别队列。");
+              })}>重新识别</button>
+              <button role="menuitem" onClick={() => withBusy("cancel", async () => {
+                await cancelProcessing(itemId);
+                setNotice("已请求停止识别。");
+              })}>停止识别</button>
+            </div>
+          ) : null}
+        </div>
       </header>
+
+      <div className="workspace-sub-header">
+        <span className="workspace-sub-header-label">READING</span>
+        <span className="workspace-sub-header-meta">编辑模式 · 保存后点击"发布"输出到 NAS</span>
+      </div>
 
       {notice ? (
         <p className="workspace-notice" role="status">
