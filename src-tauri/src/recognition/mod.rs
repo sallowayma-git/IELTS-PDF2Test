@@ -14,6 +14,7 @@
 //! precede boundary recovery.
 
 pub(crate) mod local;
+pub(crate) mod direct_canonical;
 
 use crate::artifact_store::write_canonical_json_atomic;
 use crate::schema::ielts_authoring_v2::RecognitionBlockerTargetV2;

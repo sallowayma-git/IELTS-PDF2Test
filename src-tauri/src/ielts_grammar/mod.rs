@@ -7,7 +7,7 @@
 //! any future promotion decision.
 
 mod anchors;
-mod answer_key;
+pub(crate) mod answer_key;
 mod completion;
 mod diagram;
 mod evidence;
@@ -17,7 +17,7 @@ pub(crate) mod issue_codes;
 mod option_bank;
 mod option_run;
 mod prompt_assembler;
-mod quality;
+pub(crate) mod quality;
 pub(crate) mod question_number;
 mod reading;
 #[cfg(test)]

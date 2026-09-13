@@ -243,6 +243,13 @@ pub(crate) fn recognition_blockers_gate_enabled() -> bool {
     env_flag_enabled("LOCAL_RECOGNITION_BLOCKERS_GATE", false)
 }
 
+/// G2-T04：direct canonical 开关（QLG → IeltsAuthoringIRV2 直出）。
+/// 默认关闭：关闭时主链行为与历史一致（V1 authoring → V2 shadow），可随时回滚。
+/// 指标达标 + 真实 Tauri 回归通过后才讨论默认开启（NEXT_PHASE_PLAN G2-T05）。
+pub(crate) fn qlg_direct_canonical_enabled() -> bool {
+    env_flag_enabled("QLG_DIRECT_CANONICAL", false)
+}
+
 pub(crate) fn pdf_renderer_setting() -> String {
     env::var("EPIC8_PDF_RENDERER")
         .ok()

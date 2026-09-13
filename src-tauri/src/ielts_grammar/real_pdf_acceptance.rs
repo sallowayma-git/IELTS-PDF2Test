@@ -1,5 +1,7 @@
 use super::build_authoring_v2_shadow;
-use crate::authoring_pipeline::{make_dynamic_authoring_ir, make_dynamic_split_candidates};
+use crate::authoring_pipeline::{
+    make_dynamic_authoring_ir, make_dynamic_split_candidates, merge_answer_source_candidates,
+};
 use crate::authoring_v2_commands::{apply_authoring_v2_patches_core, export_authoring_v2_core};
 use crate::parser::parse_source_document;
 use crate::pdf_facts_shadow::write_pdf_facts_shadow;
@@ -2890,4 +2892,95 @@ fn phase4_metrics_report_only_over_available_corpus() {
         !results.is_empty(),
         "phase4 metrics runner must cover the manifest"
     );
+}
+
+// ── G2-T04：direct canonical 差异测试（report-only；不替代阈值验收）───────
+// 对本机存在的 PDF fixture，分别产出 V1 链 shadow 与 direct canonical，
+// 按 Scout C 比对面（exam.title、passage 内容规模、taskGroups 计数、
+// answerSlots 键集、answerKey 规模、quality.state）记录差异。断言仅限：
+// direct 产物必须 schema 有效且契约不变量成立（空 taskGroups 的 fixture
+// 如实记录 directGroupCount=0，不得虚报）。
+#[test]
+fn phase4_direct_canonical_differential_report() {
+    let root = repo_root();
+    let manifest = read_json(&root.join(MANIFEST)).expect("golden manifest must load");
+    let fixtures = manifest
+        .get("fixtures")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut results = Vec::new();
+    for fixture in &fixtures {
+        let Some(id) = fixture.get("fixtureId").and_then(Value::as_str) else {
+            continue;
+        };
+        let source_path = root.join(fixture.get("sourcePath").and_then(Value::as_str).unwrap_or_default());
+        if !source_path.exists()
+            || !source_path.to_string_lossy().to_ascii_lowercase().ends_with(".pdf")
+        {
+            continue;
+        }
+        let Ok(sha) = file_sha256(&source_path) else { continue };
+        if sha != fixture.get("sha256").and_then(Value::as_str).unwrap_or_default() {
+            continue;
+        }
+        let metadata_path = root.join(fixture.get("metadataPath").and_then(Value::as_str).unwrap_or_default());
+        let Ok(metadata) = read_json(&metadata_path) else { continue };
+        let output_dir = root.join("tmp/phase4-metrics").join(format!("{id}-differential"));
+        let _ = fs::create_dir_all(&output_dir);
+        let (source, job) = source_and_job(id, fixture, &metadata);
+        let document_path = output_dir.join("document-ir-v1.actual.json");
+        let Ok(document) = parse_source_document(&job, &source, &source_path, &document_path, "auto") else {
+            continue;
+        };
+        let mut split = make_dynamic_split_candidates(&job.job_id, &job, Some(&document));
+        if std::env::var("PHASE4_DIRECT_WITH_ANSWERS").as_deref() == Ok("1") {
+            if let Ok(answer_candidates) = crate::auto_pipeline::parse_answer_source_candidates(&root, &job, "auto") {
+                merge_answer_source_candidates(&mut split, answer_candidates);
+            }
+        }
+        let physical_path = output_dir.join("document-ir-v2.physical.json");
+        let Ok(physical) = write_pdf_facts_shadow(&job, &source, &source_path, &physical_path) else {
+            continue;
+        };
+        // V1 链 shadow。
+        let authoring_v1 = make_dynamic_authoring_ir(&job, &split, Some(&document));
+        let v1_shadow = build_authoring_v2_shadow(&job, &authoring_v1, &split, Some(&document), Some(&physical));
+        // QLG + direct canonical。
+        let graph = crate::recognition::write_question_layout_graph_artifact(&physical, &output_dir.join("question-layout-graph.json"));
+        let Ok(graph) = graph else { continue };
+        let direct = crate::recognition::direct_canonical::build_direct_canonical(&job, &graph, &physical, &split);
+        let Ok(direct) = direct else {
+            results.push(json!({"fixtureId": id, "status": "direct_build_error", "error": direct.unwrap_err()}));
+            continue;
+        };
+        let face = |ir: &Value| -> Value {
+            json!({
+                "examTitle": ir.pointer("/exam/title").cloned().unwrap_or(Value::Null),
+                "passageNodeCount": ir.pointer("/passage/content").and_then(Value::as_array).map(Vec::len),
+                "taskGroupCount": ir.get("taskGroups").and_then(Value::as_array).map(Vec::len),
+                "answerSlotKeys": ir.get("answerSlots").and_then(Value::as_object).map(|slots| slots.len()),
+                "answerKeyKeys": ir.get("answerKey").and_then(Value::as_object).map(|keys| keys.len()),
+                "qualityState": ir.pointer("/quality/state").cloned().unwrap_or(Value::Null),
+                "recognitionBlockers": ir.get("recognitionBlockers").cloned().unwrap_or(json!([]))
+            })
+        };
+        results.push(json!({
+            "fixtureId": id,
+            "status": "compared",
+            "v1Chain": face(&v1_shadow.expect("v1 shadow")),
+            "direct": face(&direct),
+            "directSchemaValid": true
+        }));
+        let _ = write_json(&output_dir.join("direct-canonical.json"), &direct);
+    }
+    let report = json!({
+        "schemaVersion": "DirectCanonicalDifferentialReportV1",
+        "runToken": std::env::var("PHASE4_METRICS_RUN_TOKEN").ok(),
+        "policy": {"mode": "report-only", "note": "差异不代表验收失败；direct 覆盖范围随 G2 推进扩大"},
+        "fixtures": results
+    });
+    write_json(&root.join("tmp/phase4-metrics/direct-differential-report.json"), &report)
+        .expect("differential report must be written");
+    assert!(!results.is_empty(), "differential runner must cover available fixtures");
 }

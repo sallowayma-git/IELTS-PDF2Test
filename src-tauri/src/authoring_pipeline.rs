@@ -8205,7 +8205,7 @@ fn dynamic_block_html(block: &Value) -> String {
         })
 }
 
-fn dynamic_answer_map_from_split(split: &Value) -> serde_json::Map<String, Value> {
+pub(crate) fn dynamic_answer_map_from_split(split: &Value) -> serde_json::Map<String, Value> {
     let mut answers = serde_json::Map::new();
     for candidate in split
         .get("answerKeyCandidates")
