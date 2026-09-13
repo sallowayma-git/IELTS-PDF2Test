@@ -328,6 +328,9 @@ fn write_pipeline_authoring_v2_shadow(
     // flag 默认关闭；物理层或 QLG 图不可用时回退 V1 链（可回滚）。
     if crate::environment::qlg_direct_canonical_enabled() {
         let graph_path = dir.join(crate::recognition::QUESTION_LAYOUT_GRAPH_ARTIFACT_FILE);
+        if physical_shadow.is_none() {
+            eprintln!("[direct-canonical] physical shadow missing; falling back to V1 chain");
+        }
         if let (Some(physical), Ok(graph_value)) = (physical_shadow, fs::read_to_string(&graph_path)) {
             match serde_json::from_str::<crate::recognition::local::QuestionLayoutGraphV1>(&graph_value)
                 .map_err(|error| format!("direct_canonical_graph_deserialize:{error}"))

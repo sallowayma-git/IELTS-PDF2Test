@@ -162,15 +162,20 @@ fn table_stimulus_node(source_hash: &str, stimulus: &TableStimulusCandidateV1) -
     })
 }
 
-fn statement_options() -> Vec<Value> {
+fn statement_options(source_hash: &str) -> Vec<Value> {
     ["TRUE", "FALSE", "NOT GIVEN"]
         .iter()
         .map(|label| {
+            let option_id = format!("opt-{}", label.to_ascii_lowercase().replace(' ', "-"));
             json!({
-                "optionId": format!("opt-{}", label.to_ascii_lowercase().replace(' ', "-")),
+                "optionId": option_id,
                 "label": label,
-                "content": [],
-                "sourceAnchors": []
+                "content": [text_node(
+                    &format!("{option_id}-text"),
+                    label,
+                    vec![anchor(source_hash, vec![option_id.clone()], 0)]
+                )],
+                "sourceAnchors": [anchor(source_hash, vec![option_id], 0)]
             })
         })
         .collect()
@@ -292,12 +297,17 @@ fn build_task_group(
                 | TaskTypeV2::MatchingFeatures
                 | TaskTypeV2::MatchingSentenceEndings
                 | TaskTypeV2::Classification);
-        let options = match (block.option_run.as_ref(), bank) {
+        let mut options = match (block.option_run.as_ref(), bank) {
             (Some(run), _) => run.options.iter().map(|option| option_value(source_hash, option)).collect::<Vec<_>>(),
-            (None, Some(bank)) if matches!(&task_type, TaskTypeV2::TrueFalseNotGiven | TaskTypeV2::YesNoNotGiven) => statement_options(),
             (None, Some(_)) if !is_bank_bound => Vec::new(),
             _ => Vec::new(),
         };
+        // TFNG/YNNG 的语句选项由题型定义，不依赖共享库（verifier P2-a）。
+        if options.is_empty()
+            && matches!(task_type, TaskTypeV2::TrueFalseNotGiven | TaskTypeV2::YesNoNotGiven)
+        {
+            options = statement_options(source_hash);
+        }
         let prompt_nodes = vec![text_node(
             &format!("{}-stem", block.candidate_id),
             &block.stem_text,
@@ -484,11 +494,8 @@ pub(crate) fn build_direct_canonical(
             if region.role != super::local::SemanticRegionRole::Passage {
                 continue;
             }
-            let paragraph_count = (region.child_line_ids.len() / 4).max(1);
-            for paragraph_index in 0..paragraph_count {
-                let line_slice = &region.child_line_ids[paragraph_index
-                    * 4
-                    ..((paragraph_index + 1) * 4).min(region.child_line_ids.len())];
+            // chunks(4) 天然包含尾块：任何行数都完整入正文，不丢尾行（verifier P1-a）。
+            for (paragraph_index, line_slice) in region.child_line_ids.chunks(4).enumerate() {
                 if line_slice.is_empty() {
                     continue;
                 }
@@ -824,6 +831,27 @@ mod tests {
         let cell = row["cells"][0].clone();
         assert_eq!(cell["colSpan"], 2, "跨列 span 必须保留");
         assert_eq!(cell["children"][0]["text"], "Year / Event");
+    }
+
+    /// verifier P1-a 复审：passage 分段含尾块，行数非 4 倍数不丢行。
+    #[test]
+    fn passage_chunks_preserve_tail_lines() {
+        let mut graph = sample_graph();
+        graph.pages[0].regions[0].child_line_ids = (0..7).map(|index| format!("line-{index}")).collect();
+        let physical = json!({
+            "schemaVersion": "DocumentIRV2", "documentId": "doc-1", "jobId": "job-1",
+            "pages": [{"pageIndex": 0, "lines": (0..7).map(|index| json!({
+                "id": format!("line-{index}"), "text": format!("passage line {index}")
+            })).collect::<Vec<_>>()}], "assets": []
+        });
+        let built = build_direct_canonical(&sample_job(), &graph, &physical, &sample_split())
+            .expect("must build");
+        let content = built.pointer("/passage/content").and_then(Value::as_array).unwrap();
+        let text = content.iter().map(|node| node["text"].as_str().unwrap_or("")).collect::<Vec<_>>().join(" ");
+        for index in 0..7 {
+            assert!(text.contains(&format!("passage line {index}")), "丢行 {index}");
+        }
+        assert_eq!(content.len(), 2, "7 行按 4 行分段应为 2 段（含尾块）");
     }
 
     /// 题型未解析 → 诚实降级：题组保留 + 稳定阻断码，不伪造类型。
