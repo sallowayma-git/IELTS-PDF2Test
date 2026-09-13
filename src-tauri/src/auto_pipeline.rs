@@ -46,6 +46,7 @@ use crate::{
     AutoPipelineInput, CommandResult, ImportJob, JobStatus, RunCloudReviewInput, SourceFile,
     WorkflowStep,
 };
+use crate::artifact_store::write_canonical_json_atomic;
 use chrono::Utc;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -358,8 +359,10 @@ fn write_pipeline_authoring_v2_shadow(
                     )
                 }) {
                 Ok(direct) => {
-                    write_json(&shadow_path, &direct)?;
+                    // 与 V1 链同纪律：原子写 + 清理陈旧 compare（轮 2 verifier V4）。
+                    write_canonical_json_atomic(&shadow_path, &direct)?;
                     let _ = fs::remove_file(&error_path);
+                    let _ = fs::remove_file(dir.join(AUTHORING_V2_SHADOW_COMPARE_FILE));
                     return Ok(());
                 }
                 Err(error) => {
