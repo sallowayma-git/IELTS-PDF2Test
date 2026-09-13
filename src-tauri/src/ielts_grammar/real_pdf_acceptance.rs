@@ -2218,12 +2218,18 @@ fn metadata_contract_accepts_completion_slots_embedded_in_response_prompt() {
     }));
 }
 
-// ── G2-T02：Phase 4 指标 runner（report-only）────────────────────────────
-// 在 manifest 中实际存在的 fixture 上驱动与产品主链相同的识别管线，把产出
-// IeltsAuthoringIRV2 与 golden metadata 的 expected 参照对照，产出逐题与聚合
-// 指标报告。本 runner 不驱动 recognition blocker gate、不设验收阈值断言——
-// 阈值判定属 G2-T03 之后的验收动作；synthetic 语料上的结果只能作开发证据，
-// 不能替代真实语料验收（private-real 语料缺失时如实记录 missing_locally）。
+// ── G2-T02（v2）：Phase 4 指标 runner ──────────────────────────────────
+// 被测链 = flag-on direct canonical 的真实构建入口（build_direct_canonical）；
+// 旧链（V1 authoring → V2 shadow）结果只作 side-by-side baseline，字段显式命名
+// legacy。所有质量指标以 golden metadata 的 expected 为分母：
+//   - expected group 未识别记 miss；
+//   - expected slot 未生成记 miss；
+//   - expected visual 未生成记 miss；
+//   - 不从产出侧自选分母。
+// 样本量不足输出 insufficient_evidence，不输出"达标"。
+// synthetic 语料上的结果只能作开发证据；private-real 缺失时不得宣布达标。
+
+const MIN_SAMPLE_PER_METRIC: usize = 5;
 
 fn node_text_value(nodes: &Value) -> String {
     fn walk(value: &Value, out: &mut String) {
@@ -2245,36 +2251,6 @@ fn node_text_value(nodes: &Value) -> String {
     let mut out = String::new();
     walk(nodes, &mut out);
     out.trim().to_string()
-}
-
-fn produced_group_question_numbers(authoring: &Value, group: &Value) -> Vec<u32> {
-    let slots = authoring.get("answerSlots").cloned().unwrap_or(Value::Null);
-    let mut numbers = Vec::new();
-    for response in group
-        .get("responseGroups")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        for slot_id in response
-            .get("slotIds")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-        {
-            if let Some(number) = slots
-                .get(slot_id)
-                .and_then(|slot| slot.get("questionNumber"))
-                .and_then(Value::as_u64)
-            {
-                numbers.push(number as u32);
-            }
-        }
-    }
-    numbers.sort_unstable();
-    numbers.dedup();
-    numbers
 }
 
 fn expected_group_question_numbers(metadata: &Value, group_id: &str) -> Vec<u32> {
@@ -2312,7 +2288,7 @@ fn expected_group_question_numbers(metadata: &Value, group_id: &str) -> Vec<u32>
         .unwrap_or_default()
 }
 
-/// 期望题组与产出题组按题号集合的最大重叠一一配对（不做顺序假设）。
+/// 产出题组按题号集合与期望题组一一配对（无顺序假设；未配对 = miss）。
 fn match_groups_by_question_numbers(produced: &Value, numbers_of_expected: &[Vec<u32>]) -> Vec<Option<usize>> {
     let produced_groups = produced
         .get("taskGroups")
@@ -2321,7 +2297,35 @@ fn match_groups_by_question_numbers(produced: &Value, numbers_of_expected: &[Vec
         .unwrap_or_default();
     let numbers_of_produced: Vec<Vec<u32>> = produced_groups
         .iter()
-        .map(|group| produced_group_question_numbers(produced, group))
+        .map(|group| {
+            let slots = produced.get("answerSlots").cloned().unwrap_or(Value::Null);
+            let mut numbers = Vec::new();
+            for response in group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                for slot_id in response
+                    .get("slotIds")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                {
+                    if let Some(number) = slots
+                        .get(slot_id)
+                        .and_then(|slot| slot.get("questionNumber"))
+                        .and_then(Value::as_u64)
+                    {
+                        numbers.push(number as u32);
+                    }
+                }
+            }
+            numbers.sort_unstable();
+            numbers.dedup();
+            numbers
+        })
         .collect();
     let mut used_produced = vec![false; produced_groups.len()];
     let mut matches = Vec::new();
@@ -2349,43 +2353,233 @@ fn match_groups_by_question_numbers(produced: &Value, numbers_of_expected: &[Vec
     matches
 }
 
-fn produced_option_labels(group: &Value) -> Vec<String> {
-    let mut labels = Vec::new();
-    for response in group
-        .get("responseGroups")
+/// 以 expected 为分母的指标计算（对任一链的产出 IR 适用）。
+#[allow(clippy::too_many_lines)]
+fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
+    let expected = metadata.get("expected").cloned().unwrap_or(Value::Null);
+    let expected_groups = expected
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let numbers_of_expected: Vec<Vec<u32>> = expected_groups
+        .iter()
+        .map(|group| {
+            expected_group_question_numbers(
+                metadata,
+                group.get("id").and_then(Value::as_str).unwrap_or_default(),
+            )
+        })
+        .collect();
+    let pairing = match_groups_by_question_numbers(ir, &numbers_of_expected);
+    let produced_groups = ir
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let produced_slots = ir.get("answerSlots").cloned().unwrap_or(Value::Null);
+
+    let mut group_records = Vec::new();
+    let mut prompt_checked = 0usize;
+    let mut prompt_empty = 0usize;
+    let mut statement_slots = 0usize;
+    let mut statement_fail = 0usize;
+    let mut matching_groups = 0usize;
+    let mut matching_fail = 0usize;
+    let visual_expected_ids: Vec<String> = expected
+        .get("assets")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-    {
-        for option in response
-            .get("options")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(label) = option.get("label").and_then(Value::as_str) {
-                labels.push(label.to_string());
+        .filter(|asset| {
+            matches!(
+                asset.get("type").and_then(Value::as_str),
+                Some("flowchart") | Some("map") | Some("vector_figure") | Some("smartart") | Some("diagram") | Some("embedded_image")
+            )
+        })
+        .filter_map(|asset| asset.get("id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
+    let mut visual_fail = 0usize;
+    let visual_assets = ir.get("assets").and_then(Value::as_array).cloned().unwrap_or_default();
+
+    for (index, expected_group) in expected_groups.iter().enumerate() {
+        let group_id = expected_group.get("id").and_then(Value::as_str).unwrap_or_default();
+        let expected_kind = expected_group.get("kind").and_then(Value::as_str).unwrap_or_default();
+        let expected_numbers = numbers_of_expected.get(index).cloned().unwrap_or_default();
+        let produced_index = pairing.get(index).copied().flatten();
+        let produced_group = produced_index.and_then(|i| produced_groups.get(i));
+
+        // 组级：未识别 / 类型错分。
+        let (produced_type, type_match) = match produced_group {
+            Some(group) => {
+                let produced_type = group.get("taskType").and_then(Value::as_str).unwrap_or_default().to_string();
+                let matches_kind = produced_type == expected_kind
+                    || (expected_kind == "matching" && produced_type.starts_with("matching"));
+                (produced_type, matches_kind)
+            }
+            None => (String::new(), false),
+        };
+        if !type_match {
+            statement_fail += expected_numbers.len();
+            matching_fail += 1;
+        }
+
+        // 逐 expected slot：存在性 + 空 prompt。
+        for number in &expected_numbers {
+            prompt_checked += 1;
+            let slot_key = format!("q{number}");
+            let Some(slot) = produced_slots.get(&slot_key) else {
+                prompt_empty += 1;
+                continue;
+            };
+            let mut group_prompt_empty = true;
+            if let Some(group) = produced_group {
+                group_prompt_empty = group
+                    .get("responseGroups")
+                    .and_then(Value::as_array)
+                    .map(|responses| {
+                        responses
+                            .iter()
+                            .filter(|response| {
+                                response
+                                    .get("slotIds")
+                                    .and_then(Value::as_array)
+                                    .map(|ids| {
+                                        ids.iter().any(|id| id.as_str() == Some(slot_key.as_str()))
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .all(|response| {
+                                node_text_value(response.get("prompt").unwrap_or(&Value::Null))
+                                    .is_empty()
+                            })
+                    })
+                    .unwrap_or(true);
+            }
+            if group_prompt_empty {
+                prompt_empty += 1;
+            }
+            // statement completeness：expected TFNG/YNNG slot 全部检查。
+            if matches!(expected_kind, "true_false_not_given" | "yes_no_not_given") {
+                statement_slots += 1;
+                let anchored = slot
+                    .get("sourceAnchors")
+                    .and_then(Value::as_array)
+                    .is_some_and(|anchors| !anchors.is_empty());
+                if group_prompt_empty || !anchored || !type_match {
+                    statement_fail += 1;
+                }
             }
         }
-    }
-    if let Some(bank) = group.get("optionBank") {
-        for option in bank
-            .get("options")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
+
+        // matching exact structure：类型 + slot 集合 + response-group 绑定。
+        if matches!(expected_kind, "matching" | "heading_matching" | "classification")
+            || expected_kind.starts_with("matching")
         {
-            if let Some(label) = option.get("label").and_then(Value::as_str) {
-                labels.push(label.to_string());
+            matching_groups += 1;
+            let produced_numbers = produced_group
+                .map(|group| {
+                    let slots = ir.get("answerSlots").cloned().unwrap_or(Value::Null);
+                    let mut numbers = Vec::new();
+                    for response in group
+                        .get("responseGroups")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        for slot_id in response
+                            .get("slotIds")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                        {
+                            if let Some(number) = slots
+                                .get(slot_id)
+                                .and_then(|slot| slot.get("questionNumber"))
+                                .and_then(Value::as_u64)
+                            {
+                                numbers.push(number as u32);
+                            }
+                        }
+                    }
+                    numbers.sort_unstable();
+                    numbers.dedup();
+                    numbers
+                })
+                .unwrap_or_default();
+            if produced_numbers != expected_numbers || !type_match {
+                matching_fail += 1;
             }
         }
+
+        group_records.push(json!({
+            "expectedGroupId": group_id,
+            "expectedKind": expected_kind,
+            "producedGroupId": produced_group.and_then(|g| g.get("taskId")).cloned().unwrap_or(Value::Null),
+            "producedType": produced_type,
+            "typeMatch": type_match,
+            "expectedSlots": expected_numbers
+        }));
     }
-    labels.sort();
-    labels.dedup();
-    labels
+
+    // expected complex visual：缺组/缺 asset/缺 geometry 都失败。
+    for asset_id in &visual_expected_ids {
+        let materialized = visual_assets
+            .iter()
+            .any(|asset| asset.get("assetId").and_then(Value::as_str) == Some(asset_id.as_str()))
+            || produced_groups.iter().any(|group| {
+                group
+                    .pointer("/stimulus")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|node| node.get("assetId").and_then(Value::as_str) == Some(asset_id.as_str()))
+            });
+        if !materialized {
+            visual_fail += 1;
+        }
+    }
+
+    json!({
+        "groupRecords": group_records,
+        "emptyPrompt": {
+            "denominator": "expected scored slots",
+            "checked": prompt_checked,
+            "violations": prompt_empty,
+            "target": 0
+        },
+        "statementCompleteness": {
+            "denominator": "expected TFNG/YNNG slots",
+            "slots": statement_slots,
+            "failed": statement_fail
+        },
+        "matchingExactStructure": {
+            "denominator": "expected matching groups",
+            "groups": matching_groups,
+            "failed": matching_fail
+        },
+        "complexVisual": {
+            "denominator": "expected complex-visual assets",
+            "expected": visual_expected_ids.len(),
+            "failed": visual_fail
+        }
+    })
 }
 
-fn phase4_metrics_for_fixture(
+fn classify_corpus(fixture: &Value) -> Value {
+    let source_path = fixture.get("sourcePath").and_then(Value::as_str).unwrap_or_default();
+    let real = source_path.contains("private-real");
+    let synthetic = source_path.contains("synthetic");
+    json!({
+        "class": if real { "real" } else if synthetic { "synthetic" } else { "other" },
+        "format": if source_path.to_ascii_lowercase().ends_with(".docx") { "docx" } else { "pdf" },
+        "sourcePath": source_path
+    })
+}
+
+fn phase4_metrics_for_fixture_v2(
     root: &Path,
     fixture_id: &str,
     fixture: &Value,
@@ -2405,7 +2599,6 @@ fn phase4_metrics_for_fixture(
     );
     let output_dir = root.join("tmp/phase4-metrics").join(fixture_id);
     fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
-    // source_and_job 硬编码 pdf（private PDF 语料专用）；metrics runner 按扩展名分派。
     let original_name = metadata
         .pointer("/source/originalName")
         .and_then(Value::as_str)
@@ -2460,355 +2653,135 @@ fn phase4_metrics_for_fixture(
         write_pdf_facts_shadow(&job, &source, &source_path, &physical_path)
             .map_err(|error| format!("{fixture_id}: pdf facts: {error}"))?
     };
-    let authoring = build_authoring_v2_shadow(
-        &job,
-        &authoring_v1,
-        &split,
-        Some(&document),
-        Some(&physical),
+    // legacy 链（side-by-side baseline）。
+    let legacy = build_authoring_v2_shadow(&job, &authoring_v1, &split, Some(&document), Some(&physical))
+        .map_err(|error| format!("{fixture_id}: legacy shadow: {error}"))?;
+    write_json(&output_dir.join("authoring-ir-v2.shadow.json"), &legacy)?;
+    // 被测链：flag-on direct canonical 真实构建入口。
+    let graph = crate::recognition::write_question_layout_graph_artifact(
+        &physical,
+        &output_dir.join("question-layout-graph.json"),
     )
-    .map_err(|error| format!("{fixture_id}: authoring v2: {error}"))?;
-    write_json(&output_dir.join("authoring-ir-v2.shadow.json"), &authoring)?;
-
-    let groups = authoring
-        .get("taskGroups")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let expected_groups = metadata
-        .pointer("/expected/taskGroups")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let numbers_of_expected: Vec<Vec<u32>> = expected_groups
-        .iter()
-        .map(|group| {
-            expected_group_question_numbers(
-                &metadata,
-                group.get("id").and_then(Value::as_str).unwrap_or_default(),
-            )
-        })
-        .collect();
-    let pairing = match_groups_by_question_numbers(&authoring, &numbers_of_expected);
-
-    // ── 指标 1：simple choice empty prompt（目标 0；报告全量分母，Ready 耦合另行记录）──
-    let choice_groups: Vec<&Value> = groups
-        .iter()
-        .filter(|group| group.get("taskType").and_then(Value::as_str) == Some("single_choice"))
-        .collect();
-    let empty_prompt_violations: Vec<String> = choice_groups
-        .iter()
-        .filter(|group| {
-            group
-                .get("responseGroups")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .all(|response| {
-                    node_text_value(response.get("prompt").unwrap_or(&Value::Null)).is_empty()
-                })
-        })
-        .filter_map(|group| group.get("taskId").and_then(Value::as_str).map(str::to_string))
-        .collect();
-
-    // ── 指标 2：option label recall（真 recall；仅当 metadata 提供 optionBanks 参照）──
-    let mut recall_products = Vec::new();
-    for (index, expected_group) in expected_groups.iter().enumerate() {
-        let Some(expected_numbers) = numbers_of_expected.get(index) else {
-            continue;
-        };
-        if expected_numbers.is_empty() {
-            continue;
-        }
-        let expected_banks: Vec<&Value> = metadata
-            .pointer("/expected/optionBanks")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter(|bank| {
-                bank.get("taskGroupId").and_then(Value::as_str)
-                    == expected_group.get("id").and_then(Value::as_str)
-            })
-            .collect();
-        if expected_banks.is_empty() {
-            continue; // 该题组无标签参照（本机 synthetic 语料普遍如此）
-        }
-        let expected_labels: std::collections::BTreeSet<String> = expected_banks
-            .iter()
-            .flat_map(|bank| {
-                bank.get("labels")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-            })
-            .filter_map(|label| label.as_str().map(str::to_string))
-            .collect();
-        let produced_index = pairing.get(index).copied().flatten();
-        let produced_labels = produced_index
-            .and_then(|produced_index| groups.get(produced_index))
-            .map(produced_option_labels)
-            .unwrap_or_default();
-        let hit = produced_labels
-            .iter()
-            .filter(|label| expected_labels.contains(*label))
-            .count();
-        recall_products.push(json!({
-            "expectedGroupId": expected_group.get("id"),
-            "producedGroupId": produced_index.and_then(|i| groups.get(i)).and_then(|g| g.get("taskId")),
-            "expectedLabels": expected_labels.iter().cloned().collect::<Vec<_>>(),
-            "producedLabels": produced_labels,
-            "hit": hit,
-            "expected": expected_labels.len(),
-            "recall": if expected_labels.is_empty() { Value::Null } else { json!(hit as f64 / expected_labels.len() as f64) }
-        }));
-    }
-    let recall_hits: usize = recall_products
-        .iter()
-        .filter_map(|item| item.get("hit").and_then(Value::as_u64))
-        .map(|value| value as usize)
-        .sum();
-    let recall_total: usize = recall_products
-        .iter()
-        .filter_map(|item| item.get("expected").and_then(Value::as_u64))
-        .map(|value| value as usize)
-        .sum();
-
-    // ── 指标 3：statement completeness（TFNG/YNNG slot 的 prompt 非空且带锚点）──
-    let is_statement_group = |group: &Value| {
-        matches!(
-            group.get("taskType").and_then(Value::as_str),
-            Some("true_false_not_given") | Some("yes_no_not_given")
-        )
-    };
-    let statement_slots_total = groups
-        .iter()
-        .filter(|group| is_statement_group(group))
-        .map(|group| {
-            group
-                .get("responseGroups")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or(0)
-        })
-        .sum::<usize>();
-    let statement_slots_complete = groups
-        .iter()
-        .filter(|group| is_statement_group(group))
-        .flat_map(|group| {
-            group
-                .get("responseGroups")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-        })
-        .filter(|response| {
-            !node_text_value(response.get("prompt").unwrap_or(&Value::Null)).is_empty()
-                && response
-                    .get("sourceAnchors")
-                    .and_then(Value::as_array)
-                    .is_some_and(|anchors| !anchors.is_empty())
-        })
-        .count();
-
-    // ── 指标 4：matching exact structure（题数+slot 数一致；有 responseGroup 参照时逐项全等）──
-    let is_matching = |task_type: Option<&str>| -> bool {
-        task_type
-            .map(|value| value.starts_with("matching") || value == "classification")
-            .unwrap_or(false)
-    };
-    let mut matching_checks = Vec::new();
-    for (index, expected_group) in expected_groups.iter().enumerate() {
-        let expected_type = expected_group
-            .get("kind")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !is_matching(Some(expected_type)) {
-            continue;
-        }
-        let expected_numbers = numbers_of_expected.get(index).cloned().unwrap_or_default();
-        let produced_index = pairing.get(index).copied().flatten();
-        let produced_group = produced_index.and_then(|i| groups.get(i));
-        let produced_numbers = produced_group
-            .map(|group| produced_group_question_numbers(&authoring, group))
-            .unwrap_or_default();
-        let slot_count_match = produced_numbers.len() == expected_numbers.len()
-            && produced_numbers.iter().all(|number| expected_numbers.contains(number));
-        let mut checks = vec![json!({
-            "check": "slotCount", "passed": slot_count_match,
-            "expected": expected_numbers.len(), "produced": produced_numbers.len()
-        })];
-        let expected_response_groups = expected_group
-            .get("responseGroupIds")
-            .and_then(Value::as_array)
-            .map(Vec::len)
-            .unwrap_or(0);
-        if expected_response_groups > 0 {
-            if let Some(produced_group) = produced_group {
-                let produced_response_groups = produced_group
-                    .get("responseGroups")
-                    .and_then(Value::as_array)
-                    .map(Vec::len)
-                    .unwrap_or(0);
-                checks.push(json!({
-                    "check": "responseGroupCount",
-                    "passed": produced_response_groups == expected_response_groups,
-                    "expected": expected_response_groups, "produced": produced_response_groups
-                }));
-            }
-        }
-        let passed = checks
-            .iter()
-            .all(|check| check.get("passed").and_then(Value::as_bool) == Some(true));
-        matching_checks.push(json!({
-            "expectedGroupId": expected_group.get("id"),
-            "producedGroupId": produced_group.and_then(|g| g.get("taskId")),
-            "passed": passed, "checks": checks
-        }));
-    }
-    let matching_passed = matching_checks
-        .iter()
-        .filter(|item| item.get("passed").and_then(Value::as_bool) == Some(true))
-        .count();
-
-    // ── 指标 5：complex visual fallback（语义 stimulus 或 source-faithful fallback，目标 100%）──
-    let visual_groups: Vec<&Value> = groups
-        .iter()
-        .filter(|group| {
-            matches!(
-                group.get("taskType").and_then(Value::as_str),
-                Some("diagram_label_completion") | Some("plan_map_label_completion")
-            )
-        })
-        .collect();
-    let mut visual_checks = Vec::new();
-    for group in &visual_groups {
-        let semantic = group
-            .get("stimulus")
-            .and_then(Value::as_array)
-            .is_some_and(|nodes| !nodes.is_empty());
-        let fallback = group
-            .pointer("/visualFallback/assetId")
-            .and_then(Value::as_str)
-            .map(|asset_id| {
-                authoring
-                    .get("assets")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .any(|asset| asset.get("assetId").and_then(Value::as_str) == Some(asset_id))
-            })
-            .unwrap_or(false);
-        visual_checks.push(json!({
-            "taskId": group.get("taskId"),
-            "taskType": group.get("taskType"),
-            "semanticStimulus": semantic,
-            "sourceFaithfulFallback": fallback,
-            "passed": semantic || fallback
-        }));
-    }
-    let visual_passed = visual_checks
-        .iter()
-        .filter(|item| item.get("passed").and_then(Value::as_bool) == Some(true))
-        .count();
+    .map_err(|error| format!("{fixture_id}: qlg: {error}"))?;
+    let no_assets = |_: &str| -> Option<crate::recognition::direct_canonical::ResolvedVisualAsset> { None };
+    let direct = crate::recognition::direct_canonical::build_direct_canonical(
+        &job,
+        &graph,
+        &physical,
+        &split,
+        &no_assets,
+    )
+    .map_err(|error| format!("{fixture_id}: direct: {error}"))?;
+    write_json(&output_dir.join("direct-canonical.json"), &direct)?;
 
     Ok(json!({
         "fixtureId": fixture_id,
         "status": "measured",
         "sha256": fixture.get("sha256"),
+        "corpus": classify_corpus(fixture),
         "sourceFormat": source.file_type,
-        "qualityState": authoring.pointer("/quality/state").cloned().unwrap_or(Value::Null),
-        "documentScore": authoring.pointer("/quality/documentScore").cloned().unwrap_or(Value::Null),
-        "sourceCoverage": authoring.pointer("/quality/sourceCoverage").cloned().unwrap_or(Value::Null),
-        "taskGroupCount": groups.len(),
-        "metrics": {
-            "emptyPrompt": {
-                "denominator": "single_choice groups",
-                "singleChoiceGroups": choice_groups.len(),
-                "violations": empty_prompt_violations.len(),
-                "violationTaskIds": empty_prompt_violations,
-                "target": 0
-            },
-            "optionLabelRecall": {
-                "type": "true-recall-against-golden-metadata",
-                "groupsWithReference": recall_products.len(),
-                "hit": recall_hits,
-                "expected": recall_total,
-                "recall": if recall_total == 0 { Value::Null } else { json!(recall_hits as f64 / recall_total as f64) },
-                "perGroup": recall_products,
-                "note": if recall_products.is_empty() { json!("本机语料无 option bank 参照（参照在 private-real metadata）——记 no_reference，不计入 recall") } else { Value::Null }
-            },
-            "statementCompleteness": {
-                "type": "structural-proxy（prompt 非空 + sourceAnchors 非空）",
-                "slots": statement_slots_total,
-                "complete": statement_slots_complete,
-                "ratio": if statement_slots_total == 0 { Value::Null } else { json!(statement_slots_complete as f64 / statement_slots_total as f64) }
-            },
-            "matchingExactStructure": {
-                "type": "slot-count agreement（responseGroup 参照存在时逐字段全等）",
-                "groups": matching_checks.len(),
-                "passed": matching_passed,
-                "perGroup": matching_checks
-            },
-            "complexVisualFallback": {
-                "type": "semantic stimulus 或 source-faithful fallback",
-                "groups": visual_checks.len(),
-                "passed": visual_passed,
-                "perGroup": visual_checks
-            }
-        }
+        "direct": expected_denominator_metrics(&direct, &metadata),
+        "legacy": expected_denominator_metrics(&legacy, &metadata)
     }))
 }
 
-fn phase4_metrics_aggregate(results: &[Value]) -> Value {
+fn ratio(part: usize, total: usize) -> Value {
+    if total == 0 {
+        Value::Null
+    } else {
+        json!(part as f64 / total as f64)
+    }
+}
+
+fn metric_status(covered: usize) -> &'static str {
+    if covered >= MIN_SAMPLE_PER_METRIC {
+        "measured"
+    } else {
+        "insufficient_evidence"
+    }
+}
+
+fn phase4_metrics_aggregate_v2(results: &[Value]) -> Value {
     let measured: Vec<&Value> = results
         .iter()
         .filter(|result| result.get("status").and_then(Value::as_str) == Some("measured"))
         .collect();
-    let sum = |pointer: &str| -> usize {
+    let sum = |chain: &str, pointer: &str| -> usize {
         measured
             .iter()
-            .filter_map(|result| result.pointer(pointer).and_then(Value::as_u64))
+            .filter_map(|result| {
+                result
+                    .pointer(&format!("/{chain}{pointer}"))
+                    .and_then(Value::as_u64)
+            })
             .map(|value| value as usize)
             .sum()
     };
-    let statement_slots = sum("/metrics/statementCompleteness/slots");
-    let statement_complete = sum("/metrics/statementCompleteness/complete");
-    let matching_groups = sum("/metrics/matchingExactStructure/groups");
-    let matching_passed = sum("/metrics/matchingExactStructure/passed");
-    let visual_groups = sum("/metrics/complexVisualFallback/groups");
-    let visual_passed = sum("/metrics/complexVisualFallback/passed");
-    let recall_hits = sum("/metrics/optionLabelRecall/hit");
-    let recall_expected = sum("/metrics/optionLabelRecall/expected");
+    let build_metric = |chain: &str, checked: &str, bad: &str, target: Value| {
+        let denominator = sum(chain, checked);
+        let violations = sum(chain, bad);
+        json!({
+            "denominator": if chain == "direct" { "golden expected" } else { "golden expected (legacy side-by-side)" },
+            "checked": denominator,
+            "violations": violations,
+            "value": ratio(violations, denominator),
+            "target": target,
+            "status": metric_status(denominator)
+        })
+    };
     json!({
-        "fixturesMeasured": measured.len(),
-        "emptyPromptViolations": sum("/metrics/emptyPrompt/violations"),
-        "optionLabelRecall": {
-            "hit": recall_hits,
-            "expected": recall_expected,
-            "value": if recall_expected == 0 { Value::Null } else { json!(recall_hits as f64 / recall_expected as f64) },
-            "threshold": 0.995
+        "direct": {
+            "emptyPrompt": build_metric("direct", "/emptyPrompt/checked", "/emptyPrompt/violations", json!(0)),
+            "statementCompleteness": {
+                "slots": sum("direct", "/statementCompleteness/slots"),
+                "failed": sum("direct", "/statementCompleteness/failed"),
+                "value": ratio(sum("direct", "/statementCompleteness/failed"), sum("direct", "/statementCompleteness/slots")),
+                "threshold": 0.99,
+                "status": metric_status(sum("direct", "/statementCompleteness/slots"))
+            },
+            "matchingExactStructure": {
+                "groups": sum("direct", "/matchingExactStructure/groups"),
+                "failed": sum("direct", "/matchingExactStructure/failed"),
+                "value": ratio(sum("direct", "/matchingExactStructure/failed"), sum("direct", "/matchingExactStructure/groups")),
+                "threshold": 0.02,
+                "status": metric_status(sum("direct", "/matchingExactStructure/groups"))
+            },
+            "complexVisual": {
+                "expected": sum("direct", "/complexVisual/expected"),
+                "failed": sum("direct", "/complexVisual/failed"),
+                "value": ratio(sum("direct", "/complexVisual/failed"), sum("direct", "/complexVisual/expected")),
+                "threshold": 0.0,
+                "status": metric_status(sum("direct", "/complexVisual/expected"))
+            }
         },
-        "statementCompleteness": {
-            "complete": statement_complete,
-            "slots": statement_slots,
-            "value": if statement_slots == 0 { Value::Null } else { json!(statement_complete as f64 / statement_slots as f64) },
-            "threshold": 0.99
-        },
-        "matchingExactStructure": {
-            "passed": matching_passed,
-            "groups": matching_groups,
-            "value": if matching_groups == 0 { Value::Null } else { json!(matching_passed as f64 / matching_groups as f64) },
-            "threshold": 0.98
-        },
-        "complexVisualFallback": {
-            "passed": visual_passed,
-            "groups": visual_groups,
-            "value": if visual_groups == 0 { Value::Null } else { json!(visual_passed as f64 / visual_groups as f64) },
-            "threshold": 1.0
+        "legacy": {
+            "emptyPrompt": build_metric("legacy", "/emptyPrompt/checked", "/emptyPrompt/violations", json!(0)),
+            "statementCompleteness": {
+                "slots": sum("legacy", "/statementCompleteness/slots"),
+                "failed": sum("legacy", "/statementCompleteness/failed"),
+                "value": ratio(sum("legacy", "/statementCompleteness/failed"), sum("legacy", "/statementCompleteness/slots")),
+                "threshold": 0.99,
+                "status": metric_status(sum("legacy", "/statementCompleteness/slots"))
+            },
+            "matchingExactStructure": {
+                "groups": sum("legacy", "/matchingExactStructure/groups"),
+                "failed": sum("legacy", "/matchingExactStructure/failed"),
+                "value": ratio(sum("legacy", "/matchingExactStructure/failed"), sum("legacy", "/matchingExactStructure/groups")),
+                "threshold": 0.02,
+                "status": metric_status(sum("legacy", "/matchingExactStructure/groups"))
+            },
+            "complexVisual": {
+                "expected": sum("legacy", "/complexVisual/expected"),
+                "failed": sum("legacy", "/complexVisual/failed"),
+                "value": ratio(sum("legacy", "/complexVisual/failed"), sum("legacy", "/complexVisual/expected")),
+                "threshold": 0.0,
+                "status": metric_status(sum("legacy", "/complexVisual/expected"))
+            }
         }
     })
 }
 
+/// report-only：唯一断言是报告可写且覆盖 manifest。
 #[test]
 fn phase4_metrics_report_only_over_available_corpus() {
     let root = repo_root();
@@ -2819,10 +2792,12 @@ fn phase4_metrics_report_only_over_available_corpus() {
         .cloned()
         .unwrap_or_default();
     let mut results = Vec::new();
+    let mut declared = 0usize;
     for fixture in &fixtures {
         let Some(id) = fixture.get("fixtureId").and_then(Value::as_str) else {
             continue;
         };
+        declared += 1;
         let source_path = root.join(
             fixture
                 .get("sourcePath")
@@ -2847,7 +2822,7 @@ fn phase4_metrics_report_only_over_available_corpus() {
             results.push(json!({"fixtureId": id, "status": "sha_mismatch"}));
             continue;
         }
-        match phase4_metrics_for_fixture(&root, id, fixture) {
+        match phase4_metrics_for_fixture_v2(&root, id, fixture) {
             Ok(metrics) => results.push(metrics),
             Err(error) => results.push(json!({"fixtureId": id, "status": "pipeline_error", "error": error})),
         }
@@ -2856,133 +2831,53 @@ fn phase4_metrics_report_only_over_available_corpus() {
         .iter()
         .filter(|result| result.get("status").and_then(Value::as_str) == Some("measured"))
         .count();
-    let aggregate = phase4_metrics_aggregate(&results);
     let report = json!({
-        "schemaVersion": "Phase4MetricsReportV1",
+        "schemaVersion": "Phase4MetricsReportV2",
         "runToken": std::env::var("PHASE4_METRICS_RUN_TOKEN").ok(),
         "policy": {
             "mode": "report-only",
             "recognitionBlockerGateDefault": false,
-            "thresholdsAreRecordedNotEnforced": true
+            "thresholdsAreRecordedNotEnforced": true,
+            "denominator": "golden expected（不从产出侧自选分母）",
+            "chainUnderTest": "direct canonical（flag-on 构建入口）；legacy 仅 side-by-side"
         },
         "runParams": {
             "parseMode": "auto",
             "executionMode": "localOnly",
             "llmUsed": false,
-            "confidenceThreshold": 0.85
+            "confidenceThreshold": 0.85,
+            "minSamplePerMetric": MIN_SAMPLE_PER_METRIC
         },
         "corpus": {
-            "declared": fixtures.len(),
+            "declared": declared,
             "measured": measured,
-            "notMeasured": results.len() - measured
+            "notMeasured": results.len() - measured,
+            "byClass": {
+                "real": results.iter().filter(|r| r.pointer("/corpus/class").and_then(Value::as_str) == Some("real")).count(),
+                "synthetic": results.iter().filter(|r| r.pointer("/corpus/class").and_then(Value::as_str) == Some("synthetic")).count()
+            },
+            "byFormat": {
+                "pdf": results.iter().filter(|r| r.pointer("/corpus/format").and_then(Value::as_str) == Some("pdf")).count(),
+                "docx": results.iter().filter(|r| r.pointer("/corpus/format").and_then(Value::as_str) == Some("docx")).count()
+            },
+            "statusCounts": {
+                "measured": measured,
+                "missing_locally": results.iter().filter(|r| r.get("status").and_then(Value::as_str) == Some("missing_locally")).count(),
+                "sha_mismatch": results.iter().filter(|r| r.get("status").and_then(Value::as_str) == Some("sha_mismatch")).count(),
+                "pipeline_error": results.iter().filter(|r| r.get("status").and_then(Value::as_str) == Some("pipeline_error")).count()
+            }
         },
-        "aggregate": aggregate,
+        "aggregate": phase4_metrics_aggregate_v2(&results),
         "fixtures": results
     });
     let report_path = root.join("tmp/phase4-metrics/phase4-metrics-report.json");
     write_json(&report_path, &report).expect("phase4 metrics report must be written");
     eprintln!(
-        "[phase4-metrics] fixtures measured={} / declared={}；aggregate={}",
-        measured,
-        fixtures.len(),
-        serde_json::to_string(&aggregate).unwrap_or_default()
+        "[phase4-metrics] fixtures measured={measured}/{declared}；报告写入 {}",
+        report_path.display()
     );
-    // report-only：唯一断言是报告可写且覆盖了 manifest（含缺失记录）。
     assert!(
         !results.is_empty(),
         "phase4 metrics runner must cover the manifest"
     );
-}
-
-// ── G2-T04：direct canonical 差异测试（report-only；不替代阈值验收）───────
-// 对本机存在的 PDF fixture，分别产出 V1 链 shadow 与 direct canonical，
-// 按 Scout C 比对面（exam.title、passage 内容规模、taskGroups 计数、
-// answerSlots 键集、answerKey 规模、quality.state）记录差异。断言仅限：
-// direct 产物必须 schema 有效且契约不变量成立（空 taskGroups 的 fixture
-// 如实记录 directGroupCount=0，不得虚报）。
-#[test]
-fn phase4_direct_canonical_differential_report() {
-    let root = repo_root();
-    let manifest = read_json(&root.join(MANIFEST)).expect("golden manifest must load");
-    let fixtures = manifest
-        .get("fixtures")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let mut results = Vec::new();
-    for fixture in &fixtures {
-        let Some(id) = fixture.get("fixtureId").and_then(Value::as_str) else {
-            continue;
-        };
-        let source_path = root.join(fixture.get("sourcePath").and_then(Value::as_str).unwrap_or_default());
-        if !source_path.exists()
-            || !source_path.to_string_lossy().to_ascii_lowercase().ends_with(".pdf")
-        {
-            continue;
-        }
-        let Ok(sha) = file_sha256(&source_path) else { continue };
-        if sha != fixture.get("sha256").and_then(Value::as_str).unwrap_or_default() {
-            continue;
-        }
-        let metadata_path = root.join(fixture.get("metadataPath").and_then(Value::as_str).unwrap_or_default());
-        let Ok(metadata) = read_json(&metadata_path) else { continue };
-        let output_dir = root.join("tmp/phase4-metrics").join(format!("{id}-differential"));
-        let _ = fs::create_dir_all(&output_dir);
-        let (source, job) = source_and_job(id, fixture, &metadata);
-        let document_path = output_dir.join("document-ir-v1.actual.json");
-        let Ok(document) = parse_source_document(&job, &source, &source_path, &document_path, "auto") else {
-            continue;
-        };
-        let mut split = make_dynamic_split_candidates(&job.job_id, &job, Some(&document));
-        if std::env::var("PHASE4_DIRECT_WITH_ANSWERS").as_deref() == Ok("1") {
-            if let Ok(answer_candidates) = crate::auto_pipeline::parse_answer_source_candidates(&root, &job, "auto") {
-                merge_answer_source_candidates(&mut split, answer_candidates);
-            }
-        }
-        let physical_path = output_dir.join("document-ir-v2.physical.json");
-        let Ok(physical) = write_pdf_facts_shadow(&job, &source, &source_path, &physical_path) else {
-            continue;
-        };
-        // V1 链 shadow。
-        let authoring_v1 = make_dynamic_authoring_ir(&job, &split, Some(&document));
-        let v1_shadow = build_authoring_v2_shadow(&job, &authoring_v1, &split, Some(&document), Some(&physical));
-        // QLG + direct canonical。
-        let graph = crate::recognition::write_question_layout_graph_artifact(&physical, &output_dir.join("question-layout-graph.json"));
-        let Ok(graph) = graph else { continue };
-        let no_assets = |_: &str| -> Option<crate::recognition::direct_canonical::ResolvedVisualAsset> { None };
-        let direct = crate::recognition::direct_canonical::build_direct_canonical(&job, &graph, &physical, &split, &no_assets);
-        let Ok(direct) = direct else {
-            results.push(json!({"fixtureId": id, "status": "direct_build_error", "error": direct.unwrap_err()}));
-            continue;
-        };
-        let _ = &no_assets;
-        let face = |ir: &Value| -> Value {
-            json!({
-                "examTitle": ir.pointer("/exam/title").cloned().unwrap_or(Value::Null),
-                "passageNodeCount": ir.pointer("/passage/content").and_then(Value::as_array).map(Vec::len),
-                "taskGroupCount": ir.get("taskGroups").and_then(Value::as_array).map(Vec::len),
-                "answerSlotKeys": ir.get("answerSlots").and_then(Value::as_object).map(|slots| slots.len()),
-                "answerKeyKeys": ir.get("answerKey").and_then(Value::as_object).map(|keys| keys.len()),
-                "qualityState": ir.pointer("/quality/state").cloned().unwrap_or(Value::Null),
-                "recognitionBlockers": ir.get("recognitionBlockers").cloned().unwrap_or(json!([]))
-            })
-        };
-        results.push(json!({
-            "fixtureId": id,
-            "status": "compared",
-            "v1Chain": face(&v1_shadow.expect("v1 shadow")),
-            "direct": face(&direct),
-            "directSchemaValid": true
-        }));
-        let _ = write_json(&output_dir.join("direct-canonical.json"), &direct);
-    }
-    let report = json!({
-        "schemaVersion": "DirectCanonicalDifferentialReportV1",
-        "runToken": std::env::var("PHASE4_METRICS_RUN_TOKEN").ok(),
-        "policy": {"mode": "report-only", "note": "差异不代表验收失败；direct 覆盖范围随 G2 推进扩大"},
-        "fixtures": results
-    });
-    write_json(&root.join("tmp/phase4-metrics/direct-differential-report.json"), &report)
-        .expect("differential report must be written");
-    assert!(!results.is_empty(), "differential runner must cover available fixtures");
 }

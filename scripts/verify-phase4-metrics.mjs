@@ -25,7 +25,7 @@ const sha256 = (file) =>
 const headSha = git(["rev-parse", "HEAD"]);
 const sourceTree = git(["write-tree"]);
 const headTree = git(["rev-parse", "HEAD^{tree}"]);
-const status = git(["status", "--porcelain"]);
+const status = git(["status", "--porcelain", "--untracked-files=no"]);
 if (headSha === "(git unavailable)") throw new Error("git unavailable");
 
 console.log(`[phase4-metrics] runToken=${runToken}`);
@@ -52,20 +52,34 @@ if (testResult.status !== 0) {
 
 const tmpReportPath = path.join(repoRoot, "tmp", "phase4-metrics", "phase4-metrics-report.json");
 const tmpReport = JSON.parse(fs.readFileSync(tmpReportPath, "utf8"));
+// 组 2-10：tracked 工作树非 clean 时拒绝归档正式报告。
+const trackedClean = status === "";
 const report = {
   ...tmpReport,
   identity: {
     headSha,
     headSubject: git(["log", "-1", "--format=%s"]),
-    sourceTreeIdentity: { gitWriteTree: sourceTree, equalsHeadTree: sourceTree === headTree },
+    // 组 2-11：字段改名——indexTree 只证明 index 内容；trackedContent 由
+    // HEAD tree + clean 状态共同承担。
+    indexTreeIdentity: { indexTree: sourceTree, equalsHeadTree: sourceTree === headTree },
+    trackedWorktreeClean: trackedClean,
+    formal: trackedClean && sourceTree === headTree,
     worktreeStatus: status || "clean",
-    goldenManifestSha256: manifestSha256
+    goldenManifestSha256: manifestSha256,
+    supersedes: "b0c868f 时期的 phase4-metrics latest（指标定义与被测链无效，已由本版替换）"
   },
   archivedAt: new Date().toISOString()
 };
 
 const outDir = path.join(repoRoot, "artifacts", "phase4-metrics");
 fs.mkdirSync(outDir, { recursive: true });
+// 非 clean 树：只写 tmp 草稿，不进 artifacts 正式归档。
+if (!trackedClean) {
+  fs.writeFileSync(path.join(repoRoot, "tmp", "phase4-metrics", "informal-report.json"),
+    JSON.stringify({ ...report, note: "informal: tracked worktree not clean; 不作为正式证据" }, null, 2));
+  console.error("[phase4-metrics] tracked worktree 非 clean——正式报告拒绝归档（草稿仅写 tmp）");
+  process.exit(2);
+}
 const outPath = path.join(outDir, `report-${runToken}.json`);
 fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
 fs.writeFileSync(path.join(outDir, "latest.json"), JSON.stringify({
