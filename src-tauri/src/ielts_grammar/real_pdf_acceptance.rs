@@ -2380,6 +2380,8 @@ fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
     let produced_slots = ir.get("answerSlots").cloned().unwrap_or(Value::Null);
 
     let mut group_records = Vec::new();
+    let mut type_mismatch_groups = 0usize;
+    let mut type_mismatch_slots = 0usize;
     let mut prompt_checked = 0usize;
     let mut prompt_empty = 0usize;
     let mut statement_slots = 0usize;
@@ -2410,7 +2412,8 @@ fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
         let produced_index = pairing.get(index).copied().flatten();
         let produced_group = produced_index.and_then(|i| produced_groups.get(i));
 
-        // 组级：未识别 / 类型错分。
+        // 组级：未识别 / 类型错分（verifier P1-H：类型错分独立计数，
+        // 不跨桶计入 statement/matching 分母，避免 value>1.0）。
         let (produced_type, type_match) = match produced_group {
             Some(group) => {
                 let produced_type = group.get("taskType").and_then(Value::as_str).unwrap_or_default().to_string();
@@ -2421,8 +2424,8 @@ fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
             None => (String::new(), false),
         };
         if !type_match {
-            statement_fail += expected_numbers.len();
-            matching_fail += 1;
+            type_mismatch_groups += 1;
+            type_mismatch_slots += expected_numbers.len();
         }
 
         // 逐 expected slot：存在性 + 空 prompt。
@@ -2544,6 +2547,7 @@ fn expected_denominator_metrics(ir: &Value, metadata: &Value) -> Value {
 
     json!({
         "groupRecords": group_records,
+        "typeMismatch": {"groups": type_mismatch_groups, "slots": type_mismatch_slots},
         "emptyPrompt": {
             "denominator": "expected scored slots",
             "checked": prompt_checked,

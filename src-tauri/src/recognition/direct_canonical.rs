@@ -156,7 +156,8 @@ fn response_kind(task_type: &TaskTypeV2, bank_bound: bool) -> &'static str {
 pub(crate) fn parse_choose_cardinality(instruction_text: &str) -> Option<u32> {
     let normalized = instruction_text.to_ascii_uppercase();
     let marker = normalized.find("CHOOSE")?;
-    let tail = &normalized[marker..(marker + 40).min(normalized.len())];
+    // 字符边界安全窗口（P1-B：字节切片在多字节字符上会 panic）。
+    let tail: String = normalized[marker..].chars().take(40).collect();
     let words = [
         ("TWO", 2), ("THREE", 3), ("FOUR", 4), ("FIVE", 5), ("SIX", 6), ("SEVEN", 7), ("EIGHT", 8),
     ];
@@ -195,11 +196,16 @@ fn statement_options(task_type: TaskTypeV2, scope: &str) -> Vec<Value> {
         .collect()
 }
 
-fn option_value(ctx: &AnchorContext, scope: &str, option: &super::local::OptionCandidateV2) -> Value {
+fn option_value(
+    ctx: &AnchorContext,
+    scope: &str,
+    option: &super::local::OptionCandidateV2,
+    page_index: i32,
+) -> Value {
     let option_id = format!("opt-{}-{}", scope, option.label.to_ascii_lowercase());
     let mut node_ids = option.text_node_ids.clone();
     node_ids.push(option.label_node_id.clone());
-    let anchors = vec![anchor(ctx, node_ids, 0)];
+    let anchors = vec![anchor(ctx, node_ids, page_index)];
     json!({
         "optionId": option_id,
         "label": option.label,
@@ -220,7 +226,7 @@ fn option_bank_value(
     json!({
         "optionBankId": bank.bank_id.clone(),
         "scope": "task_group",
-        "options": bank.options.iter().map(|option| option_value(ctx, scope, option)).collect::<Vec<_>>(),
+        "options": bank.options.iter().map(|option| option_value(ctx, scope, option, bank.page_index as i32)).collect::<Vec<_>>(),
         "allowReuse": true,
         "sourceAnchors": bank.options.first().map(|first| {
             let mut ids = first.text_node_ids.clone();
@@ -449,7 +455,7 @@ fn build_task_group(
             (Some(run), _) => run
                 .options
                 .iter()
-                .map(|option| option_value(ctx, &response_scope, option))
+                .map(|option| option_value(ctx, &response_scope, option, block.page_index as i32))
                 .collect::<Vec<_>>(),
             (None, Some(_)) if !is_bank_bound => Vec::new(),
             _ => Vec::new(),
@@ -648,18 +654,31 @@ pub(crate) fn build_direct_canonical(
         .map(|stimulus| (stimulus.stimulus_id.clone(), stimulus))
         .collect();
 
-    // 组 1-5：锚点上下文使用真实 job source file id 与绑定文件哈希。
+    // 组 1-5 + verifier P1-F：锚点归属——fileId 取题面文件（MainQuestion），
+    // hash 与物理层 sourceFiles[0] 交叉绑定；对不上直接构建失败（回退 V1）。
+    let physical_hash = physical
+        .pointer("/sourceFiles/0/sha256")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let question_file = job
+        .source_files
+        .iter()
+        .find(|file| file.role.to_ascii_lowercase().contains("question"))
+        .or_else(|| job.source_files.first());
+    let Some(question_file) = question_file else {
+        return Err("direct_canonical_source_file_missing".to_string());
+    };
+    if !physical_hash.is_empty() && question_file.sha256 != physical_hash {
+        return Err(format!(
+            "direct_canonical_source_hash_mismatch:job={} physical={}",
+            &question_file.sha256[..8.min(question_file.sha256.len())],
+            &physical_hash[..8.min(physical_hash.len())]
+        ));
+    }
     let ctx = AnchorContext {
-        source_file_id: job
-            .source_files
-            .first()
-            .map(|file| file.file_id.clone())
-            .unwrap_or_else(|| "source-pdf-1".to_string()),
-        source_hash: physical
-            .pointer("/sourceFiles/0/sha256")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        source_file_id: question_file.file_id.clone(),
+        source_hash: physical_hash,
     };
 
     // passage：物理 passage 角色区域行文本，chunks(4) 含尾块，不丢行（P1-a 修复）。
@@ -913,13 +932,24 @@ mod tests {
     const TEST_SOURCE_FILE_ID: &str = "phase4-metrics-fixture";
 
     fn sample_job() -> ImportJob {
-        crate::job_store::make_job(crate::CreateJobInput {
+        let mut job = crate::job_store::make_job(crate::CreateJobInput {
             title: Some("Direct canonical sample".to_string()),
             category: Some("P1".to_string()),
             frequency: None,
             tags: None,
             llm_profile_id: None,
-        })
+        });
+        job.source_files.push(crate::SourceFile {
+            file_id: TEST_SOURCE_FILE_ID.to_string(),
+            original_name: "sample.pdf".to_string(),
+            stored_name: "sample.pdf".to_string(),
+            file_type: "pdf".to_string(),
+            sha256: "a".repeat(64),
+            size_bytes: 1,
+            role: "MainQuestion".to_string(),
+            imported_at: job.created_at,
+        });
+        job
     }
 
     fn anchor_of(node_id: &str) -> Value {
@@ -1112,17 +1142,7 @@ mod tests {
     /// 组 1-5 正反：锚点用真实 sourceFileId；合成选项不伪造节点；伪造 id → 构建失败。
     #[test]
     fn anchors_use_real_source_file_and_physical_nodes() {
-        let mut job = sample_job();
-        job.source_files.push(crate::SourceFile {
-            file_id: TEST_SOURCE_FILE_ID.to_string(),
-            original_name: "sample.pdf".to_string(),
-            stored_name: "sample.pdf".to_string(),
-            file_type: "pdf".to_string(),
-            sha256: "a".repeat(64),
-            size_bytes: 1,
-            role: "MainQuestion".to_string(),
-            imported_at: job.created_at,
-        });
+        let job = sample_job();
         let graph = sample_graph();
         let built = build_direct_canonical(&job, &graph, &sample_physical(), &sample_split(), &no_assets)
             .expect("must build");
