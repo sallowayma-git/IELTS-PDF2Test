@@ -48,6 +48,7 @@ use crate::{
 };
 use chrono::Utc;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Mutex};
@@ -332,10 +333,29 @@ fn write_pipeline_authoring_v2_shadow(
             eprintln!("[direct-canonical] physical shadow missing; falling back to V1 chain");
         }
         if let (Some(physical), Ok(graph_value)) = (physical_shadow, fs::read_to_string(&graph_path)) {
+            let asset_resolver = |asset_id: &str| -> Option<crate::recognition::direct_canonical::ResolvedVisualAsset> {
+                let candidate = dir.join("assets").join(format!("{asset_id}.png"));
+                let bytes = fs::read(&candidate).ok()?;
+                Some(crate::recognition::direct_canonical::ResolvedVisualAsset {
+                    sha256: format!("{:x}", Sha256::digest(&bytes)),
+                    byte_length: bytes.len() as u64,
+                    relative_path: candidate
+                        .strip_prefix(dir)
+                        .unwrap_or(&candidate)
+                        .to_string_lossy()
+                        .to_string(),
+                })
+            };
             match serde_json::from_str::<crate::recognition::local::QuestionLayoutGraphV1>(&graph_value)
                 .map_err(|error| format!("direct_canonical_graph_deserialize:{error}"))
                 .and_then(|graph| {
-                    crate::recognition::direct_canonical::build_direct_canonical(job, &graph, physical, split)
+                    crate::recognition::direct_canonical::build_direct_canonical(
+                        job,
+                        &graph,
+                        physical,
+                        split,
+                        &asset_resolver,
+                    )
                 }) {
                 Ok(direct) => {
                     write_json(&shadow_path, &direct)?;

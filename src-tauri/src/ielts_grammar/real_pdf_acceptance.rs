@@ -2949,11 +2949,13 @@ fn phase4_direct_canonical_differential_report() {
         // QLG + direct canonical。
         let graph = crate::recognition::write_question_layout_graph_artifact(&physical, &output_dir.join("question-layout-graph.json"));
         let Ok(graph) = graph else { continue };
-        let direct = crate::recognition::direct_canonical::build_direct_canonical(&job, &graph, &physical, &split);
+        let no_assets = |_: &str| -> Option<crate::recognition::direct_canonical::ResolvedVisualAsset> { None };
+        let direct = crate::recognition::direct_canonical::build_direct_canonical(&job, &graph, &physical, &split, &no_assets);
         let Ok(direct) = direct else {
             results.push(json!({"fixtureId": id, "status": "direct_build_error", "error": direct.unwrap_err()}));
             continue;
         };
+        let _ = &no_assets;
         let face = |ir: &Value| -> Value {
             json!({
                 "examTitle": ir.pointer("/exam/title").cloned().unwrap_or(Value::Null),
