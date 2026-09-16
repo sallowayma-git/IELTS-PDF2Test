@@ -118,6 +118,26 @@ pub(crate) struct ReconcileBatchInput<'a> {
 /// `(job_id, source_sha256, base_edit_version)` 派生（见
 /// [`super::commands::recognition_batch_id`]），因此同一输入与版本的重试
 /// 必然复用同一快照，既保证幂等，也让用户修改可被检出。
+/// 冻结快照是否可复用：批次 id、基线版本、源文件哈希三者一致，且确为本地链。
+///
+/// 抽成独立判据，是为了让调用方（[`reconcile_batch`]）能直接问「这次裁决采用的本地
+/// 基线到底是不是冻结快照」，而不必自行复刻一遍条件。**两处口径一旦分叉，「基线是否
+/// 可信」的判断就会与实际采用的快照不一致**——那正是「冻结失败后仍然自动写入」的成因。
+pub(crate) fn frozen_snapshot_is_reusable(
+    stored: Option<&RecognitionCandidateV1>,
+    batch_id: &str,
+    base_edit_version: i64,
+    source_sha256: &str,
+) -> bool {
+    let Some(stored) = stored else {
+        return false;
+    };
+    stored.batch_id == batch_id
+        && stored.base_edit_version == base_edit_version
+        && stored.source_sha256 == source_sha256
+        && stored.chain == ChainKindV1::Local
+}
+
 pub(crate) fn resolve_local_snapshot(
     stored: Option<RecognitionCandidateV1>,
     canonical: &Value,
@@ -129,11 +149,7 @@ pub(crate) fn resolve_local_snapshot(
     base_edit_version: i64,
 ) -> RecognitionCandidateV1 {
     if let Some(stored) = stored {
-        let same_batch = stored.batch_id == batch_id
-            && stored.base_edit_version == base_edit_version
-            && stored.source_sha256 == source_sha256
-            && stored.chain == ChainKindV1::Local;
-        if same_batch {
+        if frozen_snapshot_is_reusable(Some(&stored), batch_id, base_edit_version, source_sha256) {
             return stored;
         }
     }
@@ -154,6 +170,12 @@ pub(crate) struct ReconcileBatchOutcome {
     pub chains: RecognitionChainStateV1,
     /// 符合全部自动应用条件、且合并后结构合法的 patch（与 decision id 对齐）。
     pub auto_apply_candidates: Vec<String>,
+    /// 本次裁决采用的本地基线是否**确实是冻结快照**（决定自动写入是否有前提保护）。
+    ///
+    /// 为 `false` 时 [`ReconcileBatchOutcome::auto_apply_candidates`] 必为空：没有可信基线
+    /// 就不允许自动改题稿，见 [`frozen_snapshot_is_reusable`] 与
+    /// [`crate::reconcile::adjudicate::refuse_auto_apply_without_frozen_baseline`]。
+    pub local_baseline_frozen: bool,
     /// 证据留痕：三条链的原始结论。
     pub local: RecognitionCandidateV1,
     pub cloud: RecognitionCandidateV1,
@@ -216,6 +238,14 @@ fn source_stage_status(source: &SourceVerificationV1) -> StageStatusV1 {
 /// 三路 → 一份裁决。纯函数（无 IO），便于确定性测试。
 pub(crate) fn reconcile_batch(input: ReconcileBatchInput<'_>) -> ReconcileBatchOutcome {
     // 1) 本地链：复用批次冻结快照；没有快照时按当前权威稿投影（首次识别）。
+    //
+    // 先判定基线是否可信，再取快照：自动写入的前提保护依赖于此（见下）。
+    let baseline_frozen = frozen_snapshot_is_reusable(
+        input.local_snapshot.as_ref(),
+        input.batch_id,
+        input.base_edit_version,
+        input.source_sha256,
+    );
     let local = resolve_local_snapshot(
         input.local_snapshot,
         input.canonical,
@@ -298,6 +328,22 @@ pub(crate) fn reconcile_batch(input: ReconcileBatchInput<'_>) -> ReconcileBatchO
         validate_batch: input.validate_batch,
     });
 
+    // 4b) 无可信基线 ⇒ 撤销自动应用资格。
+    //
+    // `auto_apply_eligible` 的守卫「权威稿当前值 == 本地识别结果」只在本地是**冻结快照**
+    // 时成立。快照缺失时基线退化为「当前稿的现场重投影」，两边恒等、守卫等价于不存在，
+    // 于是自动写入会覆盖用户的编辑。冻结失败是可诊断的异常（磁盘/读稿失败），
+    // **不能因为「无云分支没有迟到的云端结果」就放行**——本地裁决自己也会自动写入。
+    let mut decision = decision;
+    let mut auto_apply_candidates = auto_apply_candidates;
+    if !baseline_frozen && !auto_apply_candidates.is_empty() {
+        super::adjudicate::refuse_auto_apply_without_frozen_baseline(
+            &mut decision,
+            &auto_apply_candidates,
+        );
+        auto_apply_candidates.clear();
+    }
+
     let chains = RecognitionChainStateV1 {
         local: local_stage_status(&local),
         cloud: cloud_stage_status(&cloud, cloud_failure.as_ref()),
@@ -309,6 +355,7 @@ pub(crate) fn reconcile_batch(input: ReconcileBatchInput<'_>) -> ReconcileBatchO
         decision,
         chains,
         auto_apply_candidates,
+        local_baseline_frozen: baseline_frozen,
         local,
         cloud,
         source,

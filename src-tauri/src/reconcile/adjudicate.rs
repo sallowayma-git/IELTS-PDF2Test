@@ -337,6 +337,34 @@ pub(crate) fn mark_auto_apply_failed(
     recompute_summary(decision);
 }
 
+/// 本地基线不可信（冻结快照缺失/批次不匹配）时调用：撤销自动应用资格，全部转人工。
+///
+/// 这些项本来符合 [`auto_apply_eligible`]，但该函数的第 2 条守卫——「权威稿当前值 ==
+/// 本地识别结果」——只有在本地基线**确实是冻结快照**时才成立。快照缺失时
+/// [`crate::reconcile::engine::resolve_local_snapshot`] 会退回「按当前权威稿现场重投影」，
+/// 于是两边恒等，守卫退化为空操作；此时自动写入等于在无保护的前提下改题稿。
+///
+/// 因此这里把它们留在 `NeedsReview`（仍可人工确认，**不静默丢弃**），只把原因码与文案
+/// 换成可解释的 [`reason::BASELINE_NOT_FROZEN`]，并重算汇总。
+pub(crate) fn refuse_auto_apply_without_frozen_baseline(
+    decision: &mut RecognitionDecisionV1,
+    candidates: &[String],
+) {
+    for item in decision.items.iter_mut() {
+        if !candidates.contains(&item.decision_id) {
+            continue;
+        }
+        item.auto_applied = false;
+        item.applied_at = None;
+        item.reason_code = reason::BASELINE_NOT_FROZEN.to_string();
+        item.user_message = format!(
+            "{}（本地基线快照不可用，已改为人工确认，不会自动写入）",
+            item.user_message
+        );
+    }
+    recompute_summary(decision);
+}
+
 /// 由**最终**项状态重算汇总。任何改动 `item.resolution` 的步骤之后都必须调用它。
 ///
 /// 为什么不能增量改计数：自动应用会把项从 `NeedsReview` 翻成 `AutoFixed`。若只把

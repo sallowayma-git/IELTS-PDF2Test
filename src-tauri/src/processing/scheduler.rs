@@ -447,24 +447,34 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     // 批次基线：本地稿定稿时的编辑版本。**必须在草稿发布「可编辑」之前**冻结，
     // 否则用户若在「发布」与「读 baseline」之间改稿，基线版本会被抬高，而后续
     // 云端裁决若按当前稿重投影本地候选，就会把用户编辑误当成本地识别结果。
-    let base_edit_version = current_edit_version_of(&app, &job_id).await.unwrap_or(0);
-
-    // 冻结本地候选快照（与 base_edit_version 同一时刻），**早于**可编辑发布。
-    // `run_recognition_cycle_core` 走 `resolve_local_snapshot` 的「复用已冻结候选」
-    // 分支，因此稍后的云端裁决比对的是冻结时的本地结果，而不是用户编辑后的当前稿，
-    // 「云端运行期间用户改了稿」才能被识别，迟到结果才不会覆盖用户修改。
-    // 冻结结果必须留痕：失败时**绝不能再进入裁决**（原因见 `freeze_local_candidate_snapshot`
-    // 文档——前提不成立时 `resolve_local_snapshot` 会退回「按当前稿重投影」，迟到云端结果
-    // 就会覆盖用户修改）。此时保留本地稿可用，丢弃云端结果、跳过裁决。
     //
-    // **两条分支都要冻结**（故不再放在 `if launch_cloud` 内）：无云分支同样会跑
-    // reconcile 并把本地候选写进证据链，若不在「发布可编辑」之前冻结，用户在这之后
-    // 的编辑就会被当成本地识别结果记进去。
+    // **读不到版本时不得退化成 0**：0 是一个合法的真实版本，用 0 顶替「读取失败」会
+    // 让批次 id（由 job_id + 源文件哈希 + 版本三者派生）指向一个并不存在的批次，冻结出的
+    // 快照与真实稿并不对应——这比「没有快照」更危险，因为它**看起来是可信的**。
+    // 读取失败与冻结失败同等对待：不冻结、不裁决、不自动写入。
     let mut freeze_error: Option<String> = None;
-    if let Err(error) = freeze_local_candidate_snapshot(&root, &job_id, base_edit_version) {
-        eprintln!("[processing] freeze local candidate snapshot failed for {job_id}: {error}");
-        freeze_error = Some(error);
-    }
+    let base_edit_version = match current_edit_version_of(&app, &job_id).await {
+        Some(version) => {
+            // 冻结本地候选快照（与 base_edit_version 同一时刻），**早于**可编辑发布。
+            // `run_recognition_cycle_core` 走 `resolve_local_snapshot` 的「复用已冻结候选」
+            // 分支，因此稍后的云端裁决比对的是冻结时的本地结果，而不是用户编辑后的当前稿，
+            // 「云端运行期间用户改了稿」才能被识别，迟到结果才不会覆盖用户修改。
+            if let Err(error) = freeze_local_candidate_snapshot(&root, &job_id, version) {
+                eprintln!("[processing] freeze local candidate snapshot failed for {job_id}: {error}");
+                freeze_error = Some(error);
+            }
+            version
+        }
+        None => {
+            eprintln!(
+                "[processing] base edit version unreadable for {job_id}; \
+                 refusing to freeze or adjudicate on an unknown baseline"
+            );
+            freeze_error = Some("READ_BASE_VERSION_FAILED".to_string());
+            // 占位值：下面的 `freeze_error.is_some()` 分支保证它既不参与冻结也不参与裁决。
+            0
+        }
+    };
 
     if launch_cloud {
         // 本地稿已成：标记 local_status=succeeded（此前为 running，云端可能仍在跑）。
@@ -485,20 +495,44 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     set_item_status_ready(&app, &job_id).await;
 
     if !launch_cloud {
+        // 无可信基线 ⇒ **不得进入裁决**（冻结失败与版本读取失败都算）。
+        //
+        // 早先这里以「本路径没有迟到的云端结果」为由放行，理由不成立：本地裁决自己也会
+        // 自动写入（`adjudicate::auto_apply_eligible` 允许「补空答案」），而它的前提守卫
+        // 「权威稿当前值 == 本地识别结果」**只在本地基线是冻结快照时才成立**。快照缺失时
+        // 基线退化为「按当前稿现场重投影」，两边恒等、守卫等价于不存在，自动写入就会覆盖
+        // 用户编辑。冻结失败是可诊断的异常（读稿/磁盘失败），不是「无云所以无所谓」。
+        //
+        // 这里是第一层保护（直接不跑）；`reconcile_batch` 内部的 `baseline_frozen` 判定是
+        // 第二层——即便有人把这段前置判断改坏，核心也不会自动写入（有意做成双保险）。
+        if freeze_error.is_some() {
+            advance(
+                &app,
+                &state,
+                &job_id,
+                STAGE_READY_FOR_REVIEW,
+                Some("succeeded"),
+                Some("not_run"),
+                Some("failed"),
+                Some(0),
+                freeze_error.as_deref(),
+            )
+            .await;
+            set_item_status_ready(&app, &job_id).await;
+            return;
+        }
         // 无云路径：**照常走完 reconcile**，让本地候选、原文核验、批次汇总全部落盘。
         // 计划 §12.3 只要求「本地即可检查、不被云端拖慢」，从未要求跳过裁决与留痕；
         // 跳过会让这三样全部缺失，前端拿不到任何可解释的证据链。云端由核心如实标为
         // `not_run`——而不是拿一个失败 profile 去顶替，把「没启用云端」谎报成云端故障。
-        //
-        // 冻结失败在此**不阻断**：本路径没有「迟到的云端结果」，不存在覆盖用户修改的
-        // 风险，因此只留机器码以便诊断，不放弃本地证据链（有云路径才必须放弃裁决）。
         let (cloud_status, reconcile_status, actionable, last_error) =
             match run_local_only_recognition_cycle(&root, &job_id, base_edit_version) {
                 Ok(report) => (
                     report.cloud_status,
                     report.reconcile_status,
                     report.actionable_count,
-                    freeze_error.as_deref().map(|_| "FREEZE_SNAPSHOT_FAILED"),
+                    // 走到这里 `freeze_error` 必为 `None`（上面已提前返回），故无告警码。
+                    None,
                 ),
                 Err(error) => {
                     eprintln!(
@@ -721,6 +755,10 @@ fn summarize_cycle_report(report: Value) -> RecognitionCycleReport {
 }
 
 /// 当前 canonical 编辑版本（批次基线的冻结值）。
+///
+/// `None` 表示**读取失败或 item 行不存在**，二者都不代表版本 0。调用方必须把它当成
+/// 「基线不可用」处理，不得用 `unwrap_or(0)` 折叠——0 是合法版本，用 0 顶替会让批次 id
+/// 指向一个不存在的批次，冻结出的快照看似可信却与实际稿无关。
 async fn current_edit_version_of(app: &AppHandle, job_id: &str) -> Option<i64> {
     let root = app_root(app).ok()?;
     let job_id = job_id.to_string();

@@ -6,8 +6,10 @@
 //!    用确定性条件筛出；本层在写入前再用**当前**权威稿复核一次
 //!    （答案仍为空 + 与识别快照一致），因此「用户已修改」永远赢。
 //! 2. **接受走正式 V2 patch/revision 路径**：一律经
-//!    `library::repository::apply_editor_commands_tx`（CAS + 校验 + 原子提交），
-//!    不绕过 V2 保护、不直接写 canonical。
+//!    `library::repository::apply_editor_commands_tx_with`（CAS + 校验 + 原子提交），
+//!    不绕过 V2 保护、不直接写 canonical。决策状态的写入作为该事务的**回调**执行，
+//!    因而与题稿改动同生共死——「题稿已改、状态未写」的窗口在结构上不存在
+//!    （否则崩溃后重试会被前提复核误判为「用户改过」而拒绝，重启也无法自愈）。
 //! 3. **幂等与持久化**：`request_id` 落 `recognition_decision_journal_v1`，
 //!    重复提交返回首次结果且不重复写入；过期项落 `Superseded`，失败落 `Failed`。
 
@@ -23,7 +25,8 @@ use super::rules::{answer_compare_key, answer_is_empty, canonical_answer, is_use
 use super::store;
 use crate::authoring_v2_commands::{apply_patch, refresh_quality_report, validate_authoring};
 use crate::library::repository::{
-    apply_editor_commands_tx, get_canonical_ds, open_library_connection, ApplyEditorCommandsInput,
+    apply_editor_commands_tx, apply_editor_commands_tx_with, get_canonical_ds,
+    open_library_connection, ApplyEditorCommandsInput,
 };
 use crate::schema::recognition_v1::{
     reason, ApplyRecognitionDecisionsRequestV1, ApplyRecognitionDecisionsResultV1, ChainStatusSummaryV1,
@@ -535,7 +538,10 @@ pub(crate) fn run_recognition_cycle_core(
         "autoApplied": applied,
         "autoApplyFailed": failures.iter().map(|(id, code)| json!({"decisionId": id, "reasonCode": code})).collect::<Vec<_>>(),
         "localCandidateStatus": outcome.local.status,
-        "cloudCandidateStatus": outcome.cloud.status
+        "cloudCandidateStatus": outcome.cloud.status,
+        // 本地基线是否可信。为 false 时 `autoApply` 必为空——前端据此解释「为什么这次
+        // 没有自动修正」，而不是把它当成「没有可修正项」。
+        "localBaselineFrozen": outcome.local_baseline_frozen
     }))
 }
 
@@ -551,8 +557,8 @@ pub(crate) fn apply_recognition_decisions_core(
     request.validate()?;
     let request = request.normalized();
 
-    // 只读连接：本函数的写入一律走 `conn_tx`（编辑事务）或 `store::`（决策状态），
-    // 这条连接只用于读取（幂等查询、批次/决策项、权威稿）。
+    // 两条连接：`conn` 只读（幂等查询、批次/决策项、权威稿）；`conn_tx` 承载编辑事务，
+    // 决策状态也经它写入（因而与题稿同事务）。见 `apply_editor_commands_tx_with`。
     let conn = open_library_connection(root)?;
     let payload = serde_json::to_string(&request).map_err(|error| error.to_string())?;
 
@@ -576,6 +582,9 @@ pub(crate) fn apply_recognition_decisions_core(
 
     let item_id = batch.library_item_id.clone();
     let mut items = store::load_decision_items(&conn, &batch.batch_id)?;
+    // `current_edit_version` 返回 `Ok(None)` 仅当 item 行不存在；查询失败经 `?` 直接上抛，
+    // **不会**被折成版本号。这里回退到批次基线而非 0：0 是一个合法的真实版本，
+    // 用它顶替「读不到」会让批次 id 与冻结快照对不上（对比 `scheduler.rs` 中已修的同名陷阱）。
     let before = store::current_edit_version(&conn, &item_id)?.unwrap_or(batch.base_edit_version);
     // 权威稿在本次调用开头读一次，供**撤销前提复核**与**接受前提复核**共用。
     // 其间只有 `reject` 会写库，而它只动 `recognition_decisions_v1`、不碰权威稿，
@@ -769,7 +778,24 @@ pub(crate) fn apply_recognition_decisions_core(
             .filter_map(|index| items[*index].proposed_patch.clone())
             .collect();
         if !commands.is_empty() {
-            let attempt = apply_editor_commands_tx(
+            // 待落库的项**先算好**（含撤销补丁）。事务回调必须能当 `Fn` 用，因此不能在回调里
+            // 改 `items`；内存副本也要等写入成功后再更新——反过来的话，「写失败」时会出
+            // 内存说已接受、数据库说仍待办，返回给前端的 view 与 outcomes 自相矛盾。
+            let accept_writes: Vec<(usize, DecisionItemV1)> = runnable
+                .iter()
+                .map(|index| {
+                    let mut persisted = items[*index].clone();
+                    persisted.auto_applied = false;
+                    persisted.applied_at = Some(now.clone());
+                    persisted.undo = super::adjudicate::undo_patch_for(&items[*index]);
+                    (*index, persisted)
+                })
+                .collect();
+            // 决策状态写入与权威稿写入**同一事务**（`apply_editor_commands_tx_with` 的
+            // 回调在 commit 之前执行）。若在事务外单独写，进程在「题稿已改、状态未写」
+            // 之间退出就会留下「题稿已含修正值、决策仍是 Open」的矛盾态：重试会当成
+            // 待办再走一遍，视图也不认得这次写入。同事务后该窗口在结构上不存在。
+            let attempt = apply_editor_commands_tx_with(
                 &mut conn_tx,
                 &ApplyEditorCommandsInput {
                     item_id: item_id.clone(),
@@ -783,9 +809,26 @@ pub(crate) fn apply_recognition_decisions_core(
                     refresh_quality_report(root, &item_id, ds)?;
                     validate_authoring(ds)
                 },
+                &|tx, _version| {
+                    for (_, item) in &accept_writes {
+                        store::set_decision_status(
+                            tx,
+                            &batch.batch_id,
+                            &item.decision_id,
+                            DecisionStatusV1::Accepted.as_str(),
+                            &serde_json::to_string(item).map_err(|error| error.to_string())?,
+                            Some(&now),
+                        )?;
+                    }
+                    Ok(())
+                },
             );
             if attempt.is_ok() {
                 applied_indices = runnable;
+                // 写入已提交，才让内存副本跟上。
+                for (index, persisted) in accept_writes {
+                    items[index] = persisted;
+                }
             } else {
                 // 整批失败：如实落 Failed，不谎称已应用。
                 let code = attempt
@@ -832,25 +875,14 @@ pub(crate) fn apply_recognition_decisions_core(
     }
 
     for index in &applied_indices {
-        let item = &mut items[*index];
-        item.status = DecisionStatusV1::Accepted;
-        item.auto_applied = false;
-        item.applied_at = Some(now.clone());
-        item.undo = super::adjudicate::undo_patch_for(item);
-        store::set_decision_status(
-            &conn,
-            &batch.batch_id,
-            &item.decision_id,
-            DecisionStatusV1::Accepted.as_str(),
-            &serde_json::to_string(item).map_err(|error| error.to_string())?,
-            Some(&now),
-        )?;
+        // 状态与撤销补丁已在上面的事务回调里写好（与题稿同生共死），这里只汇总结果。
+        let item = &items[*index];
         outcomes.push(DecisionOutcomeV1 {
             decision_id: item.decision_id.clone(),
             kind: DecisionOutcomeKindV1::Applied,
             reason_code: None,
             message: "已接受并写入题稿。".to_string(),
-            applied_at: Some(now.clone()),
+            applied_at: item.applied_at.clone(),
             undo: item.undo.clone(),
         });
     }
@@ -858,7 +890,7 @@ pub(crate) fn apply_recognition_decisions_core(
     // ── 撤销写入：回滚权威稿到修正前的值，并把决策持久化为 Undone ──────
     if !undo_commands.is_empty() {
         let undo_base = store::current_edit_version(&conn, &item_id)?.unwrap_or(before);
-        let attempt = apply_editor_commands_tx(
+        let attempt = apply_editor_commands_tx_with(
             &mut conn_tx,
             &ApplyEditorCommandsInput {
                 item_id: item_id.clone(),
@@ -872,19 +904,32 @@ pub(crate) fn apply_recognition_decisions_core(
                 refresh_quality_report(root, &item_id, ds)?;
                 validate_authoring(ds)
             },
+            // 撤销的状态写入同样与回滚同一事务。这里是**故障恢复的关键**：若状态写在
+            // 事务外，「题稿已回滚、Undone 未落库」的窗口就会留下一个仍然自称
+            // `Accepted/AutoFixed`、但目标值其实已回到修正前的项——重试会被
+            // `applied_answer_still_in_place` 误判为「用户改过」而拒绝，重启后也无法自愈。
+            &|tx, _version| {
+                for index in &undo_indices {
+                    let item = &items[*index];
+                    // 只读 `items`（回调须能当 `Fn` 用）；`set_decision_status` 会把落库 JSON
+                    // 的 `status` 覆写成传入值，所以此刻内存仍是 `Accepted` 不影响持久化。
+                    store::set_decision_status(
+                        tx,
+                        &batch.batch_id,
+                        &item.decision_id,
+                        DecisionStatusV1::Undone.as_str(),
+                        &serde_json::to_string(item).map_err(|error| error.to_string())?,
+                        item.applied_at.as_deref(),
+                    )?;
+                }
+                Ok(())
+            },
         );
         if attempt.is_ok() {
             for index in &undo_indices {
-                let item = &mut items[*index];
-                item.status = DecisionStatusV1::Undone;
-                store::set_decision_status(
-                    &conn,
-                    &batch.batch_id,
-                    &item.decision_id,
-                    DecisionStatusV1::Undone.as_str(),
-                    &serde_json::to_string(item).map_err(|error| error.to_string())?,
-                    item.applied_at.as_deref(),
-                )?;
+                // 写入已提交，才让内存副本跟上（写失败时内存不得先宣称已撤销）。
+                items[*index].status = DecisionStatusV1::Undone;
+                let item = &items[*index];
                 outcomes.push(DecisionOutcomeV1 {
                     decision_id: item.decision_id.clone(),
                     kind: DecisionOutcomeKindV1::Undone,
@@ -1749,6 +1794,250 @@ mod tests {
 
         drop(conn);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── 故障注入辅助（Task 25）─────────────────────────────────────────────
+
+    /// 让 `recognition_decisions_v1` 的 UPDATE 必然失败，用来构造
+    /// 「题稿已改、决策状态写不进」的窗口。
+    ///
+    /// 用 SQLite 触发器而不是测试专用开关：注入点落在**真实产品路径**上。被测的
+    /// `apply_recognition_decisions_core` 自己按 `root` 开连接，看到的是同一个库文件里的
+    /// 触发器，因此产品代码里不需要留任何测试专用分支——测的是产品，不是替身。
+    fn fail_decision_status_writes(root: &Path) {
+        let conn = open_library_connection(root).expect("db");
+        conn.execute_batch(
+            "CREATE TRIGGER zz_fail_decision_status BEFORE UPDATE ON recognition_decisions_v1
+             BEGIN SELECT RAISE(ABORT, 'injected_decision_status_write_failure'); END;",
+        )
+        .expect("create trigger");
+    }
+
+    fn allow_decision_status_writes(root: &Path) {
+        let conn = open_library_connection(root).expect("db");
+        conn.execute_batch("DROP TRIGGER IF EXISTS zz_fail_decision_status;")
+            .expect("drop trigger");
+    }
+
+    /// 断连重开后的编辑版本（每次都新建连接，排除「只改了内存」的假通过）。
+    fn edit_version(root: &Path, item_id: &str) -> i64 {
+        let conn = open_library_connection(root).expect("db");
+        store::current_edit_version(&conn, item_id)
+            .expect("read version")
+            .expect("item row present")
+    }
+
+    fn status_of(root: &Path, batch_id: &str) -> DecisionStatusV1 {
+        let conn = open_library_connection(root).expect("db");
+        store::load_decision_items(&conn, batch_id)
+            .expect("items")
+            .into_iter()
+            .next()
+            .expect("item present")
+            .status
+    }
+
+    fn undo_request(
+        request_id: &str,
+        batch_id: &str,
+        decision_id: &str,
+    ) -> ApplyRecognitionDecisionsRequestV1 {
+        ApplyRecognitionDecisionsRequestV1 {
+            request_id: request_id.to_string(),
+            batch_id: batch_id.to_string(),
+            base_edit_version: 0,
+            accept: vec![],
+            reject: vec![],
+            undo: vec![decision_id.to_string()],
+        }
+    }
+
+    /// Task 25：撤销的故障恢复。
+    ///
+    /// 注入「题稿已回滚、`Undone` 状态写入失败」的窗口，验证该窗口**不可能留下半截状态**，
+    /// 并验证重试与重启后内容 / 决策状态 / 幂等结果三者一致。
+    ///
+    /// 为什么不能拿「正常完成后重开」代替：那条路径只证明了成功情形可持久化，完全没有
+    /// 触及「内容已提交、状态未提交」这一中间态——而它恰恰是崩溃会留下的东西。修法是把
+    /// 状态写入并入题稿事务（`apply_editor_commands_tx_with`），因此本用例的真正断言是
+    /// **状态写不进去时，题稿的回滚也必须一并作废**。
+    #[test]
+    fn undo_status_write_failure_rolls_the_canonical_rollback_back_with_it() {
+        let (root, item_id, batch_id, item) = seed_applied_batch("undo-atomic", &applied_option());
+        let version_before = edit_version(&root, &item_id);
+        assert_eq!(q14_answer(&root, &item_id), applied_option(), "前置：修正值在位");
+
+        fail_decision_status_writes(&root);
+
+        let failed = apply_recognition_decisions_core(
+            &root,
+            undo_request("req-undo-atomic-1", &batch_id, &item.decision_id),
+        )
+        .expect("撤销失败必须如实回报，而不是把错误变成 panic");
+
+        // (1) 结果如实报失败，不谎称已撤销。
+        assert_eq!(
+            failed["outcomes"][0]["kind"].as_str(),
+            Some("failed"),
+            "状态写不进去时不得报 undone：{failed}"
+        );
+        assert_eq!(
+            failed["view"]["autoApplied"].as_array().map(Vec::len),
+            Some(1),
+            "内存视图也不得宣称已撤销，否则 view 与 outcomes 自相矛盾：{failed}"
+        );
+        // (2) **题稿没有被回滚**——状态写失败必须把内容写一并作废。这是本次修复的要害：
+        //     修复前状态写在事务外，题稿会停在「已回到修正前、状态仍是已修正」的矛盾态。
+        assert_eq!(
+            q14_answer(&root, &item_id),
+            applied_option(),
+            "状态写入失败时，题稿回滚必须随之作废（不能只成功一半）"
+        );
+        // (3) 版本号未推进：编辑日志与内容一并未提交（同事务回滚的旁证）。
+        assert_eq!(
+            edit_version(&root, &item_id),
+            version_before,
+            "事务回滚后编辑版本不得推进"
+        );
+        // (4) 决策仍为 Accepted：内容与状态一致，不存在「回滚了但没记」。
+        assert_eq!(status_of(&root, &batch_id), DecisionStatusV1::Accepted);
+
+        // 撤除注入 → 换**新** request_id 重试（真实 UI 重试即如此）→ 必须收敛。
+        allow_decision_status_writes(&root);
+        let retry = apply_recognition_decisions_core(
+            &root,
+            undo_request("req-undo-atomic-2", &batch_id, &item.decision_id),
+        )
+        .expect("retry must run");
+        assert_eq!(
+            retry["outcomes"][0]["kind"].as_str(),
+            Some("undone"),
+            "撤除故障后重试必须成功：{retry}"
+        );
+        assert_eq!(q14_answer(&root, &item_id), original_option(), "重试后题稿已回滚");
+        assert_eq!(status_of(&root, &batch_id), DecisionStatusV1::Undone, "重试后状态已落库");
+
+        // (5) 重启（断连重开）后内容与状态仍自洽——这是「重启后一致」的断言。
+        assert_eq!(status_of(&root, &batch_id), DecisionStatusV1::Undone);
+        assert_eq!(q14_answer(&root, &item_id), original_option());
+
+        // (6) 幂等一致性：同一 request_id 再提交，按日志原样重放，不再产生第二次回滚。
+        let replay = apply_recognition_decisions_core(
+            &root,
+            undo_request("req-undo-atomic-2", &batch_id, &item.decision_id),
+        )
+        .expect("replay must run");
+        assert_eq!(replay["replayed"].as_bool(), Some(true), "同 id 重放必须标记 replayed");
+        assert_eq!(q14_answer(&root, &item_id), original_option());
+        assert_eq!(status_of(&root, &batch_id), DecisionStatusV1::Undone);
+
+        // (7) 失败的那次请求同样被记进幂等日志：同 id 重放得到**原样的失败结果**且不改状态。
+        //     这是刻意的——重试必须换新 request_id，让「重试」不可能悄悄产生与首次不同的
+        //     结果；否则同一请求在重试后成功、会让「同一请求只生效一次」的契约失效。
+        let replay_failed = apply_recognition_decisions_core(
+            &root,
+            undo_request("req-undo-atomic-1", &batch_id, &item.decision_id),
+        )
+        .expect("replay of the failed request must run");
+        assert_eq!(replay_failed["replayed"].as_bool(), Some(true));
+        assert_eq!(replay_failed["outcomes"][0]["kind"].as_str(), Some("failed"));
+        assert_eq!(
+            status_of(&root, &batch_id),
+            DecisionStatusV1::Undone,
+            "重放失败结果不得改变现状"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Task 26：无可信本地基线时**不得自动写入**。
+    ///
+    /// 自动应用的守卫之一是「权威稿当前值 == 本地识别结果」（保证用户没改过该槽位）。
+    /// 该守卫只有在本地基线是**冻结快照**时才成立：`resolve_local_snapshot` 在快照缺失或
+    /// 批次不匹配时会退回「按当前权威稿现场重投影」，两边恒等、守卫退化为空操作。
+    ///
+    /// 本用例是受控实验：**唯一变量是本地快照**，其余输入完全相同。因此
+    /// 「可信基线有候选」构成了非空性对照，使「不可信基线零候选」不是一句空断言。
+    #[test]
+    fn reconcile_without_a_frozen_baseline_refuses_to_auto_apply() {
+        let batch_id = "batch-baseline";
+        let source_sha = "a".repeat(64);
+        let mut canonical = sentence_completion_canonical(&json!({"kind": "unresolved"}));
+        // 非空 sourceAnchors ⇒ 本地「有原文证据面却没填值」，原文里又有可读答案行
+        // ⇒ 原文核验给出 `Suggested`，这正是自动补空的触发条件。
+        canonical["answerSlots"]["slot-14"]["sourceAnchors"] = json!([{
+            "sourceFileId": "file-1",
+            "pageIndex": 0,
+            "nodeIds": ["line-14"],
+            "extractionMode": "pdf_native",
+            "sourceHash": "b".repeat(64)
+        }]);
+        let document_ir = json!({"pages":[{"pageIndex":0,"lines":[{"text":"14 stencilling"}]}]});
+
+        // 同一套输入，只换本地快照。
+        let run = |snapshot: Option<crate::schema::recognition_v1::RecognitionCandidateV1>| {
+            let validate = |_patches: &[Value]| -> Result<(), String> { Ok(()) };
+            reconcile_batch(ReconcileBatchInput {
+                item_id: "item-1",
+                job_id: "item-1",
+                batch_id,
+                source_file_id: "file-1",
+                source_sha256: &source_sha,
+                base_edit_version: 0,
+                canonical: &canonical,
+                document_ir: Some(&document_ir),
+                local_snapshot: snapshot,
+                cloud: Ok(natural_cloud_shape(
+                    "sentence_completion",
+                    json!({"kind":"text","values":["stencilling"]}),
+                    14,
+                )),
+                validate_batch: &validate,
+            })
+        };
+        let frozen_local = || {
+            crate::reconcile::candidate::local_candidate_from_authoring(
+                &canonical,
+                batch_id,
+                "item-1",
+                "item-1",
+                "file-1",
+                &source_sha,
+                0,
+            )
+        };
+
+        // (1) 可信基线：基线被复用，且**确实**产出候选（非空性对照）。
+        let frozen = run(Some(frozen_local()));
+        assert!(frozen.local_baseline_frozen, "批次参数一致的本地快照必须被复用");
+        assert!(
+            !frozen.auto_apply_candidates.is_empty(),
+            "本夹具在可信基线下必须产出自动写入候选，否则下一条断言是空的"
+        );
+
+        // (2) 快照缺失：基线不可信 ⇒ 候选必须清零。
+        let unfrozen = run(None);
+        assert!(!unfrozen.local_baseline_frozen, "快照缺失 ⇒ 基线不可信");
+        assert!(
+            unfrozen.auto_apply_candidates.is_empty(),
+            "无可信基线时不得产出任何自动写入候选（否则会覆盖用户编辑）"
+        );
+        // (3) 被拒的项**没有消失**：仍留在 items 里、带可解释原因码、且仍是待办，
+        //     由人工确认而不是静默丢弃。
+        let blocked: Vec<_> = unfrozen
+            .decision
+            .items
+            .iter()
+            .filter(|item| item.reason_code == reason::BASELINE_NOT_FROZEN)
+            .collect();
+        assert!(
+            !blocked.is_empty(),
+            "被拒绝自动应用的项必须带 BASELINE_NOT_FROZEN 原因码留下，不能静默消失"
+        );
+        assert!(
+            blocked.iter().all(|item| item.is_actionable()),
+            "被拒绝自动应用的项必须仍是待办（否则用户看不见、也改不了）"
+        );
     }
 
     /// 内容变化后 resolution 失效（R3）：**修正写入之后用户又改了同一槽位**时，

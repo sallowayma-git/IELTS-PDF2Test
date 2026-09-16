@@ -88,6 +88,13 @@ pub mod reason {
     pub const AUTO_APPLY_RULE_REJECTED: &str = "AUTO_APPLY_RULE_REJECTED";
     /// 相互依赖的修正中至少一项不可自动应用。
     pub const DEPENDENCY_BLOCKED: &str = "DEPENDENCY_BLOCKED";
+    /// **没有可信的本地基线**（冻结快照缺失或批次不匹配），自动写入失去前提保护。
+    ///
+    /// 自动应用的守卫之一是「权威稿的当前值 == 本地识别结果」，用来保证用户没改过该槽位。
+    /// 该守卫只有在本地基线是**冻结快照**时才成立：`resolve_local_snapshot` 在快照缺失时
+    /// 会退回「按当前权威稿现场重投影」，于是两边恒等，守卫退化成空操作。此时任何自动写入
+    /// 都是在无保护的前提下改题稿，必须拒绝并转人工。
+    pub const BASELINE_NOT_FROZEN: &str = "BASELINE_NOT_FROZEN";
     pub const SOURCE_FILE_UNREADABLE: &str = "SOURCE_FILE_UNREADABLE";
 }
 

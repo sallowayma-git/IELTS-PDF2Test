@@ -248,6 +248,28 @@ pub(crate) fn apply_editor_commands_tx(
     apply_patch: &dyn Fn(&mut Value, &Value) -> CommandResult<()>,
     prepare_ds: &dyn Fn(&mut Value) -> CommandResult<()>,
 ) -> CommandResult<ApplyEditorCommandsResult> {
+    apply_editor_commands_tx_with(conn, input, apply_patch, prepare_ds, &|_, _| Ok(()))
+}
+
+/// 同 [`apply_editor_commands_tx`]，但允许调用方在**同一个事务内**追加自己的写入。
+///
+/// `on_content_committed` 在内容写入（权威稿、版本号、编辑日志）全部完成后、`commit()`
+/// 之前被调用，参数为该事务（`Transaction` 解引用为 `Connection`）与新的编辑版本号。
+/// 它里面的任何写入与内容改动**同生共死**：返回 `Err` 则整个事务回滚，内容一字不改。
+///
+/// 为什么需要这个口子：调用方若在事务外用**另一条连接**写自己的状态，进程在「内容已提交、
+/// 状态未提交」之间退出，就会留下内容与状态互相矛盾的局面。做成同事务后，该窗口在结构上
+/// 不存在——只剩「都没写」与「都写了」两种可能。
+///
+/// **重放路径不调用该回调**：命中 `editor_journal_v1` 说明本事务此前已成功提交过，
+/// 回调的写入当时已随内容一并落盘，再调一次反而会重复写入。
+pub(crate) fn apply_editor_commands_tx_with(
+    conn: &mut Connection,
+    input: &ApplyEditorCommandsInput,
+    apply_patch: &dyn Fn(&mut Value, &Value) -> CommandResult<()>,
+    prepare_ds: &dyn Fn(&mut Value) -> CommandResult<()>,
+    on_content_committed: &dyn Fn(&Connection, i64) -> CommandResult<()>,
+) -> CommandResult<ApplyEditorCommandsResult> {
     if input.commands.is_empty() && input.title.is_none() {
         return Err("EDITOR_COMMANDS_REQUIRED".to_string());
     }
@@ -383,6 +405,9 @@ pub(crate) fn apply_editor_commands_tx(
          (SELECT id FROM editor_journal_v1 WHERE library_item_id = ?1 ORDER BY id DESC LIMIT 200)",
         [&input.item_id],
     ).map_err(|error| format!("library_v2_journal_prune:{error}"))?;
+
+    // 调用方的附加写入（如识别决策状态）与内容改动同一事务：失败则整体回滚。
+    on_content_committed(&transaction, next_version)?;
 
     transaction
         .commit()
