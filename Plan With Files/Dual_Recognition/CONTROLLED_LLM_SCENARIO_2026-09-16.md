@@ -65,3 +65,14 @@ node scripts/controlled-llm-service.mjs            # 默认 127.0.0.1:11435
 ## 5. 与后端 seed 用例的分工
 
 `seed_applied_batch` / `seed_bridge_job` 那类用例把云端结果**直接塞进注入点**，验证的是裁决与状态机；本场景验证的是**网关这一段**（HTTP + `openai_chat_content` + `parse_llm_json_content` + `validate_cloud_outline_output`）。两层证据不可互相代替——这正是 `AGENTS.md` 要求区分「产品行为端到端」与「服务层验证」的落点。
+
+## 6. 服务已实测可用（2026-09-16）
+
+- `GET /health` → `200`，回显夹具绝对路径
+- `POST /v1/chat/completions` → `200`，`choices[0].message.content` 长度 640，
+  解析后 `title = "Early Approaches to Reading"`、`groups[0].kind = "sentence_completion"`、
+  `groups[0].slots[0].answer.values[0] = "stencilling"`
+- Rust 侧：`cargo test --lib controlled_model_service` → 1 passed（0.05s）
+
+因此服务本身与网关侧的解析都已确认；剩下的是**前端按钮那一段**。
+
