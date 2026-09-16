@@ -700,13 +700,56 @@ fn run_recognition_cycle(
     base_edit_version: i64,
 ) -> Result<RecognitionCycleReport, String> {
     // 注入点直接返回调度器已拉取的云端 JSON；不再调用真实网关。
-    let report = crate::reconcile::commands::run_recognition_cycle_core(
+    //
+    // A4 的预算与调用都留在这一层：判定层（`reconcile_batch` / `adjudicate`）不持状态、
+    // 不发 HTTP，注入点只是一个 `Fn`。
+    //
+    // 预算口径 = `MAX_ADJUDICATION_MODEL_CALLS`（1 次主裁决 + 1 次受约束修复）。
+    // 第一次被拒时**把校验器的原话回给模型**再问一次，而不是空转重试：不带被拒原因的重试
+    // 只会拿到同一种错误——那不是修复，只是多烧一次配额。
+    let calls = std::cell::Cell::new(0u32);
+    let adjudicator =
+        |payload: &[serde_json::Value]| -> Result<
+            serde_json::Value,
+            crate::reconcile::engine::AdjudicationFailure,
+        > {
+            use crate::reconcile::engine::AdjudicationFailure;
+            let budget = crate::schema::recognition_v1::MAX_ADJUDICATION_MODEL_CALLS;
+            if calls.get() >= budget {
+                return Err(AdjudicationFailure::BudgetExhausted);
+            }
+            calls.set(calls.get() + 1);
+            let first = crate::auto_pipeline::adjudicate_divergence_through_gateway(
+                root, job_id, profile_id, payload, None,
+            );
+            match first {
+                Ok(value) => Ok(value),
+                Err(error) => {
+                    let repairs = crate::schema::recognition_v1::MAX_CONSTRAINED_REPAIRS;
+                    if repairs == 0 || calls.get() >= budget {
+                        return Err(AdjudicationFailure::Model(error));
+                    }
+                    calls.set(calls.get() + 1);
+                    crate::auto_pipeline::adjudicate_divergence_through_gateway(
+                        root,
+                        job_id,
+                        profile_id,
+                        payload,
+                        Some(&error),
+                    )
+                    .map_err(AdjudicationFailure::Model)
+                }
+            }
+        };
+    let adjudicator_ref: crate::reconcile::engine::AdjudicationRunner<'_> = &adjudicator;
+    let report = crate::reconcile::commands::run_recognition_cycle_core_with_adjudicator(
         root,
         job_id,
         profile_id,
         cloud_enabled,
         base_edit_version,
         &|_root, _job_id, _profile_id| cloud_fetched.clone(),
+        Some(adjudicator_ref),
     )?;
     Ok(summarize_cycle_report(report))
 }

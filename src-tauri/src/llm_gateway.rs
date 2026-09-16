@@ -44,6 +44,11 @@ pub(crate) fn run_llm_gateway(
         "generate_pdf_reading_outline" => {
             run_openai_compatible_cloud_outline_llm(root, job_id, input, api_key)
         }
+        // A4：分歧裁决。与云端识别共用证据面（PDF 附原文件 / 非 PDF 附原文文本），
+        // 但输出契约与校验完全不同——它必须回指本次提交的 decisionId 集合。
+        "adjudicate_divergence" => {
+            run_openai_compatible_adjudication_llm(root, job_id, input, api_key)
+        }
         _ => Err(format!("unsupported_llm_gateway_command:{}", command_name)),
     };
     // Per-call observability record: every gateway invocation (success or
@@ -787,6 +792,221 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
     Ok(parsed)
 }
 
+/// A4：分歧裁决的 prompt。
+///
+/// 契约文字与 `make_adjudication_input` 的 `outputContract` 是**同一套规则**：
+/// 「模型该返回什么」与「我们会校验什么」若各写一份，两者迟早漂移，
+/// 而漂移的代价是模型产出被静默拒绝、用户看到「裁决失败」却无从解释。
+fn adjudication_prompt(input: &Value) -> String {
+    let divergences = serde_json::to_string(input.get("divergences").unwrap_or(&Value::Null))
+        .unwrap_or_else(|_| "[]".to_string());
+    // 受约束修复：上一次回复被校验器拒了，把**被拒的原因原样**回给模型。
+    // 不带原因地重试同一句话，只会再拿到同一种错误——那不是修复，只是多花一次配额。
+    let repair = input
+        .get("repairNote")
+        .and_then(Value::as_str)
+        .filter(|note| !note.trim().is_empty())
+        .map(|note| {
+            format!(
+                "\n7. Your previous reply was REJECTED by our validator: {note}\n\
+Fix exactly that and return JSON only."
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "You are reconciling answers for one reading exam. The SAME question was answered by \
+three independent sources: `local` (on-device recognition of the authoring draft), `cloud` \
+(automated full-paper recognition) and `source` (an answer extracted from the original file).\n\
+For EACH item in DIVERGENCES below, decide which of the given answers the ORIGINAL FILE supports.\n\
+Hard rules:\n\
+1. Answer only for the decisionId values listed; never invent an id.\n\
+2. `chosen` must be exactly one of: local, cloud, source, unresolved.\n\
+3. You may only SELECT one of the values already given. `value` must repeat that value exactly, \
+byte for byte. Never invent a fourth value.\n\
+4. If the original file does not settle the question, return chosen = \"unresolved\" and say why.\n\
+5. `rationale` must not be empty; cite what in the original file decided it.\n\
+6. Return JSON only.{repair}\n\
+--- DIVERGENCES BEGIN ---\n{divergences}\n--- DIVERGENCES END ---"
+    )
+}
+
+/// A4：分歧裁决的网关实现。
+///
+/// 证据面与云端识别一致：PDF 走 base64 原文件附件，非 PDF 走 `sourceText`。
+/// 差别是**拿不到证据面时直接失败**，不像云端识别那样降级成一条警告后继续——
+/// 裁决的全部意义就是读原文，在空证据上「裁定」只会产生一段看似可信的编造。
+fn run_openai_compatible_adjudication_llm(
+    root: &Path,
+    job_id: &str,
+    input: &Value,
+    api_key: Option<&str>,
+) -> CommandResult<Value> {
+    let profile = llm_profile(input);
+    let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
+    if input
+        .get("divergences")
+        .and_then(Value::as_array)
+        .map(|items| items.is_empty())
+        .unwrap_or(true)
+    {
+        return Err("adjudication_no_divergences".to_string());
+    }
+    let mut content = vec![json!({"type": "text", "text": adjudication_prompt(input)})];
+    if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
+        content.push(pdf_part);
+    } else if let Some(source_text) = input
+        .get("sourceText")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+    {
+        content.push(json!({
+            "type": "text",
+            "text": format!(
+                "The original file is not a PDF, so no page image is attached. \
+The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
+--- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
+            )
+        }));
+    } else {
+        return Err("adjudication_no_evidence_surface".to_string());
+    }
+    let mut body = json!({
+        "model": model,
+        "temperature": llm_temperature(profile),
+        "messages": [
+            {"role": "system", "content": "Return valid JSON only."},
+            {"role": "user", "content": content}
+        ]
+    });
+    if llm_force_json(profile) {
+        body["response_format"] = json!({"type": "json_object"});
+    }
+    let payload = openai_post(profile, api_key, body)?;
+    let content = openai_chat_content(&payload)?;
+    let mut parsed = parse_llm_json_content(&content)?;
+    validate_adjudication_output(&mut parsed, input)?;
+    Ok(parsed)
+}
+
+/// 裁决值的形状校验。
+///
+/// 刻意**不做**宽松转换（与 `to_answer_value` 的「裸字符串当成 text」相反）：
+/// 一个形状不对的裁决值如果被静默改写成别的答案，模型的意思就被我们改掉了，
+/// 而这种改动在结果里看不出来——正是最该 fail-closed 的地方。
+fn validate_ruling_answer_value(value: &Value) -> Result<(), String> {
+    let Some(object) = value.as_object() else {
+        return Err("not_object".to_string());
+    };
+    match object.get("kind").and_then(Value::as_str) {
+        Some("text") => {
+            let Some(values) = object.get("values").and_then(Value::as_array) else {
+                return Err("text_values_missing".to_string());
+            };
+            if values.is_empty() || !values.iter().all(Value::is_string) {
+                return Err("text_values_invalid".to_string());
+            }
+            Ok(())
+        }
+        Some("option") => {
+            let Some(labels) = object.get("labels").and_then(Value::as_array) else {
+                return Err("option_labels_missing".to_string());
+            };
+            if labels.is_empty() || !labels.iter().all(Value::is_string) {
+                return Err("option_labels_invalid".to_string());
+            }
+            Ok(())
+        }
+        Some("unresolved") => Ok(()),
+        _ => Err("kind_invalid".to_string()),
+    }
+}
+
+/// A4 裁决输出的契约校验。三条规则都对应「不把模型说的话当成事实」：
+///
+/// 1. **`decisionId` 必须属于本次提交的 id 集合**——模型幻觉出的 id 会去改一个
+///    根本不存在的决策项，而按 id 匹配的落实循环恰好会静默跳过它，于是「模型编了一条」
+///    在结果里完全看不出来。这里必须整份拒绝。
+/// 2. `chosen` 必须落在四值枚举内（与 prompt 的规则 2 同一份枚举）。
+/// 3. `chosen != unresolved` 时 `value` 必填且形状合法、`rationale` 非空——
+///    没有理由的「裁定」无法复核，等于没裁。
+fn validate_adjudication_output(output: &mut Value, input: &Value) -> CommandResult<()> {
+    let allowed: std::collections::BTreeSet<String> = input
+        .get("divergences")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("decisionId").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if allowed.is_empty() {
+        return Err("adjudication_request_missing_decision_ids".to_string());
+    }
+    let Some(object) = output.as_object_mut() else {
+        return Err("adjudication_not_object".to_string());
+    };
+    let Some(rulings) = object.get("rulings").and_then(Value::as_array).cloned() else {
+        return Err("adjudication_rulings_missing_or_invalid".to_string());
+    };
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (index, ruling) in rulings.iter().enumerate() {
+        let Some(ruling_object) = ruling.as_object() else {
+            return Err(format!("adjudication_ruling_not_object:{index}"));
+        };
+        let Some(decision_id) = ruling_object.get("decisionId").and_then(Value::as_str) else {
+            return Err(format!("adjudication_ruling_id_missing:{index}"));
+        };
+        if !allowed.contains(decision_id) {
+            return Err(format!(
+                "adjudication_ruling_unknown_decision_id:{index}:{decision_id}"
+            ));
+        }
+        if !seen.insert(decision_id.to_string()) {
+            return Err(format!(
+                "adjudication_ruling_duplicate_decision_id:{index}:{decision_id}"
+            ));
+        }
+        let Some(chosen) = ruling_object.get("chosen").and_then(Value::as_str) else {
+            return Err(format!("adjudication_ruling_chosen_missing:{index}"));
+        };
+        if !matches!(chosen, "local" | "cloud" | "source" | "unresolved") {
+            return Err(format!("adjudication_ruling_chosen_invalid:{index}:{chosen}"));
+        }
+        let rationale_present = ruling_object
+            .get("rationale")
+            .and_then(Value::as_str)
+            .map(|text| !text.trim().is_empty())
+            .unwrap_or(false);
+        if !rationale_present {
+            return Err(format!("adjudication_ruling_rationale_missing:{index}"));
+        }
+        if let Some(confidence) = ruling_object.get("confidence") {
+            let valid = confidence.is_null()
+                || (confidence.is_number()
+                    && confidence
+                        .as_f64()
+                        .map(|value| (0.0..=1.0).contains(&value))
+                        .unwrap_or(false));
+            if !valid {
+                return Err(format!(
+                    "adjudication_ruling_confidence_invalid:{index}"
+                ));
+            }
+        }
+        if chosen == "unresolved" {
+            continue;
+        }
+        let Some(value) = ruling_object.get("value") else {
+            return Err(format!("adjudication_ruling_value_missing:{index}"));
+        };
+        validate_ruling_answer_value(value)
+            .map_err(|error| format!("adjudication_ruling_value_invalid:{index}:{error}"))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_llm_suggestion_output(
     output: &mut Value,
     mode: &str,
@@ -1377,4 +1597,103 @@ fn validate_cloud_outline_output(
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(ids: &[&str]) -> Value {
+        json!({
+            "divergences": ids
+                .iter()
+                .map(|id| json!({"decisionId": id}))
+                .collect::<Vec<_>>()
+        })
+    }
+
+    /// 幻觉 `decisionId` 必须**整份**拒绝。
+    ///
+    /// 若只按 id 匹配地落实裁定，模型编出来的 id 会被静默跳过——「模型编了一条」
+    /// 在结果里完全看不出来。校验层必须提前把这个可能性掐掉。
+    #[test]
+    fn adjudication_output_rejects_a_hallucinated_decision_id() {
+        let input = request(&["d:slot:slot-14:answer"]);
+        let mut output = json!({"rulings":[{
+            "decisionId": "d:slot:slot-99:answer",
+            "chosen": "cloud",
+            "value": {"kind":"text","values":["painting"]},
+            "rationale": "made up"
+        }]});
+        let error =
+            validate_adjudication_output(&mut output, &input).expect_err("必须拒绝幻觉 id");
+        assert!(error.contains("unknown_decision_id"), "实际错误：{error}");
+    }
+
+    /// `chosen != unresolved` 时 `value` 必填，且形状必须是合法答案值。
+    #[test]
+    fn adjudication_output_requires_a_well_formed_value() {
+        let input = request(&["d:slot:slot-14:answer"]);
+        let mut missing = json!({"rulings":[{
+            "decisionId": "d:slot:slot-14:answer",
+            "chosen": "cloud",
+            "rationale": "reason"
+        }]});
+        assert!(validate_adjudication_output(&mut missing, &input).is_err());
+
+        let mut empty_values = json!({"rulings":[{
+            "decisionId": "d:slot:slot-14:answer",
+            "chosen": "cloud",
+            "value": {"kind":"text","values":[]},
+            "rationale": "reason"
+        }]});
+        let error = validate_adjudication_output(&mut empty_values, &input)
+            .expect_err("空 values 不是合法答案值");
+        assert!(error.contains("text_values_invalid"), "实际错误：{error}");
+    }
+
+    /// 没有理由的「裁定」无法复核，等于没裁。
+    #[test]
+    fn adjudication_output_requires_a_rationale() {
+        let input = request(&["d:slot:slot-14:answer"]);
+        let mut output = json!({"rulings":[{
+            "decisionId": "d:slot:slot-14:answer",
+            "chosen": "cloud",
+            "value": {"kind":"text","values":["painting"]},
+            "rationale": "   "
+        }]});
+        let error =
+            validate_adjudication_output(&mut output, &input).expect_err("空 rationale 必须被拒绝");
+        assert!(error.contains("rationale_missing"), "实际错误：{error}");
+    }
+
+    /// 合法裁定（含 `unresolved`）必须通过；`unresolved` 不要求 `value`。
+    #[test]
+    fn adjudication_output_accepts_well_formed_rulings() {
+        let input = request(&["d:slot:slot-14:answer", "d:slot:slot-15:answer"]);
+        let mut output = json!({"rulings":[
+            {
+                "decisionId": "d:slot:slot-14:answer",
+                "chosen": "cloud",
+                "value": {"kind":"text","values":["painting"]},
+                "confidence": 0.8,
+                "rationale": "page 2 lists painting"
+            },
+            {
+                "decisionId": "d:slot:slot-15:answer",
+                "chosen": "unresolved",
+                "rationale": "the page does not settle question 15"
+            }
+        ]});
+        assert!(validate_adjudication_output(&mut output, &input).is_ok());
+
+        // 重复的 decisionId 会让落实循环写两次同一项，必须拒绝。
+        let mut duplicated = json!({"rulings":[
+            {"decisionId":"d:slot:slot-14:answer","chosen":"unresolved","rationale":"a"},
+            {"decisionId":"d:slot:slot-14:answer","chosen":"unresolved","rationale":"b"}
+        ]});
+        let error = validate_adjudication_output(&mut duplicated, &input)
+            .expect_err("重复 id 必须被拒绝");
+        assert!(error.contains("duplicate_decision_id"), "实际错误：{error}");
+    }
 }

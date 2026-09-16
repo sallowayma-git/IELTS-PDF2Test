@@ -12,15 +12,25 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
+use super::candidate::align_answer_value;
+use super::engine::{classify_cloud_error, AdjudicationFailure, AdjudicationRunner};
 use super::rules::{
-    answer_compare_key, answer_is_empty, canonical_answer, compare, CompareInput,
+    answer_compare_key, answer_is_empty, answer_patch, canonical_answer, compare, CompareInput,
 };
 use super::source::SourceVerificationV1;
 use crate::schema::recognition_v1::{
-    reason, ChainStatusSummaryV1, DecisionFieldV1, DecisionItemV1, DecisionResolutionV1,
-    DecisionSeverityV1, DecisionStatusV1, DecisionSummaryV1, DecisionTargetTypeV1,
-    RecognitionCandidateV1, RecognitionDecisionV1, RECOGNITION_DECISION_V1_SCHEMA_VERSION,
+    reason, ChainKindV1, ChainStatusSummaryV1, ChainStatusV1, DecisionEvidenceV1, DecisionFieldV1,
+    DecisionItemV1, DecisionResolutionV1, DecisionSeverityV1, DecisionStatusV1, DecisionSummaryV1,
+    DecisionTargetTypeV1, RecognitionCandidateV1, RecognitionDecisionV1, StageStateV1,
+    StageStatusV1, RECOGNITION_DECISION_V1_SCHEMA_VERSION,
 };
+
+/// 单次裁决请求最多携带的分歧项数。
+///
+/// 「预算 2」只有在**按批打包**时才成立：一份 40 题的卷子若有 8 处分歧，按项调用会
+/// 超预算 4 倍；打包成一次请求才是 1 次主裁决 + 1 次受约束修复。超出软上限的项
+/// **留在待确认**并带 `ADJUDICATION_BUDGET_EXHAUSTED`——不静默丢弃，也不静默超支。
+pub(crate) const ADJUDICATION_BATCH_SOFT_LIMIT: usize = 12;
 
 pub(crate) struct AdjudicateInput<'a> {
     pub canonical: &'a Value,
@@ -34,12 +44,17 @@ pub(crate) struct AdjudicateInput<'a> {
     /// 结构校验闭包：把一批 patch 应用到权威稿副本并跑同一套校验；
     /// 返回 `Err` 表示「单独合法、合并后结构损坏」。
     pub validate_batch: &'a dyn Fn(&[Value]) -> Result<(), String>,
+    /// A4：分歧裁决的模型通道。`None` = 无可用模型，分歧全部留在 `NeedsReview`。
+    pub adjudicator: Option<AdjudicationRunner<'a>>,
 }
 
 pub(crate) struct AdjudicationOutcome {
     pub decision: RecognitionDecisionV1,
     /// 已通过全部自动应用条件、且合并后结构合法的 patch（按 decision id 对齐）。
     pub auto_apply_candidates: Vec<String>,
+    /// 裁决链的**如实**状态（A4）。原先在 `engine.rs` 硬编码成 `Succeeded`，
+    /// 等于无论模型有没有跑过都对 UI 说「裁决成功」。现在由裁决层回报。
+    pub adjudication: StageStatusV1,
 }
 
 fn resolution_rank(resolution: DecisionResolutionV1) -> u8 {
@@ -198,6 +213,302 @@ fn validate_auto_batch(
     (input.validate_batch)(&patches).is_ok()
 }
 
+// ── A4：分歧裁决的模型通道 ─────────────────────────────────────────────
+
+/// 该分歧项是否**值得**交给模型。
+///
+/// 判据刻意不看 `code`（规则码是前端契约词表，拿它做控制流等于把展示层当逻辑层）：
+/// - 云端链必须可用：云端没跑时没有任何可裁决的对手方，交模型只是白花钱；
+/// - 字段必须是答案：题干/选项/结构类改动单方面替换会破坏题稿，一律留人工；
+/// - 「用户已改过」与「依赖组被阻塞」是确定性规则的结论，不该被模型翻案；
+/// - 三条链必须真的不一致（见 [`has_answer_divergence`]）。
+fn needs_adjudication(item: &DecisionItemV1, cloud_usable: bool) -> bool {
+    cloud_usable
+        && item.field == DecisionFieldV1::Answer
+        && matches!(
+            item.resolution,
+            DecisionResolutionV1::NeedsReview | DecisionResolutionV1::Unverifiable
+        )
+        && item.reason_code != reason::USER_EDITED
+        && item.reason_code != reason::DEPENDENCY_BLOCKED
+        && has_answer_divergence(item)
+}
+
+/// 三条链在**答案层面**是否不一致。
+///
+/// 只看**确实给出了值**的链（`None` = 该链没有结论，不算一种取值），但空答案是
+/// **一种取值**：`{local: 空, cloud: "stencilling"}` 正是「本地缺答案」的分歧。
+/// 比较用 `answer_compare_key`，因为形状不同但值相同的答案**不是**分歧——那正是
+/// [`align_answer_value`] 要消除的假分歧。
+fn has_answer_divergence(item: &DecisionItemV1) -> bool {
+    let distinct: BTreeSet<String> = [
+        item.local_value.as_ref(),
+        item.cloud_value.as_ref(),
+        item.source_value.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|value| answer_compare_key(Some(value)))
+    .collect();
+    distinct.len() > 1
+}
+
+enum RulingOutcome {
+    /// 已落实为具体建议（值取自某条链）。
+    Applied,
+    /// 模型给了三条链上都不存在的值：**不采纳**，只如实告知。
+    NotCorroborated,
+    /// 没有拿到可用裁定（模型明示无法裁定 / 本次未覆盖该项 / 预算 / 调用失败）。
+    Unruled,
+}
+
+/// 把一条裁定落到决策项上。**只改建议与解释，绝不改「这条修正是否已写入」。**
+///
+/// 硬规则：**模型只能「选择」，不能「发明」。** 裁决值必须与它 `chosen` 指向的那条链
+/// 的值逐键一致（形状对齐之后）。否则它就是一个三路都不存在的答案——那属于新增论断，
+/// 而 A4 的职责是在既有结论里挑一个，不是造一个新答案。
+fn apply_ruling(
+    item: &mut DecisionItemV1,
+    ruling: &Value,
+    local: &RecognitionCandidateV1,
+    canonical: &Value,
+) -> RulingOutcome {
+    let rationale = ruling
+        .get("rationale")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let Some(chosen) = ruling.get("chosen").and_then(Value::as_str) else {
+        return mark_unruled(item, reason::ADJUDICATION_DECLINED, "模型没有给出采用哪一路的结论");
+    };
+    if chosen == "unresolved" {
+        return mark_unruled(item, reason::ADJUDICATION_DECLINED, "模型核阅后仍无法裁定");
+    }
+    let chain_value = match chosen {
+        "local" => item.local_value.clone(),
+        "cloud" => item.cloud_value.clone(),
+        "source" => item.source_value.clone(),
+        _ => None,
+    };
+    let Some(raw_value) = ruling.get("value").filter(|value| !value.is_null()) else {
+        return mark_unruled(item, reason::ADJUDICATION_DECLINED, "模型没有给出裁决值");
+    };
+
+    // 形状对齐：目标形状优先取**本地作者约定**（与云端候选对齐同源）；本地无答案时
+    // 退回权威稿；两者都取不到才用模型原值（网关适配器已保证它是合法 `AnswerValueV2`）。
+    let target_shape = local
+        .slot(&item.target.target_id)
+        .and_then(|slot| slot.answer.clone())
+        .or_else(|| canonical_answer(canonical, &item.target.target_id).cloned());
+    let bank = local
+        .slot(&item.target.target_id)
+        .and_then(|slot| local.group(&slot.task_id).and_then(|group| group.option_bank.as_ref()));
+    let aligned = target_shape
+        .as_ref()
+        .and_then(|shape| align_answer_value(raw_value, shape, bank))
+        .unwrap_or_else(|| raw_value.clone());
+
+    let corroborated = chain_value
+        .as_ref()
+        .map(|value| {
+            answer_compare_key(Some(value)) == answer_compare_key(Some(&aligned))
+                && !answer_compare_key(Some(value)).is_empty()
+        })
+        .unwrap_or(false);
+    if !corroborated {
+        item.reason_code = reason::ADJUDICATION_VALUE_NOT_CORROBORATED.to_string();
+        item.user_message = format!(
+            "{}（模型给出的答案在本地/云端/原文三路中都不存在，不作为建议采纳，请人工确认）",
+            item.user_message
+        );
+        return RulingOutcome::NotCorroborated;
+    }
+
+    let label = match chosen {
+        "local" => "本地识别",
+        "source" => "原文件",
+        _ => "云端识别",
+    };
+    let reason_text = if rationale.is_empty() {
+        "未给出理由".to_string()
+    } else {
+        format!("理由：{rationale}")
+    };
+    item.proposed_patch = Some(answer_patch(&item.target.target_id, &aligned));
+    // 「无法判断」的项拿到了一条有落地形态的建议 → 转成待确认：契约规定
+    // `Unverifiable` 项不得携带 patch，而带 patch 的项对用户就是「一键确认」。
+    //
+    // **刻意不改自动应用资格**：自动写入仍然只认确定性证据（源断言），
+    // 见 [`auto_apply_eligible`] 的第 3 条守卫。让模型输出直接解锁自动改稿，
+    // 会推翻本模块「自动应用不依赖模型置信度」的硬约束。
+    if item.resolution == DecisionResolutionV1::Unverifiable {
+        item.resolution = DecisionResolutionV1::NeedsReview;
+    }
+    item.user_message = format!("{}（模型核阅后建议采用{label}的结果，{reason_text}，请确认）", item.user_message);
+    item.evidence.push(DecisionEvidenceV1 {
+        chain: match chosen {
+            "local" => ChainKindV1::Local,
+            "source" => ChainKindV1::Source,
+            _ => ChainKindV1::Cloud,
+        },
+        anchor_kind: "adjudication_ruling".to_string(),
+        page_index: None,
+        quote: if rationale.is_empty() { None } else { Some(rationale) },
+        anchor: Some(serde_json::json!({
+            "chosen": chosen,
+            "corroborated": true,
+            "confidence": ruling.get("confidence").cloned().unwrap_or(Value::Null),
+        })),
+    });
+    RulingOutcome::Applied
+}
+
+fn mark_unruled(item: &mut DecisionItemV1, code: &str, note: &str) -> RulingOutcome {
+    item.reason_code = code.to_string();
+    item.user_message = format!("{}（{note}，未作为已核验结论，请人工确认）", item.user_message);
+    RulingOutcome::Unruled
+}
+
+/// A4 主流程：挑分歧 → 交模型 → 落实裁定 → **如实**回报裁决链状态。
+///
+/// 插入点必须在 [`assign_dependency_groups`]（依赖组已定型）之后、资格计算之前：
+/// 裁定会改写 `proposed_patch`，而 `auto_apply_eligible` 读的正是它。
+///
+/// 三条不许违反的语义：
+/// 1. **没有模型可用时不碰任何项。** 确定性规则的结论原样保留（`None` 路径与
+///    未接入 A4 时逐项一致），只在链状态上如实写「裁决未运行」；
+/// 2. **没裁定 ≠ 裁过了。** 预算耗尽、模型拒绝、调用失败、模型漏答，全部留在
+///    `NeedsReview` 并带上各自的原因码；
+/// 3. **链状态由实际发生的事决定。** 全部有裁定 → `Succeeded`；部分 → `Partial`；
+///    一个都没拿到 → `NotRun`/`Unusable` + 原因码。
+fn apply_adjudication(items: &mut [DecisionItemV1], input: &AdjudicateInput<'_>) -> StageStatusV1 {
+    let cloud_usable = matches!(
+        input.cloud.status,
+        ChainStatusV1::Succeeded | ChainStatusV1::Partial
+    );
+    let eligible: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| needs_adjudication(item, cloud_usable))
+        .map(|(index, _)| index)
+        .collect();
+    if eligible.is_empty() {
+        // 没有需要模型裁定的分歧：确定性裁决**确实**跑完了，如实报成功。
+        return StageStatusV1::new(StageStateV1::Succeeded);
+    }
+    let Some(runner) = input.adjudicator else {
+        // 语义 1：不碰项，只如实说明「这次没有模型参与裁决」。
+        return StageStatusV1::with_reason(
+            StageStateV1::NotRun,
+            reason::ADJUDICATION_MODEL_UNAVAILABLE,
+            "本次运行没有可用的裁决模型，分歧项全部留给人工确认。",
+        );
+    };
+
+    // 单批软上限：超出部分如实标成预算耗尽（不静默丢弃、不静默超支）。
+    let (batch, overflow) = eligible.split_at(eligible.len().min(ADJUDICATION_BATCH_SOFT_LIMIT));
+    for index in overflow {
+        mark_unruled(
+            &mut items[*index],
+            reason::ADJUDICATION_BUDGET_EXHAUSTED,
+            "本次单批裁决项数已达上限",
+        );
+    }
+
+    let request: Vec<Value> = batch
+        .iter()
+        .map(|index| adjudication_request_item(&items[*index]))
+        .collect();
+    let response = match runner(&request) {
+        Ok(response) => response,
+        Err(failure) => {
+            let (state, code, message) = match failure {
+                AdjudicationFailure::BudgetExhausted => (
+                    StageStateV1::NotRun,
+                    reason::ADJUDICATION_BUDGET_EXHAUSTED.to_string(),
+                    "本次运行的裁决预算已耗尽，分歧项全部留给人工确认。".to_string(),
+                ),
+                AdjudicationFailure::Model(error) => {
+                    // 复用云端链的错误分类，不另造一套。
+                    let classified = classify_cloud_error(&error);
+                    (
+                        StageStateV1::from(classified.status),
+                        classified.reason_code,
+                        classified.message,
+                    )
+                }
+            };
+            for index in batch {
+                mark_unruled(&mut items[*index], &code, &message);
+            }
+            return StageStatusV1::with_reason(state, code, message);
+        }
+    };
+
+    let rulings = response
+        .get("rulings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut applied = 0usize;
+    let mut declined = 0usize;
+    for index in batch {
+        let item = &mut items[*index];
+        let decision_id = item.decision_id.clone();
+        let Some(ruling) = rulings.iter().find(|ruling| {
+            ruling.get("decisionId").and_then(Value::as_str) == Some(decision_id.as_str())
+        }) else {
+            // 模型漏答：**不能**当作「已经裁过了」，如实记成未获裁定。
+            mark_unruled(item, reason::ADJUDICATION_DECLINED, "模型本次未对该项给出裁定");
+            declined += 1;
+            continue;
+        };
+        match apply_ruling(item, ruling, input.local, input.canonical) {
+            RulingOutcome::Applied => applied += 1,
+            RulingOutcome::NotCorroborated => declined += 1,
+            RulingOutcome::Unruled => declined += 1,
+        }
+    }
+
+    // 汇总项数才是分母：`eligible` 里被软上限挡下的项已经单独标过预算耗尽。
+    let total = batch.len();
+    let unresolved = declined + overflow.len();
+    if unresolved == 0 {
+        StageStatusV1::new(StageStateV1::Succeeded)
+    } else {
+        let code = if overflow.is_empty() {
+            reason::ADJUDICATION_DECLINED
+        } else {
+            reason::ADJUDICATION_BUDGET_EXHAUSTED
+        };
+        StageStatusV1::with_reason(
+            StageStateV1::Partial,
+            code,
+            format!(
+                "本次共 {total} 处分歧交模型裁定：{applied} 处已给出建议，{unresolved} 处未获得可用裁定，仍待人工确认。"
+            ),
+        )
+    }
+}
+
+/// 交模型的最小上下文：**只给这一项的三路取值与题号**，不给整份稿子。
+///
+/// 不给指令文本/选项库是刻意的：A4 的任务是「在已有结论里挑一个」，
+/// 给得越多越容易被模型用来编造第四条路。
+fn adjudication_request_item(item: &DecisionItemV1) -> Value {
+    serde_json::json!({
+        "decisionId": item.decision_id,
+        "targetId": item.target.target_id,
+        "taskId": item.target.task_id,
+        "questionNumber": item.target.question_numbers.first(),
+        "field": item.field.as_str(),
+        "local": item.local_value,
+        "cloud": item.cloud_value,
+        "source": item.source_value,
+    })
+}
+
 pub(crate) fn adjudicate(input: AdjudicateInput<'_>) -> AdjudicationOutcome {
     let raw = compare(&CompareInput {
         canonical: input.canonical,
@@ -207,6 +518,12 @@ pub(crate) fn adjudicate(input: AdjudicateInput<'_>) -> AdjudicationOutcome {
     });
     let mut items = merge_duplicates(raw);
     assign_dependency_groups(&mut items, input.local);
+
+    // ── A4：模型裁决 ───────────────────────────────────────────────
+    //
+    // 位置是硬约束：必须在依赖组定型**之后**（裁决不该改变组的划分），
+    // 且在资格计算**之前**（裁决会改写 `proposed_patch`，而资格读的就是它）。
+    let adjudication = apply_adjudication(&mut items, &input);
 
     // ── 自动应用资格 + 依赖组一致性 ─────────────────────────────────
     let mut eligible: BTreeSet<String> = items
@@ -293,6 +610,7 @@ pub(crate) fn adjudicate(input: AdjudicateInput<'_>) -> AdjudicationOutcome {
     AdjudicationOutcome {
         decision,
         auto_apply_candidates: eligible.into_iter().collect(),
+        adjudication,
     }
 }
 
@@ -560,6 +878,7 @@ mod tests {
             job_id: "job-1",
             base_edit_version: 1,
             validate_batch: &validate,
+            adjudicator: None,
         });
         assert_eq!(outcome.decision.summary.agreed, 2);
         assert_eq!(outcome.decision.summary.needs_review, 0);
@@ -598,6 +917,7 @@ mod tests {
             job_id: "job-1",
             base_edit_version: 1,
             validate_batch: &validate,
+            adjudicator: None,
         });
         assert_eq!(outcome.decision.summary.agreed, 0, "缺少原文证据不得判为已确认");
         assert_eq!(outcome.decision.summary.unverifiable, 1);
@@ -637,6 +957,7 @@ mod tests {
             job_id: "job-1",
             base_edit_version: 1,
             validate_batch: &validate,
+            adjudicator: None,
         });
         let answer_items: Vec<_> = outcome
             .decision
@@ -678,6 +999,7 @@ mod tests {
             job_id: "job-1",
             base_edit_version: 1,
             validate_batch: &validate,
+            adjudicator: None,
         });
         assert_eq!(outcome.auto_apply_candidates.len(), 1);
         assert_eq!(outcome.auto_apply_candidates[0], "d:slot:slot-14:answer");
@@ -716,6 +1038,7 @@ mod tests {
             job_id: "job-1",
             base_edit_version: 1,
             validate_batch: &validate,
+            adjudicator: None,
         });
         assert!(outcome.auto_apply_candidates.is_empty(), "已有答案不得被自动覆盖");
         assert_eq!(outcome.decision.summary.needs_review, 1);
@@ -751,6 +1074,7 @@ mod tests {
             job_id: "job-1",
             base_edit_version: 1,
             validate_batch: &validate,
+            adjudicator: None,
         });
         assert!(outcome.auto_apply_candidates.is_empty());
         assert_eq!(outcome.decision.items[0].reason_code, reason::DEPENDENCY_BLOCKED);
@@ -794,5 +1118,304 @@ mod tests {
         };
         let undo = undo_patch_for(&item).expect("undo must exist for an applied setAnswer");
         assert_eq!(undo["value"]["kind"], json!("unresolved"));
+    }
+
+    // ── A4：分歧裁决的模型通道 ─────────────────────────────────────────
+
+    /// 三路分歧的固定场景：本地 `stencilling`、云端 `painting`、原文 `carving`。
+    fn adjudication_fixture() -> (
+        RecognitionCandidateV1,
+        RecognitionCandidateV1,
+        SourceVerificationV1,
+        Value,
+    ) {
+        let local = candidate(
+            ChainKindV1::Local,
+            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true)],
+            ChainStatusV1::Succeeded,
+        );
+        let cloud = candidate(
+            ChainKindV1::Cloud,
+            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["painting"]})), true)],
+            ChainStatusV1::Succeeded,
+        );
+        let source = verify_against_source(
+            Some(&document(&["14 carving"])),
+            &[(
+                "slot-14".to_string(),
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+                String::new(),
+            )],
+            &[],
+        );
+        let canonical = canonical_with(Some(json!({"kind":"text","values":["stencilling"]})), None);
+        (local, cloud, source, canonical)
+    }
+
+    fn answer_item(outcome: &AdjudicationOutcome) -> &DecisionItemV1 {
+        outcome
+            .decision
+            .items
+            .iter()
+            .find(|item| item.field == DecisionFieldV1::Answer)
+            .expect("答案层分歧必须产出一张建议卡")
+    }
+
+    /// A4 的价值：模型在三条链里挑一条 → 该项拿到**具体建议**与可复核的裁定留痕。
+    ///
+    /// 同时钉住一条硬约束：**模型裁定不解锁自动写入**。自动应用仍然只认确定性
+    /// 证据（原文断言），否则本模块「自动应用不依赖模型置信度」的承诺就作废了。
+    #[test]
+    fn adjudication_ruling_attaches_a_recommendation_without_unlocking_auto_apply() {
+        let (local, cloud, source, canonical) = adjudication_fixture();
+        let validate = no_validation();
+        let stub = |_payload: &[Value]| -> Result<Value, AdjudicationFailure> {
+            Ok(json!({"rulings":[{
+                "decisionId": "d:slot:slot-14:answer",
+                "chosen": "cloud",
+                "value": {"kind":"text","values":["painting"]},
+                "confidence": 0.8,
+                "rationale": "The attached page lists painting for question 14."
+            }]}))
+        };
+        let adjudicator: AdjudicationRunner<'_> = &stub;
+        let outcome = adjudicate(AdjudicateInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+            batch_id: "batch-1",
+            item_id: "item-1",
+            job_id: "job-1",
+            base_edit_version: 1,
+            validate_batch: &validate,
+            adjudicator: Some(adjudicator),
+        });
+
+        assert_eq!(
+            outcome.adjudication,
+            StageStatusV1::new(StageStateV1::Succeeded),
+            "全部项都拿到裁定 → 裁决链必须如实报成功"
+        );
+        let item = answer_item(&outcome);
+        assert_eq!(
+            item.proposed_patch.as_ref().map(|patch| patch["value"].clone()),
+            Some(json!({"kind":"text","values":["painting"]})),
+            "裁定选中的链值必须落成具体建议 patch"
+        );
+        assert!(
+            item.user_message.contains("云端识别") && item.user_message.contains("理由"),
+            "用户必须看到「模型建议采用哪一路、为什么」：{}",
+            item.user_message
+        );
+        assert!(
+            item.evidence
+                .iter()
+                .any(|evidence| evidence.anchor_kind == "adjudication_ruling"),
+            "裁定必须留下可机器复核的留痕，而不是只写进 user_message"
+        );
+        // 关键不变量：模型裁定**不**进入自动应用资格。
+        assert!(
+            outcome.auto_apply_candidates.is_empty(),
+            "模型裁定不得解锁自动写入（自动应用只认确定性证据）"
+        );
+        assert_ne!(item.resolution, DecisionResolutionV1::AutoFixed);
+    }
+
+    /// 预算耗尽：**没有尝试**过模型，绝不能记成「裁过了」。
+    #[test]
+    fn adjudication_budget_exhaustion_never_counts_as_ruled() {
+        let (local, cloud, source, canonical) = adjudication_fixture();
+        let validate = no_validation();
+        let stub =
+            |_payload: &[Value]| -> Result<Value, AdjudicationFailure> {
+                Err(AdjudicationFailure::BudgetExhausted)
+            };
+        let adjudicator: AdjudicationRunner<'_> = &stub;
+        let outcome = adjudicate(AdjudicateInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+            batch_id: "batch-1",
+            item_id: "item-1",
+            job_id: "job-1",
+            base_edit_version: 1,
+            validate_batch: &validate,
+            adjudicator: Some(adjudicator),
+        });
+
+        assert_eq!(outcome.adjudication.state, StageStateV1::NotRun);
+        assert_eq!(
+            outcome.adjudication.reason_code.as_deref(),
+            Some(reason::ADJUDICATION_BUDGET_EXHAUSTED)
+        );
+        let item = answer_item(&outcome);
+        assert_eq!(item.reason_code, reason::ADJUDICATION_BUDGET_EXHAUSTED);
+        assert!(
+            matches!(
+                item.resolution,
+                DecisionResolutionV1::NeedsReview | DecisionResolutionV1::Unverifiable
+            ),
+            "未经裁定的项必须留在待确认，实际为 {:?}",
+            item.resolution
+        );
+        assert!(outcome.auto_apply_candidates.is_empty());
+    }
+
+    /// 模型明示无法裁定：同样是「没裁」，如实上报且不改写结论。
+    #[test]
+    fn adjudication_declined_keeps_the_item_in_review() {
+        let (local, cloud, source, canonical) = adjudication_fixture();
+        let validate = no_validation();
+        let stub = |_payload: &[Value]| -> Result<Value, AdjudicationFailure> {
+            Ok(json!({"rulings":[{
+                "decisionId": "d:slot:slot-14:answer",
+                "chosen": "unresolved",
+                "rationale": "The attached page does not settle question 14."
+            }]}))
+        };
+        let adjudicator: AdjudicationRunner<'_> = &stub;
+        let outcome = adjudicate(AdjudicateInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+            batch_id: "batch-1",
+            item_id: "item-1",
+            job_id: "job-1",
+            base_edit_version: 1,
+            validate_batch: &validate,
+            adjudicator: Some(adjudicator),
+        });
+
+        assert_eq!(outcome.adjudication.state, StageStateV1::Partial);
+        assert_eq!(
+            outcome.adjudication.reason_code.as_deref(),
+            Some(reason::ADJUDICATION_DECLINED)
+        );
+        let item = answer_item(&outcome);
+        assert_eq!(item.reason_code, reason::ADJUDICATION_DECLINED);
+        assert_eq!(item.resolution, DecisionResolutionV1::NeedsReview);
+    }
+
+    /// **模型只能「选择」，不能「发明」。** 裁决值不在三条链上 → 不采纳为建议。
+    #[test]
+    fn adjudication_rejects_a_value_that_no_chain_gives() {
+        let (local, cloud, source, canonical) = adjudication_fixture();
+        let validate = no_validation();
+        let stub = |_payload: &[Value]| -> Result<Value, AdjudicationFailure> {
+            Ok(json!({"rulings":[{
+                "decisionId": "d:slot:slot-14:answer",
+                "chosen": "cloud",
+                "value": {"kind":"text","values":["invented"]},
+                "confidence": 0.99,
+                "rationale": "Trust me."
+            }]}))
+        };
+        let adjudicator: AdjudicationRunner<'_> = &stub;
+        let outcome = adjudicate(AdjudicateInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+            batch_id: "batch-1",
+            item_id: "item-1",
+            job_id: "job-1",
+            base_edit_version: 1,
+            validate_batch: &validate,
+            adjudicator: Some(adjudicator),
+        });
+
+        let item = answer_item(&outcome);
+        assert_eq!(
+            item.reason_code,
+            reason::ADJUDICATION_VALUE_NOT_CORROBORATED
+        );
+        assert_eq!(
+            item.proposed_patch.as_ref().map(|patch| patch["value"].clone()),
+            Some(json!({"kind":"text","values":["carving"]})),
+            "被拒的裁定不得改写建议；建议必须仍是确定性规则的结论"
+        );
+        assert!(outcome.auto_apply_candidates.is_empty());
+    }
+
+    /// 回归护栏：**不注入裁决通道时，决策项逐项保持确定性规则的结论。**
+    ///
+    /// 这是「A4 打开/关闭不改行为」的唯一保证。裁决链状态会如实变成
+    /// `not_run`（那是修掉「硬编码 Succeeded」的必然结果），但**项本身不被触碰**：
+    /// 一旦这里开始改写 `reason_code`，未配置模型的用户就会看到一片
+    /// 「模型未参与裁决」，而真正的分歧原因（实质分歧 / 缺证据）反而消失了。
+    #[test]
+    fn missing_adjudicator_leaves_items_untouched() {
+        let (local, cloud, source, canonical) = adjudication_fixture();
+        let validate = no_validation();
+        let outcome = adjudicate(AdjudicateInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+            batch_id: "batch-1",
+            item_id: "item-1",
+            job_id: "job-1",
+            base_edit_version: 1,
+            validate_batch: &validate,
+            adjudicator: None,
+        });
+
+        assert_eq!(outcome.adjudication.state, StageStateV1::NotRun);
+        assert_eq!(
+            outcome.adjudication.reason_code.as_deref(),
+            Some(reason::ADJUDICATION_MODEL_UNAVAILABLE)
+        );
+        let item = answer_item(&outcome);
+        assert!(
+            !item.reason_code.starts_with("ADJUDICATION_"),
+            "没有模型时不得给项盖上裁决类原因码，实际为 {}",
+            item.reason_code
+        );
+    }
+
+    /// 没有分歧就没有裁决需求：确定性裁决本身跑完了 → 如实报成功（不是 `not_run`）。
+    #[test]
+    fn adjudication_is_succeeded_when_there_is_nothing_to_decide() {
+        let local = candidate(
+            ChainKindV1::Local,
+            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["stencilling"]})), true)],
+            ChainStatusV1::Succeeded,
+        );
+        let cloud = candidate(
+            ChainKindV1::Cloud,
+            vec![slot("slot-14", 14, Some(json!({"kind":"text","values":["Stencilling"]})), true)],
+            ChainStatusV1::Succeeded,
+        );
+        let source = verify_against_source(
+            Some(&document(&["14 stencilling"])),
+            &[(
+                "slot-14".to_string(),
+                14,
+                Some(json!({"kind":"text","values":["stencilling"]})),
+                true,
+                String::new(),
+            )],
+            &[("task-1".to_string(), vec![14, 15])],
+        );
+        let canonical = canonical_with(Some(json!({"kind":"text","values":["stencilling"]})), None);
+        let validate = no_validation();
+        let outcome = adjudicate(AdjudicateInput {
+            canonical: &canonical,
+            local: &local,
+            cloud: &cloud,
+            source: &source,
+            batch_id: "batch-1",
+            item_id: "item-1",
+            job_id: "job-1",
+            base_edit_version: 1,
+            validate_batch: &validate,
+            adjudicator: None,
+        });
+        assert_eq!(outcome.adjudication, StageStatusV1::new(StageStateV1::Succeeded));
     }
 }

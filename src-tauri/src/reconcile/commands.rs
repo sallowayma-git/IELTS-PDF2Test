@@ -18,8 +18,8 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use super::engine::{
-    classify_cloud_error, persist_outcome, reconcile_batch, resolve_local_snapshot, CloudFailure,
-    ReconcileBatchInput, ReconcileBatchOutcome,
+    classify_cloud_error, persist_outcome, reconcile_batch, resolve_local_snapshot,
+    AdjudicationRunner, CloudFailure, ReconcileBatchInput, ReconcileBatchOutcome,
 };
 use super::rules::{answer_compare_key, answer_is_empty, canonical_answer, is_user_edited};
 use super::store;
@@ -397,6 +397,9 @@ fn apply_patches_with_recheck(
 /// - `batch_id` 由输入与基线版本派生，重试复用同一批次与同一份快照。
 /// - 自动应用使用固定 `request_id = recognition-auto:<batch_id>`，重放不重复写入。
 /// - 版本冲突时逐项复核，用户修改永远优先。
+///
+/// 本入口**不带**裁决注入点：等价于「本次运行没有裁决模型」，分歧项原样留给人工。
+/// 真实模型通道见 [`run_recognition_cycle_core_with_adjudicator`]。
 pub(crate) fn run_recognition_cycle_core(
     root: &Path,
     job_id: &str,
@@ -404,6 +407,36 @@ pub(crate) fn run_recognition_cycle_core(
     cloud_enabled: bool,
     base_edit_version: i64,
     cloud_runner: CloudOutlineRunner<'_>,
+) -> CommandResult<Value> {
+    run_recognition_cycle_core_with_adjudicator(
+        root,
+        job_id,
+        profile_id,
+        cloud_enabled,
+        base_edit_version,
+        cloud_runner,
+        None,
+    )
+}
+
+/// 同上，但显式注入 A4 的**分歧裁决通道**。
+///
+/// 为什么裁决通道是**参数**而不是在这里就地构造：
+/// 1. 与 `cloud_runner` 同一约定——IO 在边界注入，判定层（`reconcile_batch` /
+///    `adjudicate`）因此保持可确定性测试；
+/// 2. 「谁来提供模型、预算多少」是运行时决策（profile 是否存在、是否启用云端），
+///    不该写死在核心里。调用方（调度器）给真实的、带预算的闭包；测试给桩或不给。
+///
+/// `adjudicator = None` 时**不碰任何决策项**：确定性规则的逐项结论完整保留，
+/// 只在裁决链状态上如实写「本次没有模型参与裁决」。
+pub(crate) fn run_recognition_cycle_core_with_adjudicator(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+    cloud_enabled: bool,
+    base_edit_version: i64,
+    cloud_runner: CloudOutlineRunner<'_>,
+    adjudicator: Option<AdjudicationRunner<'_>>,
 ) -> CommandResult<Value> {
     let (canonical, current_version) = {
         let conn = open_library_connection(root)?;
@@ -462,6 +495,7 @@ pub(crate) fn run_recognition_cycle_core(
         local_snapshot: Some(local_snapshot),
         cloud,
         validate_batch: &validate_batch,
+        adjudicator,
     });
 
     // 自动应用前的快照答案表：写入前复核用。
@@ -1993,6 +2027,7 @@ mod tests {
                     14,
                 )),
                 validate_batch: &validate,
+                adjudicator: None,
             })
         };
         let frozen_local = || {

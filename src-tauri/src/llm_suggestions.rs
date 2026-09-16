@@ -209,6 +209,59 @@ pub(crate) fn make_vision_answer_extraction_input(
     })
 }
 
+/// A4 分歧裁决的输入构造。
+///
+/// **刻意只给「证据面 + 待裁定的分歧清单」**，不给整份稿子、不给指令文本、不给选项库：
+/// A4 的任务是「在三条已有结论里挑一条」，上下文给得越多，模型越容易去编第四条。
+/// 产出契约同样写进输入（`outputContract`），让「模型该返回什么」和「我们会校验什么」
+/// 是同一份文字——两份文字迟早会漂移。
+pub(crate) fn make_adjudication_input(
+    profile: &Value,
+    job: &ImportJob,
+    profile_id: &str,
+    source: &crate::SourceFile,
+    pdf_path: &Path,
+    divergences: &[Value],
+    repair_note: Option<&str>,
+) -> Value {
+    json!({
+        "mode": "adjudicate_divergence",
+        "job": {"jobId": job.job_id, "title": job.title},
+        "profile": profile_payload(profile, profile_id),
+        "sourceFile": {
+            "fileId": source.file_id,
+            "originalName": source.original_name,
+            "fileType": source.file_type,
+            "sha256": source.sha256,
+            "sizeBytes": source.size_bytes
+        },
+        "pdfPath": pdf_path.to_string_lossy(),
+        "divergences": divergences,
+        "repairNote": repair_note,
+        "outputContract": {
+            "schema": "AdjudicationRulingsV1",
+            "jsonOnly": true,
+            "shape": {
+                "rulings": [{
+                    "decisionId": "echo back a decisionId you were given",
+                    "chosen": "local | cloud | source | unresolved",
+                    "value": {"kind": "text", "values": ["the chosen value, repeated exactly"], "normalization": "ielts_default"},
+                    "confidence": 0.8,
+                    "rationale": "one short sentence citing what in the original file decided it"
+                }]
+            },
+            "rules": [
+                "Answer only for the decisionId values listed in `divergences`; never invent an id.",
+                "`chosen` picks among the three values already given (local / cloud / source).",
+                "`value` must repeat the value of the chosen source exactly, byte for byte. Never invent a fourth value.",
+                "If the original file does not settle the question, return chosen = \"unresolved\".",
+                "`rationale` must not be empty.",
+                "Return JSON only."
+            ]
+        }
+    })
+}
+
 pub(crate) fn make_cloud_paper_generation_input(
     profile: &Value,
     job: &ImportJob,

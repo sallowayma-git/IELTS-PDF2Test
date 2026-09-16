@@ -96,6 +96,20 @@ pub mod reason {
     /// 都是在无保护的前提下改题稿，必须拒绝并转人工。
     pub const BASELINE_NOT_FROZEN: &str = "BASELINE_NOT_FROZEN";
     pub const SOURCE_FILE_UNREADABLE: &str = "SOURCE_FILE_UNREADABLE";
+    /// 裁决预算耗尽：本次运行**没有**把该分歧项交给模型裁定。
+    ///
+    /// 与「模型裁定失败」区分：预算耗尽是**没有尝试**，模型失败是**尝试了没拿到结果**。
+    /// 两者都留在待确认，只是用户看到的解释不同。
+    pub const ADJUDICATION_BUDGET_EXHAUSTED: &str = "ADJUDICATION_BUDGET_EXHAUSTED";
+    /// 模型明示无法裁定（`chosen = "unresolved"`）。
+    pub const ADJUDICATION_DECLINED: &str = "ADJUDICATION_DECLINED";
+    /// 本次运行没有可用的裁决模型（未配置 profile 或未启用云端）。
+    ///
+    /// 该码只出现在**确实存在待裁定的分歧项**时：没有分歧就没有裁决需求，
+    /// 此时链状态是 `Succeeded`（确定性裁决本身跑完了），不是 `NotRun`。
+    pub const ADJUDICATION_MODEL_UNAVAILABLE: &str = "ADJUDICATION_MODEL_UNAVAILABLE";
+    /// 模型给了一个三条链上都不存在的答案值（**模型发明**）：只作建议，不构成证据。
+    pub const ADJUDICATION_VALUE_NOT_CORROBORATED: &str = "ADJUDICATION_VALUE_NOT_CORROBORATED";
 }
 
 // ── 链路候选（统一 V2 语义视图）─────────────────────────────────────────

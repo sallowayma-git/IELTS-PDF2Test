@@ -89,6 +89,31 @@ pub(crate) fn classify_cloud_error(error: &str) -> CloudFailure {
 
 // ── 编排输入 / 输出 ────────────────────────────────────────────────────
 
+/// A4：分歧裁决的模型通道。
+///
+/// 参数是本批**待裁定的分歧项**（`{decisionId, questionNumber, local, cloud, source}`），
+/// 返回值是模型原始 JSON（`{"rulings": [...]}`）。与云端识别注入点同一约定：
+/// **边界上是 JSON，解析与校验在网关侧完成**，判定逻辑只消费已验证的结构。
+///
+/// `None` = 没有可用模型：分歧项全部原样留在 `NeedsReview`，行为与未接入 A4 时逐字一致。
+pub(crate) type AdjudicationRunner<'a> =
+    &'a dyn Fn(&[Value]) -> Result<Value, AdjudicationFailure>;
+
+/// 裁决调用失败的两类原因。
+///
+/// 刻意用枚举而不是错误字符串：**「预算耗尽（没有尝试）」与「调用过但失败」是语义不同的
+/// 两件事**。混成一个字符串后，迟早会有人写 `error.contains("timeout")` 来区分，而
+/// `ADJUDICATION_BUDGET_EXHAUSTED` 里恰好没有 timeout，于是预算耗尽被归类成
+/// 「模型非法输出」——用户就会看到一条错的解释。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum AdjudicationFailure {
+    /// 本次运行不再有裁决预算（超过单批软上限，或调用次数已达上限）。
+    BudgetExhausted,
+    /// 真的调用了模型，但没有拿到可用结果（超时 / 非法输出 / 不支持输入）。
+    /// 里面的字符串交给 [`classify_cloud_error`] 归类，**不另造一套分类**。
+    Model(String),
+}
+
 pub(crate) struct ReconcileBatchInput<'a> {
     pub item_id: &'a str,
     pub job_id: &'a str,
@@ -110,6 +135,8 @@ pub(crate) struct ReconcileBatchInput<'a> {
     pub cloud: Result<Value, CloudFailure>,
     /// 结构校验闭包：把一批 patch 应用到权威稿副本并跑同一套校验。
     pub validate_batch: &'a dyn Fn(&[Value]) -> Result<(), String>,
+    /// A4：分歧裁决的模型通道。`None` = 无可用模型，分歧全部留在 `NeedsReview`。
+    pub adjudicator: Option<AdjudicationRunner<'a>>,
 }
 
 /// 取本地快照：优先复用批次已冻结的候选，否则按当前权威稿现场投影。
@@ -316,6 +343,7 @@ pub(crate) fn reconcile_batch(input: ReconcileBatchInput<'_>) -> ReconcileBatchO
     let AdjudicationOutcome {
         decision,
         auto_apply_candidates,
+        adjudication,
     } = adjudicate(AdjudicateInput {
         canonical: input.canonical,
         local: &local,
@@ -326,6 +354,7 @@ pub(crate) fn reconcile_batch(input: ReconcileBatchInput<'_>) -> ReconcileBatchO
         job_id: input.job_id,
         base_edit_version: input.base_edit_version,
         validate_batch: input.validate_batch,
+        adjudicator: input.adjudicator,
     });
 
     // 4b) 无可信基线 ⇒ 撤销自动应用资格。
@@ -348,7 +377,9 @@ pub(crate) fn reconcile_batch(input: ReconcileBatchInput<'_>) -> ReconcileBatchO
         local: local_stage_status(&local),
         cloud: cloud_stage_status(&cloud, cloud_failure.as_ref()),
         source: source_stage_status(&source),
-        adjudication: StageStatusV1::new(StageStateV1::Succeeded),
+        // 裁决链状态**由裁决本身如实给出**。原先硬编码 `Succeeded`，等于无论模型有没有
+        // 跑过都对 UI 说「裁决成功」——这是「把没跑的写成跑过了」，必须由裁决层回报。
+        adjudication,
     };
 
     ReconcileBatchOutcome {

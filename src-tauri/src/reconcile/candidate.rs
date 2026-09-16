@@ -391,32 +391,45 @@ pub(crate) fn align_cloud_answer_shapes(cloud: &mut RecognitionCandidateV1, loca
         let Some(local_answer) = &local_slot.answer else {
             continue;
         };
-        let Some(local_kind) = local_answer.get("kind").and_then(Value::as_str) else {
-            continue;
-        };
         let Some(cloud_answer) = &cloud_slot.answer else {
             continue;
         };
-        let Some(cloud_kind) = cloud_answer.get("kind").and_then(Value::as_str) else {
-            continue;
-        };
-        // 形状已经一致：比较键两侧都会规范化，无需改写，避免引入假一致。
-        if cloud_kind == local_kind {
-            continue;
-        }
         // 选项库在本地题组上，按 slot 的 task_id 取；对齐点即可达（无需上层额外传递）。
         let bank = local
             .group(&local_slot.task_id)
             .and_then(|group| group.option_bank.as_ref());
-        let new_answer = match (local_kind, cloud_kind) {
-            ("option", "text") => align_text_to_option(cloud_answer, local_answer, bank),
-            ("text", "option") => align_option_to_text(cloud_answer, local_answer, bank),
-            _ => None,
-        };
         // 无合法映射 → 保留云端原值（其原始 kind/值），交由裁决层暴露真实分歧。
-        if let Some(answer) = new_answer {
+        if let Some(answer) = align_answer_value(cloud_answer, local_answer, bank) {
             cloud_slot.answer = Some(answer);
         }
+    }
+}
+
+/// **形状对齐内核**：把 `value` 按 `target_shape` 的形状重编码；无法合法映射时返回 `None`。
+///
+/// 这是「按目标形状重编码答案」的**唯一实现**。任何新增的答案来源（云端候选、A3 的
+/// `observedValue`、A4 的 `rulings[].value`）都必须调用它，**不允许各自再写一份**：
+/// `answer_compare_key` 是形状敏感的（`text` → `values.join("|")`，
+/// `option` → `opt:LABELS:assignment`），形状口径一旦分叉，就会在**每一道题**上制造假分歧。
+///
+/// 返回 `None` 的两种情形都表示「**不要改写**」，调用方必须原样保留输入值：
+/// 1. 形状已经一致（两侧比较键都会做规范化，改写只会引入假一致）；
+/// 2. 不存在合法映射（如选项任务里云端报的是选项文本、而本地没有可解析的选项库）
+///    —— 此时必须让真实分歧上浮，**绝不**强行 unification。
+pub(crate) fn align_answer_value(
+    value: &Value,
+    target_shape: &Value,
+    bank: Option<&CandidateOptionBankV1>,
+) -> Option<Value> {
+    let value_kind = value.get("kind").and_then(Value::as_str)?;
+    let target_kind = target_shape.get("kind").and_then(Value::as_str)?;
+    if value_kind == target_kind {
+        return None;
+    }
+    match (target_kind, value_kind) {
+        ("option", "text") => align_text_to_option(value, target_shape, bank),
+        ("text", "option") => align_option_to_text(value, target_shape, bank),
+        _ => None,
     }
 }
 
@@ -1702,5 +1715,68 @@ mod tests {
         let candidate = cloud_candidate_from_value(&raw, "batch-1", "item-1", "job-1", "file-1", &"a".repeat(64), 4);
         assert_ne!(candidate.status, ChainStatusV1::Succeeded);
         assert!(candidate.reason_code.is_some());
+    }
+
+    /// Step 0 内核：`align_answer_value` 是**唯一**的形状对齐实现，双向都必须成立，
+    /// 且对齐后的比较键必须与目标形状相等——否则 `answer_compare_key` 会在每道题上
+    /// 制造假分歧。
+    #[test]
+    fn align_answer_value_aligns_both_directions_to_equal_compare_keys() {
+        let bank = CandidateOptionBankV1 {
+            option_bank_id: "ob".into(),
+            allow_reuse: false,
+            options: vec![
+                CandidateOptionV1 { option_id: "o1".into(), label: "A".into(), text: "warm climate".into() },
+                CandidateOptionV1 { option_id: "o2".into(), label: "B".into(), text: "the cold weather".into() },
+            ],
+        };
+        let option_shape = json!({"kind": "option", "labels": ["B"], "assignment": "per_slot"});
+        let text_shape = json!({"kind": "text", "values": ["the cold weather"]});
+
+        // text → option（本地 option 形状）：云端文本经选项库解析为 label。
+        let aligned_up = align_answer_value(&text_shape, &option_shape, Some(&bank))
+            .expect("文本能经选项库解析为 label，必须对齐");
+        assert_eq!(
+            crate::reconcile::rules::answer_compare_key(Some(&aligned_up)),
+            crate::reconcile::rules::answer_compare_key(Some(&option_shape)),
+            "对齐后必须与目标形状比较键相等，否则会制造假分歧"
+        );
+
+        // option → text（本地 text 形状）：云端 label 经选项库解析为文本。
+        let aligned_down = align_answer_value(&option_shape, &text_shape, Some(&bank))
+            .expect("label 能经选项库解析为文本，必须对齐");
+        assert_eq!(
+            crate::reconcile::rules::answer_compare_key(Some(&aligned_down)),
+            crate::reconcile::rules::answer_compare_key(Some(&text_shape)),
+            "反向对齐同样必须使比较键相等"
+        );
+    }
+
+    /// 形状已一致时返回 `None`（= 不改写）。改写只会引入假一致。
+    #[test]
+    fn align_answer_value_leaves_equal_shapes_untouched() {
+        let bank = CandidateOptionBankV1 { option_bank_id: "ob".into(), allow_reuse: false, options: vec![] };
+        let shape = json!({"kind": "text", "values": ["x"]});
+        assert_eq!(align_answer_value(&shape, &shape, Some(&bank)), None);
+        assert_eq!(align_answer_value(&shape, &shape, None), None);
+    }
+
+    /// 没有合法映射时必须返回 `None`（保留原值），绝不强行 unification。
+    #[test]
+    fn align_answer_value_returns_none_without_a_legal_mapping() {
+        let option_shape = json!({"kind": "option", "labels": ["B"], "assignment": "per_slot"});
+        let text_value = json!({"kind": "text", "values": ["the cold weather"]});
+        assert_eq!(align_answer_value(&text_value, &option_shape, None), None, "无选项库 → 无法映射，保留原值");
+
+        // 选项库存在但没有该文本 → 同样无法映射。
+        let bank = CandidateOptionBankV1 {
+            option_bank_id: "ob".into(),
+            allow_reuse: false,
+            options: vec![CandidateOptionV1 { option_id: "o1".into(), label: "A".into(), text: "warm climate".into() }],
+        };
+        assert_eq!(align_answer_value(&text_value, &option_shape, Some(&bank)), None);
+
+        // 缺少 `kind` 的值不参与对齐（返回 None，由调用方原样保留）。
+        assert_eq!(align_answer_value(&json!({"values": ["x"]}), &option_shape, Some(&bank)), None);
     }
 }
