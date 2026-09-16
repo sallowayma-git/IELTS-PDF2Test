@@ -81,6 +81,9 @@ function takeDevPickedPath(): PickedPath | null {
 
 export async function chooseSourceFiles(): Promise<PickedPath[]> {
   if (isTauriRuntime()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const automated = await invoke<TauriPickedPath[] | null>("automation_source_files");
+    if (automated?.length) return automated;
     const { open } = await import("@tauri-apps/plugin-dialog");
     const selected = await open({
       multiple: true,

@@ -15,6 +15,8 @@ pub(crate) const STAGE_QUEUED: &str = "queued";
 pub(crate) const STAGE_RUNNING: &str = "running";
 pub(crate) const STAGE_LOCAL_RECOGNITION: &str = "local_recognition";
 pub(crate) const STAGE_CLOUD_RECOGNITION: &str = "cloud_recognition";
+/// 本地稿已形成、正在跑原文件核验与统一裁决的阶段。
+pub(crate) const STAGE_RECONCILING: &str = "reconciling";
 pub(crate) const STAGE_READY_FOR_REVIEW: &str = "ready_for_review";
 pub(crate) const STAGE_FAILED: &str = "failed";
 pub(crate) const STAGE_CANCELLED: &str = "cancelled";
@@ -225,6 +227,53 @@ pub(crate) fn advance_stage(
             ],
         )
         .map_err(|error| format!("processing_advance:{error}"))?;
+    if updated == 0 {
+        return Ok(None);
+    }
+    let (seq, effective_stage): (i64, String) = conn
+        .query_row(
+            "SELECT event_seq, stage FROM processing_jobs_v2 WHERE id = ?1",
+            [job_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| format!("processing_advance_seq:{error}"))?;
+    Ok(Some((seq, effective_stage)))
+}
+
+/// 仅更新 `cloud_status`，不切换 `stage`。用于「本地识别仍在跑、云端已排队/起飞」
+/// 的可观测信号：此时 `stage` 应忠实停留在 `local_recognition`（percent=45），
+/// 而不是被提前推进到 `cloud_recognition`（percent=70），否则进度条会短暂虚高。
+/// 带 durable 取消标记或 lease 丢失时返回 `None`，由调用方中止云端链。
+pub(crate) fn set_cloud_status(
+    conn: &Connection,
+    job_id: &str,
+    worker_id: &str,
+    cloud_status: &str,
+) -> CommandResult<Option<(i64, String)>> {
+    let now = Utc::now().to_rfc3339();
+    // 取消优先：durable 取消标记存在时拒绝推进，返回 None 让调度器中止云端。
+    let cancelled = conn
+        .query_row(
+            "SELECT 1 FROM processing_jobs_v2 WHERE id = ?1 AND cancel_requested_at IS NOT NULL",
+            [job_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|error| format!("processing_cloud_status_cancel:{error}"))?
+        .is_some();
+    if cancelled {
+        return Ok(None);
+    }
+    let updated = conn
+        .execute(
+            "UPDATE processing_jobs_v2
+             SET cloud_status = ?3,
+                 event_seq = event_seq + 1,
+                 updated_at = ?4
+             WHERE id = ?1 AND lease_owner = ?2 AND lease_expires_at >= ?4",
+            params![job_id, worker_id, cloud_status, now],
+        )
+        .map_err(|error| format!("processing_cloud_status:{error}"))?;
     if updated == 0 {
         return Ok(None);
     }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { applyEditorCommands, getWorkspaceItem } from "../../api/workspaceClient";
 import { applyAuthoringV2Patches as applyLocalPatches, inverseAuthoringPatch } from "../../services/authoringV2Patches";
+import { conflictRecoveryNotice, rebasePendingPatches } from "./conflictRecovery";
 import { EditorCommandConflictError, compileEditorCommand, type EditorCommandV1 } from "../../exam-canvas/editorCommands";
 import { toUserFacingError } from "../../utils/userFacingError";
 import type { AuthoringPatchV2, IeltsAuthoringIRV2 } from "../../types";
@@ -40,6 +41,8 @@ export interface CanonicalEditor {
   saveState: SaveState;
   saveMessage?: string;
   pendingCount: number;
+  /** 已保存的权威稿版本号（用于学生预览显示 revision 状态）。 */
+  version: number;
   canUndo: boolean;
   canRedo: boolean;
   title?: string;
@@ -49,6 +52,20 @@ export interface CanonicalEditor {
   undo: () => void;
   redo: () => void;
   reload: () => void;
+  /** 版本冲突后：以服务端最新版本为基线重放未保存修改并保存。 */
+  recoverFromConflict: () => Promise<void>;
+  /** 放弃本地未保存的修改，以服务端最新版本重新加载。 */
+  discardLocalChanges: () => void;
+  conflictRecovering: boolean;
+  /**
+   * 冲突恢复的结果提示（例如「另有 N 项未能应用」）。
+   *
+   * 与 `saveMessage` 分开：`saveMessage` 是保存状态机的瞬态文案，每次保存循环
+   * 都会被清空；「有改动没能应用」是**必须被看到**的信息，不能被随后的
+   * 「已保存」覆盖掉，否则用户会以为全部改动都落盘了。
+   */
+  saveNotice?: string;
+  dismissSaveNotice: () => void;
   flush: () => Promise<void>;
 }
 
@@ -62,9 +79,15 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
   const [historyDepth, setHistoryDepth] = useState({ undo: 0, redo: 0 });
   const [reloadTick, setReloadTick] = useState(0);
   const [title, setTitleState] = useState<string>();
+  const [conflictRecovering, setConflictRecovering] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<string>();
   const draftRef = useRef<IeltsAuthoringIRV2 | undefined>(undefined);
   const titleRef = useRef<string | undefined>(undefined);
   const versionRef = useRef(0);
+  // 已保存的权威稿版本号。用 state 暴露给界面（预览要显示当前版本），
+  // ref 仍是保存事务的读取源，二者始终同步写入。
+  const [editVersion, setEditVersion] = useState(0);
+  const setVersion = useCallback((next: number) => { versionRef.current = next; setEditVersion(next); }, []);
   const pendingRef = useRef<AuthoringPatchV2[]>([]);
   const pendingTitleRef = useRef<string | undefined>(undefined);
   const batchRef = useRef<SaveBatch | undefined>(undefined);
@@ -110,7 +133,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
           setSaveState("saving");
           setSaveMessage(undefined);
           const result = await applyEditorCommands(batchRef.current);
-          versionRef.current = result.editVersion;
+          setVersion(result.editVersion);
           batchRef.current = undefined;
           checkpoint();
         }
@@ -120,7 +143,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
         const conflict = message.includes("EDIT_VERSION_CONFLICT");
         setSaveState(conflict ? "conflict" : "failed");
         setSaveMessage(conflict
-          ? "这道题在别处也被改过。未保存的修改已保留，请先处理保存冲突。"
+          ? "这道题在别处也被改过。本地修改仍保留，可「重试保存」重新应用，或「放弃本地修改」以最新版本重新加载。"
           : "保存失败，修改已保留。请稍后重试。");
         checkpoint();
         throw error;
@@ -140,14 +163,14 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       if (!workspace.ds) throw new Error("ITEM_DS_NOT_SEEDED");
       let loaded = workspace.ds as unknown as IeltsAuthoringIRV2;
       let loadedTitle = workspace.item.title;
-      versionRef.current = workspace.editVersion;
+      setVersion(workspace.editVersion);
       try {
         const saved = localStorage.getItem(recoveryKey);
         const recovery: RecoveryDraft | undefined = saved ? JSON.parse(saved) : undefined;
         if (recovery?.draft && Array.isArray(recovery.pending)) {
           loaded = recovery.draft;
           loadedTitle = recovery.title ?? loadedTitle;
-          versionRef.current = recovery.version;
+          setVersion(recovery.version);
           pendingRef.current = recovery.pending;
           pendingTitleRef.current = recovery.pendingTitle;
           batchRef.current = recovery.batch;
@@ -241,13 +264,95 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
   }, [checkpoint, persist]);
 
   const reload = useCallback(() => {
-    void persist().then(() => setReloadTick((value) => value + 1)).catch(() => {});
+    // 这里**不能**清 `saveNotice`。工作区会在识别事件到来时自动 reload（`pendingCount` 归零后），
+    // 而冲突恢复保存成功后恰好使 `pendingCount` 归零——若在这里清提示，
+    // 「有改动未能应用」就会被一条后台事件抹掉，又回到静默丢失。
+    // 提示只在用户主动放弃本地修改或手动关闭时失效。
+    void persist().then(() => setReloadTick((value) => value + 1)).catch((error) => {
+      // 保存失败/冲突时不能静默什么都不做：用户点了「刷新」必须看到原因与出路，
+      // 否则编辑器会停在一个既存不上、也刷不掉的死路上。
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("EDIT_VERSION_CONFLICT")) {
+        setSaveMessage(toUserFacingError(error, "刷新前保存失败，请重试。").userMessage);
+      }
+    });
   }, [persist]);
+
+  /** 仍未被服务端接受的命令，保持原始顺序（先已提交失败的批次，再待发送队列）。 */
+  const outstandingCommands = useCallback((): AuthoringPatchV2[] => {
+    const batched = batchRef.current ? batchRef.current.commands : [];
+    return [...batched, ...pendingRef.current];
+  }, []);
+
+  /** 放弃本地未保存的修改，以服务端最新版本重新加载。 */
+  const discardLocalChanges = useCallback(() => {
+    try { localStorage.removeItem(recoveryKey); } catch { /* Ignore storage failures. */ }
+    batchRef.current = undefined;
+    pendingRef.current = [];
+    pendingTitleRef.current = undefined;
+    undoStack.current = [];
+    redoStack.current = [];
+    setVersion(0);
+    setHistoryDepth({ undo: 0, redo: 0 });
+    setPendingCount(0);
+    setSaveState("idle");
+    setSaveMessage(undefined);
+    setSaveNotice(undefined);
+    setReloadTick((value) => value + 1);
+  }, [recoveryKey]);
+
+  const dismissSaveNotice = useCallback(() => { setSaveNotice(undefined); }, []);
+
+  /** 版本冲突后的出路：以服务端最新版本为基线重放本地未保存修改，再保存。 */
+  const recoverFromConflict = useCallback(async (): Promise<void> => {
+    if (conflictRecovering) return;
+    setConflictRecovering(true);
+    try {
+      const outstanding = outstandingCommands();
+      const localTitle = batchRef.current?.title ?? pendingTitleRef.current;
+      const workspace = await getWorkspaceItem(itemId);
+      if (!workspace.ds) throw new Error("ITEM_DS_NOT_SEEDED");
+      const base = workspace.ds as unknown as IeltsAuthoringIRV2;
+      // 逐条重放：某条补丁因原文已改动而无法应用时停下，已应用的部分照常保存，
+      // 未应用的部分明确告知用户——绝不静默丢弃本地修改。
+      const { rebased, applied, dropped } = rebasePendingPatches(base, outstanding);
+      draftRef.current = rebased;
+      setDraft(rebased);
+      setVersion(workspace.editVersion);
+      batchRef.current = undefined;
+      pendingRef.current = applied;
+      pendingTitleRef.current = localTitle && localTitle !== workspace.item.title ? localTitle : undefined;
+      titleRef.current = workspace.item.title;
+      setTitleState(workspace.item.title);
+      // 撤销栈建立在旧基线上，重放后不再可靠。
+      undoStack.current = [];
+      redoStack.current = [];
+      setHistoryDepth({ undo: 0, redo: 0 });
+      checkpoint();
+      setSaveState("idle");
+      // 只在确有补丁未能应用时写入，且**绝不自动清除**。
+      // 这条提示说的是「有修改永久没有保存」——用户没点关闭之前，任何自动清除
+      // （包括后续一次 dropped === 0 的恢复、以及后台识别事件触发的 reload）
+      // 都可能把尚未看到的数据丢失信息抹掉。清除只发生在用户主动关闭或放弃本地修改时。
+      if (dropped > 0) {
+        setSaveNotice(conflictRecoveryNotice(applied.length, dropped));
+      }
+      await persist();
+    } catch (error) {
+      setSaveState("failed");
+      setSaveMessage(toUserFacingError(error, "重试保存失败，可放弃本地修改后重新加载。").userMessage);
+    } finally {
+      setConflictRecovering(false);
+    }
+  }, [checkpoint, conflictRecovering, itemId, outstandingCommands, persist]);
+
   return {
     loading, loadError, draft, saveState, saveMessage, pendingCount, title, setTitle,
+    version: editVersion,
     canUndo: historyDepth.undo > 0, canRedo: historyDepth.redo > 0,
     applyCommand, applyPatch: (patch) => enqueue(patch, true), undo, redo,
-    reload,
+    reload, recoverFromConflict, discardLocalChanges, conflictRecovering,
+    saveNotice, dismissSaveNotice,
     flush: persist
   };
 }

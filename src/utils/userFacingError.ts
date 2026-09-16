@@ -67,7 +67,32 @@ function classify(raw: string): { category: UserErrorCategory; userMessage?: str
   if (raw.includes("ITEM_NOT_FOUND")) {
     return { category: "not_found", userMessage: "这道题已不在题库中，请返回题库刷新。" };
   }
+  if (raw.includes("LLM_SUGGESTION_STALE")) {
+    return { category: "conflict", userMessage: "这条云端建议是在更早的版本上生成的，已不能直接采用。请重新运行云端检查后再确认。" };
+  }
+  if (raw.includes("LLM_SUGGESTION_AUTHORITATIVE_STORE_IS_V2")) {
+    return { category: "not_ready", userMessage: "这道题的权威稿已经是新版格式，云端建议需要通过新版编辑流程应用。" };
+  }
   if (raw.includes("authoring_v2_export_blocked")) {
+    // 发布门禁的具体原因直接决定用户下一步动作，不能都压成一句话。
+    if (raw.includes("human_verification_required")) {
+      return { category: "validation", userMessage: "请先逐题确认内容，确认后才能发布。" };
+    }
+    if (raw.includes("source_review_stale") || raw.includes("source_review_unresolved")) {
+      return { category: "validation", userMessage: "原文件复核还没处理完，请先回到识别结果页确认。" };
+    }
+    if (raw.includes("quality_state=review_required")) {
+      return { category: "validation", userMessage: "这道题还有待确认的内容，处理完界面里列出的问题后可以发布。" };
+    }
+    if (raw.includes("quality_state=blocked") || raw.includes("hard_failures=")) {
+      return { category: "validation", userMessage: "这道题存在必须修复的内容缺陷，请按问题列表逐项处理。" };
+    }
+    if (raw.includes("unresolved_answers=")) {
+      return { category: "validation", userMessage: "还有题目没有答案，补齐后才能发布。" };
+    }
+    if (raw.includes("ai_fallback=") || raw.includes("partial_failures=")) {
+      return { category: "validation", userMessage: "这道题有部分内容没有识别完成，请手动补齐后再发布。" };
+    }
     return { category: "validation", userMessage: "请先补齐题干、选项或答案，再次发布。" };
   }
   if (raw.includes("requires_tauri_runtime")) {

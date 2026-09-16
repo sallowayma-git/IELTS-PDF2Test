@@ -53,6 +53,20 @@ export async function getWorkspaceItem(itemId: string): Promise<WorkspaceItemV1>
   return command("get_workspace_item", { itemId });
 }
 
+/** 发布门禁结果（`check_publish_preflight`）：编辑器把它作为可操作问题直接呈现。 */
+export interface PublishCheckResultV1 {
+  schemaVersion: string;
+  jobId: string;
+  editVersion: number;
+  passed: boolean;
+  blockers: Array<{ code: string, targetId?: string | null, userMessage?: string, action?: string }>;
+  warnings: Array<{ code: string, message?: string }>;
+}
+
+export async function getPublishPreflight(itemId: string): Promise<PublishCheckResultV1> {
+  return command("get_publish_preflight", { jobId: itemId });
+}
+
 export async function applyEditorCommands(input: {
   itemId: string;
   baseVersion: number;

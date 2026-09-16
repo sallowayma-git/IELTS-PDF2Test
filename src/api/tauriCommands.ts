@@ -236,18 +236,20 @@ export async function llmExtractGroup(jobId: string, groupId: string, profileId:
   return command("llm_extract_group", { jobId, groupId, profileId });
 }
 
+/** `baseEditVersion` = 候选产出时的编辑版本；服务端据此拒绝过期候选覆盖新编辑。 */
 export async function applyLlmSuggestion(
   jobId: string,
   suggestionId: string,
   selectedPaths: string[],
-  options?: { questionIds?: string[]; userConfirmed?: boolean }
+  options?: { questionIds?: string[]; userConfirmed?: boolean; baseEditVersion?: number }
 ): Promise<ReadingAuthoringIr> {
   return command("apply_llm_suggestion", {
     jobId,
     suggestionId,
     selectedPaths,
     questionIds: options?.questionIds,
-    userConfirmed: options?.userConfirmed ?? false
+    userConfirmed: options?.userConfirmed ?? false,
+    baseEditVersion: options?.baseEditVersion
   });
 }
 

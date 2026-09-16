@@ -800,6 +800,229 @@ fn dump_published_package_for_nas_contract() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// M6 跨仓学生端 E2E 输入：把三份真实 publisher 产物（P1/P2/P3）落到
+/// artifacts/nas-e2e-fixture，供学生端 Electron 驱动加载、渲染、作答与计分。
+/// 每份都带真实图片资产与 diagram hotspot，且 hotspotId 与 answerKey 的 label 一致。
+/// 默认忽略（写仓库 artifacts 目录、不清理），需要时手动运行：
+///   cargo test --manifest-path src-tauri/Cargo.toml dump_published_v2_visual_package_for_student_e2e -- --ignored --nocapture
+#[test]
+#[ignore = "writes artifacts/nas-e2e-fixture for the student Electron E2E; run explicitly"]
+fn dump_published_v2_visual_package_for_student_e2e() {
+    let nas_parent = workspace_path("artifacts/nas-e2e-fixture");
+    let _ = fs::remove_dir_all(&nas_parent);
+    fs::create_dir_all(&nas_parent).unwrap();
+    // 学生端套卷固定要求 P1/P2/P3 各一份；三份都由真实 export + NAS publish 产出，
+    // 学生端因此消费的是 publisher 原样输出，而不是测试手写的包。
+    for (exam_id, category, title) in [
+        ("v2-p1", "P1", "V2 Reading Part 1"),
+        ("v2-p2", "P2", "V2 Reading Part 2"),
+        ("v2-p3", "P3", "V2 Reading Part 3"),
+    ] {
+        dump_v2_visual_package_for_part(&nas_parent, exam_id, category, title);
+    }
+    let manifest =
+        fs::read_to_string(nas_parent.join("manifest.js")).expect("published manifest must exist");
+    for exam_id in ["v2-p1", "v2-p2", "v2-p3"] {
+        assert!(manifest.contains(exam_id), "manifest must carry {exam_id}");
+    }
+    eprintln!("NAS e2e fixture written to {}", nas_parent.display());
+}
+
+fn dump_v2_visual_package_for_part(nas_parent: &Path, exam_id: &str, category: &str, title: &str) {
+    let root = temp_root(&format!("nas-e2e-dump-{exam_id}"));
+    ensure_app_dirs(&root).unwrap();
+    let job = chain_job("NAS e2e visual dump");
+    save_job(&root, &job).unwrap();
+    let dir = job_dir(&root, &job.job_id);
+    ensure_job_dirs(&dir).unwrap();
+
+    let mut authoring: Value = serde_json::from_slice(
+        &fs::read(workspace_path(READY_AUTHORING_FIXTURE))
+            .expect("ready authoring fixture must exist"),
+    )
+    .expect("ready authoring fixture must be valid JSON");
+    // 每份都是独立考试身份：examId 决定包目录、脚本名与 manifest key，
+    // category 决定学生端套卷把它放在 P1/P2/P3 的哪一段。
+    {
+        let exam = authoring
+            .get_mut("exam")
+            .and_then(Value::as_object_mut)
+            .expect("ready fixture must carry exam identity");
+        exam.insert("examId".to_string(), json!(exam_id));
+        exam.insert("category".to_string(), json!(category));
+        exam.insert("title".to_string(), json!(title));
+    }
+    let existing_anchor = authoring
+        .pointer("/passage/content/0/sourceAnchors/0")
+        .cloned()
+        .unwrap_or_else(|| json!({
+            "sourceFileId": "source-pdf-1",
+            "pageIndex": 0,
+            "nodeIds": ["region-question-surface"],
+            "extractionMode": "pdf_native",
+            "sourceHash": "a".repeat(64)
+        }));
+    // 1x1 红色 PNG（CRC 已验证）：真实学生端 <img> 可解码的最小视觉资产。
+    let png = build_e2e_png();
+    let png_sha = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&png);
+        format!("{:x}", hasher.finalize())
+    };
+    {
+        let object = authoring.as_object_mut().unwrap();
+        object.insert("jobId".to_string(), json!(job.job_id));
+        object["assets"] = json!([{
+            "assetId": "img-map",
+            "kind": "raster_image",
+            "mime": "image/png",
+            "relativePath": "img-map.png",
+            "sha256": png_sha,
+            "byteLength": png.len() as u64,
+            "widthPx": 1,
+            "heightPx": 1,
+            "extractionMode": "embedded",
+            "altText": "Task map with two labelled regions"
+        }]);
+        let anchor = existing_anchor;
+        let passage = object.get_mut("passage").and_then(Value::as_object_mut).unwrap();
+        let content = passage.get_mut("content").and_then(Value::as_array_mut).unwrap();
+        content.push(json!({
+            "id": "passage-figure-map",
+            "type": "figure",
+            "provenanceStatus": "source",
+            "sourceAnchors": [anchor],
+            "assetId": "img-map",
+            "display": {"widthPercent": 60, "align": "center"},
+            "caption": [{
+                "id": "figure-map-caption",
+                "type": "text",
+                "provenanceStatus": "source",
+                "sourceAnchors": [],
+                "text": "Map referenced by Questions 14 and 15."
+            }]
+        }));
+        let task = object
+            .get_mut("taskGroups")
+            .and_then(Value::as_array_mut)
+            .unwrap()
+            .get_mut(0)
+            .and_then(Value::as_object_mut)
+            .unwrap();
+        task.insert(
+            "stimulus".to_string(),
+            json!([{
+                "id": "task-map-diagram",
+                "type": "diagram",
+                "provenanceStatus": "source",
+                "sourceAnchors": [],
+                "assetId": "img-map",
+                "display": {"widthPercent": 80, "align": "center"},
+                "hotspots": [
+                    {"hotspotId": "B", "slotId": "q14", "normalizedRect": [0.12, 0.18, 0.3, 0.22]},
+                    {"hotspotId": "D", "slotId": "q15", "normalizedRect": [0.55, 0.55, 0.3, 0.22]}
+                ]
+            }]),
+        );
+    }
+    write_json(&dir.join(AUTHORING_V2_SHADOW_FILE), &authoring).unwrap();
+    let visual_descriptor = json!({
+        "assetId": "img-map",
+        "kind": "raster_image",
+        "mime": "image/png",
+        "relativePath": "img-map.png",
+        "sha256": png_sha,
+        "byteLength": png.len() as u64,
+        "widthPx": 1,
+        "heightPx": 1,
+        "extractionMode": "embedded",
+        "altText": "Task map with two labelled regions"
+    });
+    let mut shadow = physical_shadow_for(&authoring);
+    shadow["assets"] = json!([visual_descriptor]);
+    write_json(&dir.join(DOCUMENT_V2_SHADOW_FILE), &shadow).unwrap();
+
+    {
+        let shadow: Value = serde_json::from_slice(&fs::read(dir.join(DOCUMENT_V2_SHADOW_FILE)).unwrap()).unwrap();
+        let recomputed = crate::ielts_grammar::evaluate_quality(&authoring, Some(&shadow));
+        eprintln!(
+            "visual dump quality: state={:?} hardFailures={:?} issues={}",
+            recomputed.get("state"),
+            recomputed.get("hardFailures"),
+            serde_json::to_string(recomputed.get("issues").unwrap_or(&Value::Null)).unwrap_or_default()
+        );
+    }
+
+    // export 从 job 目录物化资产文件；先把 PNG 放到 job 目录再导出。
+    fs::write(dir.join("img-map.png"), &png).expect("png must be written into the job dir");
+
+    let export_dir = root.join("exports").join("nas-e2e-dump");
+    let exported = export_authoring_v2_core(
+        &root,
+        json!({ "jobId": job.job_id, "exportDir": export_dir }),
+    )
+    .expect("visual authoring must export");
+    let runtime_path = exported
+        .pointer("/receipt/runtimePath")
+        .and_then(Value::as_str)
+        .expect("export receipt must carry the runtime path")
+        .to_string();
+    let output_dir = exported
+        .pointer("/receipt/outputDir")
+        .and_then(Value::as_str)
+        .expect("export receipt must carry the output dir")
+        .to_string();
+    let exported_exam_id = exported
+        .get("examId")
+        .and_then(Value::as_str)
+        .expect("export receipt must carry the exam id")
+        .to_string();
+    assert_eq!(
+        exported_exam_id, exam_id,
+        "the compiler must keep the exam identity we authored"
+    );
+
+    // 发布者从 assetRoot（export 产物目录）解析资产；export 已把 job 目录中的
+    // PNG 物化到该目录，无需再手写文件。
+
+    let published = publish_nas_package_v2_core(
+        &root,
+        json!({
+            "libraryRoot": nas_parent.join("publish"),
+            "sourcePath": runtime_path,
+            "assetRoot": output_dir,
+            "examId": exam_id,
+            "minimumRuntimeVersion": "0.2.0"
+        }),
+    )
+    .expect("a visual ready item must publish");
+    assert_eq!(
+        published.get("status").and_then(Value::as_str),
+        Some("committed")
+    );
+    assert_eq!(
+        published.pointer("/probe/passed").and_then(Value::as_bool),
+        Some(true),
+        "publish probe must pass for the visual package: {published}"
+    );
+    eprintln!(
+        "NAS e2e part published: examId={exam_id} category={category} root={}",
+        nas_parent.display()
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// 与 dump 测试共用的 1x1 红 PNG（CRC 已验证），足以驱动 <img> 真实解码。
+fn build_e2e_png() -> Vec<u8> {
+    vec![
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
+        6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 252, 207, 192,
+        80, 15, 0, 4, 133, 1, 128, 132, 169, 140, 33, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+        130,
+    ]
+}
+
 /// Editing must not make a publishable item unpublishable.
 ///
 /// `mark_user_audit` used to hardcode `audit.humanVerified = false` on every save, while the
@@ -1217,6 +1440,27 @@ fn publish_items_is_all_or_nothing_across_a_batch() {
         "批量中断后不得留下已提交的 release 目录"
     );
 
+    // 1b. 资源已移入根级但清单尚未替换时中断：根级资源必须回滚，旧清单保持有效。
+    let interrupted_before_manifest =
+        crate::nas_package_v2::publish_items_core(&root, batch_input(Some("before_manifest")));
+    assert!(
+        interrupted_before_manifest.is_err(),
+        "注入的批量中断必须向上报错，而不是静默返回部分成功：{interrupted_before_manifest:?}"
+    );
+    for index in 0..2 {
+        assert!(
+            !reading_root.join("resources").join(format!("batch-{index}")).exists(),
+            "清单替换前中断不得留下根级资源目录 batch-{index}"
+        );
+    }
+    assert!(
+        fs::read_dir(reading_root.join("releases"))
+            .map(|entries| entries.count())
+            .unwrap_or(0)
+            == 0,
+        "清单替换前中断不得留下 release 目录内容"
+    );
+
     // 2. 全部通过：一次原子清单替换让两题同时可见。
     let published = crate::nas_package_v2::publish_items_core(&root, batch_input(None))
         .expect("a batch whose items all pass must publish");
@@ -1243,6 +1487,20 @@ fn publish_items_is_all_or_nothing_across_a_batch() {
         manifest.contains("./releases/"),
         "发布条目必须指向不可变的 release 文件，而不是可被下一次发布覆盖的根目录文件"
     );
+    // 学生端 resolver 固定从 reading 根解析 resources/<examId>，
+    // 因此批量发布的资源与 asset-manifest 必须落在根级布局，且真实存在。
+    for index in 0..2 {
+        let resource_dir = reading_root.join("resources").join(format!("batch-{index}"));
+        assert!(
+            resource_dir.join("asset-manifest.json").is_file(),
+            "批量发布的资源必须位于根级 resources/<examId>/asset-manifest.json：{}",
+            resource_dir.display()
+        );
+        assert!(
+            manifest.contains(&format!("./resources/batch-{index}/")),
+            "清单的资源路径必须指向根级 resources/：{manifest}"
+        );
+    }
 
     // 3. 发布后把库里条目标记为已发布，且不推进编辑版本（后续编辑仍是未发布状态）。
     let conn = crate::library::repository::open_library_connection(&root).unwrap();

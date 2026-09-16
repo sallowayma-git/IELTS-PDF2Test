@@ -48,6 +48,14 @@ function findTextNode(document: IeltsAuthoringIRV2, nodeId: string): { text: str
   return found;
 }
 
+/** 热点提交值必须能被服务端按答案键接受：优先使用该 slot 已设置答案的首选值。 */
+function hotspotSubmitValueForSlot(document: IeltsAuthoringIRV2, slotId: string): string {
+  const value = document.answerKey[slotId];
+  const candidates = value?.kind === "option" ? value.labels : value?.kind === "text" ? value.values : [];
+  const primary = candidates.map((entry) => entry.trim()).find((entry) => entry.length > 0);
+  return primary ?? `${slotId}-hotspot`;
+}
+
 /** 把 EditorCommandV1 编译成后端已支持的 patch。文本命令会先校验 expectedText。 */
 export function compileEditorCommand(command: EditorCommandV1, document: IeltsAuthoringIRV2): AuthoringPatchV2 {
   if (command.op === "set_answer") {
@@ -57,7 +65,7 @@ export function compileEditorCommand(command: EditorCommandV1, document: IeltsAu
     return {
       op: "setHotspot",
       nodeId: command.nodeId,
-      hotspot: { hotspotId: `${command.slotId}-hotspot`, slotId: command.slotId, normalizedRect: command.rect }
+      hotspot: { hotspotId: hotspotSubmitValueForSlot(document, command.slotId), slotId: command.slotId, normalizedRect: command.rect }
     };
   }
   const node = findTextNode(document, command.nodeId);

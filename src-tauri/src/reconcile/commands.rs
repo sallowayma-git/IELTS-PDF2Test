@@ -1,0 +1,1461 @@
+//! 识别闭环的命令层：调度入口 + 安全自动应用 + 人工决策。
+//!
+//! 三条硬约束在这里落地（对应任务书第四步）：
+//!
+//! 1. **自动应用靠规则不靠置信度**：可自动应用的项由 [`super::adjudicate`]
+//!    用确定性条件筛出；本层在写入前再用**当前**权威稿复核一次
+//!    （答案仍为空 + 与识别快照一致），因此「用户已修改」永远赢。
+//! 2. **接受走正式 V2 patch/revision 路径**：一律经
+//!    `library::repository::apply_editor_commands_tx`（CAS + 校验 + 原子提交），
+//!    不绕过 V2 保护、不直接写 canonical。
+//! 3. **幂等与持久化**：`request_id` 落 `recognition_decision_journal_v1`，
+//!    重复提交返回首次结果且不重复写入；过期项落 `Superseded`，失败落 `Failed`。
+
+use std::path::Path;
+
+use serde_json::{json, Value};
+
+use super::engine::{
+    classify_cloud_error, persist_outcome, reconcile_batch, resolve_local_snapshot, CloudFailure,
+    ReconcileBatchInput, ReconcileBatchOutcome,
+};
+use super::rules::{answer_compare_key, answer_is_empty, canonical_answer, is_user_edited};
+use super::store;
+use crate::authoring_v2_commands::{apply_patch, refresh_quality_report, validate_authoring};
+use crate::library::repository::{
+    apply_editor_commands_tx, get_canonical_ds, open_library_connection, ApplyEditorCommandsInput,
+};
+use crate::schema::recognition_v1::{
+    reason, ApplyRecognitionDecisionsRequestV1, ApplyRecognitionDecisionsResultV1, ChainStatusSummaryV1,
+    DecisionFieldV1, DecisionItemV1, DecisionOutcomeKindV1, DecisionOutcomeV1, DecisionResolutionV1,
+    DecisionStatusV1, RecognitionChainStateV1, RecognitionDecisionV1, RecognitionDecisionViewV1,
+    StageStateV1, StageStatusV1, APPLY_RECOGNITION_DECISIONS_RESULT_V1_SCHEMA_VERSION,
+    RECOGNITION_DECISION_VIEW_V1_SCHEMA_VERSION,
+};
+use crate::util::{job_dir, read_json_opt};
+use crate::CommandResult;
+
+/// 云端全量识别的注入点：真实实现走 LLM 网关；测试注入确定性桩。
+pub(crate) type CloudOutlineRunner<'a> =
+    &'a dyn Fn(&Path, &str, Option<&str>) -> CommandResult<Value>;
+
+// ── 批次标识 ───────────────────────────────────────────────────────────
+
+fn sanitize_segment(input: &str) -> String {
+    input
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// 批次 id 由 `(job_id, source_sha256, base_edit_version)` 派生。
+///
+/// 这是「同一输入及版本的重试不产生重复应用」的根据：重试算出同一个
+/// batch_id，于是复用同一份识别快照、同一批 decision_id，写入路径上的
+/// 幂等键也相同，重复应用不可能发生。
+pub(crate) fn recognition_batch_id(
+    job_id: &str,
+    source_sha256: &str,
+    base_edit_version: i64,
+) -> String {
+    let sha = if source_sha256.is_empty() {
+        "nosha".to_string()
+    } else {
+        source_sha256.chars().take(12).collect::<String>()
+    };
+    format!(
+        "rec-{}-v{}-{}",
+        sanitize_segment(job_id),
+        base_edit_version,
+        sanitize_segment(&sha)
+    )
+}
+
+/// 取任务主源文件的 sha256（幂等键的输入之一）。取不到时返回空串，
+/// 由 [`recognition_batch_id`] 降级为 `nosha`（仍然确定性）。
+pub(crate) fn source_sha256_for_job(root: &Path, job_id: &str) -> String {
+    let Ok(job) = crate::job_store::load_job(root, job_id) else {
+        return String::new();
+    };
+    job.source_files
+        .iter()
+        .find(|file| file.role == "main")
+        .or_else(|| job.source_files.first())
+        .map(|file| file.sha256.clone())
+        .unwrap_or_default()
+}
+
+// ── 读取视图 ───────────────────────────────────────────────────────────
+
+fn chain_state_from_summary(summary: &ChainStatusSummaryV1) -> RecognitionChainStateV1 {
+    RecognitionChainStateV1 {
+        local: StageStatusV1::new(summary.local.into()),
+        cloud: match &summary.cloud_reason_code {
+            Some(code) => StageStatusV1::with_reason(summary.cloud.into(), code.clone(), String::new()),
+            None => StageStatusV1::new(summary.cloud.into()),
+        },
+        source: match &summary.source_reason_code {
+            Some(code) => StageStatusV1::with_reason(summary.source.into(), code.clone(), String::new()),
+            None => StageStatusV1::new(summary.source.into()),
+        },
+        adjudication: StageStatusV1::new(StageStateV1::Succeeded),
+    }
+}
+
+/// 建议的「前提」是否仍然成立：生成建议时所依据的**目标内容**有没有被改动。
+///
+/// - 答案字段：当前权威稿的答案必须仍等于建议生成时的本地值（`local_value`）；
+/// - 其他字段：没有通用的「当前值读取器」，改看权威稿里的编辑痕迹——目标干净即视为
+///   未改动。这正好覆盖「用户只改了别处」的情形，而不是一有版本变化就整批作废；
+/// - 读不到权威稿：无法证明目标未被改动，保守返回 `false`（宁可要求人工确认，不写脏）。
+fn resolution_premise_holds(canonical: Option<&Value>, item: &DecisionItemV1) -> bool {
+    let Some(canonical) = canonical else {
+        return false;
+    };
+    if item.field == DecisionFieldV1::Answer {
+        return answer_compare_key(canonical_answer(canonical, &item.target.target_id))
+            == answer_compare_key(item.local_value.as_ref());
+    }
+    let node_id = item
+        .target
+        .node_id
+        .as_deref()
+        .unwrap_or(&item.target.target_id);
+    !is_user_edited(canonical, node_id) && !is_user_edited(canonical, &item.target.target_id)
+}
+
+/// 这条**已写入的修正**是否仍然生效：权威稿里该槽位的答案是否还等于当时写入的值。
+///
+/// 这是「内容变化后 resolution 失效」的判据。写入值取自 `proposed_patch` 的
+/// `setAnswer.value`——**不能用 `undo` 里的 `value`**，那是被覆盖掉的旧值。返回：
+/// - `Some(true)`：修正仍在位；
+/// - `Some(false)`：用户之后改过该槽位 ⇒ 原 resolution 的前提已经消失（撤销必须拒绝，
+///   否则回滚会连同用户的新改动一起覆盖；视图也不得再把它示为「已修正」）；
+/// - `None`：无法判定（非 `setAnswer` 补丁 / 缺值 / 读不到权威稿）。调用方自行取舍：
+///   撤销取保守（拒绝），展示取保守（保持原状，不凭空宣称失效）。
+fn applied_answer_still_in_place(canonical: Option<&Value>, item: &DecisionItemV1) -> Option<bool> {
+    let patch = item.proposed_patch.as_ref()?;
+    if patch.get("op").and_then(Value::as_str) != Some("setAnswer") {
+        return None;
+    }
+    let slot_id = patch.get("slotId").and_then(Value::as_str)?;
+    let applied = patch.get("value")?;
+    let canonical = canonical?;
+    Some(
+        answer_compare_key(canonical_answer(canonical, slot_id))
+            == answer_compare_key(Some(applied)),
+    )
+}
+
+/// 读取视图。除过滤待办外，还负责「**内容变化后的 resolution 失效**」的呈现。
+///
+/// 规则：
+/// - 已写入的修正（`status == Accepted`，含 `AutoFixed` 与手动接受）：若
+///   `applied_answer_still_in_place` 为 `Some(false)`（目标此后又被用户改动）⇒ 该
+///   resolution **失效**，改以 `Superseded`（`USER_EDITED_AFTER_APPLY`）呈现；
+/// - **只对 `Accepted` 生效**：`Open` 项本来就应该与建议值不同（尚未写入），若一并判定
+///   会把所有待确认项误标为过期；
+/// - `Rejected`：拒绝的语义就是「保持原样」，用户在别处的改动不会使该决定失效，故不随
+///   内容变化失效——这也是「不因一次改稿就把所有决定作废」；
+/// - `Undone` / `Superseded` / `Open` / `Failed`：不参与该规则。
+///
+/// 这是**呈现层**判定，不写库；持久化由 `apply_recognition_decisions_core` 随下一次
+/// 应用收敛（读命令不做写入）。
+fn build_view(
+    batch: &store::BatchRow,
+    items: Vec<DecisionItemV1>,
+    current_edit_version: i64,
+    canonical: Option<&Value>,
+) -> RecognitionDecisionViewV1 {
+    let items: Vec<DecisionItemV1> = items
+        .into_iter()
+        .map(|mut item| {
+            if item.status == DecisionStatusV1::Accepted
+                && applied_answer_still_in_place(canonical, &item) == Some(false)
+            {
+                item.status = DecisionStatusV1::Superseded;
+                item.reason_code = reason::USER_EDITED_AFTER_APPLY.to_string();
+            }
+            item
+        })
+        .collect();
+    let mut actionable = Vec::new();
+    let mut auto_applied = Vec::new();
+    for item in items {
+        // 仍生效的自动修正：后台已写入权威稿，前端只作展示。
+        //
+        // **必须同时排除已撤销的项**：撤销只把 `status` 翻成 `Undone`，`resolution`
+        // 仍是 `AutoFixed`。若只看 `resolution`，撤销后的项会继续以「已自动修正」的
+        // 身份出现（甚至给出撤销入口），「撤销后不再展示、不再可撤销」的闭环就断了。
+        if item.resolution == DecisionResolutionV1::AutoFixed
+            && item.status != DecisionStatusV1::Undone
+        {
+            auto_applied.push(item);
+            continue;
+        }
+        // 待办语义只由 `DecisionItemV1::is_actionable` 定义（唯一判据）：`Open`
+        // （可人工确认）与 `Failed`（自动应用失败、权威稿其实没被修正）都是待办；
+        // `Accepted`/`Rejected`/`Superseded`/`Undone` 都不是。调度器的
+        // `actionableCount` 用同一函数，两处口径不会分叉。
+        if !item.is_actionable() {
+            continue;
+        }
+        actionable.push(item);
+    }
+    RecognitionDecisionViewV1 {
+        schema_version: RECOGNITION_DECISION_VIEW_V1_SCHEMA_VERSION.to_string(),
+        item_id: batch.library_item_id.clone(),
+        job_id: batch.job_id.clone(),
+        batch_id: batch.batch_id.clone(),
+        base_edit_version: batch.base_edit_version,
+        edit_version: current_edit_version,
+        stale: batch.base_edit_version < current_edit_version,
+        generated_at: batch.updated_at.clone(),
+        chains: batch
+            .chain_state
+            .clone()
+            .unwrap_or_else(|| chain_state_from_summary(&batch.chain_status)),
+        summary: batch.summary.clone(),
+        actionable,
+        auto_applied,
+    }
+}
+
+/// `get_recognition_decision` 的实现：只读数据库。
+pub(crate) fn get_recognition_decision_core(
+    root: &Path,
+    item_id: &str,
+) -> CommandResult<Value> {
+    let conn = open_library_connection(root)?;
+    let Some(batch) = store::load_latest_batch(&conn, item_id)? else {
+        // 尚未产生批次不是错误：如实返回空视图，前端显示「识别中/未开始」。
+        return Ok(json!({
+            "schemaVersion": RECOGNITION_DECISION_VIEW_V1_SCHEMA_VERSION,
+            "itemId": item_id,
+            "jobId": Value::Null,
+            "batchId": Value::Null,
+            "baseEditVersion": 0,
+            "editVersion": 0,
+            "stale": false,
+            "generatedAt": Value::Null,
+            "chains": {
+                "local": {"state": StageStateV1::NotRun.as_str()},
+                "cloud": {"state": StageStateV1::NotRun.as_str()},
+                "source": {"state": StageStateV1::NotRun.as_str()},
+                "adjudication": {"state": StageStateV1::NotRun.as_str()}
+            },
+            "summary": {"agreed": 0, "autoFixed": 0, "needsReview": 0, "unverifiable": 0},
+            "actionable": [],
+            "autoApplied": []
+        }));
+    };
+    let items = store::load_decision_items(&conn, &batch.batch_id)?;
+    let current = store::current_edit_version(&conn, item_id)?.unwrap_or(batch.base_edit_version);
+    let view = build_view(&batch, items, current);
+    serde_json::to_value(view).map_err(|error| error.to_string())
+}
+
+// ── 完整识别周期（本地已有稿 → 云端 → 核验 → 裁决 → 自动应用）──────────
+
+/// 自动应用条件在**写入前**用当前权威稿复核。
+///
+/// 单靠裁决阶段的条件不够：裁决与写入之间用户可能已经改过稿。这里要求
+/// 目标槽位「仍然是空的」且「与识别快照一致」，两个条件都满足才算未被修改。
+fn still_auto_applicable(
+    canonical: &Value,
+    snapshot_answer: Option<&Value>,
+    slot_id: &str,
+    proposed: &Value,
+) -> bool {
+    let current = canonical_answer(canonical, slot_id);
+    if !answer_is_empty(current) {
+        return false;
+    }
+    if answer_compare_key(current) != answer_compare_key(snapshot_answer) {
+        return false;
+    }
+    // 建议值本身必须仍然非空，否则是无效 patch。
+    !answer_is_empty(Some(proposed))
+}
+
+fn proposed_answer(item: &DecisionItemV1) -> Option<&Value> {
+    item.proposed_patch.as_ref()?.get("value")
+}
+
+/// 把一批 patch 经正式 V2 路径原子写入；返回 `(applied_ids, failures)`。
+///
+/// 版本冲突时**重新读取**权威稿逐项复核，只有仍然满足自动应用条件的项才
+/// 用新版本重试一次。有界：最多两轮，不做无限重试。
+#[allow(clippy::type_complexity)]
+fn apply_patches_with_recheck(
+    root: &Path,
+    item_id: &str,
+    base_edit_version: i64,
+    decision: &RecognitionDecisionV1,
+    candidates: &[String],
+    snapshot_answers: &std::collections::BTreeMap<String, Option<Value>>,
+    request_id: &str,
+) -> (Vec<String>, Vec<(String, String)>) {
+    let mut eligible: Vec<String> = candidates.to_vec();
+    let mut attempt_base = base_edit_version;
+    let mut last_error = String::new();
+
+    for _attempt in 0..2 {
+        if eligible.is_empty() {
+            break;
+        }
+        let commands: Vec<Value> = eligible
+            .iter()
+            .filter_map(|id| decision.item(id))
+            .filter_map(|item| item.proposed_patch.clone())
+            .collect();
+        if commands.is_empty() {
+            break;
+        }
+        let Ok(mut conn) = open_library_connection(root) else {
+            return (Vec::new(), eligible.into_iter().map(|id| (id, "recognition_db_open_failed".to_string())).collect());
+        };
+        let result = apply_editor_commands_tx(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: item_id.to_string(),
+                base_version: attempt_base,
+                request_id: Some(request_id.to_string()),
+                commands,
+                title: None,
+            },
+            &apply_patch,
+            &|ds| {
+                refresh_quality_report(root, item_id, ds)?;
+                validate_authoring(ds)
+            },
+        );
+        match result {
+            Ok(_) => return (eligible, Vec::new()),
+            Err(error) if error.starts_with("EDIT_VERSION_CONFLICT") => {
+                last_error = error;
+                let Ok(fresh) = open_library_connection(root)
+                    .and_then(|conn| get_canonical_ds(&conn, item_id))
+                else {
+                    break;
+                };
+                let Some((canonical, current)) = fresh else { break };
+                if current == attempt_base {
+                    break;
+                }
+                // 只用「目标确实还是空的且未被改动」的项重试。
+                eligible.retain(|id| {
+                    let Some(item) = decision.item(id) else { return false };
+                    let Some(proposed) = proposed_answer(item) else { return false };
+                    still_auto_applicable(
+                        &canonical,
+                        snapshot_answers.get(id).and_then(|value| value.as_ref()),
+                        &item.target.target_id,
+                        proposed,
+                    )
+                });
+                attempt_base = current;
+            }
+            Err(error) => {
+                last_error = error;
+                break;
+            }
+        }
+    }
+
+    let code = if last_error.starts_with("EDIT_VERSION_CONFLICT") {
+        reason::USER_EDITED.to_string()
+    } else if last_error.is_empty() {
+        "recognition_apply_failed".to_string()
+    } else {
+        last_error.chars().take(80).collect()
+    };
+    (
+        Vec::new(),
+        eligible.into_iter().map(|id| (id, code.clone())).collect(),
+    )
+}
+
+/// 完整识别周期：云端全量识别 → 原文件核验 → 统一裁决 → 安全自动应用。
+///
+/// 幂等保证：
+/// - `batch_id` 由输入与基线版本派生，重试复用同一批次与同一份快照。
+/// - 自动应用使用固定 `request_id = recognition-auto:<batch_id>`，重放不重复写入。
+/// - 版本冲突时逐项复核，用户修改永远优先。
+pub(crate) fn run_recognition_cycle_core(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+    cloud_enabled: bool,
+    base_edit_version: i64,
+    cloud_runner: CloudOutlineRunner<'_>,
+) -> CommandResult<Value> {
+    let (canonical, current_version) = {
+        let conn = open_library_connection(root)?;
+        get_canonical_ds(&conn, job_id)?.ok_or_else(|| format!("ITEM_DS_NOT_SEEDED:{job_id}"))?
+    };
+    let source_sha256 = source_sha256_for_job(root, job_id);
+    let batch_id = recognition_batch_id(job_id, &source_sha256, base_edit_version);
+    let document_ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
+
+    // 复用批次冻结快照（重试幂等），否则按当前稿投影。
+    let stored_local = store::read_candidate(root, job_id, &batch_id, store::LOCAL_CANDIDATE_FILE);
+    let local_snapshot = resolve_local_snapshot(
+        stored_local,
+        &canonical,
+        &batch_id,
+        job_id,
+        job_id,
+        &job_id.to_string(),
+        &source_sha256,
+        base_edit_version,
+    );
+
+    // 云端链：真实调用或分类失败（未配置 / 不支持输入 / 超时 / 非法输出）。
+    let cloud: Result<Value, CloudFailure> = if !cloud_enabled {
+        Err(CloudFailure::not_run(
+            reason::CLOUD_DISABLED,
+            "本次导入未启用云端识别。",
+        ))
+    } else if profile_id.is_none() {
+        Err(CloudFailure::not_run(
+            reason::NO_PROFILE,
+            "没有可用的云端识别配置。",
+        ))
+    } else {
+        cloud_runner(root, job_id, profile_id).map_err(|error| classify_cloud_error(&error))
+    };
+
+    let validate_batch = |patches: &[Value]| -> Result<(), String> {
+        let mut probe = canonical.clone();
+        for patch in patches {
+            apply_patch(&mut probe, patch)?;
+        }
+        refresh_quality_report(root, job_id, &mut probe)?;
+        validate_authoring(&probe)
+    };
+
+    let mut outcome: ReconcileBatchOutcome = reconcile_batch(ReconcileBatchInput {
+        item_id: job_id,
+        job_id,
+        batch_id: &batch_id,
+        source_file_id: job_id,
+        source_sha256: &source_sha256,
+        base_edit_version,
+        canonical: &canonical,
+        document_ir: document_ir.as_ref(),
+        local_snapshot: Some(local_snapshot),
+        cloud,
+        validate_batch: &validate_batch,
+    });
+
+    // 自动应用前的快照答案表：写入前复核用。
+    let snapshot_answers: std::collections::BTreeMap<String, Option<Value>> = outcome
+        .decision
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.decision_id.clone(),
+                outcome
+                    .local
+                    .slot(&item.target.target_id)
+                    .and_then(|slot| slot.answer.clone()),
+            )
+        })
+        .collect();
+
+    let auto_candidates = outcome.auto_apply_candidates.clone();
+    let auto_request_id = format!("recognition-auto:{batch_id}");
+    let (applied, failures) = if auto_candidates.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        apply_patches_with_recheck(
+            root,
+            job_id,
+            current_version,
+            &outcome.decision,
+            &auto_candidates,
+            &snapshot_answers,
+            &auto_request_id,
+        )
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    if !applied.is_empty() {
+        let undo_by_id: std::collections::BTreeMap<String, Value> = outcome
+            .decision
+            .items
+            .iter()
+            .filter(|item| applied.contains(&item.decision_id))
+            .filter_map(|item| {
+                super::adjudicate::undo_patch_for(item).map(|undo| (item.decision_id.clone(), undo))
+            })
+            .collect();
+        super::adjudicate::mark_auto_applied(&mut outcome.decision, &applied, &undo_by_id, &now);
+    }
+    if !failures.is_empty() {
+        super::adjudicate::mark_auto_apply_failed(&mut outcome.decision, &failures);
+    }
+
+    persist_outcome(root, &open_library_connection(root)?, &outcome)?;
+
+    let final_version =
+        store::current_edit_version(&open_library_connection(root)?, job_id)?.unwrap_or(current_version);
+    // 待办数与视图同源：都用 `DecisionItemV1::is_actionable`。**不能**再用
+    // `summary.needsReview + summary.unverifiable` 代替——那是 resolution 轴的分解，
+    // 既漏掉 `Failed`（不可忽略的硬失败），又把「已自动修正」的项算进去过。
+    let actionable_count = outcome
+        .decision
+        .items
+        .iter()
+        .filter(|item| item.is_actionable())
+        .count() as i64;
+    Ok(json!({
+        "schemaVersion": "RecognitionCycleReportV1",
+        "batchId": outcome.decision.batch_id,
+        "itemId": job_id,
+        "baseEditVersion": base_edit_version,
+        "editVersion": final_version,
+        "chains": outcome.chains,
+        "summary": outcome.decision.summary,
+        "actionableCount": actionable_count,
+        "autoApplied": applied,
+        "autoApplyFailed": failures.iter().map(|(id, code)| json!({"decisionId": id, "reasonCode": code})).collect::<Vec<_>>(),
+        "localCandidateStatus": outcome.local.status,
+        "cloudCandidateStatus": outcome.cloud.status
+    }))
+}
+
+// ── 人工决策（接受 / 拒绝）──────────────────────────────────────────────
+
+/// `apply_recognition_decisions` 的实现。
+pub(crate) fn apply_recognition_decisions_core(
+    root: &Path,
+    request: ApplyRecognitionDecisionsRequestV1,
+) -> CommandResult<Value> {
+    // 结构校验必须最先执行，且早于 journal：语义为空的请求一旦被记进 journal，
+    // 就会被幂等路径当成「已处理」原样重放，错误从此固化。
+    request.validate()?;
+    let request = request.normalized();
+
+    let mut conn = open_library_connection(root)?;
+    let payload = serde_json::to_string(&request).map_err(|error| error.to_string())?;
+
+    // 幂等：同一 request_id 重复提交只生效一次。请求体不同则报错（复用 id 是 bug）。
+    if let Some((item_id, batch_id, base_version, stored_payload, result_json)) =
+        store::journal_lookup(&conn, &request.request_id)?
+    {
+        let _ = (&item_id, &batch_id);
+        if base_version != request.base_edit_version || stored_payload != payload {
+            return Err("RECOGNITION_REQUEST_ID_REUSED".to_string());
+        }
+        let mut result: ApplyRecognitionDecisionsResultV1 =
+            serde_json::from_str(&result_json).map_err(|error| error.to_string())?;
+        result.replayed = true;
+        return serde_json::to_value(result).map_err(|error| error.to_string());
+    }
+
+    let Some(batch) = store::load_batch_by_id(&conn, &request.batch_id)? else {
+        return Err(format!("RECOGNITION_BATCH_NOT_FOUND:{}", request.batch_id));
+    };
+
+    let item_id = batch.library_item_id.clone();
+    let mut items = store::load_decision_items(&conn, &batch.batch_id)?;
+    let before = store::current_edit_version(&conn, &item_id)?.unwrap_or(batch.base_edit_version);
+
+    let mut outcomes: Vec<DecisionOutcomeV1> = Vec::new();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // ── 拒绝：只改状态，不碰权威稿 ──────────────────────────────────
+    for decision_id in &request.reject {
+        let Some(index) = items.iter().position(|item| &item.decision_id == decision_id) else {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Failed,
+                reason_code: Some("RECOGNITION_DECISION_NOT_FOUND".to_string()),
+                message: "该建议已不存在，可能已被新批次替换。".to_string(),
+                applied_at: None,
+                undo: None,
+            });
+            continue;
+        };
+        items[index].status = DecisionStatusV1::Rejected;
+        store::set_decision_status(
+            &conn,
+            &batch.batch_id,
+            decision_id,
+            DecisionStatusV1::Rejected.as_str(),
+            &serde_json::to_string(&items[index]).map_err(|error| error.to_string())?,
+            None,
+        )?;
+        outcomes.push(DecisionOutcomeV1 {
+            decision_id: decision_id.clone(),
+            kind: DecisionOutcomeKindV1::Rejected,
+            reason_code: None,
+            message: "已拒绝该建议，权威稿未改动。".to_string(),
+            applied_at: None,
+            undo: None,
+        });
+    }
+
+    // ── 撤销：回滚权威稿 + 持久化「已撤销」状态 ─────────────────────
+    // 收集待回滚项与逆 patch；实际写入复用下方已打开的 `conn_tx`，与接受写入
+    // 走同一条 V2 patch 路径。幂等由外层 `request_id` 日志保证（见文件尾部的
+    // journal_insert / 重放短路）。
+    let mut undo_indices: Vec<usize> = Vec::new();
+    let mut undo_commands: Vec<Value> = Vec::new();
+    for decision_id in &request.undo {
+        let Some(index) = items.iter().position(|item| &item.decision_id == decision_id) else {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Failed,
+                reason_code: Some("RECOGNITION_DECISION_NOT_FOUND".to_string()),
+                message: "该建议已不存在，可能已被新批次替换。".to_string(),
+                applied_at: None,
+                undo: None,
+            });
+            continue;
+        };
+        let item = &items[index];
+        // 已撤销：重放或重复提交，原样跳过，不产生第二次回滚。
+        if item.status == DecisionStatusV1::Undone {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Superseded,
+                reason_code: Some("RECOGNITION_ALREADY_RESOLVED".to_string()),
+                message: "该建议已撤销，本次不再重复回滚。".to_string(),
+                applied_at: item.applied_at.clone(),
+                undo: None,
+            });
+            continue;
+        }
+        // 只有「已自动修正」的项才可被撤销（其他状态没有可回滚的权威稿改动）。
+        if item.status != DecisionStatusV1::Accepted || item.resolution != DecisionResolutionV1::AutoFixed {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Failed,
+                reason_code: Some("RECOGNITION_NOT_UNDOABLE".to_string()),
+                message: "该建议当前状态不可撤销（未被自动修正或未处于已修正状态）。".to_string(),
+                applied_at: None,
+                undo: None,
+            });
+            continue;
+        }
+        let Some(undo) = item.undo.clone() else {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Failed,
+                reason_code: Some("RECOGNITION_NO_UNDO_PATCH".to_string()),
+                message: "该自动修正没有可回滚的撤销补丁，请在题面上手动改回原值。".to_string(),
+                applied_at: None,
+                undo: None,
+            });
+            continue;
+        };
+        undo_commands.push(undo);
+        undo_indices.push(index);
+    }
+
+    // ── 接受：过版本检查 → 原子写入 ─────────────────────────────────
+    let mut accepted_indices: Vec<usize> = Vec::new();
+    for decision_id in &request.accept {
+        let Some(index) = items.iter().position(|item| &item.decision_id == decision_id) else {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Failed,
+                reason_code: Some("RECOGNITION_DECISION_NOT_FOUND".to_string()),
+                message: "该建议已不存在，可能已被新批次替换。".to_string(),
+                applied_at: None,
+                undo: None,
+            });
+            continue;
+        };
+        let item = &items[index];
+        if item.status != DecisionStatusV1::Open {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Superseded,
+                reason_code: Some("RECOGNITION_ALREADY_RESOLVED".to_string()),
+                message: "该建议已处理过，本次不再重复写入。".to_string(),
+                applied_at: item.applied_at.clone(),
+                undo: None,
+            });
+            continue;
+        }
+        // 过期检查：批次基线早于当前版本时，逐项确认目标未被用户改动。
+        if item.resolution == DecisionResolutionV1::Unverifiable {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Failed,
+                reason_code: Some(reason::EVIDENCE_MISSING.to_string()),
+                message: "证据不足，无法判断；请人工修改题稿而不是套用建议。".to_string(),
+                applied_at: None,
+                undo: None,
+            });
+            continue;
+        }
+        if item.proposed_patch.is_none() {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Superseded,
+                reason_code: Some(reason::AUTO_APPLY_RULE_REJECTED.to_string()),
+                message: "该建议不含可应用的修正补丁，请在编辑器中手动修改。".to_string(),
+                applied_at: None,
+                undo: None,
+            });
+            continue;
+        }
+        accepted_indices.push(index);
+    }
+
+    let (mut conn_tx, canonical) = (open_library_connection(root)?, get_canonical_ds(&conn, &item_id)?);
+    let canonical_value = canonical.as_ref().map(|(value, _)| value.clone());
+    let mut applied_indices: Vec<usize> = Vec::new();
+    let mut superseded: Vec<(usize, String)> = Vec::new();
+
+    if !accepted_indices.is_empty() {
+        // 逐项版本复核：目标槽位当前值必须与建议生成时的「本地值」一致。
+        let mut runnable: Vec<usize> = Vec::new();
+        for index in &accepted_indices {
+            let item = &items[*index];
+            let is_answer_field = item.field == crate::schema::recognition_v1::DecisionFieldV1::Answer;
+            let unchanged = match canonical_value.as_ref() {
+                Some(canonical) if is_answer_field => {
+                    answer_compare_key(canonical_answer(canonical, &item.target.target_id))
+                        == answer_compare_key(item.local_value.as_ref())
+                }
+                // 非答案字段没有通用的「当前值读取器」，改用权威稿里的编辑痕迹：
+                // 目标节点（或目标自身）被标记 `user_edited` 即认为已被改动。
+                // 这正好覆盖「用户只改了别处」的情形——目标干净就照常应用，
+                // 而不是一有版本变化就整批作废。
+                Some(canonical) => {
+                    let node_id = item
+                        .target
+                        .node_id
+                        .as_deref()
+                        .unwrap_or(&item.target.target_id);
+                    !is_user_edited(canonical, node_id)
+                        && !is_user_edited(canonical, &item.target.target_id)
+                }
+                // 读不到权威稿：无法证明目标未被改动，保守不写入。
+                None => false,
+            };
+            if unchanged {
+                runnable.push(*index);
+            } else {
+                superseded.push((*index, reason::USER_EDITED.to_string()));
+            }
+        }
+        let commands: Vec<Value> = runnable
+            .iter()
+            .filter_map(|index| items[*index].proposed_patch.clone())
+            .collect();
+        if !commands.is_empty() {
+            let attempt = apply_editor_commands_tx(
+                &mut conn_tx,
+                &ApplyEditorCommandsInput {
+                    item_id: item_id.clone(),
+                    base_version: before,
+                    request_id: Some(format!("recognition-accept:{}", request.request_id)),
+                    commands,
+                    title: None,
+                },
+                &apply_patch,
+                &|ds| {
+                    refresh_quality_report(root, &item_id, ds)?;
+                    validate_authoring(ds)
+                },
+            );
+            if attempt.is_ok() {
+                applied_indices = runnable;
+            } else {
+                // 整批失败：如实落 Failed，不谎称已应用。
+                let code = attempt
+                    .err()
+                    .unwrap_or_else(|| "recognition_apply_failed".to_string())
+                    .chars()
+                    .take(80)
+                    .collect::<String>();
+                for index in runnable {
+                    outcomes.push(DecisionOutcomeV1 {
+                        decision_id: items[index].decision_id.clone(),
+                        kind: DecisionOutcomeKindV1::Failed,
+                        reason_code: Some(code.clone()),
+                        message: "写入失败，题稿未改动，请重试。".to_string(),
+                        applied_at: None,
+                        undo: None,
+                    });
+                }
+            }
+        }
+    }
+
+    for (index, code) in superseded {
+        let item = &mut items[index];
+        item.status = DecisionStatusV1::Superseded;
+        item.reason_code = code.clone();
+        item.user_message = format!("{}（题稿已被修改，建议过期）", item.user_message);
+        store::set_decision_status(
+            &conn,
+            &batch.batch_id,
+            &item.decision_id,
+            DecisionStatusV1::Superseded.as_str(),
+            &serde_json::to_string(item).map_err(|error| error.to_string())?,
+            None,
+        )?;
+        outcomes.push(DecisionOutcomeV1 {
+            decision_id: item.decision_id.clone(),
+            kind: DecisionOutcomeKindV1::Superseded,
+            reason_code: Some(code.clone()),
+            message: "目标已被修改，建议过期；未覆盖你的改动。".to_string(),
+            applied_at: None,
+            undo: None,
+        });
+    }
+
+    for index in &applied_indices {
+        let item = &mut items[*index];
+        item.status = DecisionStatusV1::Accepted;
+        item.auto_applied = false;
+        item.applied_at = Some(now.clone());
+        item.undo = super::adjudicate::undo_patch_for(item);
+        store::set_decision_status(
+            &conn,
+            &batch.batch_id,
+            &item.decision_id,
+            DecisionStatusV1::Accepted.as_str(),
+            &serde_json::to_string(item).map_err(|error| error.to_string())?,
+            Some(&now),
+        )?;
+        outcomes.push(DecisionOutcomeV1 {
+            decision_id: item.decision_id.clone(),
+            kind: DecisionOutcomeKindV1::Applied,
+            reason_code: None,
+            message: "已接受并写入题稿。".to_string(),
+            applied_at: Some(now.clone()),
+            undo: item.undo.clone(),
+        });
+    }
+
+    // ── 撤销写入：回滚权威稿到修正前的值，并把决策持久化为 Undone ──────
+    if !undo_commands.is_empty() {
+        let undo_base = store::current_edit_version(&conn, &item_id)?.unwrap_or(before);
+        let attempt = apply_editor_commands_tx(
+            &mut conn_tx,
+            &ApplyEditorCommandsInput {
+                item_id: item_id.clone(),
+                base_version: undo_base,
+                request_id: Some(format!("recognition-undo:{}", request.request_id)),
+                commands: undo_commands,
+                title: None,
+            },
+            &apply_patch,
+            &|ds| {
+                refresh_quality_report(root, &item_id, ds)?;
+                validate_authoring(ds)
+            },
+        );
+        if attempt.is_ok() {
+            for index in &undo_indices {
+                let item = &mut items[*index];
+                item.status = DecisionStatusV1::Undone;
+                store::set_decision_status(
+                    &conn,
+                    &batch.batch_id,
+                    &item.decision_id,
+                    DecisionStatusV1::Undone.as_str(),
+                    &serde_json::to_string(item).map_err(|error| error.to_string())?,
+                    item.applied_at.as_deref(),
+                )?;
+                outcomes.push(DecisionOutcomeV1 {
+                    decision_id: item.decision_id.clone(),
+                    kind: DecisionOutcomeKindV1::Undone,
+                    reason_code: None,
+                    message: "已撤销自动修正，题稿已改回修正前的值。".to_string(),
+                    applied_at: None,
+                    undo: None,
+                });
+            }
+        } else {
+            let code = attempt
+                .err()
+                .unwrap_or_else(|| "recognition_undo_failed".to_string())
+                .chars()
+                .take(80)
+                .collect::<String>();
+            for index in &undo_indices {
+                outcomes.push(DecisionOutcomeV1 {
+                    decision_id: items[*index].decision_id.clone(),
+                    kind: DecisionOutcomeKindV1::Failed,
+                    reason_code: Some(code.clone()),
+                    message: "撤销写入失败，题稿未改动，请重试。".to_string(),
+                    applied_at: None,
+                    undo: None,
+                });
+            }
+        }
+    }
+
+    let after = store::current_edit_version(&conn, &item_id)?.unwrap_or(before);
+    // 写后重读**同一批次**的行：必须按 batch_id 取（`load_batch_by_id`）。
+    // 这里曾经误用 `load_latest_batch(conn, item_id)`，但传入的是 `batch.batch_id`——
+    // 该函数按 `library_item_id` 过滤，于是恒查不到、被 `unwrap_or_else` 静默回退，
+    // 「从数据库重读」这条路径实际是死代码。
+    let refreshed = store::load_batch_by_id(&conn, &batch.batch_id)?
+        .map(|row| build_view(&row, items.clone(), after))
+        .unwrap_or_else(|| build_view(&batch, items.clone(), after));
+
+    let result = ApplyRecognitionDecisionsResultV1 {
+        schema_version: APPLY_RECOGNITION_DECISIONS_RESULT_V1_SCHEMA_VERSION.to_string(),
+        request_id: request.request_id.clone(),
+        batch_id: batch.batch_id.clone(),
+        edit_version_before: before,
+        edit_version_after: after,
+        replayed: false,
+        outcomes,
+        view: refreshed,
+    };
+    let result_json = serde_json::to_string(&result).map_err(|error| error.to_string())?;
+    store::journal_insert(
+        &conn,
+        &request.request_id,
+        &item_id,
+        &batch.batch_id,
+        request.base_edit_version,
+        &payload,
+        &result_json,
+    )?;
+    Ok(result_json
+        .parse::<Value>()
+        .unwrap_or_else(|_| json!({"schemaVersion": APPLY_RECOGNITION_DECISIONS_RESULT_V1_SCHEMA_VERSION})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::job_store::{make_job, save_job};
+    use crate::library::repository::{
+        open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput,
+    };
+    use crate::reconcile::store::read_decision_file;
+    use crate::schema::recognition_v1::{
+        reason, ChainStatusV1, DecisionFieldV1, DecisionSeverityV1, DecisionSummaryV1, DecisionTargetTypeV1,
+        DecisionTargetV1, RECOGNITION_DECISION_V1_SCHEMA_VERSION,
+    };
+    use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir, write_json};
+    use crate::CommandResult;
+    use crate::SourceFile;
+    // `CreateJobInput` / `WorkflowStep` 定义在 crate 根；`job_store` 与
+    // `workflow_state` 里的同名 `use` 是私有导入，靠它们转发拿不到类型。
+    use crate::{CreateJobInput, WorkflowStep};
+    use serde_json::{json, Value};
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    /// 端到端验证的夹具：建临时库 + 作业 + 已播种的 V2 权威稿 + document-ir，
+    /// 让 `run_recognition_cycle_core` 能走「本地候选投影 → 云端桩 → 三路裁决」全链路。
+    fn seed_bridge_job(canonical: &Value, doc_ir: &Value) -> (PathBuf, String) {
+        let root = std::env::temp_dir().join(format!("pdf2test-bridge-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).expect("app dirs");
+        let mut job = make_job(CreateJobInput {
+            title: Some("bridge".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["t".to_string()]),
+            llm_profile_id: None,
+        });
+        job.current_step = WorkflowStep::Authoring;
+        job.source_files = vec![SourceFile {
+            file_id: "file-1".to_string(),
+            original_name: "source.pdf".to_string(),
+            stored_name: "stored.pdf".to_string(),
+            file_type: "pdf".to_string(),
+            sha256: "0".repeat(64),
+            size_bytes: 1,
+            role: "MainQuestion".to_string(),
+            imported_at: chrono::Utc::now(),
+        }];
+        save_job(&root, &job).expect("save job");
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).expect("job dirs");
+        write_json(
+            &job_dir(&root, &job.job_id).join("authoring-ir.json"),
+            &json!({"schemaVersion":"IeltsAuthoringIRV2","exam":{"title":"t"},"taskGroups":[],"answerSlots":{},"answerKey":{},"quality":{"coverageStatus":{"unassignedSourceNodeIds":[]}}}),
+        )
+        .expect("authoring-ir");
+        write_json(&job_dir(&root, &job.job_id).join("document-ir.json"), doc_ir).expect("document-ir");
+        let conn = open_library_connection(&root).expect("db");
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: &job.job_id,
+                modality: "reading",
+                title: "t",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .expect("shell");
+        seed_canonical_ds(&conn, &job.job_id, &canonical.to_string(), "action_required").expect("seed");
+        (root, job.job_id.clone())
+    }
+
+    /// 返回「自然形态」云端输出（模型真实 contract）：group 只有 `kind`/`range`/`questionIds`
+    /// 等，没有 `taskId`/`taskType` —— 这才是 `expand_natural_cloud_shape` 要适配的输入。
+    fn natural_cloud_shape(kind: &str, answer: Value, question_number: u32) -> Value {
+        json!({
+            "title": "Generated Reading Paper",
+            "groups": [{
+                "kind": kind,
+                "range": [question_number, question_number],
+                "layoutHint": "list",
+                "questionIds": [format!("q{}", question_number)],
+                "notesText": "Complete the sentence with ONE word from the passage.",
+                "confidence": 0.9,
+                "evidence": {"quotes": [{"pageIndex": 1, "text": "source excerpt"}]},
+                "instructionsText": "Complete the sentences.",
+                "slots": [{"questionNumber": question_number, "answer": answer, "evidence": {"quotes": [{"pageIndex":1,"quote":"source excerpt"}]}}]
+            }],
+            "answerKey": {},
+            "confidence": 0.9,
+            "warnings": []
+        })
+    }
+
+    /// 云端桩：返回模型真实的「自然形态」（答案用 text 形状）。
+    ///
+    /// 刻意用 `fn` item 而不是闭包：`CloudOutlineRunner` 是
+    /// `&dyn Fn(&Path, &str, Option<&str>)`，捕获型闭包会被推断成某个具体
+    /// 生命周期，从而报 "implementation of `Fn` is not general enough"；
+    /// fn item 天生满足高阶生命周期约束。
+    fn stub_cloud_runner(
+        _root: &Path,
+        _job_id: &str,
+        _profile_id: Option<&str>,
+    ) -> CommandResult<Value> {
+        Ok(natural_cloud_shape(
+            "sentence_completion",
+            json!({"kind":"text","values":["stencilling"],"normalization":"ielts_default"}),
+            14,
+        ))
+    }
+
+    /// 同上，答案文本为 "B"，用于验证形状对齐（本地 option / 云端 text）不再制造假分歧。
+    fn stub_cloud_runner_answer_b(
+        _root: &Path,
+        _job_id: &str,
+        _profile_id: Option<&str>,
+    ) -> CommandResult<Value> {
+        Ok(natural_cloud_shape(
+            "single_choice",
+            json!({"kind":"text","values":["B"],"normalization":"ielts_default"}),
+            14,
+        ))
+    }
+
+    #[test]
+    fn cloud_natural_shape_drives_full_reconcile_cycle() {
+        let (root, job_id) = seed_bridge_job(
+            &json!({
+                "schemaVersion": "IeltsAuthoringIRV2",
+                "exam": {"title": "t"},
+                "taskGroups": [{
+                    "taskId": "task-1",
+                    "taskType": "sentence_completion",
+                    "displayRange": {"kind":"range","start":14,"end":14},
+                    "responseGroups": [{"responseGroupId":"rg-1","kind":"text_entry","slotIds":["slot-14"]}]
+                }],
+                "answerSlots": {
+                    "slot-14": {"slotId":"slot-14","questionNumber":14,"interaction":"text","sourceAnchors":[]}
+                },
+                "answerKey": {"slot-14": {"kind":"unresolved"}},
+                "quality": {"coverageStatus": {"unassignedSourceNodeIds": []}}
+            }),
+            // 故意不含答案文本：避免触发自动补全，只验证云端答案「参与裁决」。
+            &json!({"pages":[{"pageIndex":0,"lines":[{"text":"A passage about birds and weather."}]}]}),
+        );
+
+        let report = run_recognition_cycle_core(
+            &root,
+            &job_id,
+            Some("test-profile"),
+            true,
+            0,
+            &stub_cloud_runner,
+        )
+        .expect("cycle must run");
+
+        // (1) 云端链不再被判为 unusable/failed：自然形态被正确解析、题组全保留。
+        let cloud_status = report["cloudCandidateStatus"].as_str().expect("cloudCandidateStatus present");
+        assert!(
+            cloud_status == "succeeded" || cloud_status == "partial",
+            "云端链应可用，实际为 {cloud_status}"
+        );
+
+        // (2) 云端答案确实参与了裁决：存在带 cloud_value 的逐项建议。
+        let batch_id = report["batchId"].as_str().expect("batchId present");
+        let decision = read_decision_file(&root, &job_id, batch_id).expect("decision written to disk");
+        assert!(
+            decision.items.iter().any(|item| item.cloud_value.is_some()),
+            "至少有一项裁决引用了云端答案（cloud_value 非空）"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cloud_shape_mismatch_does_not_spawn_false_divergence() {
+        let (root, job_id) = seed_bridge_job(
+            &json!({
+                "schemaVersion": "IeltsAuthoringIRV2",
+                "exam": {"title": "t"},
+                "taskGroups": [{
+                    "taskId": "task-1",
+                    // 单选：作答方式必须与 option 答案自洽。否则会触发
+                    // SLOT_INTERACTION_ANSWER_MISMATCH（与本题要验证的形状对齐无关的 blocker）。
+                    "taskType": "single_choice",
+                    "displayRange": {"kind":"range","start":14,"end":14},
+                    "responseGroups": [{"responseGroupId":"rg-1","kind":"choice","slotIds":["slot-14"]}]
+                }],
+                "answerSlots": {
+                    "slot-14": {"slotId":"slot-14","questionNumber":14,"interaction":"radio","sourceAnchors":[]}
+                },
+                "answerKey": {"slot-14": {"kind":"option","labels":["B"],"assignment":"per_slot"}},
+                "quality": {"coverageStatus": {"unassignedSourceNodeIds": []}}
+            }),
+            &json!({"pages":[{"pageIndex":0,"lines":[{"text":"A passage about climate."}]}]}),
+        );
+
+        // 同一答案 "B"：本地用 option 形状，云端用 text 形状 → 形状敏感比较会误判分歧。
+        let report = run_recognition_cycle_core(
+            &root,
+            &job_id,
+            Some("test-profile"),
+            true,
+            0,
+            &stub_cloud_runner_answer_b,
+        )
+        .expect("cycle must run");
+
+        let cloud_status = report["cloudCandidateStatus"].as_str().expect("cloudCandidateStatus");
+        assert!(
+            cloud_status == "succeeded" || cloud_status == "partial",
+            "云端链应可用，实际 {cloud_status}"
+        );
+
+        let batch_id = report["batchId"].as_str().expect("batchId");
+        let decision = read_decision_file(&root, &job_id, batch_id).expect("decision written");
+
+        // 断言收窄说明（原断言「全局不存在 SUBSTANTIVE_DIVERGENCE 项」过宽且已废弃）：
+        // `reason::SUBSTANTIVE_DIVERGENCE` 在全仓有 13 处产出点
+        // （compare_slot_coverage / compare_slots / compare_groups / compare_assets /
+        //  compare_source_coverage ...），全局无该 reason 并不能隔离本测试真正要验证的
+        // 维度——「同一答案因 AnswerValueV2 形状不同（本地 option / 云端 text）而被误判为
+        // 实质分歧」。因此这里只锁定 **slot-14 的 answer 字段** 这一维度。
+        let slot_answer_divergent: Vec<&str> = decision
+            .items
+            .iter()
+            .filter(|item| {
+                item.target.target_type == DecisionTargetTypeV1::Slot
+                    && item.target.target_id == "slot-14"
+                    && item.field == DecisionFieldV1::Answer
+                    && item.reason_code == reason::SUBSTANTIVE_DIVERGENCE
+            })
+            .map(|item| item.decision_id.as_str())
+            .collect();
+        assert!(
+            slot_answer_divergent.is_empty(),
+            "同一答案 \"B\" 仅因形状不同（本地 option / 云端 text）就在 slot-14 产出实质分歧，\
+             说明 align_cloud_answer_shapes 未生效：{:?}",
+            slot_answer_divergent
+        );
+
+        // 更强、更直接的证据：slot-14 的答案项上，本地值与云端值必须**字节一致**。
+        // 云端原始形态是 text[B]，本地是 option[B]/per_slot；两者相等即证明云端已被
+        // 重新编码为本地形状（对齐逻辑真正跑通），而非「两边恰好都没有值」。
+        let aligned = decision.items.iter().find(|item| {
+            item.target.target_type == DecisionTargetTypeV1::Slot
+                && item.target.target_id == "slot-14"
+                && item.field == DecisionFieldV1::Answer
+                && item.local_value.is_some()
+                && item.cloud_value.is_some()
+        });
+        let aligned = aligned.expect(
+            "应存在一项 slot-14 的答案裁决同时携带 local_value 与 cloud_value，\
+             否则本测试并未真正覆盖「本地 vs 云端」这一维度",
+        );
+        assert_eq!(
+            aligned.local_value, aligned.cloud_value,
+            "同一答案 \"B\" 的本地值与云端值应经形状对齐后完全一致（decision_id={}）",
+            aligned.decision_id
+        );
+
+        // 云端答案仍应参与（提供值）。
+        assert!(
+            decision.items.iter().any(|item| item.cloud_value.is_some()),
+            "云端答案应参与裁决"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn batch_id_is_deterministic_and_path_safe() {
+        let first = recognition_batch_id("job/with:weird*chars", "abcdef0123456789", 3);
+        let second = recognition_batch_id("job/with:weird*chars", "abcdef0123456789", 3);
+        assert_eq!(first, second, "同一输入必须得到同一批次 id");
+        assert!(!first.contains('/') && !first.contains(':') && !first.contains('*'));
+        assert_ne!(first, recognition_batch_id("job/with:weird*chars", "abcdef0123456789", 4));
+        assert_eq!(
+            recognition_batch_id("job-1", "", 1),
+            recognition_batch_id("job-1", "", 1)
+        );
+    }
+
+    #[test]
+    fn version_bump_changes_the_batch() {
+        // 重试（版本不变）复用批次；用户改稿后新批次，避免拿旧建议覆盖新稿。
+        let a = recognition_batch_id("job-1", "deadbeef0000", 7);
+        let b = recognition_batch_id("job-1", "deadbeef0000", 8);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn auto_apply_recheck_rejects_a_slot_the_user_already_filled() {
+        let canonical = serde_json::json!({
+            "answerKey": {"slot-1": {"kind": "text", "values": ["carving"]}}
+        });
+        let snapshot = serde_json::json!({"kind": "unresolved"});
+        let proposed = serde_json::json!({"kind": "text", "values": ["stencilling"]});
+        assert!(
+            !still_auto_applicable(&canonical, Some(&snapshot), "slot-1", &proposed),
+            "用户已经填过答案，不得自动覆盖"
+        );
+    }
+
+    #[test]
+    fn auto_apply_recheck_accepts_an_untouched_empty_slot() {
+        let canonical = serde_json::json!({
+            "answerKey": {"slot-1": {"kind": "unresolved"}}
+        });
+        let snapshot = serde_json::json!({"kind": "unresolved"});
+        let proposed = serde_json::json!({"kind": "text", "values": ["stencilling"]});
+        assert!(still_auto_applicable(&canonical, Some(&snapshot), "slot-1", &proposed));
+    }
+
+    fn decision_item(
+        target_id: &str,
+        status: DecisionStatusV1,
+        resolution: DecisionResolutionV1,
+    ) -> DecisionItemV1 {
+        DecisionItemV1 {
+            decision_id: format!("d:slot:{target_id}:answer"),
+            resolution,
+            code: "ANSWER_CONFLICT".to_string(),
+            severity: DecisionSeverityV1::Blocker,
+            title: "t".to_string(),
+            user_message: "m".to_string(),
+            target: DecisionTargetV1 {
+                target_type: DecisionTargetTypeV1::Slot,
+                target_id: target_id.to_string(),
+                task_id: None,
+                node_id: None,
+                question_numbers: vec![1],
+            },
+            field: DecisionFieldV1::Answer,
+            evidence: vec![],
+            local_value: None,
+            cloud_value: None,
+            source_value: None,
+            proposed_patch: None,
+            undo: None,
+            auto_applied: false,
+            applied_at: None,
+            status,
+            reason_code: reason::SUBSTANTIVE_DIVERGENCE.to_string(),
+            dependency_group: None,
+        }
+    }
+
+    /// `cmd-state` 修复的回归锁定：**自动应用失败的项（`Failed`）必须留在 `actionable`**。
+    ///
+    /// 它是「用户最需要处理」的项——自动写入失败、权威稿其实没有被修正，若被当成
+    /// 「已处理」过滤掉，界面上不会出现任何提示，静默丢掉的恰恰是最该看见的问题。
+    /// 同时反向锁定不得过度暴露：已被用户处理（接受/拒绝）、已过期（`Superseded`）、
+    /// 已撤销（`Undone`）的项不得重新冒出来；`AutoFixed` 只能进 `auto_applied`。
+    ///
+    /// 此前该分支**零测试**（审计发现的唯一缺口：产品改动已落地，但没有任何断言保护它）。
+    #[test]
+    fn build_view_keeps_failed_items_actionable_but_hides_handled_ones() {
+        let batch = store::BatchRow {
+            batch_id: "batch-1".to_string(),
+            library_item_id: "item-1".to_string(),
+            job_id: "job-1".to_string(),
+            base_edit_version: 3,
+            source_sha256: "a".repeat(64),
+            chain_status: ChainStatusSummaryV1 {
+                local: ChainStatusV1::Succeeded,
+                cloud: ChainStatusV1::Succeeded,
+                source: ChainStatusV1::Succeeded,
+                cloud_reason_code: None,
+                source_reason_code: None,
+            },
+            summary: DecisionSummaryV1 {
+                agreed: 0,
+                auto_fixed: 1,
+                needs_review: 4,
+                unverifiable: 0,
+            },
+            chain_state: None,
+            updated_at: "2026-09-15T00:00:00Z".to_string(),
+        };
+
+        let items = vec![
+            decision_item("open-1", DecisionStatusV1::Open, DecisionResolutionV1::NeedsReview),
+            // 自动应用写入失败：权威稿未改动，必须保留为待办。
+            decision_item("failed-1", DecisionStatusV1::Failed, DecisionResolutionV1::NeedsReview),
+            // 已处理 / 已过期 / 已撤销：不得重新成为待办。
+            decision_item("accepted-1", DecisionStatusV1::Accepted, DecisionResolutionV1::NeedsReview),
+            decision_item("rejected-1", DecisionStatusV1::Rejected, DecisionResolutionV1::NeedsReview),
+            decision_item("superseded-1", DecisionStatusV1::Superseded, DecisionResolutionV1::NeedsReview),
+            decision_item("undone-1", DecisionStatusV1::Undone, DecisionResolutionV1::NeedsReview),
+            // 已自动写入：只进 auto_applied。
+            decision_item("autofixed-1", DecisionStatusV1::Accepted, DecisionResolutionV1::AutoFixed),
+        ];
+
+        let view = build_view(&batch, items, 5);
+
+        let mut actionable_ids: Vec<&str> = view
+            .actionable
+            .iter()
+            .map(|item| item.target.target_id.as_str())
+            .collect();
+        actionable_ids.sort_unstable();
+        assert_eq!(
+            actionable_ids,
+            vec!["failed-1", "open-1"],
+            "只有 open 与 failed 是待办；失败项若被过滤，用户将看不到必须处理的问题"
+        );
+
+        let auto_ids: Vec<&str> = view
+            .auto_applied
+            .iter()
+            .map(|item| item.target.target_id.as_str())
+            .collect();
+        assert_eq!(auto_ids, vec!["autofixed-1"], "AutoFixed 只能进 auto_applied");
+
+        // 视图自身的陈旧判定：批次基线 3 早于当前编辑版本 5。
+        assert_eq!(view.base_edit_version, 3);
+        assert_eq!(view.edit_version, 5);
+        assert!(view.stale, "base_edit_version < edit_version 时必须标记 stale");
+    }
+
+    /// `cmd-state` 任务的另一半：**接受 / 撤销后的状态必须跨「重开」存活**。
+    ///
+    /// 机制：状态落在 `recognition_decisions_v1.item_json`（`store::set_decision_status`），
+    /// 重开时由 `load_decision_items` 读回，`build_view` 再按状态过滤——因此用户处理过的项
+    /// 不会重新变成待办，也不会凭空消失。此前**没有任何「文件库 + 断连重开」的测试**
+    /// 覆盖这条链路：`store.rs` 里那条用的是内存库，语义上根本测不到「重开」。
+    #[test]
+    fn decision_status_survives_a_reopen_and_never_returns_to_actionable() {
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-reopen-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).expect("app dirs");
+        let item_id = "reopen-item";
+
+        let decision = RecognitionDecisionV1 {
+            schema_version: RECOGNITION_DECISION_V1_SCHEMA_VERSION.to_string(),
+            batch_id: "batch-1".to_string(),
+            item_id: item_id.to_string(),
+            job_id: "job-1".to_string(),
+            base_edit_version: 0,
+            generated_at: "2026-09-16T00:00:00Z".to_string(),
+            chain_status: ChainStatusSummaryV1 {
+                local: ChainStatusV1::Succeeded,
+                cloud: ChainStatusV1::Succeeded,
+                source: ChainStatusV1::Succeeded,
+                cloud_reason_code: None,
+                source_reason_code: None,
+            },
+            items: vec![decision_item(
+                "slot-1",
+                DecisionStatusV1::Open,
+                DecisionResolutionV1::NeedsReview,
+            )],
+            summary: DecisionSummaryV1 {
+                agreed: 0,
+                auto_fixed: 0,
+                needs_review: 1,
+                unverifiable: 0,
+            },
+        };
+
+        // ── 第一次开库：写入批次与待办项，然后用户「接受」该项。──────────────
+        {
+            let conn = open_library_connection(&root).expect("db");
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: item_id,
+                    modality: "reading",
+                    title: "t",
+                    status: "action_required",
+                    source_asset_id: None,
+                },
+            )
+            .expect("shell");
+            store::upsert_batch(&conn, &decision).expect("batch");
+            store::replace_decision_items(&conn, &decision).expect("items");
+
+            let row = store::load_latest_batch(&conn, item_id)
+                .expect("load")
+                .expect("batch row");
+            let items = store::load_decision_items(&conn, "batch-1").expect("items");
+            assert_eq!(
+                build_view(&row, items, 0).actionable.len(),
+                1,
+                "尚未处理的项必须出现在待办中"
+            );
+
+            let mut accepted = decision.items[0].clone();
+            accepted.status = DecisionStatusV1::Accepted;
+            accepted.auto_applied = false;
+            accepted.applied_at = Some("2026-09-16T00:00:01Z".to_string());
+            store::set_decision_status(
+                &conn,
+                "batch-1",
+                &accepted.decision_id,
+                DecisionStatusV1::Accepted.as_str(),
+                &serde_json::to_string(&accepted).expect("json"),
+                accepted.applied_at.as_deref(),
+            )
+            .expect("accept must be persisted");
+        } // 连接在此断开——等价于应用退出。
+
+        // ── 第二次开库（重开）：接受状态必须仍在，且不得重新成为待办。────────
+        let conn = open_library_connection(&root).expect("reopen db");
+        let row = store::load_latest_batch(&conn, item_id)
+            .expect("load")
+            .expect("batch row");
+        let items = store::load_decision_items(&conn, "batch-1").expect("items");
+        assert_eq!(items.len(), 1, "重开后裁决项数量不得变化");
+        assert_eq!(
+            items[0].status,
+            DecisionStatusV1::Accepted,
+            "接受状态必须跨重开存活（这是「重开不丢已处理状态」的机制本身）"
+        );
+        assert!(
+            build_view(&row, items, 0).actionable.is_empty(),
+            "已接受的项在重开后不得重新冒出来"
+        );
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

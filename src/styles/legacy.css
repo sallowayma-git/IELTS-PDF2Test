@@ -184,6 +184,7 @@ textarea { min-height: 120px; resize: vertical; }
   .exam-canvas-v2 .v2-author-asset figcaption { margin-top: 7px; color: var(--muted); font-size: 0.9rem; text-align: center; }
   .exam-canvas-v2 .v2-canvas-hotspot { position: absolute; z-index: 2; min-width: 28px; min-height: 24px; padding: 2px 5px; overflow: hidden; border: 2px solid #2563eb; border-radius: 4px; background: rgba(255, 255, 255, 0.88); color: #1d4ed8; font: inherit; font-weight: 700; cursor: pointer; }
   .exam-canvas-v2.is-student .v2-canvas-hotspot { border-color: #64748b; color: #334155; }
+  .exam-canvas-v2 .v2-canvas-hotspot.is-pressed { background: #2563eb; color: #ffffff; }
 .exam-canvas-v2 .v2-task-header h2 { margin: 0 0 10px; font-size: 1rem; text-transform: none; }
 .exam-canvas-v2 .v2-instruction,
 .exam-canvas-v2 .v2-stimulus,

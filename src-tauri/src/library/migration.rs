@@ -399,4 +399,57 @@ mod tests {
         assert_eq!(version, 2);
         let _ = fs::remove_dir_all(&root);
     }
+
+    /// 预检不得比发布更严。`publish_items_core` 在读权威稿之前会先跑
+    /// `migrate_single_item` 把它播种出来，所以「只有影子稿、还没有题库行」的条目
+    /// 对发布是**可发**的。预检若跳过这一步就会报 `ITEM_DS_NOT_SEEDED`，
+    /// 把一件能发布的事说成不能发布——反方向的假信号，同样是界面与门禁不一致。
+    #[test]
+    fn publish_preflight_is_not_stricter_than_publish_for_an_unmigrated_item() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        seed_job(&root, "job-shadow-only", true);
+
+        let result =
+            crate::authoring_v2_commands::get_publish_preflight_core(&root, "job-shadow-only")
+                .unwrap();
+        let codes = result["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|blocker| blocker["code"].as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            !codes.contains(&"ITEM_DS_NOT_SEEDED"),
+            "preflight must not block an item that publishing would migrate and accept: {codes:?}"
+        );
+        // 预检顺手把权威稿播种出来了——这正是发布路径依赖的前置条件。
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        assert!(
+            get_canonical_ds(&conn, "job-shadow-only").unwrap().is_some(),
+            "the preflight must leave the item in the state publishing expects"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 反方向：连影子稿都没有的条目，发布必然以 `ITEM_DS_NOT_SEEDED` 失败，
+    /// 预检必须报出同一个码，而不是给一个绿色的空列表。
+    #[test]
+    fn publish_preflight_reports_the_publish_blocker_when_there_is_nothing_to_migrate() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        seed_job(&root, "job-empty", false);
+
+        let result =
+            crate::authoring_v2_commands::get_publish_preflight_core(&root, "job-empty").unwrap();
+        assert_eq!(result["passed"], serde_json::json!(false));
+        let codes = result["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|blocker| blocker["code"].as_str())
+            .collect::<Vec<_>>();
+        assert!(codes.contains(&"ITEM_DS_NOT_SEEDED"), "{codes:?}");
+        let _ = fs::remove_dir_all(&root);
+    }
 }

@@ -268,6 +268,60 @@ pub(crate) fn apply_llm_suggestion_core(
     question_ids: Option<Vec<String>>,
     user_confirmed: bool,
 ) -> CommandResult<Value> {
+    apply_llm_suggestion_core_with_version(
+        root,
+        job_id,
+        suggestion_id,
+        selected_paths,
+        question_ids,
+        user_confirmed,
+        None,
+    )
+}
+
+/// 云端候选只能落在**权威稿**上（计划 §5 / §9.6）。
+///
+/// 编辑器与发布链都以 `library_items_v2.canonical_ds` 为唯一权威；本函数历史上只写
+/// V1 `authoring-ir.json`，而 `migrate_single_item` 对已有权威稿的条目直接返回、从不
+/// 回读 V1 —— 于是「接受建议」会**静默丢失**。这里在写盘前把两种情况变成显式错误：
+///
+/// - 候选产出时的编辑版本与当前权威版本不一致 → `LLM_SUGGESTION_STALE`
+///   （过期候选不得覆盖用户后来的编辑，findings V5 stale 保护）；
+/// - 条目已有 V2 权威稿 → `LLM_SUGGESTION_AUTHORITATIVE_STORE_IS_V2`
+///   （候选必须走 V2 补丁路径，而不是写一个没人读的 V1 文件）。
+fn guard_llm_suggestion_authoritative_store(
+    root: &Path,
+    job_id: &str,
+    base_edit_version: Option<u64>,
+) -> CommandResult<()> {
+    let conn = crate::library::repository::open_library_connection(root)?;
+    let Some(item) = crate::library::repository::get_item(&conn, job_id)? else {
+        return Ok(());
+    };
+    if !item.has_canonical_ds {
+        return Ok(());
+    }
+    if let Some(base) = base_edit_version {
+        if base != item.current_edit_version as u64 {
+            return Err(format!(
+                "LLM_SUGGESTION_STALE:current={}:base={base}",
+                item.current_edit_version
+            ));
+        }
+    }
+    Err("LLM_SUGGESTION_AUTHORITATIVE_STORE_IS_V2".to_string())
+}
+
+pub(crate) fn apply_llm_suggestion_core_with_version(
+    root: &Path,
+    job_id: &str,
+    suggestion_id: &str,
+    selected_paths: Vec<String>,
+    question_ids: Option<Vec<String>>,
+    user_confirmed: bool,
+    base_edit_version: Option<u64>,
+) -> CommandResult<Value> {
+    guard_llm_suggestion_authoritative_store(root, job_id, base_edit_version)?;
     let mut ir: Value = read_json(&job_dir(root, job_id).join("authoring-ir.json"))?;
     let suggestion = load_llm_suggestions(root, job_id)?
         .into_iter()

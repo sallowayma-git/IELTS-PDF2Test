@@ -350,6 +350,20 @@ function patchInsertAnswerSlot(document: IeltsAuthoringIRV2, patch: Extract<Auth
   patchExpression(document, { op: "setQuestionExpression", taskId: patch.taskId, expression: patch.expression });
 }
 
+/** 删除答案位时同步清掉内容里仍指向该 slot 的热点，避免留下无法修复的悬挂热点。 */
+function removeHotspotsForSlot(document: IeltsAuthoringIRV2, slotId: string): void {
+  const visit = (nodes: ContentNodeV2[]): void => {
+    for (const node of nodes) {
+      if ((node.type === "figure" || node.type === "diagram") && Array.isArray(node.hotspots)) {
+        const next = node.hotspots.filter((hotspot) => hotspot.slotId !== slotId);
+        if (next.length !== node.hotspots.length) node.hotspots = next;
+      }
+      for (const child of childArrays(node as unknown as JsonObject)) visit(child.nodes);
+    }
+  };
+  for (const root of everyContentRoot(document)) visit(root);
+}
+
 function patchDeleteAnswerSlot(document: IeltsAuthoringIRV2, patch: Extract<AuthoringPatchV2, { op: "deleteAnswerSlot" }>): void {
   const task = document.taskGroups.find((candidate) => candidate.taskId === patch.taskId);
   const group = task?.responseGroups.find((candidate) => candidate.responseGroupId === patch.responseGroupId);
@@ -362,6 +376,7 @@ function patchDeleteAnswerSlot(document: IeltsAuthoringIRV2, patch: Extract<Auth
   group.slotIds = group.slotIds.filter((slotId) => slotId !== patch.slotId);
   delete document.answerSlots[patch.slotId];
   delete document.answerKey[patch.slotId];
+  removeHotspotsForSlot(document, patch.slotId);
   patchExpression(document, { op: "setQuestionExpression", taskId: patch.taskId, expression: patch.expression });
 }
 

@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 3;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 4;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let transaction = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
@@ -54,8 +54,70 @@ fn migrations() -> Vec<(i64, &'static str)> {
              WHERE stage = 'ready_for_review' AND local_status = 'action_required'
                AND last_error_code = 'interrupted';",
         ),
+        // v4：识别闭环（生成批次 / 统一裁决 / 决策幂等）。数据库是**读取权威**，
+        // job 目录下的 JSON 只作证据留痕（可被清理策略回收而不影响前端读取）。
+        (4, RECOGNITION_CLOSED_LOOP_SQL),
     ]
 }
+
+const RECOGNITION_CLOSED_LOOP_SQL: &str = r#"
+-- 一次导入 = 一个生成批次。重试复用同一 batch_id（幂等 apply 的前提）。
+CREATE TABLE IF NOT EXISTS recognition_batches_v1 (
+    batch_id          TEXT PRIMARY KEY,
+    library_item_id   TEXT NOT NULL REFERENCES library_items_v2(id),
+    job_id            TEXT NOT NULL,
+    base_edit_version INTEGER NOT NULL,
+    source_sha256     TEXT NOT NULL DEFAULT '',
+    local_status      TEXT NOT NULL DEFAULT 'not_started',
+    cloud_status      TEXT NOT NULL DEFAULT 'not_started',
+    source_status     TEXT NOT NULL DEFAULT 'not_started',
+    cloud_reason_code TEXT,
+    source_reason_code TEXT,
+    -- 四阶段完整状态（RecognitionChainStateV1）。churn 低、字段演进频繁，
+    -- 因此整块存 JSON；上面的 status/reason 列保留，供 SQL 过滤与索引使用。
+    stages_json       TEXT NOT NULL DEFAULT '{}',
+    agreed_count       INTEGER NOT NULL DEFAULT 0,
+    auto_fixed_count   INTEGER NOT NULL DEFAULT 0,
+    needs_review_count INTEGER NOT NULL DEFAULT 0,
+    unverifiable_count INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_recognition_batches_v1_item
+    ON recognition_batches_v1(library_item_id, created_at);
+
+-- 统一裁决逐项落库：前端读取的权威来源。同一 batch 内 decision_id 唯一，
+-- 因此「同一问题只有一张建议卡」在存储层也被强制。
+CREATE TABLE IF NOT EXISTS recognition_decisions_v1 (
+    batch_id        TEXT NOT NULL,
+    decision_id     TEXT NOT NULL,
+    library_item_id TEXT NOT NULL REFERENCES library_items_v2(id),
+    resolution      TEXT NOT NULL,
+    code            TEXT NOT NULL,
+    severity        TEXT NOT NULL,
+    target_type     TEXT NOT NULL,
+    target_id       TEXT NOT NULL,
+    field           TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    item_json       TEXT NOT NULL,
+    applied_at      TEXT,
+    updated_at      TEXT NOT NULL,
+    PRIMARY KEY (batch_id, decision_id)
+);
+CREATE INDEX IF NOT EXISTS idx_recognition_decisions_v1_item
+    ON recognition_decisions_v1(library_item_id, batch_id);
+
+-- 决策提交幂等日志：同一 request_id 的重复提交不重复写入权威稿。
+CREATE TABLE IF NOT EXISTS recognition_decision_journal_v1 (
+    request_id        TEXT PRIMARY KEY,
+    library_item_id   TEXT NOT NULL,
+    batch_id          TEXT NOT NULL,
+    base_edit_version INTEGER NOT NULL,
+    payload_json      TEXT NOT NULL,
+    result_json       TEXT NOT NULL,
+    created_at        TEXT NOT NULL
+);
+"#;
 
 const LIBRARY_V2_SCHEMA_SQL: &str = r#"
 -- ── 唯一权威稿（计划 §4.3）──────────────────────────────────────────
@@ -159,6 +221,9 @@ mod tests {
             "actionable_issues_v1",
             "library_item_recovery_v1",
             "editor_journal_v1",
+            "recognition_batches_v1",
+            "recognition_decisions_v1",
+            "recognition_decision_journal_v1",
         ] {
             let name: String = conn
                 .query_row(

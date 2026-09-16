@@ -6,6 +6,7 @@ import type {
   ResponseGroupV2,
   TaskGroupV2
 } from "../types/ielts-authoring-v2";
+import type { ContentNodeV2, DiagramHotspotV2 } from "../types/content-doc-v2";
 import type { AssetDescriptorV2 } from "../types/schema-common-v2";
 import {
   READING_ATTEMPT_V2_SCHEMA_VERSION,
@@ -83,6 +84,107 @@ function sourceRevision(source: ReadingExamSourceV2): number {
     : 0;
 }
 
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return isRecord(value);
+}
+
+/** 内容节点的子容器键：与 ContentDoc 的 children/items/rows/cells/steps/caption 对应。 */
+function contentChildArrays(node: ContentNodeV2): ContentNodeV2[][] {
+  const keys = ["children", "items", "rows", "cells", "steps", "caption"];
+  return keys.flatMap((key) => {
+    const value = (node as unknown as Record<string, unknown>)[key];
+    return Array.isArray(value) && value.every((entry) => isRecordLike(entry) && typeof entry.type === "string")
+      ? [value as ContentNodeV2[]]
+      : [];
+  });
+}
+
+function hotspotGroups(nodes: ContentNodeV2[], out: Array<DiagramHotspotV2[]>): void {
+  for (const node of nodes) {
+    if ((node.type === "figure" || node.type === "diagram") && Array.isArray(node.hotspots)) {
+      out.push(node.hotspots);
+    }
+    for (const children of contentChildArrays(node)) hotspotGroups(children, out);
+  }
+}
+
+function hotspotContentRoots(source: ReadingExamSourceV2): ContentNodeV2[][] {
+  const roots: ContentNodeV2[][] = [source.passage.content];
+  for (const task of source.taskGroups) {
+    roots.push(task.instructions);
+    if (task.stimulus?.length) roots.push(task.stimulus);
+    for (const response of task.responseGroups) {
+      if (response.prompt?.length) roots.push(response.prompt);
+    }
+  }
+  return roots;
+}
+
+/** 学生端点击热点时原样提交 `hotspotId`，服务端按该 slot 的可接受答案值校验。 */
+function acceptedSubmitValues(value: AnswerValueV2 | undefined): string[] {
+  if (!value) return [];
+  const raw = value.kind === "option" ? value.labels : value.kind === "text" ? value.values : [];
+  return raw.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+}
+
+function hotspotValueMatches(value: string, accepted: string[], exact: boolean): boolean {
+  const normalize = (input: string) => {
+    const trimmed = input.trim();
+    return exact ? trimmed : trimmed.replace(/\s+/gu, " ").toLocaleUpperCase("en-US");
+  };
+  return accepted.some((candidate) => normalize(candidate) === normalize(value));
+}
+
+/** 把无法映射到答案值的热点 ID 重写为该 slot 的首选可接受值；无法映射时保持原值由校验拒绝。
+ *  就地修改调用方传入的 source，调用方必须先持有独立副本。 */
+function normalizeRuntimeHotspots(source: ReadingExamSourceV2): void {
+  const acceptedBySlot = new Map(Object.entries(source.answerKey).map(([slotId, value]) => [slotId, acceptedSubmitValues(value)]));
+  for (const nodes of hotspotContentRoots(source)) {
+    const groups: Array<DiagramHotspotV2[]> = [];
+    hotspotGroups(nodes, groups);
+    for (const hotspots of groups) {
+      for (const hotspot of hotspots) {
+        const accepted = acceptedBySlot.get(hotspot.slotId);
+        if (!accepted?.length || hotspotValueMatches(hotspot.hotspotId, accepted, false)) continue;
+        hotspot.hotspotId = accepted[0];
+      }
+    }
+  }
+}
+
+function hotspotIssues(source: ReadingExamSourceV2): ReadingRuntimeIssueV2[] {
+  const issues: ReadingRuntimeIssueV2[] = [];
+  const exactBySlot = new Map(
+    Object.entries(source.answerKey).map(([slotId, value]) => [slotId, value.kind === "text" && value.normalization === "exact"])
+  );
+  for (const nodes of hotspotContentRoots(source)) {
+    const groups: Array<DiagramHotspotV2[]> = [];
+    hotspotGroups(nodes, groups);
+    for (const hotspots of groups) {
+      const seen = new Set<string>();
+      for (const hotspot of hotspots) {
+        if (!source.answerSlots[hotspot.slotId]) {
+          issues.push(issue("RUNTIME_HOTSPOT_SLOT_UNKNOWN", hotspot.hotspotId, "A figure hotspot references an unknown answer slot."));
+          continue;
+        }
+        const accepted = acceptedSubmitValues(source.answerKey[hotspot.slotId]);
+        if (!hotspotValueMatches(hotspot.hotspotId, accepted, exactBySlot.get(hotspot.slotId) === true)) {
+          issues.push(issue(
+            "RUNTIME_HOTSPOT_SUBMIT_VALUE_UNMAPPED",
+            hotspot.hotspotId,
+            "The hotspot submit value is not an accepted answer for its slot. Set the slot answer and rebind the hotspot."
+          ));
+        }
+        if (seen.has(hotspot.hotspotId)) {
+          issues.push(issue("RUNTIME_HOTSPOT_ID_DUPLICATE", hotspot.hotspotId, "Hotspot IDs must be unique within their figure."));
+        }
+        seen.add(hotspot.hotspotId);
+      }
+    }
+  }
+  return issues;
+}
+
 /**
  * Perform the cross-field checks that JSON Schema cannot express. This is the
  * boundary used by both the preview and a future student loader.
@@ -140,12 +242,48 @@ export function validateReadingExamSourceV2(source: ReadingExamSourceV2): Readin
       issues.push(issue("RUNTIME_SLOT_ID_MISMATCH", slotId, "Slot key, slotId and display map must agree."));
     }
   }
+  issues.push(...hotspotIssues(source));
   return issues;
 }
 
 export function assertReadingExamSourceV2(source: ReadingExamSourceV2): void {
   const issues = validateReadingExamSourceV2(source);
   if (issues.length) throwFirstIssue(issues);
+}
+
+/**
+ * 答案键类型与槽位交互的一致性检查——与真实学生端运行时同一判定。
+ *
+ * 真实学生端（`src-tauri/src/reading_runtime_v2.rs`）对「选项型槽位 + 文本型答案键」
+ * 判 `RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION`，并且会让**整份提交失败**；发布门禁的 Rust
+ * 编译器探针把同一件事记成 `RUNTIME_COMPILER_FAILED`。
+ *
+ * 为什么单独一个函数、而不是并进 `validateReadingExamSourceV2`：
+ * 该问题**不影响题面渲染**——题面照样能画出来、学生照样能作答。而 `validateReadingExamSourceV2`
+ * 被 `assertReadingExamSourceV2` 直接 throw，并进那条路径会把整份预览一起挡掉，作者连学生视图
+ * 都看不到，反而无从判断。所以这里单独暴露，让预览在**保留学生视图**的同时，明确告诉作者
+ * 「提交/计分阶段会失败」——既不是假完成，也不制造新的死角。
+ *
+ * `unresolved` 表示「答案还没填」，属另一类问题，不在本检查范围。
+ */
+export function validateReadingAnswerKeyKinds(source: ReadingExamSourceV2): ReadingRuntimeIssueV2[] {
+  const issues: ReadingRuntimeIssueV2[] = [];
+  for (const [slotId, slot] of Object.entries(source.answerSlots)) {
+    const answer = source.answerKey[slotId];
+    if (!answer || answer.kind === "unresolved") continue;
+    if (slot.interaction === "text") {
+      if (answer.kind !== "text") {
+        issues.push(issue("RUNTIME_TEXT_SLOT_ANSWER_NOT_TEXT", slotId, "Text slots accept only text answer keys."));
+      }
+    } else if (answer.kind !== "option") {
+      issues.push(issue(
+        "RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION",
+        slotId,
+        "Choice, matching and hotspot slots accept option answer keys; a mismatched key makes the whole submission fail."
+      ));
+    }
+  }
+  return issues;
 }
 
 /**
@@ -507,6 +645,8 @@ export async function resolveAsset(
 }
 
 export function buildReadingSourceV2FromAuthoring(authoring: IeltsAuthoringIRV2): ReadingExamSourceV2 {
+  // taskGroups/passage 深拷贝后再做 hotspot 规范化，避免改写共享的 authoring 状态。
+  const taskGroups: TaskGroupV2[] = structuredClone(authoring.taskGroups);
   const source: ReadingExamSourceV2 = {
     schemaVersion: READING_EXAM_SOURCE_V2_SCHEMA_VERSION,
     examId: authoring.exam.examId,
@@ -517,10 +657,10 @@ export function buildReadingSourceV2FromAuthoring(authoring: IeltsAuthoringIRV2)
     },
     assets: { examId: authoring.exam.examId, assets: authoring.assets },
     passage: {
-      content: authoring.passage?.content ?? [],
+      content: structuredClone(authoring.passage?.content ?? []),
       paragraphMap: authoring.passage?.paragraphMap
     },
-    taskGroups: authoring.taskGroups,
+    taskGroups,
     answerSlots: authoring.answerSlots,
     answerKey: authoring.answerKey,
     questionOrder: Object.values(authoring.answerSlots)
@@ -537,6 +677,7 @@ export function buildReadingSourceV2FromAuthoring(authoring: IeltsAuthoringIRV2)
       sourceRevisionKind: authoring.audit.source
     }
   };
+  normalizeRuntimeHotspots(source);
   assertReadingExamSourceV2(source);
   return source;
 }

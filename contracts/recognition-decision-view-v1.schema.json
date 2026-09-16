@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "recognition-decision-view-v1.schema.json",
+  "title": "RecognitionDecisionViewV1",
+  "description": "get_recognition_decision 的返回。四阶段状态 + 待处理建议 + 已自动修正记录。\n注意：本文件**有意**不列入 contracts/contract-manifest.json —— 该 manifest 是跨仓（NAS peer）契约包，新增条目会触发对端 hash 校验；识别闭环契约目前只在本仓消费。语义真源是 src-tauri/src/schema/recognition_v1.rs。",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "itemId",
+    "jobId",
+    "batchId",
+    "baseEditVersion",
+    "editVersion",
+    "stale",
+    "generatedAt",
+    "chains",
+    "summary",
+    "actionable",
+    "autoApplied"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "RecognitionDecisionViewV1" },
+    "itemId": { "type": "string", "minLength": 1 },
+    "jobId": { "type": ["string", "null"] },
+    "batchId": { "type": ["string", "null"] },
+    "baseEditVersion": { "type": "integer", "minimum": 0 },
+    "editVersion": { "type": "integer", "minimum": 0 },
+    "stale": { "type": "boolean", "description": "baseEditVersion < editVersion" },
+    "generatedAt": { "type": ["string", "null"] },
+    "chains": { "$ref": "#/$defs/chains" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "actionable": { "type": "array", "items": { "$ref": "#/$defs/decisionItem" } },
+    "autoApplied": { "type": "array", "items": { "$ref": "#/$defs/decisionItem" } }
+  },
+  "$defs": {
+    "stageState": {
+      "enum": ["queued", "running", "succeeded", "partial", "unusable", "not_run", "failed", "canceled"]
+    },
+    "stageStatus": {
+      "type": "object",
+      "required": ["state"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "$ref": "#/$defs/stageState" },
+        "reasonCode": { "type": ["string", "null"] },
+        "message": { "type": ["string", "null"] },
+        "updatedAt": { "type": ["string", "null"] }
+      }
+    },
+    "chains": {
+      "type": "object",
+      "required": ["local", "cloud", "source", "adjudication"],
+      "additionalProperties": false,
+      "properties": {
+        "local": { "$ref": "#/$defs/stageStatus" },
+        "cloud": { "$ref": "#/$defs/stageStatus" },
+        "source": { "$ref": "#/$defs/stageStatus" },
+        "adjudication": { "$ref": "#/$defs/stageStatus" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["agreed", "autoFixed", "needsReview", "unverifiable"],
+      "additionalProperties": false,
+      "properties": {
+        "agreed": { "type": "integer", "minimum": 0 },
+        "autoFixed": { "type": "integer", "minimum": 0 },
+        "needsReview": { "type": "integer", "minimum": 0 },
+        "unverifiable": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "reasonCode": {
+      "description": "稳定原因码词表（schema::recognition_v1::reason）",
+      "enum": [
+        "NO_PROFILE",
+        "CLOUD_DISABLED",
+        "MODEL_UNSUPPORTED_INPUT",
+        "MODEL_TIMEOUT",
+        "MODEL_INVALID_OUTPUT",
+        "SALVAGE_PARTIAL",
+        "ADJUDICATION_FAILED",
+        "RULES_MATCH",
+        "SUBSTANTIVE_DIVERGENCE",
+        "NO_SOURCE_EVIDENCE",
+        "EVIDENCE_MISSING",
+        "USER_EDITED",
+        "AUTO_APPLY_RULE_REJECTED",
+        "DEPENDENCY_BLOCKED",
+        "SOURCE_FILE_UNREADABLE",
+        "RECOGNITION_ALREADY_RESOLVED",
+        "EDIT_VERSION_CONFLICT"
+      ]
+    },
+    "decisionItem": {
+      "type": "object",
+      "required": [
+        "decisionId",
+        "resolution",
+        "code",
+        "severity",
+        "title",
+        "userMessage",
+        "target",
+        "field",
+        "autoApplied",
+        "status",
+        "reasonCode"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "decisionId": {
+          "type": "string",
+          "pattern": "^d:[a-z_]+:.+:[a-z_]+$",
+          "description": "d:<targetType>:<targetId>:<field>，稳定去重键"
+        },
+        "resolution": { "enum": ["agreed", "auto_fixed", "needs_review", "unverifiable"] },
+        "code": {
+          "type": "string",
+          "description": "见 RECOGNITION_LOOP_CONTRACT.md §4.2 的 19 个词条"
+        },
+        "severity": { "enum": ["info", "warning", "blocker"] },
+        "title": { "type": "string" },
+        "userMessage": { "type": "string" },
+        "target": {
+          "type": "object",
+          "required": ["targetType", "targetId", "questionNumbers"],
+          "additionalProperties": false,
+          "properties": {
+            "targetType": { "enum": ["document", "task", "response_group", "slot", "node", "asset"] },
+            "targetId": { "type": "string" },
+            "taskId": { "type": ["string", "null"] },
+            "nodeId": { "type": ["string", "null"] },
+            "questionNumbers": { "type": "array", "items": { "type": "integer", "minimum": 1 } }
+          }
+        },
+        "field": {
+          "enum": [
+            "answer",
+            "prompt",
+            "options",
+            "option_bank",
+            "slot_interaction",
+            "group_kind",
+            "slot_placement",
+            "asset",
+            "source_coverage",
+            "slot_participation"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["chain", "anchorKind"],
+            "additionalProperties": false,
+            "properties": {
+              "chain": { "enum": ["local", "cloud", "source"] },
+              "anchorKind": { "type": "string" },
+              "pageIndex": { "type": ["integer", "null"] },
+              "quote": { "type": ["string", "null"] },
+              "anchor": true
+            }
+          }
+        },
+        "localValue": true,
+        "cloudValue": true,
+        "sourceValue": true,
+        "proposedPatch": {
+          "description": "AuthoringPatchV2 形态；unverifiable 项保证缺省",
+          "oneOf": [{ "type": "null" }, { "type": "object" }]
+        },
+        "undo": {
+          "description": "自动修正的逆 patch（仅 autoApplied 项可能给出）",
+          "oneOf": [{ "type": "null" }, { "type": "object" }]
+        },
+        "autoApplied": { "type": "boolean" },
+        "appliedAt": { "type": ["string", "null"] },
+        "status": { "enum": ["open", "accepted", "rejected", "superseded", "failed"] },
+        "reasonCode": { "$ref": "#/$defs/reasonCode" },
+        "dependencyGroup": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

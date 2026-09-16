@@ -18,12 +18,14 @@ use tauri::{AppHandle, Emitter};
 
 use super::queue::{
     self, advance_stage, claim_next, finalize_cancelled_without_lease, finalize_ready_without_lease,
-    get_job, renew_lease, request_cancel, retry, STAGE_CLOUD_RECOGNITION, STAGE_FAILED,
-    STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
+    get_job, renew_lease, request_cancel, retry, set_cloud_status, STAGE_CLOUD_RECOGNITION,
+    STAGE_FAILED, STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
 };
-use crate::auto_pipeline::{run_auto_pipeline_core, run_cloud_review_core};
+use crate::auto_pipeline::{generate_cloud_reading_outline, run_auto_pipeline_core};
 use crate::library::repository::open_library_connection;
-use crate::{app_root, AutoPipelineInput, RunCloudReviewInput};
+use crate::reconcile::{candidate, commands, store};
+use crate::{app_root, AutoPipelineInput};
+use std::path::Path;
 
 pub(crate) const EVENT_ITEM_UPDATED: &str = "processing://item-updated";
 /// 连续自动中断恢复上限（M2 契约：超过后等待用户重试）。
@@ -110,6 +112,26 @@ fn display_message(stage: &str, error: Option<&str>) -> String {
     }
 }
 
+fn display_message_for(job: &queue::ProcessingJobRow) -> String {
+    if let Some(code) = job.last_error_code.as_deref() {
+        return display_message(&job.stage, Some(code));
+    }
+    // 本地稿尚未形成（本地识别仍在跑、cloud_status 已并行推进到 queued/running）
+    // 时，如实说明本地进度，不得谎称「本地识别完成」。
+    if job.stage == STAGE_CLOUD_RECOGNITION && job.local_status != "succeeded" {
+        return display_message(STAGE_LOCAL_RECOGNITION, None);
+    }
+    // 「本地先出稿」是产品的核心承诺：本地稿一旦形成就必须明确告诉用户
+    // 现在可以打开编辑，同时如实地说明云端仍在排队，而不是笼统写"识别中"。
+    if job.stage == STAGE_CLOUD_RECOGNITION && job.cloud_status == "queued" {
+        return "本地识别完成，可以打开编辑 · 云端识别排队中".to_string();
+    }
+    if job.stage == STAGE_CLOUD_RECOGNITION && job.cloud_status == "running" {
+        return "本地识别完成，可以打开编辑 · 云端识别中".to_string();
+    }
+    display_message(&job.stage, None)
+}
+
 fn emit_item_updated(app: &AppHandle, job: &queue::ProcessingJobRow) {
     let payload = json!({
         "libraryItemId": job.library_item_id,
@@ -120,7 +142,7 @@ fn emit_item_updated(app: &AppHandle, job: &queue::ProcessingJobRow) {
         "reconcileStatus": job.reconcile_status,
         "progressPercent": stage_percent(&job.stage),
         "actionableCount": job.actionable_count,
-        "displayMessage": display_message(&job.stage, job.last_error_code.as_deref()),
+        "displayMessage": display_message_for(job),
         "stateVersion": job.event_seq
     });
     if let Err(error) = app.emit(EVENT_ITEM_UPDATED, payload) {
@@ -264,6 +286,31 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         .await;
     }
 
+    // ── 云端决策输入（只依赖 job.progress 与 settings，提前到本地识别之前）──
+    // 这样云端链可以与本地识别「并行」起飞，而不是等本地稿落库后才开始。
+    let cloud_enabled = job
+        .progress
+        .get("cloudEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(state.settings.cloud_enabled_default);
+    // PDF 与 DOCX 都要走完整云端链路（任务书第二/九项）：DOCX 用本地抽取
+    // 的原文文本作为证据面，见 `auto_pipeline::generate_cloud_reading_outline`。
+    let cloud_source_supported = job
+        .progress
+        .get("fileName")
+        .and_then(Value::as_str)
+        .map(|name| {
+            let lower = name.to_ascii_lowercase();
+            lower.ends_with(".pdf") || lower.ends_with(".docx")
+        })
+        .unwrap_or(false);
+    let cloud_profile_id = job
+        .progress
+        .get("cloudProfileId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let cloud_will_run = cloud_enabled && cloud_source_supported;
+
     // ── 本地识别（阻塞线程池；持 local permit）───────────────────────
     let local_permit = state.local_permits.clone().acquire_owned().await;
     let advanced = advance(&app, &state, &job_id, STAGE_LOCAL_RECOGNITION, Some("running"), None, None, None, None).await;
@@ -283,33 +330,113 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         finish_cancelled(&app, &state, &job_id).await;
         return;
     }
+
     let Ok(root) = app_root(&app) else { return };
-    let local_result = tauri::async_runtime::spawn_blocking({
-        let root = root.clone();
-        let job_id = job_id.clone();
-        move || {
-            run_auto_pipeline_core(
-                &root,
-                &job_id,
-                Some(AutoPipelineInput {
-                    confidence_threshold: Some(0.85),
-                    execution_mode: Some("localOnly".to_string()),
-                    target: Some("editableDraft".to_string()),
-                    ..Default::default()
-                }),
-            )
+
+    // 解析云端 profile 一次（与 `generate_cloud_reading_outline` 的回退逻辑一致）：
+    // 显式 `cloudProfileId` 优先，否则回退到 job 的 `active_llm_profile_id`；
+    // 同一解析值同时传给「拉取」与「reconcile」，避免拉取了却被 reconcile 当
+    // NO_PROFILE 丢弃（一致性约束 #4）。
+    let resolved_profile: Option<String> = cloud_profile_id.clone().or_else(|| {
+        crate::job_store::load_job(&root, &job_id)
+            .ok()
+            .and_then(|import_job| import_job.active_llm_profile_id)
+    });
+    // 是否真正拉取云端：需 cloud_will_run 且已解析出 profile（约束 #8：
+    // 无 profile 时不拉取，避免拉取后被 reconcile 当 NO_PROFILE 丢弃）。
+    let launch_cloud = cloud_will_run && resolved_profile.is_some();
+
+    // 本地识别仍在跑时，先如实声明「云端排队」——但**不**提前把 stage 推进到
+    // `cloud_recognition`（否则 progressPercent 会虚高到 70%）。改用 set_cloud_status
+    // 只写 cloud_status，stage 保持 local_recognition（percent=45），让「本地仍在读」
+    // 的进度诚实可见，同时云端排队状态也对外可见（并行承诺的可观测信号）。
+    if launch_cloud {
+        let queued = set_cloud_status_only(&app, &state, &job_id, "queued").await;
+        if queued.is_none() {
+            // lease 丢失或已取消：中止云端链（本地识别仍会照常完成）。
+            return;
         }
-    })
-    .await;
-    drop(local_permit);
-    let local_result = match local_result {
-        Ok(result) => result,
-        Err(error) => Err(format!("processing_join:{error}")),
-    };
-    if let Err(error) = &local_result {
-        fail_job(&app, &state, &job_id, &error).await;
-        return;
     }
+
+    // ── 本地识别与云端拉取并行执行 ───────────────────────────────────
+    // 本地闭包：真实本地管道。
+    let root_local = root.clone();
+    let job_id_local = job_id.clone();
+    let local_closure = move || {
+        run_auto_pipeline_core(
+            &root_local,
+            &job_id_local,
+            Some(AutoPipelineInput {
+                confidence_threshold: Some(0.85),
+                execution_mode: Some("localOnly".to_string()),
+                target: Some("editableDraft".to_string()),
+                ..Default::default()
+            }),
+        )
+    };
+
+    // 云端任务（async）：**不在主路径上**抢 permit——permit 获取与 cloud_status 推进
+    // 都放进任务内部，因此本地识别可以立即起飞，不被云端 permit 阻塞（Defect 1 修复）。
+    // 任务只更新 cloud_status（"running"），不把 stage 推到 cloud_recognition，
+    // 所以本地识别期间前端仍看到 local_recognition（percent=45）。返回
+    // `Option<Result<Value,String>>`：`None` 表示云端在取消/lease 丢失时中止，
+    // 调用方据此跳过 reconcile。
+    let cloud_future: Option<
+        std::pin::Pin<
+            Box<dyn std::future::Future<Output = Option<Result<serde_json::Value, String>>> + Send + 'static>,
+        >,
+    > = if launch_cloud {
+        let state_cloud = state.clone();
+        let app_cloud = app.clone();
+        let root_cloud = root.clone();
+        let job_id_cloud = job_id.clone();
+        let resolved = resolved_profile.clone();
+        Some(Box::pin(async move {
+            // 受控并发：取得 cloud permit（等待期间落下的取消由 set_cloud_status_only 拒绝）。
+            let _cloud_permit = state_cloud.cloud_permits.clone().acquire_owned().await;
+            if set_cloud_status_only(&app_cloud, &state_cloud, &job_id_cloud, "running")
+                .await
+                .is_none()
+            {
+                return None; // 取消 / lease 丢失：中止云端链。
+            }
+            // 模型调用移入阻塞线程池，不占 async runtime；permit 随闭包结束释放，
+            // 仅覆盖模型调用（reconcile 不再持有，约束：云端 permit 只在模型调用期间持有）。
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                let result =
+                    generate_cloud_reading_outline(&root_cloud, &job_id_cloud, resolved.as_deref());
+                drop(_cloud_permit);
+                result
+            })
+            .await
+            .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
+            Some(result)
+        }))
+    } else {
+        None
+    };
+
+    // ── 立即并发拉起：本地阻塞任务 + 云端 async 任务，二者互不阻塞 ──────────
+    // 云端 permit 的获取发生在 cloud 任务内部（见 cloud_future），所以本地识别
+    // 此刻就能起飞，绝不会被云端 permit 卡住（Defect 1 修复）。
+    let local_handle = tauri::async_runtime::spawn_blocking(local_closure);
+    let cloud_handle: Option<
+        tauri::async_runtime::JoinHandle<Option<Result<serde_json::Value, String>>>,
+    > = cloud_future.map(|fut| tauri::async_runtime::spawn(fut));
+
+    // 只 await 本地结果——云端仍在并行跑。本地失败/取消在此即时兑现。
+    let local_result = local_handle
+        .await
+        .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
+    drop(local_permit);
+
+    match local_result {
+        Ok(_) => {}
+        Err(error) => {
+            fail_job(&app, &state, &job_id, &error).await;
+            return;
+        }
+    };
     // G1/A4-F02：本地识别期间发生的取消必须在此兑现；否则无云端路径会
     // 直接推进 ready_for_review，取消被静默吞掉。
     if state.cancelled.read().await.contains(&job_id) {
@@ -317,123 +444,337 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         return;
     }
 
-    // ── 云端识别（可选；独立 permit；失败不取消本地结果）──────────────
-    let cloud_enabled = job
-        .progress
-        .get("cloudEnabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(state.settings.cloud_enabled_default);
-    let is_pdf = job
-        .progress
-        .get("fileName")
-        .and_then(Value::as_str)
-        .map(|name| name.to_ascii_lowercase().ends_with(".pdf"))
-        .unwrap_or(false);
-    let cloud_profile_id = job
-        .progress
-        .get("cloudProfileId")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    if cloud_enabled && is_pdf {
-        let cancelled = state.cancelled.read().await.contains(&job_id);
-        if cancelled {
-            finish_cancelled(&app, &state, &job_id).await;
-            return;
-        }
-        let _cloud_permit = state.cloud_permits.clone().acquire_owned().await;
-        // G1 边界（复核 B）：等待 cloud permit / 推进期间落下的取消会被
-        // advance 强制落 cancelled（返回有效阶段）。此时必须直接退出，
-        // 不得再启动云调用；持久化状态已由 advance 落库并广播。
-        let cloud_advanced = advance(
+    // 批次基线：本地稿定稿时的编辑版本。**必须在草稿发布「可编辑」之前**冻结，
+    // 否则用户若在「发布」与「读 baseline」之间改稿，基线版本会被抬高，而后续
+    // 云端裁决若按当前稿重投影本地候选，就会把用户编辑误当成本地识别结果。
+    let base_edit_version = current_edit_version_of(&app, &job_id).await.unwrap_or(0);
+
+    // 冻结本地候选快照（与 base_edit_version 同一时刻），**早于**可编辑发布。
+    // `run_recognition_cycle_core` 走 `resolve_local_snapshot` 的「复用已冻结候选」
+    // 分支，因此稍后的云端裁决比对的是冻结时的本地结果，而不是用户编辑后的当前稿，
+    // 「云端运行期间用户改了稿」才能被识别，迟到结果才不会覆盖用户修改。
+    // 冻结结果必须留痕：失败时**绝不能再进入裁决**（原因见 `freeze_local_candidate_snapshot`
+    // 文档——前提不成立时 `resolve_local_snapshot` 会退回「按当前稿重投影」，迟到云端结果
+    // 就会覆盖用户修改）。此时保留本地稿可用，丢弃云端结果、跳过裁决。
+    //
+    // **两条分支都要冻结**（故不再放在 `if launch_cloud` 内）：无云分支同样会跑
+    // reconcile 并把本地候选写进证据链，若不在「发布可编辑」之前冻结，用户在这之后
+    // 的编辑就会被当成本地识别结果记进去。
+    let mut freeze_error: Option<String> = None;
+    if let Err(error) = freeze_local_candidate_snapshot(&root, &job_id, base_edit_version) {
+        eprintln!("[processing] freeze local candidate snapshot failed for {job_id}: {error}");
+        freeze_error = Some(error);
+    }
+
+    if launch_cloud {
+        // 本地稿已成：标记 local_status=succeeded（此前为 running，云端可能仍在跑）。
+        let _ = advance(
             &app,
             &state,
             &job_id,
             STAGE_CLOUD_RECOGNITION,
             Some("succeeded"),
-            Some("running"),
+            None,
             None,
             None,
             None,
         )
         .await;
-        if let Some((_, effective)) = &cloud_advanced {
-            if effective == queue::STAGE_CANCELLED {
-                state.cancelled.write().await.remove(&job_id);
-                return;
-            }
-        }
-        if cloud_advanced.is_none() {
-            return;
-        }
-        let cloud_result = tauri::async_runtime::spawn_blocking({
-            let root = root.clone();
-            let job_id = job_id.clone();
-            move || run_cloud_review_core(&root, &job_id, Some(RunCloudReviewInput { profile_id: cloud_profile_id }))
-        })
-        .await;
-        let cloud_status = match cloud_result {
-            Ok(Ok(_)) => "succeeded",
-            Ok(Err(_)) | Err(_) => "failed",
-        };
-        // G1/A4-F02：云端执行期间发生的取消必须在推进 ready 之前兑现，
-        // 迟到的云端结果不得把已取消的任务推进到可检查状态。
-        if state.cancelled.read().await.contains(&job_id) {
-            finish_cancelled(&app, &state, &job_id).await;
-            return;
-        }
-        let advance_result = advance(
+    }
+    // 本地稿已成：立刻发布「可打开编辑」（云端仍在并行跑，不阻塞）。
+    set_item_status_ready(&app, &job_id).await;
+
+    if !launch_cloud {
+        // 无云路径：**照常走完 reconcile**，让本地候选、原文核验、批次汇总全部落盘。
+        // 计划 §12.3 只要求「本地即可检查、不被云端拖慢」，从未要求跳过裁决与留痕；
+        // 跳过会让这三样全部缺失，前端拿不到任何可解释的证据链。云端由核心如实标为
+        // `not_run`——而不是拿一个失败 profile 去顶替，把「没启用云端」谎报成云端故障。
+        //
+        // 冻结失败在此**不阻断**：本路径没有「迟到的云端结果」，不存在覆盖用户修改的
+        // 风险，因此只留机器码以便诊断，不放弃本地证据链（有云路径才必须放弃裁决）。
+        let (cloud_status, reconcile_status, actionable, last_error) =
+            match run_local_only_recognition_cycle(&root, &job_id, base_edit_version) {
+                Ok(report) => (
+                    report.cloud_status,
+                    report.reconcile_status,
+                    report.actionable_count,
+                    freeze_error.as_deref().map(|_| "FREEZE_SNAPSHOT_FAILED"),
+                ),
+                Err(error) => {
+                    eprintln!(
+                        "[processing] local-only recognition cycle failed for {job_id}: {error}"
+                    );
+                    (
+                        "not_run".to_string(),
+                        "failed".to_string(),
+                        0,
+                        Some("RECONCILE_FAILED"),
+                    )
+                }
+            };
+        if advance(
             &app,
             &state,
             &job_id,
             STAGE_READY_FOR_REVIEW,
             Some("succeeded"),
-            Some(cloud_status),
-            Some("succeeded"),
-            None,
-            None,
+            Some(&cloud_status),
+            Some(&reconcile_status),
+            Some(actionable),
+            last_error,
         )
-        .await;
-        if advance_result.is_none() {
-            // G1 对抗审计 P1-3：lease 丢失（如睡眠唤醒、心跳瞬断）时允许
-            // 免 lease 终态收尾——local 已成功 + reclaim 守卫保证无人接手。
-            let finalized = tauri::async_runtime::spawn_blocking({
-                let root = root.clone();
-                let job_id = job_id.clone();
-                let cloud_status = cloud_status.to_string();
-                move || {
-                    let conn = open_library_connection(&root)?;
-                    finalize_ready_without_lease(&conn, &job_id, &cloud_status, "succeeded")
-                }
-            })
-            .await
-            .map_err(|error| error.to_string())
-            .and_then(|inner| inner)
-            .unwrap_or(false);
-            if !finalized {
-                return;
-            }
+        .await
+        .is_some()
+        {
+            set_item_status_ready(&app, &job_id).await;
         }
-        set_item_status_ready(&app, &job_id).await;
         return;
     }
 
-    // 无云端：直接到 ready_for_review（本地稿可检查可编辑，计划 §12.3）。
-    if advance(
+    // 取消检查（join 之后、reconcile 之前）：迟到结果不得穿透取消。
+    if state.cancelled.read().await.contains(&job_id) {
+        finish_cancelled(&app, &state, &job_id).await;
+        return;
+    }
+
+    // 直到此刻才 await 云端句柄：本地稿早已发布、base_edit_version 已冻结
+    // （Defect 2 修复——「可打开编辑」的承诺不被云端模型调用拖慢）。云端在本地
+    // 识别期间就已经并发起飞，这里只是收口它的结果。
+    let cloud_fetched = if freeze_error.is_some() {
+        // 冻结失败：护栏前提不成立（见上文）。宁可没有云端建议，也不允许迟到结果
+        // 覆盖用户修改——直接丢弃云端结果、走「跳过 reconcile」分支。
+        None
+    } else {
+        match cloud_handle {
+            Some(handle) => handle
+                .await
+                .unwrap_or(None), // join 失败（任务异常）按「云端中止」处理：跳过 reconcile。
+            None => None,
+        }
+    };
+    // 云端中止（取消 / lease 丢失）时返回 None——本地稿仍可检查，云端标记失败、跳过裁决。
+    let (cloud_status, reconcile_status, actionable) = match cloud_fetched {
+        Some(prefetched) => {
+            // 云端 JSON 已在本地识别期间并发拉取并冻结于此；reconcile 直接复用，
+            // 不再发起第二次网络调用。整段 `Result` 传入，由 run_recognition_cycle
+            // 内部决定云端成功 / 失败如何并入裁决报告。
+            let cycle_result = run_recognition_cycle(
+                &root,
+                &job_id,
+                resolved_profile.as_deref(),
+                true,
+                prefetched,
+                base_edit_version,
+            );
+            match cycle_result {
+                Ok(report) => (
+                    report.cloud_status.clone(),
+                    report.reconcile_status.clone(),
+                    report.actionable_count,
+                ),
+                Err(error) => {
+                    eprintln!("[processing] recognition cycle failed for {job_id}: {error}");
+                    ("failed".to_string(), "failed".to_string(), 0)
+                }
+            }
+        }
+        None => ("failed".to_string(), "skipped".to_string(), 0),
+    };
+
+    let advance_result = advance(
         &app,
         &state,
         &job_id,
         STAGE_READY_FOR_REVIEW,
         Some("succeeded"),
-        Some("skipped"),
-        Some("skipped"),
-        None,
-        None,
+        Some(&cloud_status),
+        Some(&reconcile_status),
+        Some(actionable),
+        // 冻结失败是一次真实降级：留机器码供 UI / 诊断区分「云端自己失败」与
+        // 「本地快照没能冻结、因此主动放弃裁决」，避免这种失败只活在 stderr 里。
+        if freeze_error.is_some() {
+            Some("FREEZE_SNAPSHOT_FAILED")
+        } else {
+            None
+        },
     )
-    .await
-    .is_some()
-    {
-        set_item_status_ready(&app, &job_id).await;
+    .await;
+    if advance_result.is_none() {
+        // G1 对抗审计 P1-3：lease 丢失（如睡眠唤醒、心跳瞬断）时允许
+        // 免 lease 终态收尾——local 已成功 + reclaim 守卫保证无人接手。
+        let finalized = tauri::async_runtime::spawn_blocking({
+            let root = root.clone();
+            let job_id = job_id.clone();
+            let cloud_status = cloud_status.clone();
+            let reconcile_status = reconcile_status.clone();
+            move || {
+                let conn = open_library_connection(&root)?;
+                finalize_ready_without_lease(&conn, &job_id, &cloud_status, &reconcile_status)
+            }
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|inner| inner)
+        .unwrap_or(false);
+        if !finalized {
+            return;
+        }
     }
+    set_item_status_ready(&app, &job_id).await;
+}
+
+
+
+/// 识别周期的精简结果（调度器只关心阶段状态与待确认数量）。
+struct RecognitionCycleReport {
+    cloud_status: String,
+    reconcile_status: String,
+    actionable_count: i64,
+}
+
+/// 链状态 → 任务行里的 `cloud_status`。
+///
+/// **`not_run` 必须原样透传**：它表示「本次没有云端参与」（未启用 / 未配置），
+/// 与「云端跑了但失败」是两件不同的事。此前一律折叠成 `failed`，于是无云导入会在
+/// 任务行里谎报云端失败，用户会去排查一个根本不存在的云端故障。
+fn chain_status_to_job_status(raw: &str) -> String {
+    match raw {
+        "succeeded" => "succeeded",
+        "partial" => "partial",
+        "not_run" => "not_run",
+        _ => "failed",
+    }
+    .to_string()
+}
+
+/// 云端全量识别 → 原文件核验 → 统一裁决 → 安全自动应用。
+///
+/// 本地链**不在这里重跑**：草稿在调度器上一阶段就已落库并发布可编辑。
+/// 云端全量识别结果 `cloud_fetched` 由调度器在本地识别期间**并发拉取**后传入，
+/// 这里直接复用，不再发起第二次网络调用。
+///
+/// `cloud_enabled = false` 用于**无云路径**（未启用云端 / 未解析到 profile）：此时仍要
+/// 走完「本地候选 → 原文核验 → 裁决 → 落盘」，只把云端如实标成 `not_run`。**绝不能跳过**
+/// ——跳过会让本地候选、原文核验、批次汇总全都不落盘，前端拿不到任何可解释的证据链；
+/// 也**不能**用失败 profile 制造假失败来绕过这个缺口。
+fn run_recognition_cycle(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+    cloud_enabled: bool,
+    cloud_fetched: Result<serde_json::Value, String>,
+    base_edit_version: i64,
+) -> Result<RecognitionCycleReport, String> {
+    // 注入点直接返回调度器已拉取的云端 JSON；不再调用真实网关。
+    let report = crate::reconcile::commands::run_recognition_cycle_core(
+        root,
+        job_id,
+        profile_id,
+        cloud_enabled,
+        base_edit_version,
+        &|_root, _job_id, _profile_id| cloud_fetched.clone(),
+    )?;
+    Ok(summarize_cycle_report(report))
+}
+
+/// **无云路径**：云端链由核心如实标成 `not_run`（`CLOUD_DISABLED`），而本地候选、
+/// 原文核验、批次汇总**照常完整落盘**——这正是「无云分支不再跳过 reconcile」的落点。
+///
+/// 注入点在此路径上**不可达**（`cloud_enabled = false` 是云端选择的第一分支）。若将来
+/// 有人改坏了这个前置判断，这里会返回一个显式错误，被外层记成 `RECONCILE_FAILED`，
+/// 而不是静默地假装云端跑过、更不是拿一个假失败 profile 去顶替。
+fn run_local_only_recognition_cycle(
+    root: &Path,
+    job_id: &str,
+    base_edit_version: i64,
+) -> Result<RecognitionCycleReport, String> {
+    let report = crate::reconcile::commands::run_recognition_cycle_core(
+        root,
+        job_id,
+        None,
+        false,
+        base_edit_version,
+        &|_root, _job_id, _profile_id| Err("cloud_runner_invoked_on_no_cloud_path".to_string()),
+    )?;
+    Ok(summarize_cycle_report(report))
+}
+
+fn summarize_cycle_report(report: Value) -> RecognitionCycleReport {
+    let cloud_status = chain_status_to_job_status(
+        report
+            .get("cloudCandidateStatus")
+            .and_then(Value::as_str)
+            .unwrap_or("failed"),
+    );
+    // 待办数与视图同源（`DecisionItemV1::is_actionable`），由核心直接给出，不再由
+    // `summary.needsReview + summary.unverifiable` 拼出来。
+    let actionable_count = report
+        .get("actionableCount")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    RecognitionCycleReport {
+        cloud_status,
+        // 裁决跑完即算完成；云端不可用会体现在 cloud_status 与 chain_status 里。
+        reconcile_status: "succeeded".to_string(),
+        actionable_count,
+    }
+}
+
+/// 当前 canonical 编辑版本（批次基线的冻结值）。
+async fn current_edit_version_of(app: &AppHandle, job_id: &str) -> Option<i64> {
+    let root = app_root(app).ok()?;
+    let job_id = job_id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_library_connection(&root).ok()?;
+        crate::reconcile::store::current_edit_version(&conn, &job_id)
+            .ok()
+            .flatten()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// 在草稿发布「可编辑」**之前**冻结本地候选快照（与 base_edit_version 同一时刻）。
+///
+/// 这是修复「先读 baseline 版本、再按当前稿重投影本地候选」的关键：把本地识别那一刻的
+/// 候选按 `batch_id = (job_id, source_sha256, base_edit_version)` 落盘。`run_recognition_cycle_core`
+/// 在裁决前会通过 `store::read_candidate` 读到这份快照，并因 `resolve_local_snapshot` 的
+/// 「同一批次复用已冻结候选」分支而采用它——于是稍后比对的是冻结时的本地结果，不是用户
+/// 编辑后的当前稿，「云端运行期间用户改了稿」才会被识别，迟到结果才不会覆盖用户修改。
+///
+/// 幂等安全：`batch_id` 由输入与版本派生，重试必然复用同一快照，不会因重复冻结产生偏差。
+///
+/// **每一步失败都必须上抛，不得静默吞掉。** 调用方拿「冻结成功」当作「迟到结果不覆盖
+/// 用户修改」护栏的前提：一旦快照缺失，`resolve_local_snapshot`（`reconcile/engine.rs`）
+/// 会退回「按当前稿现场重投影」分支，裁决就会把用户编辑后的稿当成本地识别结果，
+/// 于是「云端运行期间用户改了稿」永远检测不到、迟到结果照样覆盖用户修改——正是本
+/// 修复要消灭的缺陷。因此这里把连接 / 取稿 / 落盘三处失败逐一如实上抛。
+fn freeze_local_candidate_snapshot(
+    root: &Path,
+    job_id: &str,
+    base_edit_version: i64,
+) -> Result<(), String> {
+    let conn = open_library_connection(root)
+        .map_err(|error| format!("open_library_connection_failed:{error}"))?;
+    let (canonical, _current_version) =
+        crate::library::repository::get_canonical_ds(&conn, job_id)
+            .map_err(|error| format!("read_canonical_failed:{error}"))?
+            .ok_or_else(|| format!("canonical_not_seeded:{job_id}"))?;
+    let source_sha256 = commands::source_sha256_for_job(root, job_id);
+    let batch_id = commands::recognition_batch_id(job_id, &source_sha256, base_edit_version);
+    let snapshot = candidate::local_candidate_from_authoring(
+        &canonical,
+        &batch_id,
+        job_id,
+        job_id,
+        job_id,
+        &source_sha256,
+        base_edit_version,
+    );
+    store::write_candidate(root, &batch_id, &snapshot, store::LOCAL_CANDIDATE_FILE)
+        .map_err(|error| format!("write_local_snapshot_failed:{error}"))?;
+    Ok(())
 }
 
 async fn advance(
@@ -490,6 +831,47 @@ async fn advance(
                 .await;
             }
             Some((seq, effective_stage))
+        }
+        _ => None,
+    }
+}
+
+/// 只更新 `cloud_status`、不切换 `stage` 的异步包装（详见 `queue::set_cloud_status`）。
+/// 用于本地识别仍在跑时如实声明云端「排队/起飞」，而不把 stage 提前推到
+/// `cloud_recognition` 让进度条虚高。返回 `None` 表示 lease 丢失或已取消。
+async fn set_cloud_status_only(
+    app: &AppHandle,
+    state: &Arc<ProcessingState>,
+    job_id: &str,
+    cloud_status: &str,
+) -> Option<(i64, String)> {
+    let Ok(root) = app_root(app) else { return None };
+    let worker_id = state.worker_id.clone();
+    let job_id_owned = job_id.to_string();
+    let cloud_owned = cloud_status.to_string();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_library_connection(&root)?;
+        if !renew_lease(&conn, &job_id_owned, &worker_id)? {
+            return Ok(None);
+        }
+        set_cloud_status(&conn, &job_id_owned, &worker_id, &cloud_owned)
+    })
+    .await;
+    match result {
+        Ok(Ok(Some((seq, stage)))) => {
+            if let Ok(root) = app_root(app) {
+                let app = app.clone();
+                let job_id = job_id.to_string();
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    let conn = open_library_connection(&root)?;
+                    if let Some(job) = get_job(&conn, &job_id)? {
+                        emit_row(&app, &job);
+                    }
+                    Ok::<(), String>(())
+                })
+                .await;
+            }
+            Some((seq, stage))
         }
         _ => None,
     }
@@ -616,3 +998,357 @@ pub(crate) fn enqueue_processing_job(
     queue::enqueue(&conn, job_id, library_item_id, source_asset_id, progress)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 生产并发编排契约的精简副本（仅供单测，生产代码在 `run_job_inner` 内联同一套
+    /// 顺序）：1) 立刻并发 spawn 本地阻塞任务与云端 future（二者互不阻塞——云端 permit
+    /// 获取不挡本地起飞）；2) 只 await 本地结果；3) 本地完成后调用 `on_local_done`
+    /// （生产里即「发布可编辑草稿 + 冻结 base_edit_version」），**之后**才 await 云端句柄。
+    /// 返回 `(本地结果, 云端结果)`；云端结果 `None` 表示云端任务中止。
+    async fn run_parallel_local_cloud<Fut>(
+        local: impl FnOnce() -> Result<serde_json::Value, String> + Send + 'static,
+        cloud: Option<Fut>,
+        on_local_done: impl FnOnce(),
+    ) -> (Result<serde_json::Value, String>, Option<Result<serde_json::Value, String>>)
+    where
+        Fut: std::future::Future<Output = Option<Result<serde_json::Value, String>>> + Send + 'static,
+    {
+        let local_handle = tauri::async_runtime::spawn_blocking(local);
+        let cloud_handle: Option<
+            tauri::async_runtime::JoinHandle<Option<Result<serde_json::Value, String>>>,
+        > = cloud.map(|fut| tauri::async_runtime::spawn(fut));
+
+        // 只 await 本地——云端仍在并行跑。
+        let local_result = local_handle
+            .await
+            .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
+
+        // 本地完成即发布草稿（生产：advance local_status=succeeded + set_item_status_ready）。
+        on_local_done();
+
+        // 此刻才收口云端：草稿发布不依赖云端调用完成（「本地先出稿」承诺）。
+        let cloud_result = match cloud_handle {
+            Some(handle) => handle.await.unwrap_or(None),
+            None => None,
+        };
+        (local_result, cloud_result)
+    }
+
+    /// 证明「本地识别与云端识别并行」的两条核心产品保证，且二者用确定性时序
+    /// （本地 50ms < 云端 300ms）驱动，不依赖任何 sleep 竞态，因此不会偶发 flaky：
+    ///
+    /// 1) **云端在本地仍在跑时就已经起飞**——云端 future 一开始即记录「本地尚未完成」。
+    ///    若并行被破坏（云端等到本地结束后才 spawn），`cloud_started_before_local_done`
+    ///    将为 false，断言失败。这同时覆盖了 Defect 1（本地不再被云端 permit 卡住）。
+    ///
+    /// 2) **可编辑草稿在云端调用完成之前就已发布**——`on_local_done`（对应生产里的
+    ///    `set_item_status_ready` + 冻结 `base_edit_version`）在 local 解析后、云端句柄
+    ///    被 await 之前调用；该回调记录「云端是否仍在跑」。这覆盖了 Defect 2（草稿发布
+    ///    不再等云端）。
+    ///
+    /// `run_parallel_local_cloud` 是 `run_job_inner` 内联并发顺序的精简副本：先并发 spawn
+    /// 本地 + 云端，只 await 本地，本地完成即调 `on_local_done`，之后才 await 云端。
+    #[test]
+    fn cloud_fetch_starts_before_local_recognition_finishes_and_draft_published_first() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let local_finished = Arc::new(AtomicBool::new(false));
+        let cloud_started = Arc::new(AtomicBool::new(false));
+        let cloud_finished = Arc::new(AtomicBool::new(false));
+        let draft_published = Arc::new(AtomicBool::new(false));
+        // 云端 future 一开始：本地是否仍在进行。
+        let cloud_started_before_local_done = Arc::new(AtomicBool::new(false));
+        // 发布草稿那一刻：云端是否仍在进行。
+        let draft_published_before_cloud_done = Arc::new(AtomicBool::new(false));
+
+        // 本地较快（50ms），云端较慢（300ms）→ 确定性不靠 sleep 竞态。
+        let local_finished_c = local_finished.clone();
+        let local = move || {
+            std::thread::sleep(Duration::from_millis(50));
+            local_finished_c.store(true, Ordering::SeqCst);
+            Ok(serde_json::json!({"local": true}))
+        };
+
+        let cloud_started_c = cloud_started.clone();
+        let cloud_finished_c = cloud_finished.clone();
+        let local_finished_c2 = local_finished.clone();
+        let marker = cloud_started_before_local_done.clone();
+        let cloud = async move {
+            // 云端一被调度起来就必须记录：此时本地识别仍在跑。
+            cloud_started_c.store(true, Ordering::SeqCst);
+            marker.store(!local_finished_c2.load(Ordering::SeqCst), Ordering::SeqCst);
+            // 云端耗时（明显长于本地）。
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            cloud_finished_c.store(true, Ordering::SeqCst);
+            Some(Ok(serde_json::json!({"cloud": true})))
+        };
+
+        let draft_published_c = draft_published.clone();
+        let cloud_finished_c2 = cloud_finished.clone();
+        let draft_marker = draft_published_before_cloud_done.clone();
+        let on_local_done = move || {
+            // 对应生产：本地完成即发布可编辑草稿（set_item_status_ready）。
+            draft_published_c.store(true, Ordering::SeqCst);
+            // 发布那一刻，云端是否仍在跑。
+            draft_marker.store(!cloud_finished_c2.load(Ordering::SeqCst), Ordering::SeqCst);
+        };
+
+        let (local_result, cloud_result) =
+            tauri::async_runtime::block_on(run_parallel_local_cloud(local, Some(cloud), on_local_done));
+
+        assert!(local_result.is_ok(), "本地识别应成功");
+        assert!(
+            cloud_result.expect("cloud 应返回 Some").is_ok(),
+            "云端拉取应成功"
+        );
+        // 保证 1：云端在本地完成前就已起飞（并行核心保证，Defect 1）。
+        assert!(cloud_started.load(Ordering::SeqCst), "云端任务必须被启动");
+        assert!(
+            cloud_started_before_local_done.load(Ordering::SeqCst),
+            "云端模型调用必须在本地识别完成之前就已起飞（并行核心保证）"
+        );
+        // 保证 2：草稿在云端完成前就已发布（本地先出稿承诺，Defect 2）。
+        assert!(
+            draft_published.load(Ordering::SeqCst),
+            "本地完成后必须立即发布草稿"
+        );
+        assert!(
+            draft_published_before_cloud_done.load(Ordering::SeqCst),
+            "可编辑草稿必须在云端模型调用完成之前就发布（本地先出稿承诺）"
+        );
+    }
+
+    /// 目标 2（Fix 2）的 seam 验证：本地候选快照必须在草稿可编辑**之前**冻结，
+    /// 云端裁决比对冻结快照而非用户编辑后的当前稿，从而「云端运行期间用户改了稿」
+    /// 可被识别、迟到结果不覆盖用户修改。
+    ///
+    /// 这里直接复刻 `freeze_local_candidate_snapshot` 的落盘行为：按冻结时刻的稿投影本地
+    /// 候选并写入 `local-candidate.json`（`batch_id` 由 `job_id + source_sha256 + 版本` 派生）。
+    /// 随后模拟用户编辑（答案被改、当前稿变化），调用 `resolve_local_snapshot` 取快照——
+    /// 必须返回**冻结时**的候选（答案仍为冻结值），而不是被编辑后当前稿重投影的结果。
+    #[test]
+    fn frozen_local_snapshot_takes_precedence_over_later_user_edits() {
+        use crate::reconcile::engine::resolve_local_snapshot;
+        use uuid::Uuid;
+        use crate::schema::recognition_v1::ChainKindV1;
+        use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir};
+
+        let root = std::env::temp_dir()
+            .join(format!("pdf2test-freeze-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job_id = "freeze-job";
+        ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
+
+        // 冻结时刻的稿（base_edit_version = 0）：q1 答案 "frozen_answer"。
+        let frozen_authoring = json!({
+            "answerSlots": { "q1": { "questionNumber": 1, "answer": "frozen_answer" } },
+            "answerKey": { "q1": "frozen_answer" },
+            "taskGroups": [{
+                "taskId": "t1", "taskType": "short_answer",
+                "responseGroups": [{ "responseGroupId": "r1", "slotIds": ["q1"] }]
+            }]
+        });
+        let source_sha256 = "a".repeat(64);
+        let base_edit_version = 0_i64;
+        let batch_id = commands::recognition_batch_id(job_id, &source_sha256, base_edit_version);
+
+        // 等价于 `freeze_local_candidate_snapshot`：投影并落盘冻结快照。
+        let snapshot = candidate::local_candidate_from_authoring(
+            &frozen_authoring,
+            &batch_id,
+            job_id,
+            job_id,
+            job_id,
+            &source_sha256,
+            base_edit_version,
+        );
+        store::write_candidate(&root, &batch_id, &snapshot, store::LOCAL_CANDIDATE_FILE).unwrap();
+
+        let stored = store::read_candidate(&root, job_id, &batch_id, store::LOCAL_CANDIDATE_FILE)
+            .expect("冻结快照应已落盘");
+        assert_eq!(stored.chain, ChainKindV1::Local);
+        assert_eq!(stored.base_edit_version, base_edit_version);
+        assert_eq!(stored.batch_id, batch_id);
+
+        // 模拟用户编辑：q1 答案被改成 "edited_answer"（当前稿已变化）。
+        let edited_authoring = json!({
+            "answerSlots": { "q1": { "questionNumber": 1, "answer": "edited_answer" } },
+            "answerKey": { "q1": "edited_answer" },
+            "taskGroups": [{
+                "taskId": "t1", "taskType": "short_answer",
+                "responseGroups": [{ "responseGroupId": "r1", "slotIds": ["q1"] }]
+            }]
+        });
+        // 同一 batch（source 与 base 版本未变）下，reconcile 取快照应命中冻结者。
+        let resolved = resolve_local_snapshot(
+            Some(stored),
+            &edited_authoring,
+            &batch_id,
+            job_id,
+            job_id,
+            job_id,
+            &source_sha256,
+            base_edit_version,
+        );
+        // 关键不变量：返回的是冻结快照，答案仍是 "frozen_answer"，而非编辑稿重投影的
+        // "edited_answer"——这才是「迟到结果不覆盖用户修改」的前提。
+        let frozen_answer = resolved
+            .slots
+            .iter()
+            .find(|slot| slot.slot_id == "q1")
+            .and_then(|slot| slot.answer.as_ref())
+            .and_then(|answer| answer.as_str());
+        assert_eq!(
+            frozen_answer,
+            Some("frozen_answer"),
+            "云端裁决应比对冻结快照，不得用编辑后当前稿重投影覆盖用户修改"
+        );
+        assert_eq!(resolved.batch_id, batch_id);
+        assert_eq!(resolved.base_edit_version, base_edit_version);
+        assert_eq!(resolved.source_sha256, source_sha256);
+
+        // 反向对照：若从未冻结（stored=None），则按当前（已编辑）稿重投影，证明
+        // 「冻结」本身才是上一条断言成立的原因。
+        let projected = resolve_local_snapshot(
+            None,
+            &edited_authoring,
+            &batch_id,
+            job_id,
+            job_id,
+            job_id,
+            &source_sha256,
+            base_edit_version,
+        );
+        let projected_answer = projected
+            .slots
+            .iter()
+            .find(|slot| slot.slot_id == "q1")
+            .and_then(|slot| slot.answer.as_ref())
+            .and_then(|answer| answer.as_str());
+        assert_eq!(
+            projected_answer,
+            Some("edited_answer"),
+            "未冻结时应按当前稿投影（对照，证明冻结才是关键）"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 目标 2（Fix 2）的**真函数**验证，补上此前被忽略的失败路径。
+    ///
+    /// 上一条测试的注释自陈是「直接复刻 `freeze_local_candidate_snapshot` 的落盘行为」，
+    /// 因此它**永远测不到真函数内部的静默吞错**（连接失败 return、canonical 缺失 return、
+    /// `let _ =` 忽略写盘失败）。这里直接调用真函数，双向断言：
+    ///   1. canonical 未就绪 ⇒ 必须返回 `Err`（过去是静默 `return`）；
+    ///   2. canonical 就绪 ⇒ 真正落盘，且 `resolve_local_snapshot` 复用该快照。
+    ///
+    /// 为什么失败必须上抛：冻结失败会让 `resolve_local_snapshot` 退回「按当前稿重投影」，
+    /// 于是迟到云端结果会覆盖用户修改。调度器正是据此丢弃云端结果、跳过裁决并把
+    /// `FREEZE_SNAPSHOT_FAILED` 写入 `last_error_code`（而不是只打一行 stderr）。
+    #[test]
+    fn freeze_local_candidate_snapshot_surfaces_failure_and_writes_real_snapshot() {
+        use crate::library::repository::{
+            open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput,
+        };
+        use crate::reconcile::engine::resolve_local_snapshot;
+        use crate::schema::recognition_v1::ChainKindV1;
+        use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir};
+        use uuid::Uuid;
+
+        let root = std::env::temp_dir()
+            .join(format!("pdf2test-freeze-real-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job_id = "freeze-real-job";
+        ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
+        let base_edit_version = 0_i64;
+
+        // (1) canonical 未就绪：过去静默 return（调用方误以为已冻结），现在必须上抛。
+        let error = freeze_local_candidate_snapshot(&root, job_id, base_edit_version)
+            .expect_err("canonical 未就绪时冻结必须失败并上抛，而不是静默返回");
+        assert!(
+            error.contains("canonical_not_seeded"),
+            "失败原因应可定位，实际为：{error}"
+        );
+
+        // (2) canonical 就绪：真函数必须落盘，且 resolve 会复用它。
+        let conn = open_library_connection(&root).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: job_id,
+                modality: "reading",
+                title: "t",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        seed_canonical_ds(
+            &conn,
+            job_id,
+            &json!({
+                "schemaVersion": "IeltsAuthoringIRV2",
+                "answerSlots": { "q1": { "questionNumber": 1, "answer": "frozen_answer" } },
+                "answerKey": { "q1": "frozen_answer" },
+                "taskGroups": [{
+                    "taskId": "t1", "taskType": "short_answer",
+                    "responseGroups": [{ "responseGroupId": "r1", "slotIds": ["q1"] }]
+                }]
+            })
+            .to_string(),
+            "action_required",
+        )
+        .unwrap();
+        drop(conn);
+
+        freeze_local_candidate_snapshot(&root, job_id, base_edit_version)
+            .expect("canonical 就绪时冻结必须成功");
+
+        let source_sha256 = commands::source_sha256_for_job(&root, job_id);
+        let batch_id = commands::recognition_batch_id(job_id, &source_sha256, base_edit_version);
+        let stored = store::read_candidate(&root, job_id, &batch_id, store::LOCAL_CANDIDATE_FILE)
+            .expect("真函数必须把本地候选快照真正落盘");
+        assert_eq!(stored.chain, ChainKindV1::Local);
+        assert_eq!(stored.base_edit_version, base_edit_version);
+
+        // 用户随后改稿：resolve 仍须命中冻结快照，而非编辑后的当前稿。
+        let edited = json!({
+            "schemaVersion": "IeltsAuthoringIRV2",
+            "answerSlots": { "q1": { "questionNumber": 1, "answer": "edited_answer" } },
+            "answerKey": { "q1": "edited_answer" },
+            "taskGroups": [{
+                "taskId": "t1", "taskType": "short_answer",
+                "responseGroups": [{ "responseGroupId": "r1", "slotIds": ["q1"] }]
+            }]
+        });
+        let resolved = resolve_local_snapshot(
+            Some(stored),
+            &edited,
+            &batch_id,
+            job_id,
+            job_id,
+            job_id,
+            &source_sha256,
+            base_edit_version,
+        );
+        let answer = resolved
+            .slots
+            .iter()
+            .find(|slot| slot.slot_id == "q1")
+            .and_then(|slot| slot.answer.as_ref())
+            .and_then(|answer| answer.as_str());
+        assert_eq!(
+            answer,
+            Some("frozen_answer"),
+            "真函数落盘的快照必须优先于用户编辑后的当前稿"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+

@@ -1,0 +1,366 @@
+//! 识别闭环端到端编排：三路结果 → **一份**统一裁决 → 持久化。
+//!
+//! 这一层只做编排，不做判断：所有判定都在 [`super::rules`] 与
+//! [`super::adjudicate`] 里，便于确定性测试。编排层负责的是任务书要求的
+//! 「可恢复、有界、不回退」：
+//!
+//! - **本地先出稿**：本地候选直接从已有权威稿抽取，不等待云端。
+//! - **云端失败必须分类**：超时 / 不支持输入 / 非法输出各有稳定原因码，
+//!   绝不把「没验证」写成「已验证」（[`classify_cloud_error`]）。
+//! - **有界**：模型调用上限 `MAX_ADJUDICATION_MODEL_CALLS`，受约束修复
+//!   `MAX_CONSTRAINED_REPAIRS`；不足时输出 `Unverifiable` 而不是猜。
+//! - **迟到不覆盖**：裁决项的 `status` 由应用层按版本检查写回，编排层不
+//!   直接碰权威稿。
+
+use std::path::Path;
+
+use rusqlite::Connection;
+use serde_json::Value;
+
+use super::adjudicate::{adjudicate, AdjudicateInput, AdjudicationOutcome};
+use super::candidate::{
+    align_cloud_answer_shapes, cloud_candidate_from_value, local_candidate_from_authoring, not_run_candidate,
+};
+use super::source::{verify_against_source, SourceVerificationV1};
+use super::store;
+use crate::schema::recognition_v1::{
+    reason, ChainKindV1, ChainStatusV1, RecognitionCandidateV1, RecognitionChainStateV1,
+    RecognitionDecisionV1, StageStateV1, StageStatusV1,
+};
+use crate::CommandResult;
+
+// ── 云端失败分类 ───────────────────────────────────────────────────────
+
+/// 云端链失败的**分类**结果。失败必须说清「为什么没有验证」，
+/// 否则前端只能显示一个无意义的错误。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CloudFailure {
+    pub status: ChainStatusV1,
+    /// 稳定原因码，取值来自 [`reason`]。
+    pub reason_code: String,
+    /// 供人阅读的解释（可含原始错误细节，不参与判定）。
+    pub message: String,
+}
+
+impl CloudFailure {
+    pub(crate) fn unusable(reason_code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: ChainStatusV1::Unusable,
+            reason_code: reason_code.into(),
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn not_run(reason_code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: ChainStatusV1::NotRun,
+            reason_code: reason_code.into(),
+            message: message.into(),
+        }
+    }
+}
+
+/// 把网关/校验层的错误字符串归类成稳定原因码。
+///
+/// 顺序很重要：先判「不支持输入」，再判「超时」，最后才归到「非法输出」。
+/// 归类失败时默认 `MODEL_INVALID_OUTPUT`（保守：宁可要求人工确认，
+/// 也不要把解析失败当成「模型不支持」而跳过验证）。
+pub(crate) fn classify_cloud_error(error: &str) -> CloudFailure {
+    let lower = error.to_ascii_lowercase();
+    let unsupported = [
+        "unsupported",
+        "not_supported",
+        "does_not_support",
+        "invalid_model",
+        "model_not_found",
+        "llm_profile_model_missing",
+        "no_profile",
+    ];
+    if unsupported.iter().any(|needle| lower.contains(needle)) {
+        return CloudFailure::not_run(reason::MODEL_UNSUPPORTED_INPUT, error);
+    }
+    let timeout = ["timeout", "timed out", "deadline", "etimedout", "operation timed"];
+    if timeout.iter().any(|needle| lower.contains(needle)) {
+        // 超时是**不可用**而不是「未运行」：确实尝试过，只是没有拿到可用结果。
+        return CloudFailure::unusable(reason::MODEL_TIMEOUT, error);
+    }
+    CloudFailure::unusable(reason::MODEL_INVALID_OUTPUT, error)
+}
+
+// ── 编排输入 / 输出 ────────────────────────────────────────────────────
+
+pub(crate) struct ReconcileBatchInput<'a> {
+    pub item_id: &'a str,
+    pub job_id: &'a str,
+    pub batch_id: &'a str,
+    pub source_file_id: &'a str,
+    pub source_sha256: &'a str,
+    pub base_edit_version: i64,
+    /// 当前权威稿（`IeltsAuthoringIRV2` JSON）。本地链与用户修改判定都基于它。
+    pub canonical: &'a Value,
+    /// 原文件语义（`DocumentIRV2` JSON）。云端核验与原文证据都基于它。
+    pub document_ir: Option<&'a Value>,
+    /// **识别当时的本地结果快照**。
+    ///
+    /// 关键：这里必须传「批次生成时冻结的本地候选」，而不是用当前权威稿
+    /// 现场重投影。原因见 [`resolve_local_snapshot`]：只有快照与当前权威稿
+    /// 的差异才能识别「云端运行期间用户改了稿」，迟到结果才不会覆盖用户修改。
+    pub local_snapshot: Option<RecognitionCandidateV1>,
+    /// 云端全量识别结果：原始 `CloudReadingOutlineV1` JSON，或分类后的失败。
+    pub cloud: Result<Value, CloudFailure>,
+    /// 结构校验闭包：把一批 patch 应用到权威稿副本并跑同一套校验。
+    pub validate_batch: &'a dyn Fn(&[Value]) -> Result<(), String>,
+}
+
+/// 取本地快照：优先复用批次已冻结的候选，否则按当前权威稿现场投影。
+///
+/// 复用条件是「同一 batch_id + 同一 base_edit_version」——batch_id 本身由
+/// `(job_id, source_sha256, base_edit_version)` 派生（见
+/// [`super::commands::recognition_batch_id`]），因此同一输入与版本的重试
+/// 必然复用同一快照，既保证幂等，也让用户修改可被检出。
+pub(crate) fn resolve_local_snapshot(
+    stored: Option<RecognitionCandidateV1>,
+    canonical: &Value,
+    batch_id: &str,
+    item_id: &str,
+    job_id: &str,
+    source_file_id: &str,
+    source_sha256: &str,
+    base_edit_version: i64,
+) -> RecognitionCandidateV1 {
+    if let Some(stored) = stored {
+        let same_batch = stored.batch_id == batch_id
+            && stored.base_edit_version == base_edit_version
+            && stored.source_sha256 == source_sha256
+            && stored.chain == ChainKindV1::Local;
+        if same_batch {
+            return stored;
+        }
+    }
+    local_candidate_from_authoring(
+        canonical,
+        batch_id,
+        item_id,
+        job_id,
+        source_file_id,
+        source_sha256,
+        base_edit_version,
+    )
+}
+
+pub(crate) struct ReconcileBatchOutcome {
+    pub decision: RecognitionDecisionV1,
+    /// 四阶段状态（本地 / 云端 / 核验 / 裁决），供前端解释。
+    pub chains: RecognitionChainStateV1,
+    /// 符合全部自动应用条件、且合并后结构合法的 patch（与 decision id 对齐）。
+    pub auto_apply_candidates: Vec<String>,
+    /// 证据留痕：三条链的原始结论。
+    pub local: RecognitionCandidateV1,
+    pub cloud: RecognitionCandidateV1,
+    pub source: SourceVerificationV1,
+}
+
+/// 由本地候选推导链路状态：有槽位即成功；丢弃过题组即部分可用。
+fn local_stage_status(local: &RecognitionCandidateV1) -> StageStatusV1 {
+    if local.slots.is_empty() && local.task_groups.is_empty() {
+        return StageStatusV1::with_reason(
+            StageStateV1::Unusable,
+            reason::EVIDENCE_MISSING,
+            "本地稿没有可识别的题目结构。",
+        );
+    }
+    if local.unresolved_regions.is_empty() {
+        StageStatusV1::new(StageStateV1::Succeeded)
+    } else {
+        StageStatusV1::with_reason(
+            StageStateV1::Partial,
+            reason::SALVAGE_PARTIAL,
+            "本地稿有部分区域未能识别，仍需人工确认。",
+        )
+    }
+}
+
+fn cloud_stage_status(cloud: &RecognitionCandidateV1, failure: Option<&CloudFailure>) -> StageStatusV1 {
+    match failure {
+        Some(failure) => StageStatusV1::with_reason(
+            StageStateV1::from(failure.status),
+            failure.reason_code.clone(),
+            failure.message.clone(),
+        ),
+        None => {
+            let state = StageStateV1::from(cloud.status);
+            match &cloud.reason_code {
+                Some(code) => StageStatusV1::with_reason(
+                    state,
+                    code.clone(),
+                    "云端识别只有部分题组通过校验，其余需要人工确认。",
+                ),
+                None => StageStatusV1::new(state),
+            }
+        }
+    }
+}
+
+fn source_stage_status(source: &SourceVerificationV1) -> StageStatusV1 {
+    let state = StageStateV1::from(source.status);
+    match &source.reason_code {
+        Some(code) => StageStatusV1::with_reason(
+            state,
+            code.clone(),
+            "原文件没有可核验的文本证据，结论只能标记为无法判断。",
+        ),
+        None => StageStatusV1::new(state),
+    }
+}
+
+/// 三路 → 一份裁决。纯函数（无 IO），便于确定性测试。
+pub(crate) fn reconcile_batch(input: ReconcileBatchInput<'_>) -> ReconcileBatchOutcome {
+    // 1) 本地链：复用批次冻结快照；没有快照时按当前权威稿投影（首次识别）。
+    let local = resolve_local_snapshot(
+        input.local_snapshot,
+        input.canonical,
+        input.batch_id,
+        input.item_id,
+        input.job_id,
+        input.source_file_id,
+        input.source_sha256,
+        input.base_edit_version,
+    );
+
+    // 2) 云端链：成功 → 归一为候选；失败 → 带原因码的不可用候选。
+    let (mut cloud, cloud_failure) = match &input.cloud {
+        Ok(raw) => (
+            cloud_candidate_from_value(
+                raw,
+                input.batch_id,
+                input.item_id,
+                input.job_id,
+                input.source_file_id,
+                input.source_sha256,
+                input.base_edit_version,
+            ),
+            None,
+        ),
+        Err(failure) => (
+            not_run_candidate(
+                ChainKindV1::Cloud,
+                input.batch_id,
+                input.item_id,
+                input.job_id,
+                input.source_file_id,
+                input.source_sha256,
+                input.base_edit_version,
+                &failure.reason_code,
+            ),
+            Some(failure.clone()),
+        ),
+    };
+
+    // 2b) 形状对齐：云端答案若与本地同题答案「形状不同但值相同」（如本地 option / 云端
+    // text），对齐为本地形状，避免 `answer_compare_key` 的 shape-sensitive 比较制造假分歧。
+    // 只对齐形状、不改动值；本地无答案或云端值无法抽字符串时保持原样。
+    align_cloud_answer_shapes(&mut cloud, &local);
+
+    // 3) 原文件核验：只产出问题与修正建议，不产出第二份权威稿。
+    let local_slots: Vec<(String, u32, Option<Value>, bool, String)> = local
+        .slots
+        .iter()
+        .map(|slot| {
+            (
+                slot.slot_id.clone(),
+                slot.question_number,
+                slot.answer.clone(),
+                slot.has_source_evidence,
+                String::new(),
+            )
+        })
+        .collect();
+    let local_groups: Vec<(String, Vec<u32>)> = local
+        .task_groups
+        .iter()
+        .map(|group| (group.task_id.clone(), super::source::group_question_numbers(&group.display_range)))
+        .collect();
+    let source = verify_against_source(input.document_ir, &local_slots, &local_groups);
+
+    // 4) 统一裁决：合并去重、依赖分组、自动应用资格、结构校验。
+    let AdjudicationOutcome {
+        decision,
+        auto_apply_candidates,
+    } = adjudicate(AdjudicateInput {
+        canonical: input.canonical,
+        local: &local,
+        cloud: &cloud,
+        source: &source,
+        batch_id: input.batch_id,
+        item_id: input.item_id,
+        job_id: input.job_id,
+        base_edit_version: input.base_edit_version,
+        validate_batch: input.validate_batch,
+    });
+
+    let chains = RecognitionChainStateV1 {
+        local: local_stage_status(&local),
+        cloud: cloud_stage_status(&cloud, cloud_failure.as_ref()),
+        source: source_stage_status(&source),
+        adjudication: StageStatusV1::new(StageStateV1::Succeeded),
+    };
+
+    ReconcileBatchOutcome {
+        decision,
+        chains,
+        auto_apply_candidates,
+        local,
+        cloud,
+        source,
+    }
+}
+
+/// 把三路证据与裁决写入 job 目录，并把批次汇总与逐项裁决写入数据库。
+///
+/// 数据库是前端读取权威；job 目录 JSON 只是证据留痕，被清理策略回收不
+/// 影响产品决策。
+pub(crate) fn persist_outcome(
+    root: &Path,
+    conn: &Connection,
+    outcome: &ReconcileBatchOutcome,
+) -> CommandResult<()> {
+    let batch_id = outcome.decision.batch_id.clone();
+    let job_id = outcome.decision.job_id.clone();
+    store::write_candidate(root, &batch_id, &outcome.local, store::LOCAL_CANDIDATE_FILE)?;
+    store::write_candidate(root, &batch_id, &outcome.cloud, store::CLOUD_CANDIDATE_FILE)?;
+    store::write_source_verification(root, &job_id, &batch_id, &outcome.source)?;
+    store::write_decision(root, &job_id, &batch_id, &outcome.decision)?;
+    store::write_current_batch(root, &job_id, &batch_id)?;
+
+    store::upsert_batch_with_stages(conn, &outcome.decision, Some(&outcome.chains))?;
+    store::replace_decision_items(conn, &outcome.decision)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_input_is_not_run_but_timeout_is_unusable() {
+        let unsupported = classify_cloud_error("model_not_supported_for_pdf_input");
+        assert_eq!(unsupported.status, ChainStatusV1::NotRun);
+        assert_eq!(unsupported.reason_code, reason::MODEL_UNSUPPORTED_INPUT);
+
+        let timeout = classify_cloud_error("openai request timeout after 60s");
+        assert_eq!(timeout.status, ChainStatusV1::Unusable);
+        assert_eq!(timeout.reason_code, reason::MODEL_TIMEOUT);
+
+        // 未知错误保守归为「非法输出」，并要求人工确认，而不是静默跳过。
+        let unknown = classify_cloud_error("cloud_outline_direct_pdf_failed_and_no_images");
+        assert_eq!(unknown.status, ChainStatusV1::Unusable);
+        assert_eq!(unknown.reason_code, reason::MODEL_INVALID_OUTPUT);
+    }
+
+    #[test]
+    fn missing_profile_is_reported_as_unsupported_not_silently_skipped() {
+        let failure = classify_cloud_error("llm_profile_model_missing");
+        assert_eq!(failure.status, ChainStatusV1::NotRun);
+        assert_eq!(failure.reason_code, reason::MODEL_UNSUPPORTED_INPUT);
+    }
+}

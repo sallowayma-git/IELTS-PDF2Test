@@ -237,27 +237,36 @@ pub(crate) fn make_cloud_paper_generation_input(
             "shape": {
                 "title": "paper title",
                 "groups": [{
-                    "range": [1, 5],
                     "kind": "true_false_not_given",
+                    "range": [1, 5],
                     "layoutHint": "list",
-                    "questionIds": ["q1"],
-                    "notesText": "",
-                    "confidence": 0.0,
-                    "evidence": {"quotes": [{"pageIndex": 1, "text": "short visible source excerpt"}]}
+                    "questionIds": ["q1", "q2", "q3", "q4", "q5"],
+                    "instructionsText": "Do the following statements agree with the claims of the writer?",
+                    "stimulusText": "The passage text this group depends on (for completion groups: the notes/table/diagram text).",
+                    "optionBank": {"options": [{"label": "A", "text": "TRUE"}, {"label": "B", "text": "FALSE"}, {"label": "C", "text": "NOT GIVEN"}], "allowReuse": true},
+                    "notesText": "Optional notes for completion groups; empty for choice groups.",
+                    "confidence": 0.9,
+                    "evidence": {"quotes": [{"pageIndex": 1, "text": "short visible source excerpt"}]},
+                    "slots": [
+                        {"questionNumber": 1, "prompt": "Full transcribed question text for Q1.", "answer": "TRUE", "evidence": [{"pageIndex": 1, "quote": "visible excerpt supporting Q1"}]},
+                        {"questionNumber": 2, "prompt": "Full transcribed question text for Q2.", "answer": "FALSE", "evidence": [{"pageIndex": 1, "quote": "visible excerpt supporting Q2"}]}
+                    ]
                 }],
-                "answerKey": {"1": "TRUE"},
-                "confidence": 0.0,
+                "answerKey": {"1": "TRUE", "2": "FALSE", "3": "NOT GIVEN", "4": "TRUE", "5": "FALSE"},
+                "confidence": 0.9,
                 "warnings": []
             },
             "rules": [
-                "Return an outline for comparison only, not JavaScript or HTML.",
-                "Do not invent passage facts or answers.",
-                "Use only question-group ranges, question kinds, layout hints, and visible answers.",
-                "Question kinds must use the local group-kind enum names.",
-                "Every group must include evidence.quotes copied from visible PDF text. If evidence is missing, lower group confidence below 0.75.",
-                "When the source says Complete the notes below, note completion, notes, or uses numbered ellipsis/blank markers such as 8……… or 8 ______, keep the whole range as one completion group.",
-                "For notes completion groups, set layoutHint to inline_completion, include qN ids for every blank in the same group, and copy the continuous notes text into notesText.",
-                "Do not rewrite notes completion into a list of independent short-answer items."
+                "Return FULL recognition content for comparison, not an outline. An outline alone is not acceptable.",
+                "Transcribe every question's FULL prompt text into slots[].prompt; do not abbreviate or summarize questions.",
+                "Transcribe every option bank and every option label and its text into optionBank.options.",
+                "Transcribe ALL passage / notes / table / diagram text the group depends on into stimulusText (and notesText for completion groups).",
+                "Provide the answer for EVERY question: prefer slots[].answer per question; you may also repeat them in answerKey keyed by question number as a string or string array.",
+                "Every group must include evidence.quotes with one quote copied from visible PDF text (pageIndex>0, non-empty text). If evidence is missing, lower group confidence below 0.75.",
+                "Do not invent passage facts or answers; omit uncertain question numbers rather than guessing.",
+                "Question kinds must use the local group-kind enum names: single_choice, multi_choice, true_false_not_given, yes_no_not_given, matching, heading_matching, matching_information, classification, summary_completion, table_completion, diagram_completion, short_answer, sentence_completion.",
+                "range must be a 2-element array [start, end] with start>0 and end>=start; questionIds must be unique non-empty strings (length = end-start+1), one per question in the range.",
+                "For notes completion groups (source says Complete the notes below, notes, or uses blank markers such as 8……… or 8 ______), keep the whole range as one completion group: set layoutHint to inline_completion, include qN ids for every blank, and copy the continuous notes text into notesText. Do not rewrite into a list of independent short-answer items."
             ]
         }
     })

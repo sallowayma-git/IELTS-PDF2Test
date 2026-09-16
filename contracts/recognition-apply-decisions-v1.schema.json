@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "recognition-apply-decisions-v1.schema.json",
+  "title": "ApplyRecognitionDecisionsV1",
+  "description": "apply_recognition_decisions 的请求与返回。请求用一个 requestId 幂等；返回用 outcomes[] 区分 applied/rejected/superseded/failed 四态。\n注意：本文件**有意**不列入 contracts/contract-manifest.json（理由同 recognition-decision-view-v1.schema.json）。语义真源是 src-tauri/src/schema/recognition_v1.rs。",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/result" }
+  ],
+  "$defs": {
+    "request": {
+      "title": "ApplyRecognitionDecisionsRequestV1",
+      "type": "object",
+      "required": ["requestId", "batchId", "baseEditVersion"],
+      "additionalProperties": false,
+      "properties": {
+        "requestId": { "type": "string", "minLength": 1, "description": "幂等键；重试必须复用" },
+        "batchId": { "type": "string", "minLength": 1 },
+        "baseEditVersion": { "type": "integer", "minimum": 0 },
+        "accept": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "reject": { "type": "array", "items": { "type": "string" }, "default": [] }
+      }
+    },
+    "result": {
+      "title": "ApplyRecognitionDecisionsResultV1",
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "batchId",
+        "editVersionBefore",
+        "editVersionAfter",
+        "replayed",
+        "outcomes",
+        "view"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "const": "ApplyRecognitionDecisionsResultV1" },
+        "requestId": { "type": "string" },
+        "batchId": { "type": "string" },
+        "editVersionBefore": { "type": "integer", "minimum": 0 },
+        "editVersionAfter": { "type": "integer", "minimum": 0 },
+        "replayed": { "type": "boolean", "description": "true = 幂等重放，未重复写入" },
+        "outcomes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["decisionId", "kind", "message"],
+            "additionalProperties": false,
+            "properties": {
+              "decisionId": { "type": "string" },
+              "kind": { "enum": ["applied", "rejected", "superseded", "failed"] },
+              "reasonCode": { "type": ["string", "null"] },
+              "message": { "type": "string" },
+              "appliedAt": { "type": ["string", "null"] },
+              "undo": {
+                "oneOf": [{ "type": "null" }, { "type": "object" }]
+              }
+            }
+          }
+        },
+        "view": { "type": "object", "description": "处理后的最新 RecognitionDecisionViewV1" }
+      }
+    }
+  }
+}

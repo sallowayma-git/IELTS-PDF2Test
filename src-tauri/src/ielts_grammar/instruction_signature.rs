@@ -54,7 +54,7 @@ pub(crate) fn infer_instruction_signature(
     if !has_strong_task_cue(&lower, &task_type) {
         warnings.push("instruction_signature_weak_task_cue".to_string());
     }
-    if is_completion_task(&task_type) && word_limit.is_none() {
+    if is_completion_task(&task_type) && word_limit.is_none() && option_alphabet.is_none() {
         warnings.push("completion_word_limit_not_found".to_string());
     }
     if let (Some(instruction_type), Some(structure_type)) = (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { InlineTextEditor } from "./editors/InlineTextEditor";
 import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
@@ -30,6 +30,14 @@ export interface ExamCanvasProps {
 }
 
 type VisualNodeV2 = Extract<ContentNodeV2, { type: "figure" | "image" | "diagram" }>;
+
+/** author 模式读取 answerKey 投影，student 预览读取本地作答状态；
+ *  两种模式用同一份 setter 语义，保证预览交互与学生端一致。 */
+const CanvasAnswersContext = createContext<{
+  answers: Record<string, string[]>;
+  setText: (slotId: string, value: string) => void;
+  setOption: (slotId: string, label: string, checked: boolean, multiple: boolean, assignment?: "per_slot" | "unordered_set") => void;
+}>({ answers: {}, setText: () => {}, setOption: () => {} });
 
 const assetPreviewCache = new Map<string, Promise<AuthoringAssetPreview | undefined>>();
 
@@ -198,6 +206,7 @@ function VisualAssetNode({ node, canvas, select }: {
   canvas: ExamCanvasProps;
   select: (event: React.MouseEvent) => void;
 }) {
+  const { answers, setOption } = useContext(CanvasAnswersContext);
   const [preview, setPreview] = useState<AuthoringAssetPreview>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -255,14 +264,18 @@ function VisualAssetNode({ node, canvas, select }: {
         const hotspotWidth = hotspot.normalizedRect[2] / width;
         const hotspotHeight = hotspot.normalizedRect[3] / height;
         if (left + hotspotWidth <= 0 || top + hotspotHeight <= 0 || left >= 1 || top >= 1) return null;
+        // 学生端（FigureNode.vue）点击热点把 hotspotId 写入该题答案；作者模式点击仅选中。
+        const pressed = (answers[hotspot.slotId] ?? []).includes(hotspot.hotspotId);
         return <button
           key={hotspot.hotspotId}
           type="button"
-          className="v2-canvas-hotspot"
+          className={`v2-canvas-hotspot${pressed ? " is-pressed" : ""}`}
+          aria-pressed={canvas.mode === "student" ? pressed : undefined}
           style={{ left: `${left * 100}%`, top: `${top * 100}%`, width: `${hotspotWidth * 100}%`, height: `${hotspotHeight * 100}%` }}
           onClick={(event) => {
             event.stopPropagation();
             if (canvas.mode === "author") canvas.onSelect?.(hotspot.slotId);
+            else setOption(hotspot.slotId, hotspot.hotspotId, true, false);
           }}
         >{canvas.authoring.answerSlots[hotspot.slotId]?.displayLabel ?? hotspot.slotId}</button>;
       }) : null}
@@ -272,6 +285,7 @@ function VisualAssetNode({ node, canvas, select }: {
 }
 
 function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; canvas: ExamCanvasProps }): ReactNode {
+  const canvasState = useContext(CanvasAnswersContext);
   if (!nodes?.length) return null;
   return nodes.map((node) => {
     const selected = canvas.selectedId === node.id;
@@ -322,7 +336,7 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
       case "answer_slot": {
         const slot = canvas.authoring.answerSlots[node.slotId];
         if (!slot) return null;
-        const values = selectedValues(canvas.authoring.answerKey[node.slotId]);
+        const values = canvasState.answers[node.slotId] ?? [];
         const removeTools = <AuthorTools canvas={canvas} label={`编辑答案位 ${slot.displayLabel}`} compact>
           <ToolButton label={`在此答案位后插入答案位`} onClick={() => canvas.onStructureAction?.({ type: "answer-slot.insert", afterNodeId: node.id })}>＋</ToolButton>
           <ToolButton label={`删除答案位 ${slot.displayLabel}`} onClick={() => canvas.onStructureAction?.({ type: "answer-slot.delete", nodeId: node.id, slotId: slot.slotId })}>×</ToolButton>
@@ -331,7 +345,8 @@ function ContentNodes({ nodes, canvas }: { nodes: ContentNodeV2[] | undefined; c
           ? <span key={node.id} className="v2-answer-slot-frame">{control}{removeTools}</span>
           : control;
         if (slot.interaction === "text") {
-          return withTools(<label key={node.id} data-editor-id={node.id} className={`v2-answer-slot v2-answer-slot-text${authorClass}${selectedClass}`} onClick={select}><span className="v2-slot-label">{slot.displayLabel}</span><input type="text" name={slot.slotId} value={canvas.mode === "author" ? values[0] ?? "" : undefined} defaultValue={canvas.mode === "student" ? "" : undefined} placeholder={node.placeholder || "Answer"} onChange={(event) => canvas.mode === "author" && canvas.onAnswerChange?.(slot.slotId, { kind: "text", values: [event.target.value], normalization: "ielts_default" })} /></label>);
+          // 学生预览也要能真实输入（与学生 AnswerSlotNode 行为一致），不再是无回显的 uncontrolled 输入框。
+          return withTools(<label key={node.id} data-editor-id={node.id} className={`v2-answer-slot v2-answer-slot-text${authorClass}${selectedClass}`} onClick={select}><span className="v2-slot-label">{slot.displayLabel}</span><input type="text" name={slot.slotId} value={values[0] ?? ""} placeholder={node.placeholder || "Answer"} onChange={(event) => canvasState.setText(slot.slotId, event.target.value)} /></label>);
         }
         if (slot.interaction === "hotspot") {
           return withTools(<button key={node.id} type="button" data-editor-id={node.id} className={`v2-answer-slot v2-answer-slot-hotspot${authorClass}${selectedClass}`} onClick={select}>{slot.displayLabel}{values[0] ? `: ${values[0]}` : ""}</button>);
@@ -398,16 +413,17 @@ export function ExamCanvas(props: ExamCanvasProps) {
     if (props.mode === "author") props.onAnswerChange?.(slotId, { kind: "text", values: [value], normalization: "ielts_default" });
     else setStudentAnswers((current) => ({ ...current, [slotId]: value ? [value] : [] }));
   };
-  const setOption = (slotId: string, label: string, checked: boolean, multiple: boolean) => {
+  const setOption = (slotId: string, label: string, checked: boolean, multiple: boolean, assignment: "per_slot" | "unordered_set" = "per_slot") => {
     const current = canvasAnswers[slotId] ?? [];
     const next = multiple ? current.filter((value) => value !== label) : [];
     if (checked) next.push(label);
-    if (props.mode === "author") props.onAnswerChange?.(slotId, { kind: "option", labels: next, assignment: "per_slot" });
+    if (props.mode === "author") props.onAnswerChange?.(slotId, { kind: "option", labels: next, assignment });
     else setStudentAnswers((answers) => ({ ...answers, [slotId]: next }));
   };
   const optionsFor = (task: TaskGroupV2, response: ResponseGroupV2) => interactionModel.responseGroups[response.responseGroupId]?.options ?? task.optionBank?.options ?? [];
 
-  return <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}`} data-testid={`exam-canvas-v2-${props.mode}`}>
+  return <CanvasAnswersContext.Provider value={{ answers: canvasAnswers, setText, setOption }}>
+    <div className={`exam-canvas-v2 ${props.mode === "author" ? "is-author" : "is-student"}`} data-testid={`exam-canvas-v2-${props.mode}`}>
     <main id="left" className="reading-pane passage-pane pane v2-passage-pane">
       <article className="reading-html passage-html v2-passage-content" aria-label={runtime.title}>
         <ContentNodes nodes={runtime.passage} canvas={props} />
@@ -415,7 +431,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
     </main>
     <section id="right" className="reading-pane question-pane pane v2-question-pane" aria-label="Reading questions">
       <div id="question-groups" className="question-groups v2-question-groups">
-        {runtime.taskGroups.map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
+        {runtime.taskGroups.map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} data-editor-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
           <header className="v2-task-header"><h2>{task.taskType}</h2><div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
           {task.stimulus?.length ? <div className="v2-stimulus"><ContentNodes nodes={task.stimulus} canvas={props} /></div> : null}
           {(() => {
@@ -443,6 +459,13 @@ export function ExamCanvas(props: ExamCanvasProps) {
           {matrixHandled(task as TaskGroupV2, runtime) ? null : task.responseGroups.map((response) => {
             const options = optionsFor(task as TaskGroupV2, response);
             const unordered = response.assignment === "unordered_set";
+            // 学生端 ReadingExamV2Renderer 用 `cardinality.max` 作为共享选择的禁用阈值
+            // （legend 才用 `exact`）。这里必须一致，否则作者预览比学生端更早锁住选项，
+            // 作者会以为某些组合不可选。
+            const unorderedLimit = unordered
+              ? response.cardinality.max ?? Number.POSITIVE_INFINITY
+              : Number.POSITIVE_INFINITY;
+            const unorderedSelected = new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? [])).size;
             const responseSlotIds = new Set(response.slotIds);
             // Text completion is rendered as one canonical stimulus document
             // with inline slots. Once every response slot is present there,
@@ -456,7 +479,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
             return <section key={response.responseGroupId} className={`v2-response-group${props.selectedId === response.responseGroupId ? " is-selected" : ""}`} data-response-group-id={response.responseGroupId} data-assignment={response.assignment} onClick={(event) => { if (props.mode === "author") { event.stopPropagation(); props.onSelect?.(response.responseGroupId); } }}>
               {response.prompt?.length ? <div className="v2-response-prompt"><ContentNodes nodes={response.prompt} canvas={props} /></div> : null}
               {options.length || (props.mode === "author" && (response.kind === "choice" || response.kind === "matching")) ? <OptionBankTools canvas={props} taskId={task.taskId} responseGroupId={response.responseGroupId} options={options} /> : null}
-              {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection"><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className="v2-choice-item"><input type="checkbox" value={option.label} checked={checked} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false)); }} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
+              {inlineStimulusComplete ? null : unordered ? <fieldset className="v2-shared-selection"><legend>Select {response.cardinality.exact || response.slotIds.length} options for {response.slotIds.map((slotId) => runtime.questionDisplayMap[slotId]).join(", ")}</legend>{options.map((option) => { const checked = response.slotIds.some((slotId) => (canvasAnswers[slotId] ?? []).includes(option.label)); return <label key={option.optionId} className="v2-choice-item"><input type="checkbox" value={option.label} checked={checked} disabled={!checked && unorderedSelected >= unorderedLimit} onChange={(event) => { const selected = Array.from(new Set(response.slotIds.flatMap((slotId) => canvasAnswers[slotId] ?? []).filter((value) => value !== option.label))).slice(0, response.slotIds.length); if (event.target.checked) selected.push(option.label); response.slotIds.forEach((slotId, index) => setOption(slotId, selected[index] ?? "", Boolean(selected[index]), false, "unordered_set")); }} /><span><strong>{option.label}</strong> <ContentNodes nodes={option.content} canvas={props} /></span></label>; })}<div className="v2-slot-summary">{response.slotIds.map((slotId) => <span key={slotId} className="v2-slot-chip" data-question-id={slotId}>{runtime.questionDisplayMap[slotId]}: {(canvasAnswers[slotId] ?? []).join(", ") || "—"}</span>)}</div></fieldset> : <div className="v2-slot-list">{response.slotIds.map((slotId, index) => {
                 const slot = runtime.answerSlots[slotId];
                 if (!slot) return null;
                 const values = canvasAnswers[slotId] ?? [];
@@ -468,7 +491,8 @@ export function ExamCanvas(props: ExamCanvasProps) {
         </article>)}
       </div>
     </section>
-  </div>;
+    </div>
+  </CanvasAnswersContext.Provider>;
 }
 
 /** 兼容期别名：`StructuredAuthoringEditorV2` 仍以旧名导入，P10 删除旧页面时一并移除。 */

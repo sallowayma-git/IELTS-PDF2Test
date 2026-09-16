@@ -130,6 +130,55 @@ fn list_pdf_files_in_dir(dir: PathBuf) -> CommandResult<Vec<PickedSourcePath>> {
     Ok(files)
 }
 
+fn picked_source_path(path: PathBuf) -> CommandResult<PickedSourcePath> {
+    if !path.is_file() {
+        return Err(format!("automation_source_file_missing:{}", path.display()));
+    }
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("automation_source_file_name_invalid:{}", path.display()))?
+        .to_string();
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "pdf" | "docx" | "txt" | "md") {
+        return Err(format!("automation_source_file_type_unsupported:{extension}"));
+    }
+    let size_bytes = fs::metadata(&path)
+        .map_err(|error| error.to_string())?
+        .len();
+    Ok(PickedSourcePath {
+        path: path.to_string_lossy().to_string(),
+        title_hint: clean_file_stem(&name),
+        name,
+        size_bytes,
+        requires_desktop_parser: false,
+    })
+}
+
+/// Real-Tauri E2E hook for the normal "choose files" path. Absent the env var,
+/// the frontend keeps using the native dialog unchanged.
+pub(crate) fn automation_source_files_from_env() -> CommandResult<Option<Vec<PickedSourcePath>>> {
+    let Ok(raw) = env::var("PDF2TEST_AUTOMATION_SOURCE_FILES") else {
+        return Ok(None);
+    };
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    let mut files = Vec::new();
+    for path in env::split_paths(&raw) {
+        files.push(picked_source_path(path)?);
+    }
+    if files.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(files))
+    }
+}
+
 pub(crate) async fn create_import_job_core(
     input: CreateJobInput,
     app: AppHandle,

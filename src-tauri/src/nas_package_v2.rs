@@ -12,12 +12,13 @@ use crate::authoring_v2_commands::{
 use crate::export_artifacts::{build_wrapper, safe_exam_id};
 use crate::export_nas_library::{nas_reading_exams_dir, normalize_nas_library_root};
 use crate::reading_runtime_v2::{
-    run_student_loader_probe, safe_join_asset_path, ExamAssetManifestV2, StudentProbeReportV2,
+    run_student_loader_probe_with_files, safe_join_asset_path, ExamAssetManifestV2,
+    ProbePackageFiles, StudentProbeReportV2,
 };
 use crate::reading_source_v2::{
     compile_reading_source_v2, validate_reading_source_v2, ReadingExamSourceV2,
 };
-use crate::schema::common::canonical_json_bytes;
+use crate::schema::common::{canonical_json_bytes, canonical_json_bytes_js};
 use crate::schema::IeltsAuthoringIRV2;
 use crate::CommandResult;
 use chrono::Utc;
@@ -286,6 +287,13 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
     write_lock_metadata(&paths, &batch_id)?;
     let staging = reading_root.join(format!(".batch-staging-{batch_id}"));
     let release = reading_root.join("releases").join(&batch_id);
+    let backup_dir = library_root
+        .join(CONTROL_DIR_NAME)
+        .join(BACKUP_DIR_NAME)
+        .join(format!("batch-{batch_id}"));
+    let mut moved_resources: Vec<(String, bool)> = Vec::new();
+    // 提交点标志：清单替换成功即为「包已对学生可见」。此后任何失败都不得回滚资源。
+    let mut manifest_committed = false;
     let result = (|| -> CommandResult<Value> {
         fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
         let mut outcomes = Vec::new();
@@ -311,10 +319,10 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                 expected_manifest_sha256: None, fault: None, job_id: None, revision: None,
             };
             let mut staged = stage_package_files(&package_input, &source, &source_value, &source_path, &staged_paths)?;
-            for field in ["script", "resourcesBase", "assetManifest"] {
-                let relative = staged.entry[field].as_str().ok_or("PUBLISH_PATH_MISSING")?.trim_start_matches("./");
-                staged.entry[field] = json!(format!("./releases/{batch_id}/{relative}"));
-            }
+            // 脚本放进不可变的 releases/ 目录；资源路径保持根级 `resources/<examId>/`，
+            // 因为学生端 resolver 固定从 reading 根解析 `resources/${examId}`，不消费 resourcesBase。
+            let script_relative = staged.entry["script"].as_str().ok_or("PUBLISH_PATH_MISSING")?.trim_start_matches("./");
+            staged.entry["script"] = json!(format!("./releases/{batch_id}/{script_relative}"));
             manifest.insert(exam_id.clone(), staged.entry);
             outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id,
                 "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": source.assets.assets.len()}));
@@ -326,20 +334,81 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         manifest.insert("_meta".to_string(), json!({"schemaVersion": "ReadingExamManifestV2",
             "assetCount": manifest.len(), "generatedAt": Utc::now().to_rfc3339(), "batchId": batch_id}));
         let candidate = staging.join("manifest.js");
-        write_synced_file(&candidate, format!("window.__READING_EXAM_MANIFEST__ = {};\n",
-            serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?).as_bytes())?;
+        let candidate_bytes = format!("window.__READING_EXAM_MANIFEST__ = {};\n",
+            serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?).into_bytes();
+        write_synced_file(&candidate, &candidate_bytes)?;
+        // 提交点判定只能靠磁盘事实。提交用的是 `atomic_replace_file`（移动），
+        // 提交后 release 里已无候选清单，所以必须先把候选清单的内容哈希记进状态，
+        // 崩溃恢复才能凭「线上清单哈希 == 待提交哈希」认出包已经生效。
+        let candidate_manifest_sha256 = sha256_hex(&candidate_bytes);
+        // 在清单替换前把每题资源落到根级 `resources/<examId>/`（学生端唯一可解析位置）。
+        // 备份 + 状态文件保证：任何一步失败可回滚；崩溃后由 recover_incomplete_transactions 重放。
+        let write_batch_state = |moved: &[(String, bool)], committed: bool| -> CommandResult<()> {
+            let state = json!({
+                "schemaVersion": "NasBatchBackupStateV1",
+                "manifestCommitted": committed,
+                "hadManifest": paths.manifest_path.is_file(),
+                "pendingManifestSha256": candidate_manifest_sha256,
+                "exams": moved.iter()
+                    .map(|(exam_id, had)| json!({"examId": exam_id, "hadResources": had}))
+                    .collect::<Vec<_>>(),
+            });
+            fs::create_dir_all(&backup_dir).map_err(|error| error.to_string())?;
+            write_synced_file(
+                &backup_dir.join("state.json"),
+                &canonical_json_bytes(&state).map_err(|error| error.to_string())?,
+            )
+        };
+        // 保留清单基线。`atomic_replace_file` 本身是原子替换，但提交点判定与
+        // 「未提交却已替换」的还原都不应依赖状态文件的写入时机，因此留一份字节备份。
+        fs::create_dir_all(&backup_dir).map_err(|error| error.to_string())?;
+        if paths.manifest_path.is_file() {
+            copy_file_verified(&paths.manifest_path, &backup_dir.join("manifest.js"))
+                .map_err(|error| format!("PUBLISH_BATCH_MANIFEST_BACKUP:{error}"))?;
+        }
+        write_batch_state(&moved_resources, false)?;
+        fs::create_dir_all(reading_root.join("resources")).map_err(|error| error.to_string())?;
+        for exam_id in &exam_ids {
+            let root_resource = reading_root.join("resources").join(exam_id);
+            let had_resources = root_resource.exists();
+            // 先把「本题将被移动」写进状态，再动磁盘。顺序反过来会留下一个
+            // 崩溃窗口：旧资源已移走但状态未记录，恢复端不知道它存在过，
+            // 线上目录永久缺失。
+            moved_resources.push((exam_id.clone(), had_resources));
+            write_batch_state(&moved_resources, false)?;
+            if had_resources {
+                fs::create_dir_all(backup_dir.join("resources")).map_err(|error| error.to_string())?;
+                fs::rename(&root_resource, backup_dir.join("resources").join(exam_id))
+                    .map_err(|error| error.to_string())?;
+            }
+            fs::rename(staging.join("resources").join(exam_id), &root_resource)
+                .map_err(|error| error.to_string())?;
+        }
         verify_manifest_compare_and_swap(&paths.manifest_path, &base_hash)?;
         fs::create_dir_all(release.parent().unwrap()).map_err(|error| error.to_string())?;
         fs::rename(&staging, &release).map_err(|error| error.to_string())?;
         if input.fault.as_deref() == Some("before_manifest") { return Err("PUBLISH_BATCH_INTERRUPTED".to_string()); }
-        // Published entries point only at immutable files. One manifest replacement exposes the batch.
+        // Published entries point only at immutable script files; one manifest replacement exposes the batch.
         atomic_replace_file(&release.join("manifest.js"), &paths.manifest_path)?;
+        // 提交点已过：新清单引用的 scripts 与 resources 都已就位。状态文件此刻
+        // 只是诊断信息，写失败不得升级为回滚——回滚会删掉刚生效的资源，
+        // 留下「新清单 + 无资源」的坏包。
+        manifest_committed = true;
+        if let Err(error) = write_batch_state(&moved_resources, true) {
+            eprintln!("[publish] batch committed state write failed: {error}");
+        }
         Ok(json!({"destination": input.destination, "succeeded": outcomes, "failed": []}))
     })();
     if result.is_err() {
-        let _ = fs::remove_dir_all(&staging);
-        let _ = fs::remove_dir_all(&release);
+        if manifest_committed {
+            eprintln!("[publish] batch failed after manifest commit; leaving the committed package in place");
+        } else {
+            rollback_batch_resources(&reading_root, &backup_dir, &moved_resources);
+            let _ = fs::remove_dir_all(&staging);
+            let _ = fs::remove_dir_all(&release);
+        }
     } else {
+        let _ = fs::remove_dir_all(&backup_dir);
         for (id, _, version) in snapshots {
             // A later edit remains unpublished; metadata failure cannot undo a committed NAS manifest.
             if let Err(error) = conn.execute("UPDATE library_items_v2 SET status = 'published' WHERE id = ?1 AND current_edit_version = ?2", rusqlite::params![id, version]) {
@@ -530,8 +599,12 @@ fn stage_package_files(
     let asset_manifest_path = paths.staging_resource_path.join(ASSET_MANIFEST_FILE_NAME);
     write_synced_file(&asset_manifest_path, &asset_manifest_bytes)?;
 
-    let runtime_value = serde_json::to_value(source).map_err(|error| error.to_string())?;
-    let runtime_bytes = canonical_json_bytes(&runtime_value).map_err(|error| error.to_string())?;
+    // 学生端用 JSON.stringify 重算 runtimeSha256，manifest 里的值必须与之一致，
+    // 不能是 serde_json 的数字写法（1.0 vs 1、1e21 vs 1e+21）。哈希操作数必须是
+    // wrapper 真正嵌入的那份磁盘 JSON（source_value），而不是对 source 重新序列化：
+    // 任何 `skip_serializing_if` 字段显式为 null 时，两者字节不同，学生端会
+    // 以 reading_source_integrity_failed 拒绝整个包。
+    let runtime_bytes = canonical_json_bytes_js(source_value);
     let wrapper = build_wrapper(source_value)?;
     write_synced_file(&paths.staging_exam_path, wrapper.as_bytes())?;
     if input.fault.as_deref() == Some("after_assets") {
@@ -541,8 +614,25 @@ fn stage_package_files(
         return Err("nas_package_v2_fault_after_source".to_string());
     }
 
+    let runtime_sha256 = sha256_hex(&runtime_bytes);
+    let asset_manifest_sha256 = sha256_hex(&asset_manifest_bytes);
+    let script_sha256 = sha256_hex(wrapper.as_bytes());
+
     update_lock_heartbeat(paths)?;
-    let probe = run_student_loader_probe(source, &asset_manifest, &paths.staging_resource_path);
+    // 探针必须复算学生端会读到的真实字节，否则发布门禁会对一个学生加载不了的
+    // 包报 passed——正是今天这个缺陷类型。
+    let probe = run_student_loader_probe_with_files(
+        source,
+        &asset_manifest,
+        &paths.staging_resource_path,
+        Some(&ProbePackageFiles {
+            exam_script_path: &paths.staging_exam_path,
+            asset_manifest_path: &asset_manifest_path,
+            expected_script_sha256: &script_sha256,
+            expected_runtime_sha256: &runtime_sha256,
+            expected_asset_manifest_sha256: &asset_manifest_sha256,
+        }),
+    );
     if !probe.passed {
         return Err(format!(
             "nas_package_v2_probe_failed:{}",
@@ -550,9 +640,6 @@ fn stage_package_files(
         ));
     }
 
-    let runtime_sha256 = sha256_hex(&runtime_bytes);
-    let asset_manifest_sha256 = sha256_hex(&asset_manifest_bytes);
-    let script_sha256 = sha256_hex(wrapper.as_bytes());
     let minimum_runtime_version = input
         .minimum_runtime_version
         .as_deref()
@@ -1381,11 +1468,190 @@ fn restore_backup_dir_or_keep(
     Ok(())
 }
 
+/// 批量发布失败后的资源回滚：还原备份资源，删除本次新移入的根级资源目录。
+///
+/// 状态文件先于 `rename` 写入，所以「状态里有该题」不代表旧资源已被移走。
+/// 因此只有备份目录确实存在时才允许动线上目录；否则线上目录仍是旧资源，
+/// 必须原样保留，删掉它就是不可逆的数据丢失。
+fn rollback_batch_resources(reading_root: &Path, backup_dir: &Path, moved: &[(String, bool)]) {
+    let mut fully_restored = true;
+    for (exam_id, had_resources) in moved.iter().rev() {
+        let root_resource = reading_root.join("resources").join(exam_id);
+        let backup_resource = backup_dir.join("resources").join(exam_id);
+        if *had_resources {
+            if !backup_resource.exists() {
+                // 尚未移动：线上目录就是旧资源，保留。
+                continue;
+            }
+            if let Err(error) = fs::remove_dir_all(&root_resource) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("[publish] batch rollback remove {exam_id}: {error}");
+                    fully_restored = false;
+                }
+            }
+            if let Err(error) = fs::rename(&backup_resource, &root_resource) {
+                eprintln!("[publish] batch rollback restore {exam_id}: {error}");
+                fully_restored = false;
+            }
+        } else if let Err(error) = fs::remove_dir_all(&root_resource) {
+            // 原本没有资源：删除本次可能已生效的新资源。
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("[publish] batch rollback remove {exam_id}: {error}");
+                fully_restored = false;
+            }
+        }
+    }
+    // 还原未完成时保留备份与状态文件，交给下一次 recover_incomplete_transactions 重放。
+    if fully_restored {
+        let _ = fs::remove_dir_all(backup_dir);
+    }
+}
+
+/// 重放被中断的批量发布：清单未替换 → 还原备份资源、清理 staging/release；
+/// 清单已替换 → 新资源已生效，仅需清理备份。
+fn recover_interrupted_batches(paths: &PackagePaths, control_root: &Path) -> CommandResult<()> {
+    let backups_root = control_root.join(BACKUP_DIR_NAME);
+    if !backups_root.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&backups_root).map_err(|error| error.to_string())? {
+        let dir = entry.map_err(|error| error.to_string())?.path();
+        let Some(name) = dir.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("batch-") {
+            continue;
+        }
+        let state_path = dir.join("state.json");
+        let Ok(raw) = fs::read_to_string(&state_path) else {
+            continue;
+        };
+        let state: Value = serde_json::from_str(&raw)
+            .map_err(|error| format!("nas_package_v2_recovery_state_invalid:{error}"))?;
+        if state.get("schemaVersion").and_then(Value::as_str) != Some("NasBatchBackupStateV1") {
+            continue;
+        }
+        let batch_id = name.trim_start_matches("batch-");
+        if !safe_transaction_component(batch_id) {
+            return Err("nas_package_v2_recovery_journal_identity_invalid".to_string());
+        }
+        // 提交点判定必须基于磁盘事实，而不是状态文件。清单替换成功后进程可能
+        // 在写入 `manifestCommitted` 之前崩溃；此时包已经生效，按状态文件回滚
+        // 会把它弄坏。三个正向信号取或：状态自称已提交 / 线上清单已被本批次替换 /
+        // 线上清单哈希等于状态里记录的候选哈希。
+        let had_manifest = state
+            .get("hadManifest")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let committed = state
+            .get("manifestCommitted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || manifest_replaced_since_baseline(paths, &dir, had_manifest)
+            || manifest_matches_state(paths, &state);
+        if committed {
+            let _ = fs::remove_dir_all(&dir);
+            continue;
+        }
+        for exam in state.get("exams").and_then(Value::as_array).unwrap_or(&Vec::new()) {
+            let Some(exam_id) = exam.get("examId").and_then(Value::as_str) else {
+                continue;
+            };
+            if !safe_transaction_component(exam_id) {
+                return Err("nas_package_v2_recovery_journal_identity_invalid".to_string());
+            }
+            let root_resource = paths.reading_root.join("resources").join(exam_id);
+            let backup_resource = dir.join("resources").join(exam_id);
+            // 只有备份确实存在时才动线上目录。状态先于 rename 写入，所以
+            // 「有该题记录但无备份」意味着旧资源从未被移走，必须原样保留。
+            if backup_resource.exists() {
+                if let Err(error) = fs::remove_dir_all(&root_resource) {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        return Err(error.to_string());
+                    }
+                }
+                fs::rename(&backup_resource, &root_resource).map_err(|error| error.to_string())?;
+            }
+        }
+        restore_manifest_baseline(paths, &dir)?;
+        let _ = fs::remove_dir_all(paths.reading_root.join(format!(".batch-staging-{batch_id}")));
+        let _ = fs::remove_dir_all(paths.reading_root.join("releases").join(batch_id));
+        let _ = fs::remove_dir_all(&dir);
+    }
+    Ok(())
+}
+
+/// 线上清单是否已被本批次替换。
+///
+/// 只看磁盘：批次开始前有清单基线时，「线上清单与基线不同」即已被替换；
+/// 批次开始前没有清单（新库）时，「线上清单存在」即由本批次创建。
+///
+/// 这个判据不依赖状态文件的写入时机，也**不依赖新加的 `pendingManifestSha256`**，
+/// 因此旧版本写下的、没有该字段的状态文件同样能判对——否则那些批次仍会被误判为
+/// 未提交，进而把已经生效的包回滚掉。
+fn manifest_replaced_since_baseline(
+    paths: &PackagePaths,
+    backup_dir: &Path,
+    had_manifest: bool,
+) -> bool {
+    let baseline = backup_dir.join("manifest.js");
+    if baseline.is_file() {
+        let Ok(base) = fs::read(&baseline) else {
+            return false;
+        };
+        return match fs::read(&paths.manifest_path) {
+            Ok(live) => live != base,
+            Err(_) => false,
+        };
+    }
+    if had_manifest {
+        // 状态自称有基线，但基线文件不在：无法判定，保守按「未替换」处理，
+        // 走备份感知的还原路径（它只在备份确实存在时才动线上目录）。
+        return false;
+    }
+    paths.manifest_path.is_file()
+}
+
+/// 批量清单是否已经替换：线上清单的内容哈希等于状态里记录的「待提交清单」哈希。
+///
+/// 注意**不能**拿 `releases/<batchId>/manifest.js` 来比对：提交走的是
+/// `atomic_replace_file`（移动语义），提交成功后候选清单已被移走，release 目录里
+/// 不再有该文件，比对会恒为 false——于是崩溃恢复会把一个已经生效的包当成未提交，
+/// 删掉刚上线的资源并把清单退回旧基线，正好毁掉提交结果。
+fn manifest_matches_state(paths: &PackagePaths, state: &Value) -> bool {
+    let Some(expected) = state.get("pendingManifestSha256").and_then(Value::as_str) else {
+        return false;
+    };
+    match fs::read(&paths.manifest_path) {
+        Ok(live) => sha256_hex(&live) == expected,
+        Err(_) => false,
+    }
+}
+
+/// 未提交但清单已被替换时还原基线清单。`atomic_replace_file` 本身原子，
+/// 正常路径下线上清单不会损坏，因此只在基线存在且内容不同时才动作。
+fn restore_manifest_baseline(paths: &PackagePaths, backup_dir: &Path) -> CommandResult<()> {
+    let baseline = backup_dir.join("manifest.js");
+    if !baseline.is_file() {
+        return Ok(());
+    }
+    let bytes = fs::read(&baseline).map_err(|error| error.to_string())?;
+    if fs::read(&paths.manifest_path)
+        .map(|live| live == bytes)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    atomic_replace_file(&baseline, &paths.manifest_path)
+        .map_err(|error| format!("nas_package_v2_recovery_manifest:{error}"))
+}
+
 fn recover_incomplete_transactions(paths: &PackagePaths) -> CommandResult<()> {
     let control_root = paths.library_root.join(CONTROL_DIR_NAME);
     if !control_root.is_dir() {
         return Ok(());
     }
+    recover_interrupted_batches(paths, &control_root)?;
     for entry in fs::read_dir(&control_root).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
         let journal_path = entry.path();
@@ -2161,6 +2427,255 @@ mod tests {
         );
         assert!(!paths.backup_root.exists());
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn batch_control_dir(library_root: &Path, batch_id: &str) -> PathBuf {
+        library_root
+            .join(CONTROL_DIR_NAME)
+            .join(BACKUP_DIR_NAME)
+            .join(format!("batch-{batch_id}"))
+    }
+
+    fn write_batch_backup_state(dir: &Path, committed: bool, exams: Value, pending_manifest_sha256: Option<&str>) {
+        fs::create_dir_all(dir).unwrap();
+        let state = json!({
+            "schemaVersion": "NasBatchBackupStateV1",
+            "manifestCommitted": committed,
+            "hadManifest": true,
+            "pendingManifestSha256": pending_manifest_sha256,
+            "exams": exams,
+        });
+        fs::write(
+            dir.join("state.json"),
+            canonical_json_bytes(&state).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// 状态文件先于 `rename` 写入，所以「状态里有该题」不代表旧资源已被移走。
+    /// 回滚绝不能因为状态里有记录就删掉线上目录——那正是旧资源本身。
+    #[test]
+    fn batch_rollback_keeps_live_resources_when_no_backup_was_taken() {
+        let root = temp_root();
+        let reading_root = root.join("reading");
+        let live = reading_root.join("resources").join("v2-p1");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("asset.bin"), "old-asset").unwrap();
+        let backup_dir = root.join("backup");
+
+        rollback_batch_resources(
+            &reading_root,
+            &backup_dir,
+            &[("v2-p1".to_string(), true)],
+        );
+
+        assert_eq!(
+            fs::read_to_string(live.join("asset.bin")).unwrap(),
+            "old-asset",
+            "live resources must survive a rollback that never moved them"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 崩溃恢复同样必须备份感知：state 记录存在但没有备份 = 尚未移动。
+    #[test]
+    fn batch_recovery_keeps_live_resources_when_state_precedes_the_move() {
+        let root = temp_root();
+        let library_root = root.join("library");
+        let reading_root = nas_reading_exams_dir(&library_root);
+        let paths = make_paths(&library_root, &reading_root, "batch").unwrap();
+        let live = reading_root.join("resources").join("v2-p1");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("asset.bin"), "old-asset").unwrap();
+        let dir = batch_control_dir(&library_root, "deadbeef");
+        write_batch_backup_state(
+            &dir,
+            false,
+            json!([{"examId": "v2-p1", "hadResources": true}]),
+            None,
+        );
+
+        recover_interrupted_batches(&paths, &library_root.join(CONTROL_DIR_NAME)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(live.join("asset.bin")).unwrap(),
+            "old-asset",
+            "recovery must not delete resources it never backed up"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 清单替换后进程可能在写入 `manifestCommitted` 之前崩溃。恢复端必须靠
+    /// 磁盘事实判定已提交，否则会回滚掉一个已经生效的包。
+    ///
+    /// 夹具必须复刻生产语义：提交用的是 `atomic_replace_file`，它把候选清单
+    /// **移走**。早期版本用 `fs::write` 造一份 release 副本，恰好让「提交后
+    /// release 里没有清单」这一真实情况消失，于是把 bug 掩盖掉了。
+    #[test]
+    fn batch_recovery_detects_commit_from_disk_and_keeps_the_package() {
+        let root = temp_root();
+        let library_root = root.join("library");
+        let reading_root = nas_reading_exams_dir(&library_root);
+        let paths = make_paths(&library_root, &reading_root, "batch").unwrap();
+        let live = reading_root.join("resources").join("v2-p1");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("asset.bin"), "new-asset").unwrap();
+        fs::create_dir_all(&paths.manifest_path.parent().unwrap()).unwrap();
+        let candidate = b"window.__READING_EXAM_MANIFEST__ = {};\n";
+        let release = reading_root.join("releases").join("deadbeef");
+        fs::create_dir_all(&release).unwrap();
+        fs::write(release.join("manifest.js"), candidate).unwrap();
+        let dir = batch_control_dir(&library_root, "deadbeef");
+        // 状态文件停在「未提交」——正是崩溃窗口里的样子；候选哈希已记录。
+        write_batch_backup_state(
+            &dir,
+            false,
+            json!([{"examId": "v2-p1", "hadResources": true}]),
+            Some(&sha256_hex(candidate)),
+        );
+        // 复刻生产的提交动作：移动（不是复制）候选清单到线上路径。
+        atomic_replace_file(&release.join("manifest.js"), &paths.manifest_path).unwrap();
+        assert!(
+            !release.join("manifest.js").exists(),
+            "提交后 release 里不应再有候选清单——恢复逻辑不能依赖它"
+        );
+
+        recover_interrupted_batches(&paths, &library_root.join(CONTROL_DIR_NAME)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(live.join("asset.bin")).unwrap(),
+            "new-asset",
+            "a committed batch must keep its live resources"
+        );
+        assert_eq!(fs::read(&paths.manifest_path).unwrap(), candidate);
+        assert!(!dir.exists(), "committed batch backup must be cleaned up");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 旧版本写下的状态文件没有 `pendingManifestSha256`。此时仍必须能判定「清单已被
+    /// 本批次替换」——否则那些批次会被误判为未提交，把已经生效的包回滚掉。
+    #[test]
+    fn batch_recovery_detects_commit_without_a_recorded_hash() {
+        let root = temp_root();
+        let library_root = root.join("library");
+        let reading_root = nas_reading_exams_dir(&library_root);
+        let paths = make_paths(&library_root, &reading_root, "batch").unwrap();
+        let live = reading_root.join("resources").join("v2-p1");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("asset.bin"), "new-asset").unwrap();
+        fs::create_dir_all(&paths.manifest_path.parent().unwrap()).unwrap();
+        let new_manifest = b"window.__READING_EXAM_MANIFEST__ = {\"batch\":\"new\"};\n";
+        fs::write(&paths.manifest_path, new_manifest).unwrap();
+        let dir = batch_control_dir(&library_root, "deadbeef");
+        fs::create_dir_all(&dir).unwrap();
+        // 基线：批次开始前的旧清单，与线上不同 → 说明清单已被替换。
+        fs::write(dir.join("manifest.js"), b"window.__READING_EXAM_MANIFEST__ = {\"batch\":\"old\"};\n").unwrap();
+        // 旧格式状态：没有 pendingManifestSha256，且 manifestCommitted 仍是 false。
+        fs::write(
+            dir.join("state.json"),
+            canonical_json_bytes(&json!({
+                "schemaVersion": "NasBatchBackupStateV1",
+                "manifestCommitted": false,
+                "hadManifest": true,
+                "exams": [{"examId": "v2-p1", "hadResources": true}],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        recover_interrupted_batches(&paths, &library_root.join(CONTROL_DIR_NAME)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(live.join("asset.bin")).unwrap(),
+            "new-asset",
+            "a committed batch must keep its live resources even without a recorded hash"
+        );
+        assert_eq!(
+            fs::read(&paths.manifest_path).unwrap(),
+            new_manifest,
+            "a replaced manifest must not be reverted to the baseline"
+        );
+        assert!(!dir.exists(), "committed batch backup must be cleaned up");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 反方向：线上清单与基线**相同**（未被替换）且没有候选哈希 → 未提交，必须还原。
+    #[test]
+    fn batch_recovery_restores_when_the_manifest_still_matches_the_baseline() {
+        let root = temp_root();
+        let library_root = root.join("library");
+        let reading_root = nas_reading_exams_dir(&library_root);
+        let paths = make_paths(&library_root, &reading_root, "batch").unwrap();
+        let live = reading_root.join("resources").join("v2-p1");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("asset.bin"), "new-asset").unwrap();
+        fs::create_dir_all(&paths.manifest_path.parent().unwrap()).unwrap();
+        let manifest = b"window.__READING_EXAM_MANIFEST__ = {\"batch\":\"same\"};\n";
+        fs::write(&paths.manifest_path, manifest).unwrap();
+        let dir = batch_control_dir(&library_root, "deadbeef");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("manifest.js"), manifest).unwrap();
+        let backup_resource = dir.join("resources").join("v2-p1");
+        fs::create_dir_all(&backup_resource).unwrap();
+        fs::write(backup_resource.join("asset.bin"), "old-asset").unwrap();
+        fs::write(
+            dir.join("state.json"),
+            canonical_json_bytes(&json!({
+                "schemaVersion": "NasBatchBackupStateV1",
+                "manifestCommitted": false,
+                "hadManifest": true,
+                "exams": [{"examId": "v2-p1", "hadResources": true}],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        recover_interrupted_batches(&paths, &library_root.join(CONTROL_DIR_NAME)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(live.join("asset.bin")).unwrap(),
+            "old-asset",
+            "an uncommitted batch must restore the backed-up resources"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 未提交且确有备份时必须还原旧资源，并清理 staging/release。
+    #[test]
+    fn batch_recovery_restores_backed_up_resources_when_not_committed() {
+        let root = temp_root();
+        let library_root = root.join("library");
+        let reading_root = nas_reading_exams_dir(&library_root);
+        let paths = make_paths(&library_root, &reading_root, "batch").unwrap();
+        let live = reading_root.join("resources").join("v2-p1");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("asset.bin"), "new-asset").unwrap();
+        let dir = batch_control_dir(&library_root, "deadbeef");
+        // 候选哈希与线上清单不同 → 未提交。用不同的哈希而不是 None，
+        // 才能证明提交点判定真的在比较内容，而不是缺字段时凑巧走对分支。
+        write_batch_backup_state(
+            &dir,
+            false,
+            json!([{"examId": "v2-p1", "hadResources": true}]),
+            Some(&sha256_hex(b"a-different-candidate-manifest")),
+        );
+        let backup_resource = dir.join("resources").join("v2-p1");
+        fs::create_dir_all(&backup_resource).unwrap();
+        fs::write(backup_resource.join("asset.bin"), "old-asset").unwrap();
+        fs::create_dir_all(reading_root.join(".batch-staging-deadbeef")).unwrap();
+        fs::create_dir_all(reading_root.join("releases").join("deadbeef")).unwrap();
+
+        recover_interrupted_batches(&paths, &library_root.join(CONTROL_DIR_NAME)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(live.join("asset.bin")).unwrap(),
+            "old-asset",
+            "uncommitted batch must restore the backed-up resources"
+        );
+        assert!(!reading_root.join(".batch-staging-deadbeef").exists());
+        assert!(!reading_root.join("releases").join("deadbeef").exists());
+        assert!(!dir.exists());
         let _ = fs::remove_dir_all(root);
     }
 }

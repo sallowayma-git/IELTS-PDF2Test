@@ -6,7 +6,7 @@ use authoring_commands::{
 };
 use authoring_v2_commands::{
     apply_authoring_v2_patches_core, export_authoring_v2_core, get_authoring_v2_core,
-    resolve_authoring_asset_preview_core,
+    get_publish_preflight_core, resolve_authoring_asset_preview_core,
 };
 use auto_pipeline::{
     run_auto_pipeline_core, run_cloud_review_core, run_cloud_review_core_with_gateway,
@@ -25,7 +25,8 @@ use export_pack::{
 };
 use export_writing_library::export_writing_library_core;
 use llm_commands::{
-    apply_llm_suggestion_core, apply_vision_answer_candidates_core, delete_llm_profile_core,
+    apply_llm_suggestion_core_with_version,
+    apply_vision_answer_candidates_core, delete_llm_profile_core,
     llm_run_group_core, save_llm_profile_core, test_llm_profile_core,
 };
 use pdf_facts_shadow::debug_document_ir_v2_overlay_core;
@@ -83,6 +84,7 @@ mod reading_runtime_v2;
 mod reading_source;
 mod reading_source_v2;
 mod recognition;
+mod reconcile;
 mod runtime_compiler;
 mod runtime_validation;
 pub mod schema;
@@ -920,6 +922,11 @@ async fn pick_pdf_folder_sources(
     job_commands::pick_pdf_folder_sources_core(app).await
 }
 
+#[tauri::command]
+async fn automation_source_files() -> CommandResult<Option<Vec<job_commands::PickedSourcePath>>> {
+    job_commands::automation_source_files_from_env()
+}
+
 // ── M1：Workspace API（library/commands.rs 的薄壳，计划 §5.3 命令收敛）──
 
 #[tauri::command]
@@ -953,6 +960,33 @@ async fn list_library_items(include_deleted: Option<bool>, app: AppHandle) -> Co
     })
     .await
     .map_err(|error| format!("library_v2_join:{error}"))?
+}
+
+// ── 识别闭环：统一建议读取与人工决策（reconcile 的薄壳）──────────────
+
+/// 读取条目最新批次的识别建议（各阶段状态 + 待处理项 + 已自动修正记录）。
+#[tauri::command]
+async fn get_recognition_decision(item_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        reconcile::commands::get_recognition_decision_core(&root, &item_id)
+    })
+    .await
+    .map_err(|error| format!("recognition_join:{error}"))?
+}
+
+/// 接受 / 拒绝识别建议。`requestId` 为幂等键；接受走正式 V2 patch 路径原子写入。
+#[tauri::command]
+async fn apply_recognition_decisions(input: Value, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let request: schema::recognition_v1::ApplyRecognitionDecisionsRequestV1 =
+            serde_json::from_value(input)
+                .map_err(|error| format!("recognition_invalid_input:{error}"))?;
+        reconcile::commands::apply_recognition_decisions_core(&root, request)
+    })
+    .await
+    .map_err(|error| format!("recognition_join:{error}"))?
 }
 
 // ── M2：后端接管调度（processing/commands.rs 的薄壳，计划 §5.3 命令收敛）──
@@ -1108,6 +1142,13 @@ async fn get_authoring_v2(job_id: String, app: AppHandle) -> CommandResult<Value
     get_authoring_v2_core(&root, &job_id)
 }
 
+/// 只读发布前检查。编辑器用它把发布门禁的 blocker 直接呈现为可操作的问题项。
+#[tauri::command]
+async fn get_publish_preflight(job_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    get_publish_preflight_core(&root, &job_id)
+}
+
 #[tauri::command]
 async fn resolve_authoring_asset_preview(
     job_id: String,
@@ -1229,16 +1270,18 @@ async fn apply_llm_suggestion(
     selected_paths: Vec<String>,
     question_ids: Option<Vec<String>>,
     user_confirmed: Option<bool>,
+    base_edit_version: Option<u64>,
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    apply_llm_suggestion_core(
+    apply_llm_suggestion_core_with_version(
         &root,
         &job_id,
         &suggestion_id,
         selected_paths,
         question_ids,
         user_confirmed.unwrap_or(false),
+        base_edit_version,
     )
 }
 
@@ -1543,6 +1586,8 @@ pub fn run() {
             get_workspace_item,
             apply_editor_commands,
             list_library_items,
+            get_recognition_decision,
+            apply_recognition_decisions,
             import_files,
             publish_items,
             open_source_file,
@@ -1556,6 +1601,7 @@ pub fn run() {
             reveal_job_folder,
             choose_export_dir,
             pick_pdf_folder_sources,
+            automation_source_files,
             parse_document,
             debug_document_ir_v2_overlay,
             rerun_ocr,
@@ -1567,6 +1613,7 @@ pub fn run() {
             build_authoring_ir,
             update_authoring_ir,
             get_authoring_v2,
+            get_publish_preflight,
             resolve_authoring_asset_preview,
             apply_authoring_v2_patches,
             export_authoring_v2,
@@ -1637,6 +1684,7 @@ mod tests {
         file_load_secret, file_save_secret, load_profile_secret, plaintext_secret_fallback_allowed,
         redact_profile_for_ui,
     };
+    use crate::llm_commands::apply_llm_suggestion_core;
     use crate::llm_suggestions::{
         apply_suggestion_to_authoring, deterministic_llm_output, llm_suggestion_auto_apply_issues,
         make_llm_input,
@@ -11159,6 +11207,114 @@ Answers
                 .and_then(Value::as_bool),
             Some(true)
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// 云端候选必须绑定到产出时的编辑版本，且不得写进没人读的 V1 文件。
+    /// 编辑器与发布链都以 V2 权威稿为准，而 `apply_llm_suggestion` 只写
+    /// `authoring-ir.json`；迁移对已有权威稿的条目直接返回、从不回读 V1，
+    /// 因此「接受建议」会静默丢失（findings V5 V1/V2 分裂 + stale 保护）。
+    #[test]
+    fn llm_suggestion_accept_is_revision_bound_and_never_writes_past_the_authoritative_store() {
+        use crate::library::repository::{
+            get_canonical_ds, open_library_connection, seed_canonical_ds, upsert_item_shell,
+            UpsertItemInput,
+        };
+
+        let root = temp_test_root();
+        ensure_app_dirs(&root).unwrap();
+        let mut job = test_job();
+        job.current_step = WorkflowStep::Authoring;
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        write_json(
+            &job_dir(&root, &job.job_id).join("authoring-ir.json"),
+            &json!({
+                "schemaVersion": "IeltsAuthoringIRV1",
+                "exam": {"title": "t"},
+                "passage": {"htmlBlocks": []},
+                "groups": [{"groupId": "group-1", "kind": "short_answer", "questionRange": [1, 1], "instruction": [], "verified": false, "sourceBlockIds": ["b1"], "questions": [{"id": "q1", "prompt": "old one"}]}],
+                "answerKey": {},
+                "audit": {"revision": 0}
+            }),
+        )
+        .unwrap();
+        llm_suggestions::save_llm_suggestion(
+            &root,
+            &job.job_id,
+            &json!({
+                "suggestionId": "suggestion-bound",
+                "jobId": job.job_id,
+                "groupId": "group-1",
+                "kind": "short_answer",
+                "confidence": 0.99,
+                "patch": [],
+                "questions": [{"id": "q1", "prompt": "improved one"}],
+                "warnings": [],
+                "evidence": {"sourceBlockIds": ["b1"], "quotes": [{"blockId": "b1", "text": "source evidence"}]},
+                "createdAt": "2026-09-03T00:00:00Z"
+            }),
+        )
+        .unwrap();
+
+        // 尚未迁移：没有 V2 权威稿，V1 接受路径照旧可用。
+        apply_llm_suggestion_core_with_version(
+            &root,
+            &job.job_id,
+            "suggestion-bound",
+            vec!["questions".to_string()],
+            None,
+            true,
+            None,
+        )
+        .unwrap();
+
+        // 条目一旦有了 V2 权威稿，接受必须被显式拒绝，而不是写一个不会被读的文件。
+        let conn = open_library_connection(&root).unwrap();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: &job.job_id,
+                modality: "reading",
+                title: "t",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        seed_canonical_ds(
+            &conn,
+            &job.job_id,
+            &json!({"schemaVersion": "IeltsAuthoringIRV2", "exam": {"title": "t"}, "taskGroups": []})
+                .to_string(),
+            "action_required",
+        )
+        .unwrap();
+        let (_, current_version) = get_canonical_ds(&conn, &job.job_id).unwrap().unwrap();
+
+        let stale = apply_llm_suggestion_core_with_version(
+            &root,
+            &job.job_id,
+            "suggestion-bound",
+            vec!["questions".to_string()],
+            None,
+            true,
+            Some(current_version as u64 + 7),
+        )
+        .unwrap_err();
+        assert!(stale.starts_with("LLM_SUGGESTION_STALE"), "{stale}");
+
+        let blocked = apply_llm_suggestion_core_with_version(
+            &root,
+            &job.job_id,
+            "suggestion-bound",
+            vec!["questions".to_string()],
+            None,
+            true,
+            Some(current_version as u64),
+        )
+        .unwrap_err();
+        assert_eq!(blocked, "LLM_SUGGESTION_AUTHORITATIVE_STORE_IS_V2");
         let _ = fs::remove_dir_all(root);
     }
 }

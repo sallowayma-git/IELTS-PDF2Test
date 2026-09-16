@@ -222,3 +222,57 @@ src/styles.css            -99.1%
   后端由 product_chain 新测试证明（真实 SQLite/文件系统）；UI 级由 e2e:tauri 证明
   （编辑/标题/重开持久化）；「发布」环节 UI 级当前被质量门如实 BLOCKED（语料限制），
   发布链本身的命令级证明在 product_chain 直通发布测试中。
+
+---
+
+## 2026-09-15 识别闭环后端（本地先出稿 → 云端并行 → 统一裁决 → 少量疑点）
+
+### 新建/改动（本 agent 写入面）
+
+- **新增** `src-tauri/src/reconcile/{mod,candidate,source,rules,adjudicate,store,commands,engine}.rs`
+- **新增** `src-tauri/src/schema/recognition_v1.rs`（契约类型唯一真源）
+- **新增** `contracts/recognition-decision-view-v1.schema.json`、`contracts/recognition-apply-decisions-v1.schema.json`
+  （有意不列入 `contract-manifest.json`，避免 NAS peer hash 校验失败；理由写入文件描述与契约 §10.3）
+- **新增** `scripts/recognition/contract-drift.mjs` + `npm run verify:recognition:contract`
+- **新增** `Plan With Files/Dual_Recognition/RECOGNITION_LOOP_CONTRACT.md`（v2 契约）、
+  `HANDOFF_2026-09-15_frontend_contract_drift.md`（前端交接单）
+- **改** `processing/scheduler.rs`（本地优先双链）、`processing/queue.rs`（`STAGE_RECONCILING`、`ACTIVE_STAGES`）、
+  `auto_pipeline.rs`（`generate_cloud_reading_outline`）、`llm_gateway.rs`（DOCX 无 PDF 附件时回退 `sourceText`）、
+  `library/schema.rs`（`LIBRARY_V2_SCHEMA_VERSION = 4`，`recognition_batches_v1.stages_json`）、
+  `lib.rs`（两个命令注册）、`package.json`（追加 1 条 npm script）
+
+### 验证（全部真实运行）
+
+- `cargo test --lib`：**660 passed / 0 failed / 11 ignored**（上轮 659，+1 为本轮契约护栏）
+- `node scripts/recognition/contract-drift.mjs`：Rust ↔ Schema **0 处不一致**；
+  前端↔Rust **3 处破坏性**（已出交接单）
+- Python `json.load` 校验两个新 schema：**均通过**（此前 PowerShell `ConvertFrom-Json` 的 FAIL 是控制台编码假阳性，
+  该工具无法可靠读 UTF-8 中文，结论作废）
+
+### 本次自行发现并修掉的缺陷
+
+`DecisionFieldV1::as_str()` 返回 camelCase，而 `#[serde(rename_all = "snake_case")]` 产出 snake_case。
+该值是 `decisionId` 末段 / 原文件核验 `anchorKind` 末段 / `recognition_decisions_v1` 字段键的唯一来源，
+漂移导致 `d:slot:slot-14:optionBank` **不满足本契约 schema 的 `^d:[a-z_]+:.+:[a-z_]+$`**（即 schema 拒绝真实产出）。
+受影响 6 个字段，已改为 snake_case，并新增 `as_str_matches_serde_for_every_wire_enum`
+对 6 个线上枚举的全部变体断言 `as_str() == serde 渲染`。
+
+### 覆盖层级与剩余缺口（不计为验收通过）
+
+- 已证明：**服务与命令层 + 类型契约层**（Rust 单测 + 三面交叉核对）。
+- **未验证**：真实 UI 集成、真实云服务往返、跨仓学生端计分。需两 agent 集成后按 `AGENTS.md`
+  走真实产品链路（导入 → 本地出稿 → 云端裁决 → 接受/拒绝 → 预览 → 发布 → 学生端计分）。
+- **已知阻塞（写入面）**：前端 `recognitionClient.ts` 首版按 v1 设计文档编写。
+  **读取面已被前端修复**（`RecognitionDecisionRawV1` + `normalizeDecisionView` 双形状容错）——
+  后端建立漂移检查后前端随即补齐，该面现已可用。
+  **写入面仍未修**：仍发 `{itemId, decisions:[{decisionId,action}]}`，
+  后端要 `{requestId, batchId, baseEditVersion, accept[], reject[]}` 且未设 `deny_unknown_fields`
+  → `decisions` 被静默丢弃、`accept/reject` 取空数组 → **「采用修正」是静默空操作**；
+  又因读 `result.accepted.length`（应为 `outcomes[]`）抛 TypeError 而误报「没有生效」。
+  `verify:recognition:contract` 当前输出 **2 处破坏性不一致，均在写入面**。
+- **附带发现**：`StageStateV1` 的 `queued`/`partial`/`unusable` 未在前端 `CHAIN_STATE_TO_STATUS` 覆盖，
+  被渲染成英文原文（`云端核验状态：partial。`）；其中 `queued → not_started` 会让用户以为「云端没跑」，
+  而本地优先流程下此刻云端正是「已排队待跑」——打掉了核心体验。
+- 按所有权约定 `src/**` 归前端 agent 独占写入，本轮**未改任何前端文件**，
+  已在交接单给出逐字段修复清单与 `queued`/`partial`/`unusable` 文案缺口。
+

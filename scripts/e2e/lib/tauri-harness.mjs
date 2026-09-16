@@ -262,7 +262,7 @@ export function killAppProcess() {
  * （同一 dataDir/publishDir），产品以相同数据重新启动。
  * @returns {Promise<{driver, runDir, dataDir, publishDir, pdfDir, driverStderr:()=>string, cleanup:()=>Promise<void>}>}
  */
-export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix = "tauri", runDirOverride = null }) {
+export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix = "tauri", runDirOverride = null, appEnv = {} }) {
   let runDir;
   if (runDirOverride) {
     runDir = runDirOverride;
@@ -290,6 +290,7 @@ export async function launchTauriApp({ exePath, pdfPath, keep = false, runPrefix
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      ...appEnv,
       PATH: `${driverDir}${path.delimiter}${process.env.PATH ?? ""}`,
       // Windows 上 Tauri 的 app_data_dir 走 known-folder API、WebView2 配置同理，
       // 都不读 APPDATA/LOCALAPPDATA 环境变量，因此必须用产品侧测试钩子
@@ -478,7 +479,33 @@ export async function importPdfViaFolderHook(driver, timeoutMs = 30000) {
   return { itemId: newItemId, priorRowCount: before.size };
 }
 
-export function writeReport(runDir, report) {  const file = path.join(runDir, "report.json");
+/** 通过“选择文件”走真实导入 UI。文件本身由 PDF2TEST_AUTOMATION_SOURCE_FILES 提供，
+ * 因此可覆盖 DOCX/TXT/MD，而不需要驱动系统文件对话框。 */
+export async function importSourceViaFileHook(driver, timeoutMs = 30000) {
+  const before = new Set(
+    await driver.findElements(By.css('[data-testid="library-row"]'))
+      .then(async (rows) => Promise.all(rows.map((row) => row.getAttribute("data-item-id"))))
+  );
+  await driver.findElement(By.css('[data-testid="library-import"]')).click();
+  await driver.wait(until.elementLocated(By.css('[data-testid="import-drawer"]')), 10000);
+  await driver.findElement(By.css('[data-testid="import-pick-files"]')).click();
+  await driver.wait(until.elementLocated(By.css('[data-testid="import-picked-files"] li')), 10000);
+  await driver.findElement(By.css('[data-testid="import-start"]')).click();
+  const deadline = Date.now() + timeoutMs;
+  let newItemId = null;
+  while (Date.now() < deadline) {
+    const ids = await driver.findElements(By.css('[data-testid="library-row"]'))
+      .then(async (rows) => Promise.all(rows.map((row) => row.getAttribute("data-item-id"))));
+    newItemId = ids.find((id) => !before.has(id)) ?? null;
+    if (newItemId) break;
+    await sleep(1000);
+  }
+  if (!newItemId) throw new Error(`导入后未出现新题库行（导入前行数 ${before.size}）`);
+  return { itemId: newItemId, priorRowCount: before.size };
+}
+
+export function writeReport(runDir, report) {
+  const file = path.join(runDir, "report.json");
   fs.writeFileSync(file, JSON.stringify(report, null, 2));
   console.log(`[e2e:tauri] verdict: ${report.verdict}`);
   console.log(`[e2e:tauri] report: ${file}`);

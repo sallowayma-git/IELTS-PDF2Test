@@ -1,4 +1,4 @@
-use crate::schema::common::canonical_json_bytes;
+use crate::schema::common::{canonical_json_bytes, canonical_json_bytes_js};
 use crate::util::{safe_job_dir, validate_path_segment};
 use crate::{hash_bytes, CommandResult};
 use chrono::Utc;
@@ -174,6 +174,17 @@ pub(crate) fn write_canonical_json_atomic(
     value: &Value,
 ) -> CommandResult<ArtifactReceiptV2> {
     let bytes = canonical_json_bytes(value).map_err(|error| error.to_string())?;
+    write_bytes_atomic(path, &bytes, true)
+}
+
+/// Same as [`write_canonical_json_atomic`], but encodes numbers the way
+/// JavaScript's `JSON.stringify` does. Required for artifacts whose checksum the
+/// student runtime recomputes (the published `ReadingExamSourceV2`).
+pub(crate) fn write_js_canonical_json_atomic(
+    path: &Path,
+    value: &Value,
+) -> CommandResult<ArtifactReceiptV2> {
+    let bytes = canonical_json_bytes_js(value);
     write_bytes_atomic(path, &bytes, true)
 }
 

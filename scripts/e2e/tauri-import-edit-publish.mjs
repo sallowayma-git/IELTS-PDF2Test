@@ -284,6 +284,14 @@ async function main() {
       // （PDF2TEST_AUTOMATION_DATA_DIR，见 lib.rs app_root）+ WebView2 官方变量做隔离。
       PDF2TEST_AUTOMATION_DATA_DIR: dataDir,
       WEBVIEW2_USER_DATA_FOLDER: path.join(runDir, "appdata", "webview"),
+      // 受限/无头环境下 WebView2 渲染进程会因无可用 GPU 崩溃，表现为会话建立后
+      // 立即 "session deleted as the browser has closed the connection"。
+      // 实测（tmp/e2e-webview2-probe.mjs）：只加 --disable-gpu 即可让会话存活；
+      // **不能**再加 --disable-software-rasterizer——它与 --disable-gpu 叠加会同时
+      // 关掉 GPU 与软件光栅化，渲染进程没有可用绘制后端，反而必崩。
+      // 需要真实 GPU 时用 PDF2TEST_E2E_WEBVIEW2_ARGS 覆盖。
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: process.env.PDF2TEST_E2E_WEBVIEW2_ARGS
+        ?? "--no-sandbox --disable-gpu",
       PDF2TEST_AUTOMATION_PDF_DIR: pdfDir,
       PDF2TEST_AUTOMATION_EXPORT_DIR: publishDir
     },

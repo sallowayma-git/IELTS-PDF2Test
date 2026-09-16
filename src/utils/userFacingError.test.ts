@@ -106,3 +106,26 @@ describe("toUserFacingError — 透传与兜底", () => {
     expect(userMessageOf("plain_ascii_code")).toBe("操作没有完成，请稍后重试。");
   });
 });
+
+describe("toUserFacingError — 云端候选与发布门禁文案", () => {
+  it("过期候选给出「重新检查」的出路，而不是泛化失败", () => {
+    const result = toUserFacingError(new Error("LLM_SUGGESTION_STALE:current=5:base=3"));
+    expect(result.category).toBe("conflict");
+    expect(result.userMessage).toContain("重新运行云端检查");
+  });
+
+  it("权威稿已是 V2 时明确说明走新版流程", () => {
+    const result = toUserFacingError(new Error("LLM_SUGGESTION_AUTHORITATIVE_STORE_IS_V2"));
+    expect(result.userMessage).toContain("新版编辑流程");
+  });
+
+  it("发布门禁按具体原因给出可操作文案", () => {
+    expect(userMessageOf("authoring_v2_export_blocked:human_verification_required")).toContain("逐题确认");
+    expect(userMessageOf("authoring_v2_export_blocked:source_review_stale")).toContain("复核");
+    expect(userMessageOf("authoring_v2_export_blocked:quality_state=blocked")).toContain("问题列表");
+    expect(userMessageOf("authoring_v2_export_blocked:unresolved_answers=q14,q15")).toContain("没有答案");
+    expect(userMessageOf("authoring_v2_export_blocked:ai_fallback=a.b.c")).toContain("手动补齐");
+    // 未知原因仍然有兜底，不会把机器码当人话输出。
+    expect(userMessageOf("authoring_v2_export_blocked:unknown_reason")).toContain("补齐");
+  });
+});

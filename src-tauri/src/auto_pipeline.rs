@@ -51,10 +51,14 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Mutex};
 use std::thread;
 use uuid::Uuid;
+use quick_xml::escape::unescape;
+use quick_xml::events::Event;
+use zip::ZipArchive;
 
 const LOCAL_PLACEHOLDER_PROFILE_ID: &str = "profile-local-placeholder";
 
@@ -443,6 +447,200 @@ fn main_pdf_upload_path(root: &Path, job: &ImportJob) -> CommandResult<(SourceFi
         ));
     }
     Ok((source, upload_path))
+}
+
+/// 云端识别链的源文件解析：PDF 与 DOCX 都允许通过。
+///
+/// 与 [`main_pdf_upload_path`] 的关键区别是**不要求** `file_type == "pdf"`。
+/// 云端链需要拒绝的是「没有可用源文件」，而不是「来源不是 PDF」——否则 DOCX
+/// 永远到不了模型，云端识别对 DOCX 形同不存在。非 PDF 的证据面改由
+/// [`document_ir_source_text`] 提供，见 [`generate_cloud_reading_outline`]。
+fn main_source_for_cloud(root: &Path, job: &ImportJob) -> CommandResult<(SourceFile, PathBuf)> {
+    let source = main_source_file(job)
+        .cloned()
+        .ok_or_else(|| "no_main_source_file".to_string())?;
+    let upload_path = job_dir(root, &job.job_id)
+        .join("uploads")
+        .join(&source.stored_name);
+    if !upload_path.exists() {
+        return Err(format!(
+            "main_source_file_missing_for_cloud:{}",
+            upload_path.display()
+        ));
+    }
+    Ok((source, upload_path))
+}
+
+/// 从作业的 `DocumentIRV2` 影子稿中抽取纯文本，作为非 PDF 来源的云端证据面。
+///
+/// 只按页/行顺序拼接原文件里**已经出现过**的字符串，不掺入任何本地结论：
+/// 模型看到的证据必须来自原文件本身，否则「本地抽错了、云端也跟着错」，
+/// 三路核验就退化成了自我印证。抽不出文本时返回 `None`，由调用方如实报错。
+fn document_ir_source_text(root: &Path, job_id: &str) -> Option<String> {
+    let ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))
+        .ok()
+        .flatten()?;
+    let mut out = String::new();
+    for page in ir.get("pages").and_then(Value::as_array).into_iter().flatten() {
+        let lines = page.get("lines").and_then(Value::as_array);
+        let spans = page.get("spans").and_then(Value::as_array);
+        if let Some(lines) = lines {
+            for line in lines {
+                if let Some(text) = line.get("text").and_then(Value::as_str) {
+                    if !text.trim().is_empty() {
+                        out.push_str(text);
+                        out.push('\n');
+                    }
+                }
+            }
+        } else if let Some(spans) = spans {
+            for span in spans {
+                if let Some(text) = span.get("text").and_then(Value::as_str) {
+                    out.push_str(text);
+                }
+            }
+            out.push('\n');
+        }
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// 云端证据面准备：**从原始上传文件直接抽取纯文本**，绝不依赖本地识别产物
+/// `document-ir.json`，因此与本地语义识别并行起飞时不会因后者尚未落盘而 race/失败。
+///
+/// 这是修复「DOCX 云端输入依赖本地识别产物」的核心 seam：本地链与云端链都可以
+/// 各自独立地准备证据面（PDF 走视觉抽取 `pdfPath`，DOCX/TXT/MD 走这里的原文件直读），
+/// 云端不再「等待本地语义识别完成」。
+///
+/// - `pdf`：返回 `None`——PDF 证据面由视觉抽取（`pdfPath` + `main_pdf_vision_extraction`）
+///   提供，不需要纯文本；
+/// - `txt` / `md`：直接按 UTF-8 读取原文件；
+/// - `docx`：拆 zip 读 `word/document.xml`（及页眉页脚），收集 `<w:t>` 文本，对原文件
+///   做一遍**独立**抽取；
+/// - 其它 / 缺文件 / 抽不出文本：返回 `None`，由调用方如实报 `cloud_source_text_unavailable`。
+fn prepare_cloud_source_evidence(root: &Path, job: &ImportJob) -> Option<String> {
+    let source = main_source_file(job)?;
+    let upload_path = job_dir(root, &job.job_id)
+        .join("uploads")
+        .join(&source.stored_name);
+    if !upload_path.exists() {
+        return None;
+    }
+    match source.file_type.as_str() {
+        "pdf" => None,
+        "txt" | "md" => {
+            // `sourceText` 网关路径（`llm_gateway.rs`）仍按此文本工作。
+            fs::read_to_string(&upload_path).ok().filter(|text| !text.trim().is_empty())
+        }
+        "docx" => extract_docx_plain_text(&upload_path),
+        _ => None,
+    }
+}
+
+/// 从原始 DOCX 文件直接抽取纯文本（独立于本地识别）。只读 `word/document.xml`、
+/// 页眉页脚、脚注/尾注等文本承载部件，收集 `<w:t>` 内容，并在段落边界补换行。
+fn extract_docx_plain_text(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    let mut parts: Vec<String> = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).ok()?;
+        let name = entry.name().to_string();
+        let is_text_part = name == "word/document.xml"
+            || name.starts_with("word/header")
+            || name.starts_with("word/footer")
+            || name == "word/footnotes.xml"
+            || name == "word/endnotes.xml";
+        if !is_text_part {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        // `ZipFile` 在 `ZipArchive` 借用下读取，写入自有 buffer 后脱离借用。
+        entry.read_to_end(&mut bytes).ok()?;
+        parts.push(docx_part_plain_text(&bytes));
+    }
+    let mut out = String::new();
+    for part in parts {
+        let trimmed = part.trim();
+        if !trimmed.is_empty() {
+            out.push_str(trimmed);
+            out.push('\n');
+        }
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// 解析单个 DOCX XML 部件，抽取可见文本：`<w:t>` 内容收集为文本，段落（`w:p`）
+/// 边界补一个换行，`w:tab`/`w:br`/`w:cr` 转成制表/换行。这与本地识别的 `document-ir.json`
+/// 抽出无关，只反映原文件里的字符串。
+fn docx_part_plain_text(xml: &[u8]) -> String {
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut out = String::new();
+    let mut in_text = false;
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(event)) => {
+                let name = event.name();
+                let local = local_name_of(name.as_ref());
+                if local == "t" {
+                    in_text = true;
+                } else if local == "p" {
+                    out.push('\n');
+                } else if local == "tab" {
+                    out.push('\t');
+                } else if local == "br" || local == "cr" {
+                    out.push('\n');
+                }
+            }
+            Ok(Event::Empty(event)) => {
+                let name = event.name();
+                let local = local_name_of(name.as_ref());
+                if local == "tab" {
+                    out.push('\t');
+                } else if local == "br" || local == "cr" {
+                    out.push('\n');
+                }
+            }
+            Ok(Event::End(event)) => {
+                let name = event.name();
+                let local = local_name_of(name.as_ref());
+                if local == "t" {
+                    in_text = false;
+                } else if local == "p" {
+                    out.push('\n');
+                }
+            }
+            Ok(Event::Text(event)) => {
+                if in_text {
+                    let raw = String::from_utf8_lossy(event.as_ref());
+                    if let Ok(value) = unescape(raw.as_ref()) {
+                        out.push_str(value.as_ref());
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// XML 元素名的本地名（去掉 `w:` 之类命名空间前缀），用于 `<w:t>`/`<w:p>` 判断。
+fn local_name_of(name: &[u8]) -> &str {
+    let text = std::str::from_utf8(name).unwrap_or("");
+    text.rsplit(':').next().unwrap_or("")
 }
 
 fn main_pdf_vision_extraction(root: &Path, job: &ImportJob) -> CommandResult<(Value, PathBuf)> {
@@ -1179,6 +1377,68 @@ where
     llm_gateway(
         root,
         &job.job_id,
+        "generate_pdf_reading_outline",
+        &input,
+        api_key.as_deref(),
+    )
+}
+
+/// 云端全量识别（识别闭环的正门）：返回原始 `CloudReadingOutlineV1` JSON。
+///
+/// 走真实 LLM 网关（`generate_pdf_reading_outline`），不做任何本地兜底：
+/// 失败必须让调用方看到真实错误，由 `reconcile::engine::classify_cloud_error`
+/// 归类成稳定原因码。这样「没验证」永远不会被写成「已验证」。
+///
+/// **PDF 与 DOCX 都必须走通这条链**（任务书第二/九项）：
+/// - PDF：附原始 PDF 文件（`pdfPath`），失败回退到渲染页图；
+/// - 非 PDF：不能把 DOCX 当作 `application/pdf` 附件发出去，改为附
+///   `DocumentIRV2` 抽出的原文文本（`sourceText`）。
+pub(crate) fn generate_cloud_reading_outline(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+) -> CommandResult<Value> {
+    let job = load_job(root, job_id)?;
+    let selected = profile_id
+        .map(str::to_string)
+        .or_else(|| job.active_llm_profile_id.clone())
+        .ok_or_else(|| "NO_PROFILE".to_string())?;
+    let profile = find_profile(root, &selected)?;
+    let (source, upload_path) = main_source_for_cloud(root, &job)?;
+    let is_pdf = source.file_type == "pdf";
+    let extraction = if is_pdf {
+        main_pdf_vision_extraction(root, &job)
+            .map(|(extraction, _asset_dir)| extraction)
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
+    let mut input = make_cloud_paper_generation_input(
+        &profile,
+        &job,
+        &selected,
+        &source,
+        &upload_path,
+        &extraction,
+    );
+    if !is_pdf {
+        // `data_url_for_pdf` 会按 `data:application/pdf` 发送 `pdfPath`，
+        // 对 DOCX 是错误声明，必须先摘掉，否则模型收到一个它无法解析的
+        // 「PDF」。没有可抽取文本时如实失败，不假装识别过。
+        if let Some(object) = input.as_object_mut() {
+            object.remove("pdfPath");
+        }
+        // 证据面必须来自**原文件本身**的独立抽取，绝不能读本地识别产物
+        // `document-ir.json`：本地与云端并行起飞时，本地可能还没落盘该文件，
+        // 云端若依赖它就会 race/失败（见 `prepare_cloud_source_evidence`）。
+        let source_text = prepare_cloud_source_evidence(root, &job)
+            .ok_or_else(|| format!("cloud_source_text_unavailable:{job_id}"))?;
+        input["sourceText"] = json!(source_text);
+    }
+    let api_key = load_llm_api_key(root, &selected);
+    run_llm_gateway(
+        root,
+        job_id,
         "generate_pdf_reading_outline",
         &input,
         api_key.as_deref(),
@@ -2777,6 +3037,11 @@ where
 mod tests {
     use super::*;
     use crate::IssueCounts;
+    use crate::job_store::save_job;
+    use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir, write_json};
+    use serde_json::{json, Value};
+    use std::fs;
+    use uuid::Uuid;
 
     fn sample_job() -> ImportJob {
         let now = Utc::now();
@@ -2803,6 +3068,191 @@ mod tests {
             current_step: WorkflowStep::DocumentReview,
             issue_counts: IssueCounts::default(),
         }
+    }
+
+    /// 目标 3(a)：DOCX 主源经 `main_source_for_cloud` 必须被接受，绝不返回 `main_source_is_not_pdf`。
+    #[test]
+    fn main_source_for_cloud_accepts_docx() {
+        let root = std::env::temp_dir().join(format!("pdf2test-docx-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let mut job = sample_job();
+        job.job_id = "docx-job".to_string();
+        job.source_files = vec![SourceFile {
+            file_id: "doc-1".to_string(),
+            original_name: "source.docx".to_string(),
+            stored_name: "source.docx".to_string(),
+            file_type: "docx".to_string(),
+            sha256: "b".repeat(64),
+            size_bytes: 100,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        }];
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let upload = job_dir(&root, &job.job_id).join("uploads").join("source.docx");
+        fs::write(&upload, b"PK\x03\x04 dummy docx payload").unwrap();
+        let (source, _path) = main_source_for_cloud(&root, &job)
+            .expect("DOCX 主源应被云端链接受（旧实现会返回 main_source_is_not_pdf）");
+        assert_eq!(source.file_type, "docx");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 目标 3(a) 的反向对照：DOCX 缺上传文件时，报错应是「文件缺失」而非「类型非 PDF」。
+    #[test]
+    fn main_source_for_cloud_rejects_missing_file_not_wrong_type() {
+        let root = std::env::temp_dir().join(format!("pdf2test-docx-missing-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let mut job = sample_job();
+        job.job_id = "docx-missing".to_string();
+        job.source_files = vec![SourceFile {
+            file_id: "doc-1".to_string(),
+            original_name: "source.docx".to_string(),
+            stored_name: "source.docx".to_string(),
+            file_type: "docx".to_string(),
+            sha256: "b".repeat(64),
+            size_bytes: 100,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        }];
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        // 故意不写 uploads 文件。
+        let err = main_source_for_cloud(&root, &job).expect_err("缺上传文件应报错");
+        assert!(
+            err.contains("main_source_file_missing_for_cloud"),
+            "报错应为文件缺失，实际: {err}"
+        );
+        assert!(
+            !err.contains("main_source_is_not_pdf"),
+            "DOCX 不得被判为「非 PDF」，实际: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 目标 3(b) 的构件：`document_ir_source_text` 必须把 DocumentIRV2 的
+    /// `pages[].lines[].text` 顺序拼成纯文本（缺失文本时回退 `pages[].spans[].text`），
+    /// 且抽取不出文本时返回 None。这正是 `generate_cloud_reading_outline` 送给网关的
+    /// `sourceText`（非 PDF 路径）。
+    #[test]
+    fn document_ir_source_text_flattens_pages_and_lines() {
+        let root = std::env::temp_dir().join(format!("pdf2test-ir-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job = sample_job();
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        write_json(
+            &job_dir(&root, &job.job_id).join("document-ir.json"),
+            &json!({"pages":[
+                {"pageIndex":0,"lines":[{"text":"First line of page one."},{"text":"Second line."}]},
+                {"pageIndex":1,"spans":[{"text":"Span text on page two."}]}
+            ]}),
+        )
+        .unwrap();
+        let text = document_ir_source_text(&root, &job.job_id).expect("文本应被抽出");
+        assert!(text.contains("First line of page one."));
+        assert!(text.contains("Second line."));
+        assert!(text.contains("Span text on page two."));
+        // 只应含原文件文本，不得混入与证据面无关的东西。
+        assert!(!text.contains("pdfPath"));
+        // 空 IR → 抽不出文本 → None。
+        write_json(
+            &job_dir(&root, &job.job_id).join("document-ir.json"),
+            &json!({"pages":[]}),
+        )
+        .unwrap();
+        assert!(document_ir_source_text(&root, &job.job_id).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 目标 3(b) 修复：云端证据面必须来自**原文件**的独立抽取，不依赖本地识别产物
+    /// `document-ir.json`。本测试构造一个真实 .docx（仅含 `word/document.xml`），
+    /// 故意**不写** `document-ir.json`，断言 `prepare_cloud_source_evidence` 仍能量出
+    /// 原文件文本——证明 DOCX 云端输入不再等待/依赖本地语义识别落盘。
+    #[test]
+    fn cloud_source_evidence_independent_of_local_artifact() {
+        let root = std::env::temp_dir()
+            .join(format!("pdf2test-cloud-evidence-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let mut job = sample_job();
+        job.job_id = "cloud-evidence-docx".to_string();
+        job.source_files = vec![SourceFile {
+            file_id: "doc-1".to_string(),
+            original_name: "source.docx".to_string(),
+            stored_name: "source.docx".to_string(),
+            file_type: "docx".to_string(),
+            sha256: "b".repeat(64),
+            size_bytes: 100,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        }];
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        let upload = job_dir(&root, &job.job_id)
+            .join("uploads")
+            .join("source.docx");
+        write_minimal_docx_for_evidence(
+            &upload,
+            "READING PASSAGE 1\nQuestions 1-2 Choose TWO letters.\nAnswers one two",
+        );
+        // 故意不写 document-ir.json —— 旧实现会在此处 race/失败。
+        assert!(!job_dir(&root, &job.job_id).join("document-ir.json").exists());
+        let evidence = prepare_cloud_source_evidence(&root, &job)
+            .expect("云端证据面应从原文件独立抽取，不依赖 document-ir.json");
+        assert!(
+            evidence.contains("READING PASSAGE 1"),
+            "应含原文件文本，实际: {evidence}"
+        );
+        assert!(
+            evidence.contains("Answers one two"),
+            "应含原文件文本，实际: {evidence}"
+        );
+
+        // 等价对照：纯文本源也走同样独立的原文件抽取路径。
+        let mut txt_job = sample_job();
+        txt_job.job_id = "cloud-evidence-txt".to_string();
+        txt_job.source_files = vec![SourceFile {
+            file_id: "txt-1".to_string(),
+            original_name: "source.txt".to_string(),
+            stored_name: "source.txt".to_string(),
+            file_type: "txt".to_string(),
+            sha256: "c".repeat(64),
+            size_bytes: 20,
+            role: "MainQuestion".to_string(),
+            imported_at: Utc::now(),
+        }];
+        save_job(&root, &txt_job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &txt_job.job_id)).unwrap();
+        let txt_upload = job_dir(&root, &txt_job.job_id)
+            .join("uploads")
+            .join("source.txt");
+        fs::write(&txt_upload, "Plain text passage for the cloud.").unwrap();
+        let txt_evidence = prepare_cloud_source_evidence(&root, &txt_job)
+            .expect("纯文本源也应独立抽取");
+        assert!(
+            txt_evidence.contains("Plain text passage"),
+            "实际: {txt_evidence}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 测试用：写出一个最小但合法（quick-xml 可解析）的 .docx，只含 `word/document.xml`。
+    fn write_minimal_docx_for_evidence(path: &Path, body_text: &str) {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        let file = fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("[Content_Types].xml", options).unwrap();
+        zip.write_all(br#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"#).unwrap();
+        zip.add_directory("word/", options).unwrap();
+        zip.start_file("word/document.xml", options).unwrap();
+        let document = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t xml:space="preserve">{body_text}</w:t></w:r></w:p></w:body></w:document>"#,
+            body_text = body_text
+        );
+        zip.write_all(document.as_bytes()).unwrap();
+        zip.finish().unwrap();
     }
 
     #[test]

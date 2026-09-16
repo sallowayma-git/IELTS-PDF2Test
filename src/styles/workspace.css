@@ -308,6 +308,16 @@
   line-height: 1;
 }
 
+/* 保存失败/冲突后的出路：必须始终可见，否则编辑器会停在存不上也刷不掉的死路。 */
+.workspace-save-recovery {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--workspace-spacing-base);
+  border-bottom: 1px solid var(--workspace-line);
+  background: rgba(179, 38, 30, 0.06);
+}
+
 /* ================ Issues panel ================ */
 .workspace-issues {
   max-height: 34vh;
@@ -591,4 +601,247 @@ body.workspace-resizing * {
   .workspace-divider {
     display: none;
   }
+}
+
+/* ================ 编辑 / 学生预览 开关 ================ */
+.workspace-mode-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-self: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--workspace-soft-line);
+  border-radius: 8px;
+  background: var(--workspace-panel);
+}
+
+.workspace-mode-toggle > button {
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--workspace-muted-ink);
+  background: transparent;
+  cursor: pointer;
+}
+
+.workspace-mode-toggle > button.active {
+  background: var(--accent, #1f8a70);
+  color: #fff;
+}
+
+.workspace-mode-toggle > button:focus-visible {
+  outline: 2px solid var(--accent, #1f8a70);
+  outline-offset: 1px;
+}
+
+/* ================ 学生预览容器 ================ */
+/* 预览不是新页面：它复用 ExamCanvas 的 student 模式，因此这里只负责让它
+   填满工作区并在内部维持「原文 | 题目」两栏，排版规则仍来自共享样式表。 */
+.workspace-student-preview {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-student-preview > .workspace-notice,
+.workspace-student-preview > .workspace-preview-summary,
+.workspace-student-preview > .workspace-preview-error {
+  flex: 0 0 auto;
+  margin: 8px var(--workspace-spacing-base) 0;
+}
+
+.workspace-preview-summary {
+  font-size: 13px;
+  color: var(--workspace-muted-ink);
+}
+
+.workspace-preview-error ul {
+  margin: 6px 0 10px;
+  padding-left: 18px;
+}
+
+.workspace-preview-error li small {
+  color: var(--workspace-muted-ink);
+}
+
+/* 预览能渲染、但学生端提交阶段会拒绝的内容：与编译失败分开显示，避免「看起来没问题」的假完成。 */
+.workspace-student-preview > .workspace-preview-runtime-issues {
+  flex: 0 0 auto;
+  margin: 8px var(--workspace-spacing-base) 0;
+}
+
+.workspace-preview-runtime-issues {
+  border-left: 3px solid #d97706;
+  background: rgba(217, 119, 6, 0.08);
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.workspace-preview-runtime-issues p {
+  margin: 0 0 6px;
+}
+
+.workspace-preview-runtime-issues ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+}
+
+.workspace-preview-runtime-issues li small {
+  color: var(--workspace-muted-ink);
+}
+
+.workspace-preview-runtime-locate {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--workspace-accent, #2563eb);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.workspace-student-preview > .exam-canvas-v2 {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(280px, var(--workspace-left-pane-width)) minmax(300px, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  box-shadow: none;
+}
+
+.workspace-student-preview > .exam-canvas-v2 > .v2-passage-pane,
+.workspace-student-preview > .exam-canvas-v2 > .v2-question-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 27px var(--workspace-spacing-base) 110px;
+  background: var(--workspace-panel);
+}
+
+/* ================ 识别建议面板 ================ */
+.workspace-recognition {
+  grid-row: 3;
+  grid-column: 1 / -1;
+  z-index: 2;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 12px var(--workspace-spacing-base);
+  border-bottom: 1px solid var(--workspace-soft-line);
+  background: var(--workspace-panel);
+}
+
+.workspace-recognition-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-recognition-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.workspace-recognition-status,
+.workspace-recognition-meta {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--workspace-muted-ink);
+}
+
+.workspace-recognition-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.workspace-recognition-summary li {
+  border: 1px solid var(--workspace-soft-line);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.workspace-recognition-autofixed,
+.workspace-recognition-group {
+  margin-top: 10px;
+}
+
+.workspace-recognition-autofixed ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+/* 撤销后 / 没有可用撤销信息时的说明：比正文弱一档，但绝不隐藏。 */
+.workspace-recognition-undone {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--workspace-muted-ink);
+}
+
+.workspace-recognition-group-hint {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--workspace-muted-ink);
+}
+
+.workspace-recognition-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--workspace-soft-line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--workspace-panel);
+}
+
+.workspace-recognition-card.severity-blocker { border-left-color: #d9534f; }
+.workspace-recognition-card.severity-warning { border-left-color: #e0a800; }
+
+.workspace-recognition-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-recognition-card > p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.workspace-recognition-evidence {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--workspace-muted-ink);
+}
+
+.workspace-recognition-values {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-recognition-reason,
+.workspace-recognition-decided {
+  font-size: 12px;
+  color: var(--workspace-muted-ink);
 }

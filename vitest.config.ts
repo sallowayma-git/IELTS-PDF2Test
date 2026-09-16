@@ -11,7 +11,10 @@ import { defineConfig } from "vitest/config";
 //    当前用例集全部为纯逻辑，因此不引入 jsdom 依赖。
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // `scripts/**` 里放的是**验收判定本身**的纯逻辑测试（如完整链 verdict）。
+    // 它们与前端单测同属层 1：不驱动真实应用，只保证「判定不会假绿」。
+    // 产品级证据仍然只在 `scripts/e2e/tauri-*.mjs`（真实应用进程）里产生。
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/**/*.test.mjs"],
     environment: "node",
     reporters: "default"
   }

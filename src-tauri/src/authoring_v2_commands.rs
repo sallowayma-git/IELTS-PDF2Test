@@ -8,9 +8,11 @@
 
 use crate::artifact_store::{
     append_revision, ensure_job_artifact_layout, list_revision_records, read_revision,
-    recover_current_revision, write_artifact_json, write_canonical_json_atomic, RevisionSourceV2,
+    recover_current_revision, write_artifact_json, write_canonical_json_atomic,
+    write_js_canonical_json_atomic, RevisionSourceV2,
 };
 use crate::ielts_grammar::evaluate_quality;
+use crate::ielts_grammar::quality::derive_instruction_signature_for_group;
 use crate::reading_source_v2::compile_reading_source_v2;
 use crate::schema::common::AssetDescriptorV2;
 use crate::schema::IeltsAuthoringIRV2;
@@ -62,6 +64,43 @@ pub(crate) struct ExportAuthoringV2Input {
 pub(crate) fn get_authoring_v2_core(root: &Path, job_id: &str) -> CommandResult<Value> {
     safe_job_dir(root, job_id)?;
     build_editor_session(root, job_id)
+}
+
+/// 发布前检查：把发布门禁的判断以结构化 blocker 形式交给编辑器。
+///
+/// 编辑器此前只有一套纯前端近似检查（`deriveActionableIssues`），于是会出现
+/// 「界面显示 0 个问题、点发布却失败」且文案不可操作。这里复用发布路径上同一个
+/// `check_publish_preflight`，让「编辑器问题列表」与「发布门禁」是同一份判断。
+///
+/// **不是只读**：为了与发布同等宽松，它会先跑一次权威稿播种（见下），
+/// 因此可能创建题库行或补种缺失的 canonical 文档——与工作区加载时走的是同一步，
+/// 且该步骤是幂等的、不覆盖用户已编辑的稿子。
+pub(crate) fn get_publish_preflight_core(root: &Path, job_id: &str) -> CommandResult<Value> {
+    safe_job_dir(root, job_id)?;
+    // 预检必须与发布**同等宽松**：`publish_items_core` 在读权威稿之前会先跑
+    // `migrate_single_item` 播种它（工作区加载时也走同一步）。若预检跳过这一步，
+    // 就会把一个发布本会接受的条目报成阻断——那是反方向的假信号。
+    crate::library::migration::migrate_single_item(root, job_id)?;
+    let canonical = crate::library::repository::open_library_connection(root)
+        .and_then(|conn| crate::library::repository::get_canonical_ds(&conn, job_id))?;
+    let Some((authoring_value, version)) = canonical else {
+        // 播种后仍然没有权威稿：发布必然以同一个码失败，预检如实报出来。
+        return Ok(json!({
+            "schemaVersion": "PublishCheckResultV1",
+            "jobId": job_id,
+            "editVersion": 0,
+            "passed": false,
+            "blockers": [{
+                "code": "ITEM_DS_NOT_SEEDED",
+                "targetId": Value::Null,
+                "userMessage": "这道题还没有可发布的权威稿，请先完成识别并保存，再发布。",
+                "action": "open_workspace",
+                "internal": "canonical_ds_missing"
+            }],
+            "warnings": []
+        }));
+    };
+    Ok(check_publish_preflight(job_id, version.max(0) as u64, &authoring_value))
 }
 
 pub(crate) fn resolve_authoring_asset_preview_core(
@@ -709,7 +748,11 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
     let materialize_result: CommandResult<()> = (|| {
         let authoring_receipt = write_canonical_json_atomic(&authoring_path, &authoring_value)?;
         let runtime_value = serde_json::to_value(&runtime).map_err(|error| error.to_string())?;
-        let runtime_receipt = write_canonical_json_atomic(&runtime_path, &runtime_value)?;
+        // 学生端用 JavaScript 的 JSON.stringify 重算 ReadingExamSourceV2 的
+        // runtimeSha256，所以运行时源必须按 ECMAScript 数字规则编码，否则整型
+        // 浮点（confidence 1.0、widthPercent 60.0）会让发布包被学生端判定为
+        // reading_source_integrity_failed。
+        let runtime_receipt = write_js_canonical_json_atomic(&runtime_path, &runtime_value)?;
         materialize_authoring_assets(&artifact_layout.job_dir, &staging_dir, &authoring.assets)?;
         let manifest_value = json!({
             "schemaVersion": "AuthoringV2ExportReceiptV1",
@@ -1118,7 +1161,39 @@ fn replace_text(document: &mut Value, patch: &Map<String, Value>) -> CommandResu
         preserve_provenance(patch),
         restore_provenance_status(patch),
     );
+    // If the edited node is part of a task group's instruction text, the
+    // derived `instructionSignature` is now stale. Re-derive it from the new
+    // instruction text so quality is judged against the edited instruction.
+    if let Some(task_groups) = document.get_mut("taskGroups").and_then(Value::as_array_mut) {
+        for group in task_groups {
+            if instruction_node_edited(group, &node_id) {
+                derive_instruction_signature_for_group(group);
+            }
+        }
+    }
     Ok(())
+}
+
+/// True when `node_id` is the id of an instruction node of `group`, or of a
+/// descendant text node inside one of its `instructions`.
+fn instruction_node_edited(group: &Value, node_id: &str) -> bool {
+    group
+        .get("instructions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|node| node_equals_or_contains(node, node_id))
+}
+
+fn node_equals_or_contains(node: &Value, node_id: &str) -> bool {
+    if node.get("id").and_then(Value::as_str) == Some(node_id) {
+        return true;
+    }
+    node.get("children")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|child| node_equals_or_contains(child, node_id))
 }
 
 fn set_node_attrs(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
@@ -2762,5 +2837,86 @@ mod tests {
         preserve_issue_resolutions(&mut quality, authoring.get("quality"));
         assert_eq!(quality["issues"][0]["details"]["resolution"], "ignored");
         assert_eq!(quality["issues"][0]["details"]["note"], "reviewed");
+    }
+
+    #[test]
+    fn editing_instruction_text_recomputes_signature_before_quality() {
+        // Editing instruction text must re-derive the stored `instructionSignature`
+        // from the new text (so quality reflects the edited instruction), while
+        // preserving the user-confirmed question numbering.
+        let mut document = json!({
+            "taskGroups": [{
+                "taskId": "task-1",
+                "displayRange": {"kind":"range","start":1,"end":2},
+                "taskType": "sentence_completion",
+                "instructions": [{
+                    "type":"paragraph",
+                    "id":"task-1-instructions",
+                    "children":[{
+                        "type":"text",
+                        "id":"task-1-instructions-text",
+                        "text":"Complete the sentences below. Choose NO MORE THAN TWO WORDS."
+                    }]
+                }],
+                "instructionSignature": {
+                    "normalizedText":"Complete the sentences below. Choose NO MORE THAN TWO WORDS.",
+                    "taskType":"sentence_completion",
+                    "expectedQuestionNumbers":[1,2],
+                    "expectedSlotCount":2
+                },
+                "responseGroups": []
+            }],
+            "quality": {"issues": []}
+        });
+        // Replace "sentences" (offset 13..22) with "summary" -> a clearly
+        // different task type, still a completion.
+        apply_patch(
+            &mut document,
+            &json!({
+                "op":"replaceText",
+                "nodeId":"task-1-instructions-text",
+                "from":13,
+                "to":22,
+                "text":"summary"
+            }),
+        )
+        .unwrap();
+        let signature = &document["taskGroups"][0]["instructionSignature"];
+        assert_eq!(
+            signature["normalizedText"],
+            "Complete the summary below. Choose NO MORE THAN TWO WORDS."
+        );
+        assert_eq!(signature["taskType"], "summary_completion");
+        // User-confirmed question numbering is preserved across the re-derivation.
+        assert_eq!(signature["expectedQuestionNumbers"], json!([1, 2]));
+        assert_eq!(signature["expectedSlotCount"], 2);
+        // Word limit is re-derived from the new (still text-entry) instruction.
+        assert_eq!(signature["wordLimit"]["maxWords"], 2);
+    }
+
+    #[test]
+    fn distinct_facts_on_same_target_do_not_share_resolution_state() {
+        // Two genuinely different facts against the same target carry distinct
+        // issueIds, so resolving/ignoring one must not bleed into the other.
+        // "The same fact" == an identical issueId (code + target + message + ...).
+        let previous = json!({
+            "issues": [
+                {"issueId":"phase4-SLOT_HOST_MISSING-task-1-aaaa","details":{"resolution":"ignored","note":"inline"}},
+                {"issueId":"phase4-SLOT_HOST_MISSING-task-1-bbbb","details":{"resolution":"resolved","note":"host"}}
+            ]
+        });
+        let mut quality = json!({
+            "issues": [
+                {"issueId":"phase4-SLOT_HOST_MISSING-task-1-aaaa","details":{}},
+                {"issueId":"phase4-SLOT_HOST_MISSING-task-1-bbbb","details":{}}
+            ]
+        });
+        // 注意实参形状：`preserve_issue_resolutions` 的第二个参数是**整个 quality 对象**
+        // （它内部会自行 `.get("issues")`），这里必须传 `Some(&previous)` 而不是
+        // `previous.get("issues")`。后者是数组，在其上 `.get("issues")` 恒为 None，
+        // 会导致什么都继承不到（曾使本测试误报：拿到的 resolution 是 Null）。
+        preserve_issue_resolutions(&mut quality, Some(&previous));
+        assert_eq!(quality["issues"][0]["details"]["resolution"], "ignored");
+        assert_eq!(quality["issues"][1]["details"]["resolution"], "resolved");
     }
 }

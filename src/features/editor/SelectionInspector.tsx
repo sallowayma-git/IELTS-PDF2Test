@@ -3,6 +3,15 @@ import type { AuthoringPatchV2, ContentNodeV2, IeltsAuthoringIRV2 } from "../../
 import { locateContentNode } from "../../services/authoringV2Patches";
 
 type Rect = [number, number, number, number];
+
+/** 学生端点击热点提交 `hotspotId`，服务端要求其必须能通过该 slot 答案键的校验，
+ *  因此热点可选的提交值就是答案键里已接受的首选值集合。 */
+function acceptedHotspotValues(draft: IeltsAuthoringIRV2, slotId: string | undefined): string[] {
+  if (!slotId) return [];
+  const value = draft.answerKey[slotId];
+  const raw = value?.kind === "option" ? value.labels : value?.kind === "text" ? value.values : [];
+  return raw.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+}
 function RectFields({ value, onChange }: { value: Rect; onChange: (value: Rect) => void }) {
   return <div className="crop-grid">{value.map((number, index) => <label key={index}>
     {["横向位置", "纵向位置", "宽度", "高度"][index]}
@@ -35,18 +44,32 @@ export function SelectionInspector({ draft, selectedId, onPatch, onClose }: {
         <button className="ghost small" title="恢复完整图片" aria-label="恢复完整图片" onClick={() => onPatch({ op: "cropAsset", nodeId: media.id, crop: null })}><RotateCcw size={16} /></button>
       </details>
       {media.type !== "image" ? <>
-        {hotspots.map((hotspot) => <fieldset key={hotspot.hotspotId}>
-          <legend>答案 {draft.answerSlots[hotspot.slotId]?.displayLabel}</legend>
-          <select aria-label="对应答案" value={hotspot.slotId} onChange={(event) => onPatch({ op: "setHotspot", nodeId: media.id, hotspot: { ...hotspot, slotId: event.target.value } })}>
-            {Object.values(draft.answerSlots).filter((slot) => slot.hostNodeId === media.id).map((slot) => <option key={slot.slotId} value={slot.slotId}>{slot.displayLabel}</option>)}
-          </select>
-          <RectFields value={hotspot.normalizedRect} onChange={(normalizedRect) => onPatch({ op: "setHotspot", nodeId: media.id, hotspot: { ...hotspot, normalizedRect } })} />
-          <button className="ghost small" aria-label="删除答案位置" title="删除答案位置" onClick={() => onPatch({ op: "removeHotspot", nodeId: media.id, hotspotId: hotspot.hotspotId })}><X size={16} /></button>
-        </fieldset>)}
+        {hotspots.map((hotspot) => {
+          const accepted = acceptedHotspotValues(draft, hotspot.slotId);
+          const bound = accepted.includes(hotspot.hotspotId);
+          const renameHotspot = (nextHotspotId: string) => {
+            if (nextHotspotId === hotspot.hotspotId) return;
+            onPatch({ op: "removeHotspot", nodeId: media.id, hotspotId: hotspot.hotspotId });
+            onPatch({ op: "setHotspot", nodeId: media.id, hotspot: { ...hotspot, hotspotId: nextHotspotId } });
+          };
+          return <fieldset key={hotspot.hotspotId}>
+            <legend>答案 {draft.answerSlots[hotspot.slotId]?.displayLabel}</legend>
+            <select aria-label="对应答案" value={hotspot.slotId} onChange={(event) => onPatch({ op: "setHotspot", nodeId: media.id, hotspot: { ...hotspot, slotId: event.target.value } })}>
+              {Object.values(draft.answerSlots).filter((slot) => slot.hostNodeId === media.id).map((slot) => <option key={slot.slotId} value={slot.slotId}>{slot.displayLabel}</option>)}
+            </select>
+            <label>提交值<select aria-label="热点提交值" value={hotspot.hotspotId} onChange={(event) => renameHotspot(event.target.value)}>
+              {!bound && hotspot.hotspotId ? <option value={hotspot.hotspotId}>{hotspot.hotspotId}（无效）</option> : null}
+              {accepted.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
+            </select></label>
+            <RectFields value={hotspot.normalizedRect} onChange={(normalizedRect) => onPatch({ op: "setHotspot", nodeId: media.id, hotspot: { ...hotspot, normalizedRect } })} />
+            <button className="ghost small" aria-label="删除答案位置" title="删除答案位置" onClick={() => onPatch({ op: "removeHotspot", nodeId: media.id, hotspotId: hotspot.hotspotId })}><X size={16} /></button>
+          </fieldset>;
+        })}
         <button className="ghost small" onClick={() => {
           const slot = Object.values(draft.answerSlots).find((slot) => slot.hostNodeId === media.id && !hotspots.some((hotspot) => hotspot.slotId === slot.slotId));
-          if (slot) onPatch({ op: "setHotspot", nodeId: media.id, hotspot: { hotspotId: crypto.randomUUID(), slotId: slot.slotId, normalizedRect: [0.1, 0.1, 0.2, 0.1] } });
-        }} disabled={!Object.values(draft.answerSlots).some((slot) => slot.hostNodeId === media.id && !hotspots.some((hotspot) => hotspot.slotId === slot.slotId))}><Plus size={16} />答案位置</button>
+          const primary = acceptedHotspotValues(draft, slot?.slotId)[0];
+          if (slot && primary) onPatch({ op: "setHotspot", nodeId: media.id, hotspot: { hotspotId: primary, slotId: slot.slotId, normalizedRect: [0.1, 0.1, 0.2, 0.1] } });
+        }} disabled={!Object.values(draft.answerSlots).some((slot) => slot.hostNodeId === media.id && !hotspots.some((hotspot) => hotspot.slotId === slot.slotId) && acceptedHotspotValues(draft, slot.slotId).length > 0)} title="先为该题设置答案，再添加答案位置"><Plus size={16} />答案位置</button>
       </> : null}
     </> : null}
     {node.type === "table_cell" ? <>

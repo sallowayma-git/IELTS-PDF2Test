@@ -7,9 +7,10 @@
 //! authoring export and the future student probe one deterministic contract.
 
 use crate::reading_source_v2::{validate_reading_source_v2, ReadingExamSourceV2};
-use crate::schema::common::{AssetDescriptorV2, AssetKindV2};
+use crate::schema::common::{canonical_json_bytes_js, AssetDescriptorV2, AssetKindV2};
 use crate::schema::content_doc_v2::ContentNodeV2;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -45,10 +46,33 @@ pub(crate) struct StudentProbeReportV2 {
     pub issues: Vec<RuntimeAssetIssueV2>,
 }
 
+/// The already-staged package files the student loader will actually read.
+///
+/// The probe must not trust the in-memory values it just computed: it re-reads
+/// these files from disk and recomputes the checksums with the same encoding
+/// the student runtime uses.  Passing `None` keeps the legacy semantic-only
+/// probe available for callers that have not staged a package yet.
+pub(crate) struct ProbePackageFiles<'a> {
+    pub exam_script_path: &'a Path,
+    pub asset_manifest_path: &'a Path,
+    pub expected_script_sha256: &'a str,
+    pub expected_runtime_sha256: &'a str,
+    pub expected_asset_manifest_sha256: &'a str,
+}
+
 pub(crate) fn run_student_loader_probe(
     source: &ReadingExamSourceV2,
     manifest: &ExamAssetManifestV2,
     resource_root: &Path,
+) -> StudentProbeReportV2 {
+    run_student_loader_probe_with_files(source, manifest, resource_root, None)
+}
+
+pub(crate) fn run_student_loader_probe_with_files(
+    source: &ReadingExamSourceV2,
+    manifest: &ExamAssetManifestV2,
+    resource_root: &Path,
+    package_files: Option<&ProbePackageFiles<'_>>,
 ) -> StudentProbeReportV2 {
     let mut issues = Vec::new();
     let referenced_asset_ids = referenced_asset_ids(source);
@@ -128,6 +152,10 @@ pub(crate) fn run_student_loader_probe(
         }
     }
 
+    if let Some(files) = package_files {
+        issues.extend(verify_staged_checksums(source, files));
+    }
+
     StudentProbeReportV2 {
         schema_version: "StudentLoaderProbeV2".to_string(),
         exam_id: source.exam_id.clone(),
@@ -136,6 +164,93 @@ pub(crate) fn run_student_loader_probe(
         referenced_asset_ids,
         issues,
     }
+}
+
+/// Recompute the manifest checksums from the bytes on disk exactly the way the
+/// student loader does, so a package the student would reject can never be
+/// reported as `passed`.
+///
+/// * `scriptSha256`        — sha256 of the raw `<examId>.js` wrapper file.
+/// * `runtimeSha256`       — sha256 of the ECMAScript-canonical encoding of the
+///                           payload object embedded in that wrapper.
+/// * `assetManifestSha256` — sha256 of the raw `asset-manifest.json` bytes.
+fn verify_staged_checksums(
+    source: &ReadingExamSourceV2,
+    files: &ProbePackageFiles<'_>,
+) -> Vec<RuntimeAssetIssueV2> {
+    let mut issues = Vec::new();
+    let script_bytes = match fs::read(files.exam_script_path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) => {
+            issues.push(asset_issue(
+                "RUNTIME_SCRIPT_UNREADABLE",
+                &source.exam_id,
+                &format!("{}:{error}", files.exam_script_path.display()),
+            ));
+            None
+        }
+    };
+    if let Some(bytes) = &script_bytes {
+        let actual = sha256_hex(bytes);
+        if actual != files.expected_script_sha256.to_ascii_lowercase() {
+            issues.push(asset_issue(
+                "RUNTIME_SCRIPT_HASH_MISMATCH",
+                &source.exam_id,
+                "Staged script bytes do not match the manifest scriptSha256.",
+            ));
+        }
+        match std::str::from_utf8(bytes)
+            .ok()
+            .and_then(extract_registered_payload)
+        {
+            Some(payload) => {
+                let runtime_bytes = canonical_json_bytes_js(&payload);
+                if sha256_hex(&runtime_bytes) != files.expected_runtime_sha256.to_ascii_lowercase() {
+                    issues.push(asset_issue(
+                        "RUNTIME_SOURCE_HASH_MISMATCH",
+                        &source.exam_id,
+                        "Runtime payload re-encoded from the staged script does not match the manifest runtimeSha256.",
+                    ));
+                }
+            }
+            None => issues.push(asset_issue(
+                "RUNTIME_PAYLOAD_UNREADABLE",
+                &source.exam_id,
+                "Could not extract the registered payload object from the staged script.",
+            )),
+        }
+    }
+    match fs::read(files.asset_manifest_path) {
+        Ok(bytes) => {
+            if sha256_hex(&bytes) != files.expected_asset_manifest_sha256.to_ascii_lowercase() {
+                issues.push(asset_issue(
+                    "RUNTIME_ASSET_MANIFEST_HASH_MISMATCH",
+                    &source.exam_id,
+                    "Staged asset manifest bytes do not match the manifest assetManifestSha256.",
+                ));
+            }
+        }
+        Err(error) => issues.push(asset_issue(
+            "RUNTIME_ASSET_MANIFEST_UNREADABLE",
+            &source.exam_id,
+            &format!("{}:{error}", files.asset_manifest_path.display()),
+        )),
+    }
+    issues
+}
+
+/// Extract the payload object passed to `__READING_EXAM_DATA__.register(key, payload)`.
+///
+/// `examId` matches `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`, so the first `{` after
+/// the register call always starts the payload; the first JSON value from that
+/// offset is the payload itself.
+fn extract_registered_payload(script: &str) -> Option<Value> {
+    const MARKER: &str = "__READING_EXAM_DATA__.register(";
+    let start = script.find(MARKER)? + MARKER.len();
+    let rest = &script[start..];
+    let brace = rest.find('{')?;
+    let mut deserializer = serde_json::Deserializer::from_str(&rest[brace..]);
+    Value::deserialize(&mut deserializer).ok()
 }
 
 pub(crate) fn safe_join_asset_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
@@ -457,6 +572,79 @@ mod tests {
             .issues
             .iter()
             .any(|issue| issue.code == "ASSET_MANIFEST_SET_MISMATCH"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Regression for the cross-repo defect where the published `runtimeSha256`
+    /// was computed over a re-serialization of the typed struct rather than the
+    /// payload the wrapper actually embeds.  The probe must reject a package
+    /// whose staged script encodes to a different runtime hash than the
+    /// manifest advertises.
+    #[test]
+    fn staged_checksum_probe_rejects_a_runtime_hash_the_student_cannot_reproduce() {
+        let authoring: crate::schema::IeltsAuthoringIRV2 = serde_json::from_str(include_str!(
+            "../../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json"
+        ))
+        .unwrap();
+        let source = crate::reading_source_v2::compile_reading_source_v2(&authoring).unwrap();
+        let mut source_value = serde_json::to_value(&source).unwrap();
+        // Inject an explicit `null` for an optional field the typed struct
+        // skips.  The default export→publish chain round-trips the typed value
+        // so it never emits this, but the public publish command accepts an
+        // arbitrary `source_path`; hashing the typed re-serialization there
+        // would advertise a runtimeSha256 the staged payload cannot reproduce.
+        source_value["audit"]["notes"] = Value::Null;
+
+        let root = temp_root();
+        let script_path = root.join(format!("{}.js", source.exam_id));
+        let manifest_path = root.join("asset-manifest.json");
+        let wrapper = crate::export_artifacts::build_wrapper(&source_value).unwrap();
+        fs::write(&script_path, wrapper.as_bytes()).unwrap();
+        fs::write(&manifest_path, b"{}").unwrap();
+
+        let manifest = ExamAssetManifestV2 {
+            schema_version: EXAM_ASSET_MANIFEST_V2_SCHEMA_VERSION.to_string(),
+            exam_id: source.exam_id.clone(),
+            generated_at: "2026-08-12T00:00:00Z".to_string(),
+            assets: BTreeMap::new(),
+        };
+
+        // The honest runtime hash (over the raw payload the wrapper embeds).
+        let honest_runtime = sha256_hex(&canonical_json_bytes_js(&source_value));
+        let script_sha = sha256_hex(wrapper.as_bytes());
+        let asset_sha = sha256_hex(b"{}");
+        let honest = ProbePackageFiles {
+            exam_script_path: &script_path,
+            asset_manifest_path: &manifest_path,
+            expected_script_sha256: &script_sha,
+            expected_runtime_sha256: &honest_runtime,
+            expected_asset_manifest_sha256: &asset_sha,
+        };
+        let report = run_student_loader_probe_with_files(&source, &manifest, &root, Some(&honest));
+        assert!(
+            !report
+                .issues
+                .iter()
+                .any(|issue| issue.code.starts_with("RUNTIME_")),
+            "honest checksums must not raise runtime issues: {:?}",
+            report.issues
+        );
+
+        // The buggy operand: hashing the typed re-serialization drops the null,
+        // so the advertised hash no longer matches the embedded payload.
+        let typed_only =
+            sha256_hex(&canonical_json_bytes_js(&serde_json::to_value(&source).unwrap()));
+        assert_ne!(typed_only, honest_runtime, "test fixture must diverge");
+        let stale = ProbePackageFiles {
+            expected_runtime_sha256: &typed_only,
+            ..honest
+        };
+        let report = run_student_loader_probe_with_files(&source, &manifest, &root, Some(&stale));
+        assert!(!report.passed);
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "RUNTIME_SOURCE_HASH_MISMATCH"));
         let _ = fs::remove_dir_all(root);
     }
 }

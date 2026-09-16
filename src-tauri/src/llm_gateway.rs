@@ -715,6 +715,21 @@ fn run_openai_compatible_cloud_outline_llm(
     let mut content = vec![json!({"type": "text", "text": cloud_outline_prompt(input)})];
     if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
         content.push(pdf_part);
+    } else if let Some(source_text) = input
+        .get("sourceText")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+    {
+        // DOCX 等非 PDF 来源没有页图可附：用本地抽取的原文文本作为唯一证据面。
+        // 这样 DOCX 也走完整云端链路，而不是被静默跳过（任务书第二/九项）。
+        content.push(json!({
+            "type": "text",
+            "text": format!(
+                "The original file is not a PDF, so no page image is attached. \
+The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
+--- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
+            )
+        }));
     } else {
         warnings.push("cloud_outline_pdf_file_unavailable".to_string());
     }

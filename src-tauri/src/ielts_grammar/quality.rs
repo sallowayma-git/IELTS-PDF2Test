@@ -6,8 +6,10 @@ use crate::environment::recognition_blockers_gate_enabled;
 use crate::reading_source::ReadingExamSourceV1;
 use crate::reading_source_v2::{compile_reading_source_v2, CompilerIssueV2};
 use crate::schema::IeltsAuthoringIRV2;
+use crate::schema::ielts_authoring_v2::QuestionNumberExpressionV2;
 use crate::validator::validate_reading_source_contract;
 
+use super::instruction_signature::infer_instruction_signature;
 use super::issue_codes::*;
 
 #[derive(Debug, Clone, Default)]
@@ -1546,7 +1548,24 @@ fn evaluate_group(
         hard_failures,
     );
     if is_completion_type(task_type) {
-        if signature.and_then(|value| value.get("wordLimit")).is_none() {
+        // A word/number limit is mandatory ONLY for *text-entry* completion,
+        // where the candidate writes words or numbers sourced from the passage
+        // (sentence / summary / note / table / form / flowchart / diagram /
+        // plan-map completion). For *selection-type* completion the answer is
+        // chosen from a fixed option bank / lettered option alphabet (e.g.
+        // "Complete the sentences with the correct letter, A-D" or "Complete the
+        // summary using a word A-I from the box"); there the answer is a letter,
+        // so an IELTS word limit is meaningless and must NOT block publishing.
+        //
+        // We detect selection-type via the DERIVED `optionAlphabet` on the
+        // instruction signature: when the signature resolved a lettered option
+        // set, the task is selection-type. If we cannot tell (no optionAlphabet
+        // was resolved) we fail conservatively and keep requiring a word limit
+        // rather than silently passing a possibly malformed completion.
+        let selection_type = signature
+            .and_then(|value| value.get("optionAlphabet"))
+            .is_some_and(|value| !value.is_null());
+        if !selection_type && signature.and_then(|value| value.get("wordLimit")).is_none() {
             push_issue(
                 issues,
                 hard_failures,
@@ -3657,8 +3676,25 @@ fn issue(
     source_anchors: Vec<Value>,
     suggested_actions: Vec<&str>,
 ) -> Value {
+    // `issueId` must identify a *fact*, not just (code, target). The previous
+    // scheme `phase4-{code}-{target_id}` collapsed two genuinely different
+    // problems reported against the same target into one id (e.g. the two
+    // `SLOT_HOST_MISSING` variants in `validate_completion_host`, or a code
+    // emitted once per question number). The frontend de-duplicated them into a
+    // single row and silently swallowed a real issue.
+    //
+    // The slug is a deterministic hash of the full discriminating payload, so:
+    //   (1) two different facts on the same target get different ids; and
+    //   (2) the same fact recomputed on a later save yields an *identical* id,
+    // which is what lets `preserve_issue_resolutions` carry resolution/status
+    // forward instead of losing it on every quality recompute.
+    let fact = format!(
+        "{code}|{target_type}|{target_id}|{severity}|{message}|{}",
+        suggested_actions.join(",")
+    );
+    let slug = issue_id_slug(&fact);
     json!({
-        "issueId": format!("phase4-{code}-{target_id}"),
+        "issueId": format!("phase4-{code}-{target_id}-{slug}"),
         "code": code,
         "severity": severity,
         "message": message,
@@ -3667,6 +3703,18 @@ fn issue(
         "sourceAnchors": source_anchors,
         "suggestedActions": suggested_actions
     })
+}
+
+/// Deterministic FNV-1a 64-bit digest, rendered as hex. Two equal fact strings
+/// always produce the same slug, so fact-based `issueId`s are stable across
+/// recomputes. The slug carries no randomness.
+fn issue_id_slug(fact: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in fact.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// §6.8 / §6.11: the local recognition graph's hard closures, carried on the
@@ -3705,6 +3753,72 @@ fn validate_recognition_blockers(
                 vec!["assign_role", "edit_text"],
             ),
         );
+    }
+}
+
+/// Re-derive `instructionSignature` for a task group from its current
+/// instruction text. Called after the user edits instruction text (via the
+/// `replaceText` patch op in `authoring_v2_commands`) so that quality is judged
+/// against the NEW instruction instead of a stale signature.
+///
+/// The signature is a *derived* artifact. Only the text-derived fields are
+/// recomputed here: `normalizedText`, `optionAlphabet`, `selectionCardinality`,
+/// `allowOptionReuse`, `wordLimit`, `answerAssignment`, `confidence` and
+/// `evidenceAnchors`. User-confirmed question numbering
+/// (`expectedQuestionNumbers` / `expectedSlotCount`) is preserved from the
+/// previous signature, so an explicit `setQuestionExpression` patch is not
+/// lost on a later text edit.
+pub(crate) fn derive_instruction_signature_for_group(group: &mut Value) {
+    let Some(instructions) = group.get("instructions").and_then(Value::as_array) else {
+        return;
+    };
+    let mut parts = Vec::new();
+    collect_instruction_node_text(instructions, &mut parts);
+    if parts.is_empty() {
+        return;
+    }
+    let text = parts.join(" ");
+    let expression: QuestionNumberExpressionV2 = group
+        .get("displayRange")
+        .and_then(|value| serde_json::from_value::<QuestionNumberExpressionV2>(value.clone()).ok())
+        .unwrap_or(QuestionNumberExpressionV2::Range { start: 1, end: 1 });
+    let kind_hint = group.get("taskType").and_then(Value::as_str);
+    let evidence_anchors: Vec<Value> = group
+        .get("instructionSignature")
+        .and_then(|signature| signature.get("evidenceAnchors"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let result = infer_instruction_signature(&text, &expression, kind_hint, evidence_anchors);
+    let mut signature_value = match serde_json::to_value(&result.signature) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    if let Some(old) = group.get("instructionSignature") {
+        if let Some(object) = signature_value.as_object_mut() {
+            if let Some(numbers) = old.get("expectedQuestionNumbers") {
+                object.insert("expectedQuestionNumbers".to_string(), numbers.clone());
+            }
+            if let Some(count) = old.get("expectedSlotCount") {
+                object.insert("expectedSlotCount".to_string(), count.clone());
+            }
+        }
+    }
+    if let Some(object) = group.as_object_mut() {
+        object.insert("instructionSignature".to_string(), signature_value);
+    }
+}
+
+fn collect_instruction_node_text(nodes: &[Value], out: &mut Vec<String>) {
+    for node in nodes {
+        if let Some(text) = node.get("text").and_then(Value::as_str) {
+            if !text.trim().is_empty() {
+                out.push(text.to_string());
+            }
+        }
+        if let Some(children) = node.get("children").and_then(Value::as_array) {
+            collect_instruction_node_text(children, out);
+        }
     }
 }
 
@@ -4586,5 +4700,105 @@ mod tests {
         silent.as_object_mut().unwrap().remove("recognitionBlockers");
         let report = evaluate_quality_with_gate(&silent, Some(&physical), true);
         assert_eq!(report["state"], "ready", "{report:#}");
+    }
+
+    #[test]
+    fn selection_type_completion_without_word_limit_is_not_blocked() {
+        // "Complete the sentences with the correct letter, A-D" draws its
+        // answer from a fixed lettered option bank, so no IELTS word limit is
+        // expected and the missing word limit must NOT block publishing.
+        let authoring = json!({
+            "taskGroups": [{
+                "taskId": "task-1",
+                "instructionSignature": {
+                    "taskType": "sentence_completion",
+                    "optionAlphabet": "A-D",
+                    "expectedQuestionNumbers": [1, 2],
+                    "confidence": 0.95
+                },
+                "instructions": [{"type":"text","text":"Complete the sentences below with the correct letter, A, B, C or D."}],
+                "responseGroups": []
+            }],
+            "answerSlots": {},
+            "answerKey": {}
+        });
+        let report = evaluate_quality(&authoring, None);
+        assert!(
+            !issue_for_target(&report, WORD_LIMIT_UNPARSED, "task-1"),
+            "selection-type completion must not require a word limit: {report:#}"
+        );
+    }
+
+    #[test]
+    fn text_entry_completion_without_word_limit_is_blocked() {
+        // A genuine text-entry completion with no resolved word limit is still
+        // a structural error and must block.
+        let authoring = json!({
+            "taskGroups": [{
+                "taskId": "task-1",
+                "instructionSignature": {
+                    "taskType": "sentence_completion",
+                    "expectedQuestionNumbers": [1, 2],
+                    "confidence": 0.95
+                },
+                "instructions": [{"type":"text","text":"Complete the sentences below."}],
+                "responseGroups": []
+            }],
+            "answerSlots": {},
+            "answerKey": {}
+        });
+        let report = evaluate_quality(&authoring, None);
+        assert!(
+            issue_for_target(&report, WORD_LIMIT_UNPARSED, "task-1"),
+            "text-entry completion without a word limit must still block: {report:#}"
+        );
+    }
+
+    #[test]
+    fn issue_id_collides_only_when_fact_is_identical() {
+        // Two genuinely different facts reported against the SAME target must
+        // get DIFFERENT issueIds (the two SLOT_HOST_MISSING variants share code
+        // and target but describe different problems).
+        let inline = issue(
+            SLOT_HOST_MISSING,
+            "blocking",
+            "canonical stimulus must host each question with a unique inline slot",
+            "task",
+            "task-1",
+            Vec::new(),
+            vec!["edit_text"],
+        );
+        let host = issue(
+            SLOT_HOST_MISSING,
+            "blocking",
+            "completion slot has no renderable host node",
+            "task",
+            "task-1",
+            Vec::new(),
+            vec!["edit_text"],
+        );
+        assert_ne!(inline["issueId"], host["issueId"]);
+
+        // The SAME fact recomputed twice must yield the SAME id, so recorded
+        // resolution/status survives every quality recompute.
+        let a = issue(
+            WORD_LIMIT_UNPARSED,
+            "blocking",
+            "completion 题组未解析出 IELTS word limit。",
+            "task",
+            "task-1",
+            Vec::new(),
+            vec!["edit_text", "confirm_table"],
+        );
+        let b = issue(
+            WORD_LIMIT_UNPARSED,
+            "blocking",
+            "completion 题组未解析出 IELTS word limit。",
+            "task",
+            "task-1",
+            Vec::new(),
+            vec!["edit_text", "confirm_table"],
+        );
+        assert_eq!(a["issueId"], b["issueId"]);
     }
 }

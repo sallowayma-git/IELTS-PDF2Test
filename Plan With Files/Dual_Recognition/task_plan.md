@@ -29,7 +29,7 @@
 | **M2** 后端接管调度 | P6-T01/T02/T04/T05 | import_files + Rust scheduler + lease/取消/启动恢复 + `processing://item-updated`；删前端队列与 2s 轮询 | **complete**（2026-09-11 修复轮确认：认领 SQL 绑定、源文件登记、全阶段启动恢复、lease 续租、前端改订阅事件） |
 | **M3** 完整结构编辑 | P3-T01~T06 剩余 | 9 类 EditorCommandV1 全量；renderer/editor 按题型拆分；SourceDrawer/手工补录/热点调整；NAS renderer parity | 部分完成（结构操作已接入工作区：选项增删移动、表格行列、答案位插删、资源替换/裁剪/热点、单元格跨行跨列与表头；renderer 按题型拆分与 NAS parity 未做） |
 | **M4** 本地识别主链替换 | P4-T01~T06 | DocumentIRV2 直通、Question Layout Graph、题号 token-first、硬闭包、physical table、未分配账本 | 部分完成（2026-09-11/12：P4-T01 起点——统一物理提取入口，自动导入路径对 DOCX 也物化物理 DocumentIRV2（此前仅 PDF，导致自动导入 DOCX 无法产出 V2 会话、永远到不了 ready/发布）。DOCX 用例已断言到 `get_authoring_v2_core` 打开 `AuthoringEditorSessionV1`，并用回退过滤条件做过差异化验证（旧逻辑下该用例失败）。未动：主链仍走 `make_dynamic_split_candidates` → V1 IR → 编译 V2 authoring shadow，DocumentIRV2 目前只是 `build_authoring_v2_shadow` 的辅助输入；DOCX 物理层默认是 OOXML 结构级而非渲染几何（需 `EPIC8_DOCX_RENDER_ASSIST`）；P4-T02 起点——新增 `recognition/local` 几何识别层与 `QuestionLayoutGraphV1`，由物理 DocumentIRV2 直出（§6.3 顺序：区域角色→指令区→题号 token-first→题块几何扩展→局部选项串→共享选项库→视觉刺激→未分配账本），在自动导入路径物化为 `question-layout-graph.json`（写入后经消费者 schema 闸门回读自校验）。**该图目前仍无人消费**——主链仍走 `make_dynamic_split_candidates` → V1 IR → 编译 V2 authoring shadow；§6.8 题型分类、§6.10 硬闭包与主链切换未做；P4-T03~T06 未开始。**2026-09-12 续（P4-T03~T06 + 主链消费）**：新增 `recognition/local/task_groups.rs`（§6.8 题型分类 + 硬闭包：单选/多选需源文本覆盖 ≥0.92、选项标签与文本齐备、标签唯一、选项 ≥3；TFNG/YNNG 必须精确固定响应集；匹配题族需选项库非空；§6.9「List of Headings + 罗马数字选项库 + Paragraph A-G 目标」优先判定为 matching_headings 而非通用特征匹配；§6.11 题面跨度内 ≥80 字符未分配散文记为 SIGNIFICANT_SOURCE_TEXT_UNASSIGNED；声明题号缺失记 QUESTION_NUMBER_MISSING）与 `recognition/local/stimulus.rs`（§6.10 物理表格按真实行列与跨行跨列投影，拓扑不足且无裁剪 → ASSET_REFERENCE_MISSING；图/表混合刺激解析源裁剪并输出归一化矩形热点，槽位无法挂接 → SLOT_OUTSIDE_FIGURE）；`QuestionLayoutGraphV1` 增 `task_groups`/`table_stimuli` 与 `blocking_issues()`/`blocking_issue_targets()`。**主链切换采用分级（staged）方式**：`build_authoring_v2_shadow` 从物理 shadow 派生识别阻断码并写入文档 `recognitionBlockers`/`recognitionBlockerTargets`（schema 新增可选字段，`skip_serializing_if` 空值不落盘，向后兼容既有稿件），质量门新增 `validate_recognition_blockers`，由 `recognition_blockers_gate_enabled()`（环境变量 `LOCAL_RECOGNITION_BLOCKERS_GATE`，**默认关闭**）决定是否阻断发布——因 §6.8 验收指标尚未实测，先记录后放行。**边界**：主链仍由 `make_dynamic_split_candidates` → V1 IR 产出 authoring 结构，该图以「阻断码 + 目标」形式被消费，尚未成为 authoring 结构的主产出者） |
-| **M5** 云端完整候选与合并 | P5-T01~T06、P6-T03 | skill bundle、CloudRecognitionCandidateV1、repair/salvage、三方合并与 user_edited 保护 | pending（未动：云端仍只产出对照提纲） |
+| **M5** 云端完整候选与合并 | P5-T01~T06、P6-T03 | skill bundle、CloudRecognitionCandidateV1、repair/salvage、三方合并与 user_edited 保护 | **部分完成**（2026-09-15：识别闭环后端已落地，见下节。云端仍只产出对照提纲，未做 versioned skill bundle 的完整候选渲染） |
 | **M6** 批量原子发布与清理 | P7-T03/T05、P7-T02 收尾 | publish_library_items 整批原子提交、发布恢复记录、引用集合清理、NAS Electron 实测 | 部分完成（2026-09-11：`publish_items` 整批冻结快照 + 单次原子清单替换 + 中途失败全量回滚，已有故障注入测试；引用集合清理与 NAS 实测未做） |
 | **M7** 旧链退出与统一交付 | P8-T01~T05 | 删退休页面/双写/前端调度/旧预览发布；超大文件迁移；Windows 安装包 + 100 PDF 语料 + 故障矩阵验收 | pending |
 
@@ -61,6 +61,54 @@
 
 **2026-09-12 M4/P4-T03~T06 与主链消费**：新增 `recognition/local/task_groups.rs`（§6.8 分类 + 硬闭包、§6.9 匹配标题优先、§6.11 未分配账本）与 `recognition/local/stimulus.rs`（§6.10 物理表格 + 图/表混合刺激热点），图增益 `task_groups`/`table_stimuli`/`blocking_issues()`/`blocking_issue_targets()`，`issue_codes` 增 `OPTION_LABEL_MISSING`/`OPTION_TEXT_MISSING`。主链消费：`build_authoring_v2_shadow` 把识别阻断码写回文档，质量门经 `LOCAL_RECOGNITION_BLOCKERS_GATE`（默认关闭）决定是否阻断，新增 `evaluate_quality_with_gate` 使闸门可单测（不在测试中改环境变量）。验证：识别层 15 个单测（题块 4 / 分类闭包 7 / 刺激 4）；`cargo test --locked` 583 通过 / 0 失败 / 10 ignored（593 运行）；`npm run check` 通过。**同时修复契约漂移（非本轮引入）**：`contracts/contract-manifest.json` 的 6 个 schema sha256 与实际文件不符（由 `6428fe8` 把正确哈希改成不匹配值所致，`8806272` 之后原本一致），导致 `verify:phase1:schema` 与 `verify:phase6:runtime` 在干净检出上即失败；已按文件实际内容校正 6 个哈希，并把作者稿新字段补进 `contracts/ielts-authoring-ir-v2.schema.json`（根 `additionalProperties:false` 下显式声明 `recognitionBlockers`/`recognitionBlockerTargets` 与 `$defs/recognitionBlockerTarget`），新增 1 个正向接受探针 + 2 个负向拒绝探针（`additionalProperties`/`minLength`）。`verify:phase1:schema:local` 0 错误、`verify:phase6:runtime` 通过。**遗留（预存在，非本轮引入）**：`verify:phase4:grammar` 因 `src/config/featureFlags.ts` 的 V2 旗标已被 `2dedd83`（make geometry-backed authoring v2 the main path）默认开启而失败，该脚本的「V2 仅 shadow」前提已作废，需计划方重新定义；`verify:phase7:listening-contract` 在构建跨仓 `../NAS` 处失败（本环境无该仓库）。
 
+## 2026-09-15 识别闭环后端（P8 Reconciliation + P7 云端候选归一）
+
+目标闭环：**本地先出稿 → 云端并行全量识别 → 后台统一裁决 → 用户只处理少量疑点**。
+
+新增 `src-tauri/src/reconcile/`（`candidate` → `source` → `rules` → `adjudicate` → `store` → `commands`
+→ `engine`），契约类型集中在 `src-tauri/src/schema/recognition_v1.rs`（唯一真源）。
+
+| 步骤 | 落地内容 |
+|---|---|
+| 双链调度 | `processing/scheduler.rs` 改为**本地优先**：本地识别成功即 `set_item_status_ready`（草稿可读写），随后推进 `cloud_recognition`+`cloud=queued`；`display_message_for` 明确写「本地识别完成，可以打开编辑 · 云端识别排队中/中」，前端不得因 `stage != ready_for_review` 禁用编辑 |
+| 统一语义 | 三路（本地权威稿 / 云端 `CloudReadingOutlineV1` / 原文件 `DocumentIRV2`）全部归一到 `IeltsAuthoringIRV2` 语义再比较；JS 只是发布派生 |
+| 确定性裁决 | `rules` 逐字段比较 → `adjudicate` 合并去重（`decisionId = d:<targetType>:<targetId>:<field>`）、依赖分组、自动应用资格、结构校验；**规则优先，模型只用于实质分歧**，模型调用有上限 |
+| 四种结论 | `agreed`（不出现在待办）/ `auto_fixed`（已原子写入，可撤销）/ `needs_review`（一条建议卡）/ `unverifiable`（**保证无 `proposedPatch`**，禁止强行选版本） |
+| 安全自动应用 | 不依赖置信度；写入前用**当前**权威稿复核（答案仍为空 + 与批次快照一致），一律经 `apply_editor_commands_tx`（CAS + journal 原子提交），不绕过 V2 保护 |
+| 幂等与迟到 | `batchId = rec-<jobId>-v<baseEditVersion>-<sha[:12]\|nosha>`；自动应用固定 `requestId`；人工决策 `requestId` 落 journal，重复提交返回首次结果且 `replayed=true`；用户已改 → `superseded`（不覆盖） |
+| 失败可辨 | `classify_cloud_error` 把网关错误映射到 `MODEL_UNSUPPORTED_INPUT`（→`not_run`）/`MODEL_TIMEOUT`（→`unusable`）/ 其余 `MODEL_INVALID_OUTPUT`（保守）；四阶段状态由 `chains` 精确表达 |
+
+**契约与护栏**：`Plan With Files/Dual_Recognition/RECOGNITION_LOOP_CONTRACT.md`（v2，与代码逐字段一致）、
+`contracts/recognition-decision-view-v1.schema.json`、`contracts/recognition-apply-decisions-v1.schema.json`
+（**有意不列入 `contract-manifest.json`**——该 manifest 是跨仓 NAS peer 契约包，新增条目会触发对端 hash 校验；
+理由已写入文件描述与契约 §10.3）、
+`scripts/recognition/contract-drift.mjs`（三面交叉核对：Rust ↔ Schema ↔ 前端 TS）。
+
+**本次修掉的自身缺陷**：`DecisionFieldV1::as_str()` 返回 camelCase 而 serde 是 snake_case，
+使 `decisionId` 末段（`d:slot:slot-14:optionBank`）与线上 `field`（`option_bank`）不一致，
+且**不满足本契约 schema 的 `^d:[a-z_]+:.+:[a-z_]+$`**（即 schema 会拒绝真实产出）。
+受影响 6 个字段，已修正并新增 `as_str_matches_serde_for_every_wire_enum` 护栏
+（对 6 个线上枚举的全部变体断言 `as_str() == serde 渲染`）。
+
+**验证**：`cargo test --lib` **660 passed / 0 failed / 11 ignored**（较上轮 +1，为本轮护栏）。
+`verify:recognition:contract` 输出 **Rust ↔ Schema 0 处不一致**；前端 3 处破坏性不一致已出交接单。
+
+**剩余缺口（照实声明，不计为验收通过）**：
+- 以上是**服务与命令层 + 类型契约层**证据。真实 UI 集成、真实云服务往返、跨仓学生端计分
+  **尚未验证**，需两 agent 集成后按 `AGENTS.md` 走真实产品链路。
+- 前端契约状态（2026-09-15 复核）：`src/api/recognitionClient.ts` 首版按 v1 设计文档编写，
+  与 v2 有 3 处破坏性不一致；后端建立漂移检查后前端已修**读取面**
+  （`RecognitionDecisionRawV1` + `normalizeDecisionView` 双形状容错）。
+  **写入面（accept/reject）至今未修**：仍发 `{itemId, decisions[]}`，后端要 `accept[]`/`reject[]`
+  且未设 `deny_unknown_fields` → 点击「采用修正」是**静默空操作**，同时因读 `result.accepted.length`
+  抛 TypeError 而误报失败。`verify:recognition:contract` 当前 2 处破坏性不一致，均在写入面。
+  另发现 `queued`/`partial`/`unusable` 三个 `StageStateV1` 取值被渲染成英文原文，
+  其中 `queued→not_started` 会让用户误以为「云端没跑」，打掉本地优先的核心体验。
+  交接单：[HANDOFF_2026-09-15_frontend_contract_drift.md](HANDOFF_2026-09-15_frontend_contract_drift.md)。
+  按所有权约定，`src/**` 由前端 agent 独占写入，本轮**未改动任何前端文件**，只出清单。
+- `document-ir.json` 在扫描件（无文本层）场景下 `source.status=not_run`，核验只能给 `unverifiable`；
+  这是设计上的诚实降级，不是 bug。
+
 ## Phase Map（本地执行阶段 ↔ 计划 PR，历史记录）
 
 | 阶段 | 内容 | 计划 PR | 状态 |
@@ -73,7 +121,7 @@
 | P5 | Durable Processing Queue：SQLite job、lease、事件、启动恢复 | PR-08 | pending |
 | P6 | 本地 DocumentIRV2 直接识别：Question Layout Graph、题号/题干/选项几何恢复 | PR-09/10 | pending |
 | P7 | 云端完整识别：versioned skill bundle、CloudRecognitionCandidateV1、repair/salvage | PR-11/12 | pending |
-| P8 | Reconciliation：对齐、字段级合并、ActionableIssue、原位差异 | PR-13 | pending |
+| P8 | Reconciliation：对齐、字段级合并、ActionableIssue、原位差异 | PR-13 | 后端完成（2026-09-15：`reconcile/**` + 契约 v2；原位差异展示属前端，见交接单） |
 | P9 | 发布/设置/清理收敛：typed preflight、batch publish、artifact cleanup | PR-14/15 | pending |
 | P10 | 旧链删除与真实回归 | PR-16 | pending |
 

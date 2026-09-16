@@ -1,5 +1,202 @@
 # Findings
 
+## 2026-09-14 第三轮精简确认 verifier 的技术发现（跨仓）
+
+第三轮派 3 个只读 verifier（发布/打包完整性、学生端提交校验、编辑器与云端 UX）复核第二轮
+修复。**三条修复被证伪或部分证伪**，本轮已全部修复；以下记录技术机理与裁定依据。
+
+### 1. 提交点判定用了一个「提交后就不存在」的文件（P0，`6b6ac8e`）
+
+- `nas_package_v2.rs` 的 `atomic_replace_file(&release.join("manifest.js"), &paths.manifest_path)`
+  是**移动**语义（`MoveFileExW`），提交成功后 `releases/<batchId>/manifest.js` 已不存在。
+- 而 `manifest_matches_release` 正是拿 live manifest 与这个文件比对 → 恒为 `false`。
+- 于是「清单已替换、`manifestCommitted` 尚未写盘」这个崩溃窗口被误判为**未提交**：
+  `recover_interrupted_batches` 会 `remove_dir_all` 掉刚上线的 `resources/<examId>`、
+  用备份还原、再 `restore_manifest_baseline` 退回旧清单——**毁掉一个已经生效的批次**。
+- 修复：状态文件在破坏性步骤**之前**记录候选清单的 sha256（`pendingManifestSha256`），
+  恢复端用**线上清单的内容哈希**判定提交点。
+- 附带修掉一个测试缺陷：原测试用 `fs::write(release/manifest.js, candidate)` 造了一份**副本**，
+  恰好让「提交后 release 里没有清单」这一真实情况消失，因此 bug 在测试里不可见。
+  现改为复刻生产的移动语义，并断言移动后 release 里确实没有该文件。
+
+### 2. `JSON.stringify` 对超过 2^53 的整数会舍入（P1，`84bc3f0`）
+
+- JSON 只有 double 一种数字类型。`JSON.stringify(9007199254740993)` → `"9007199254740992"`。
+- `js_number_to_string` 对 i64/u64 走了「精确位数」捷径，绕过了已经实现好的
+  ECMAScript `Number::toString`，于是 Rust 侧算出的 `runtimeSha256` 与学生端复算值不同。
+- 可达性：契约里没有接近 2^53 的整数字段（`byteLength` 等远小于），因此在当前真实包上
+  **不可达**；但公开命令接受任意 `source_path`，且这是编码器语义错误，按正确性修复。
+- 期望值取自真实 Node（`JSON.stringify(JSON.parse(<字面量>))`），不靠推断：
+  `18446744073709551615` → `"18446744073709552000"`，
+  `123456789012345678901234567890` → `"1.2345678901234568e+29"`。
+
+### 3. 「槽位交互 ↔ 答案键类型」只检查了有内容热点的槽位（P1，`6741fb4`）
+
+- 学生端 `reading-v2-loader.ts:495-496` 对**每个**槽位强制：文本槽位必须配文本答案，
+  非文本槽位必须配选项答案；不一致时抛 500 → **整份提交失败**（整卷不可提交）。
+- 生产端只在 `hotspot_issues` 里检查绑定到内容热点的槽位，`diagram_hotspot`/`composite`
+  等没有内容热点的槽位漏检 → 可以发布一个学生端必然拒绝的包。
+- 修复：在 `validate_reading_source_v2` 里对**全部** `answer_slots` 逐槽位比对，与学生端
+  规则一一对应，并给出 `RUNTIME_TEXT_SLOT_ANSWER_NOT_TEXT` /
+  `RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION` 两个码。
+- 顺带发现既有夹具 `text_entry_response_and_text_answers_do_not_require_an_option_bank`
+  把响应组改成 `TextEntry` 并给了文本答案，却没改槽位的 `interaction`——它构造的正是
+  学生端会拒绝的状态。夹具已修正为自洽。
+
+### 4. 预检可以给一个永远发不出去的条目报「通过」（P1，`f8a48be`）
+
+- `get_publish_preflight_core` 在条目没有权威稿时回退到 job 目录草稿，仍可能返回 `passed`。
+- 但发布路径硬要求权威稿，否则 `ITEM_DS_NOT_SEEDED`。界面因此会出现「绿色 + 发布必失败」。
+- 修复：预检在无权威稿时直接返回同一个 `ITEM_DS_NOT_SEEDED` 阻断。
+
+### 5. 提示被保存循环吃掉 = 静默数据丢失（P0，`ed5e75a`）
+
+- `recoverFromConflict` 先 `setSaveMessage("…另有 N 项未能应用…")`，紧接着 `await persist()`；
+  而 `persist()` 的每次循环迭代都会 `setSaveMessage(undefined)`，最后 `setSaveState("saved")`。
+- 只要 `applied.length > 0`（几乎总是），用户**只会看到绿色「已保存」**。
+- 更严重：`checkpoint()` 写进 localStorage 的 `pending` 只有 `applied`，未能应用的补丁
+  **连恢复草稿里都没有**，无法找回。
+- 修复：提示改走独立的、保存循环不触碰的 `saveNotice` 状态（需用户手动关闭），
+  并把「何时必须有提示」抽成纯函数 `conflictRecoveryNotice(applied, dropped)` 以便断言。
+- 前端没有 React 测试环境（无 testing-library/jsdom），因此**没有** hook 级测试；
+  证据层级是「纯函数单测 + 代码审查」，如实登记。
+
+### 6. 真实 Tauri E2E 的两个真实根因（`4890606` + 未解决）
+
+- **参数**：`--disable-gpu` 与 `--disable-software-rasterizer` 同时存在 = GPU 与软件光栅化
+  全部关闭，渲染进程没有可用绘制后端，WebView2 会话建立即崩。只留
+  `--no-sandbox --disable-gpu` 后会话存活。
+- **构建模式**：`cargo build` 产出的是 **dev 模式**二进制，按 `tauri.conf.json` 的
+  `devUrl` 加载 `http://localhost:1420`；dev server 未启动，页面根本没加载
+  （探针观察到 `url=about:blank`、`bodyLen=0`）。产品 E2E 必须用
+  `npx tauri build --debug --no-bundle`（内嵌 `dist`）。
+- **仍未解决**：内嵌构建下应用进程与 2 个 WebView2 子进程独立运行时稳定存活，
+  但被 tauri-driver 驱动时第一个命令即断。驱动/运行时版本匹配，`switchTo` 无关。
+  这是 driver/WebView2 会话层问题，不是产品断言失败。
+
+## 2026-09-14 六 verifier 复核后的裁定与修复（跨仓闭环）
+
+第二轮 6 个只读 verifier 的结论已逐条裁定。以下记录「裁定 + 处置 + 证据层级」，避免把
+verifier 的推断当成事实，也避免把环境阻塞当成产品缺陷。
+
+### 已确认为真实产品缺陷并修复（product/service 级证据）
+
+1. **V6 P1-3 `runtimeSha256` 哈希操作数不是学生读到的字节**（PDF2Test `958e7e3`）
+   - 原实现 `serde_json::to_value(source)` 重序列化后哈希，而 wrapper 里嵌的是磁盘原始
+     `source_value`；`skip_serializing_if` 字段显式为 `null` 时两者字节不同。
+   - **可达性裁定**：默认 export→publish 链上 `runtime_value` 也是 `to_value(&runtime)`，
+     因此二者字节相同，此缺陷在该链上**不可达**；但公开命令接受任意 `source_path`，
+     该路径上可达。按防御性正确性修复：改为对 `source_value` 编码。
+   - 证据层级：service/命令级（Rust 单元测试 + 探针门禁）。
+
+2. **V6 P1-2 发布门禁不校验 checksum（假阳性）**（PDF2Test `958e7e3`）
+   - `run_student_loader_probe` 只查资源与语义，从不复算 `runtimeSha256`/`scriptSha256`/
+     `assetManifestSha256`，因此可以对一个学生端会以 `reading_source_integrity_failed`
+     拒绝的包报 `passed` —— 正是本轮真实踩到的缺陷类型。
+   - 修复：新增 `run_student_loader_probe_with_files`，从落盘 `<examId>.js` 中提取
+     `__READING_EXAM_DATA__.register` 的 payload，用 ECMAScript 规范编码复算并比对；
+     `scriptSha256`/`assetManifestSha256` 按文件字节复算。
+   - 证据层级：service/命令级。
+
+3. **V2 F1/F2/F3 批量发布崩溃窗口**（PDF2Test `958e7e3`）
+   - F3（数据丢失）：状态文件在 `rename` **之后**才写，且恢复/回滚会**无条件**删除线上
+     `resources/<examId>`；崩溃在两者之间就永久删掉旧资源。
+   - F1：清单替换后状态写失败会触发回滚，删掉刚生效的资源，留下「新清单 + 无资源」坏包。
+   - F2：从不备份 `manifest.js`。
+   - 修复：状态先于破坏性移动写入；回滚与恢复都改为「备份存在才动线上目录」；提交点用
+     live manifest 与 release 候选清单的**字节比对**判定（不依赖状态文件写入时机）；
+     提交点之后不再回滚资源；还原失败时保留备份交给下次恢复重放；并保留清单字节基线。
+   - 证据层级：service/命令级（4 个定向单元测试覆盖三个窗口 + 备份感知回滚）。
+
+4. **V3 F1 多槽 `per_slot` 组被整组求和误判超限 → 整卷 500**（学生端 `0b7b3d4`）
+   - 生产者为 `per_slot` 组按槽位写 `{min:1,max:1,exact:1}`；学生端把整组标签求和后与
+     `max=1` 比较，任何多槽 per_slot 组都会超限。
+   - 裁定：`unordered_set` 是整组共享标签池（生产者保证 `exact == 槽位数`），
+     `per_slot`/`ordered_slots` 是逐槽约束。改为按 `assignment` 分派校验。
+   - 证据层级：跨仓静态套件（phase6 + vertical-slice）。
+
+5. **V3 F2 / V6 P2-4 热点槽位用文本答案 → 可点但永远交不上卷**（PDF2Test `958e7e3`）
+   - 学生端对 `interaction != 'text'` 的槽位要求答案键是 `option`；生产者却接受 text
+     答案键（`normalize_runtime_hotspots` 还会把 hotspotId 改写成文本值，使值匹配看似通过）。
+   - 修复：编译期新增 `RUNTIME_HOTSPOT_ANSWER_NOT_OPTION`。
+   - 证据层级：service/命令级。
+
+6. **V3 F3 「同一字母可用多次」的匹配题被误判重复**（学生端 `0b7b3d4`）
+   - 重复选项只在确实不允许复用时才算错（响应组 `allowOptionReuse` 或任务选项库
+     `allowReuse`）。`buildReadingV2InteractionModel` 增补 `optionBankAllowsReuse`。
+   - 证据层级：跨仓静态套件。
+
+7. **V3 F10 / V6 P0-1 空槽位让整卷提交 500 且无回执**（学生端 `0b7b3d4`）
+   - `createReadingV2PracticeSubmission` 传 `requireComplete: true`，任何未作答评分槽位都会
+     让 `/api/exam/final-submit` 抛 500 且不写回执，学生被锁死。V1 路径一直是按答错计分。
+   - 修复：终局提交改为 `requireComplete: false`（空槽计错、正常出回执）；学生输入类校验
+     改为 HTTP 400（可被前端呈现），只有「已发布包自身不一致」保留 500。
+   - 证据层级：跨仓静态套件；真实 Electron E2E 仍为全对作答，空槽路径**尚无产品级 E2E**。
+
+8. **V4 P0 保存冲突死路**（PDF2Test `440ce94`）
+   - `reload()` 先 `persist()`，失败被吞掉 → 刷新从未发生；恢复记录又把同一个过期 draft
+     载回来重跑同一次失败保存；返回/发布都先 flush，静默失败；重启应用无效。
+   - 修复：`rebasePendingPatches` 纯函数把未保存补丁按序重放到服务端最新版本（遇到无法
+     应用的补丁就停下并报告条数）；`recoverFromConflict` / `discardLocalChanges` 两个明确
+     出路常驻在保存状态为 conflict/failed 时。
+   - 证据层级：pure unit（3 例）+ tsc；**真实 Tauri 双写者场景未做产品级 E2E**。
+
+9. **V4 P1 编辑器问题列表 ≠ 发布门禁**（PDF2Test `d274162`）
+   - 编辑器只有纯前端近似检查，会出现「界面 0 问题、点发布失败」且文案泛化。
+   - 修复：新增只读命令 `get_publish_preflight`，复用发布路径同一个
+     `check_publish_preflight`，并把 blocker/warning 并入同一问题列表（保留后端
+     `userMessage`，按 code+targetId 去重）。
+   - 证据层级：pure unit（4 例）+ service（命令复用同一函数）。
+
+10. **V5 P1 云端候选无修订绑定 + V1/V2 分裂**（PDF2Test `baa0965`）
+    - `apply_llm_suggestion` 只写 V1 `authoring-ir.json`；条目一旦有 V2 权威稿，
+      `migrate_single_item` 直接返回、从不回读 V1 → 接受建议**静默丢失**。
+    - 修复：新增 `apply_llm_suggestion_core_with_version`，写盘前守卫：
+      版本不一致 → `LLM_SUGGESTION_STALE`；已有 V2 权威稿 → 显式拒绝
+      `LLM_SUGGESTION_AUTHORITATIVE_STORE_IS_V2`（把静默丢失变成可诊断拒绝）。
+    - **未交付**：候选审阅 UI（diff + 逐题选择）。云端 API 函数自审阅页删除后**没有 UI 调用方**，
+      接受路径在产品界面上不可达；本次只把后端做成安全的，没有新增表面。
+    - 证据层级：service/命令级（1 个 Rust 测试）+ pure unit（3 例文案）。
+
+### 判定为「不需要修复」或「非产品缺陷」
+
+- **V1 P2 键序排序差异**：Rust 按 UTF-8 字节序、JS 按 UTF-16 码元序。契约键全为 ASCII 时
+  等价；出现非 BMP 键才会分歧。当前所有契约字段名均为 ASCII，判定为**暂不修复**，
+  作为已知约束记录（若将来引入非 BMP 键需重新评估）。
+- **V2 环境阻塞**：`npm run build:server` 与 vite `emptyOutDir` 会递归删除目录，被沙箱
+  `safe-delete` 拦截。这是**环境限制不是产品缺陷**；已用 `tsc` 直出 + `vite --emptyOutDir=false`
+  预构建，并给四个跨仓脚本加 `PHASE6_SKIP_BUILD=1` 预构建跳过开关（默认行为不变）。
+- **V2 F2 清单备份**：`atomic_replace_file` 在 Windows 用 `MoveFileExW`
+  （`REPLACE_EXISTING|WRITE_THROUGH`）、Unix 用 `fs::rename`，都是原子替换；加上提交点按字节
+  比对判定后，清单不会被半写坏。仍保留一份字节基线作为恢复兜底。
+- **`better-sqlite3`**：并非缺陷。Electron ABI 下正常建库与迁移成功；真正阻塞 E2E 的是
+  Python 解释器选择、GPU 参数与沙箱删除限制。
+- **V1 旧路径仍泄漏 `answerKey`（V6 P2-5/P3-9）**：V2 边界已确认无泄漏（payload 与
+  `runtimeSourceV2` 均无 answerKey）。V1 legacy 路径的不透明性与 `schemaVersion` 判定
+  属既有历史行为，本轮**未改**，如实列为残留风险。
+
+### 复核后仍未闭环（如实登记）
+
+- P4 云端候选审阅 UI（diff 呈现 + 逐题采纳）**未实现**，云端接受路径在产品界面上不可达。
+- 编辑器「学生预览」表面（`ExamCanvas mode="student"` 无调用点、
+  `buildReadingSourceV2FromAuthoring` 无导入方）**仍未接线**，因此「编辑器 == 学生」目前
+  只能靠跨仓静态套件 + 真实 Electron E2E 间接证明，缺少「同一 UI 内对照」的直接证据。
+- 热点重命名是破坏性两段补丁、资源预览缓存不失效、插入槽位用全局 max+1 等 P2 未处理。
+- 真实 PDF/DOCX 从 Tauri UI 到发布的同一轮闭环仍是缺口（本轮 E2E 起点是真实发布产物）。
+
+## 2026-09-13 产品可用性诊断 / WYSIWYG / 云端校验
+
+- 用户目标不是增加更多“Phase 页面”，而是一个转换工具：导入 PDF/DOCX -> 自动识别为学生可作答 GS/考试题目形态 -> 同一真实练习界面中查看与编辑 -> 云端校验以可理解方式呈现差异 -> 用户确认后导出。
+- 规划文档将目标架构收敛为 Library / Workspace / Settings 三个主表面，以 `IeltsAuthoringIRV2` 为基础的 Canonical Exam DS 为唯一权威内容；runtime/JS/NAS 仅在发布时编译。
+- 规划文档 2026-09-12 自审计显示：产品壳层/三路由/题库任务态/工作区直接编辑已大体落地；仍未交付或只部分交付的核心是 DocumentIRV2 geometry-first 主识别链、完整 Cloud Recognition Candidate、cloud evidence resolver/group salvage/reconcile、EditorCommand 全量覆盖、过程文件清理和跨实际学生 renderer 的 parity 证明。
+- 用户当前“看起来已经成型但可用性很差”的反馈，初步与计划文档自身识别出的未完成核心一致：UI 表面简化并不等于识别闭包、云端校验呈现、编辑反馈与最终学生端一致性已经闭环。
+- 计划把真实产品体验定义为“本地草稿一旦可用即可打开最终题面；云端结果迟到时只增量呈现局部差异；用户离开工作区后后台任务继续”。这意味着可用性不能依赖一个阻塞式“全部生成完再进入编辑器”的流程。
+- WYSIWYG 的关键不是直接编辑生成 JS，而是：前端内存 DS 即时更新，约 450ms debounce 发送 `EditorCommandV1`，Rust 事务更新 canonical DS/editVersion，发布时再编译 JS/NAS。需要重点核查当前实现是否真正遵守这条链，而不是只“看起来可编辑”。
+- 云端目标 UX 已明确：新增建议绿底、删除建议红色删除线、结构冲突定位到题组 popover；绝不再建独立 LLM Review 页。用户编辑过的节点应进入 proposal-only 保护，迟到 cloud result 不能自动覆盖。
+- 规划对发布门禁的产品定义很重要：只看当前 Canonical DS、当前 actionable blockers、当前 compiler 和资源闭包；不应因历史 fallback/partial 日志永久禁止发布，也不应把 schema/hash/CAS 暴露给用户。
+- 规划 2026-09-12 校正还显示：ExamCanvas 拆分仅部分落地（当时 3/11 组件）、EditorCommand 仍不完整、后端逐文件重构几乎零推进。这提示“前端已收敛”可能掩盖底层仍由旧链驱动的产品割裂。
+
+
 ## 2026-06-06 Settings Preflight + 100-PDF Live Regression
 
 - 设置页当前 `settings-grid` 把预检、模型列表、新建配置、高级诊断同时排成 3 列；预检项又复用 `.layer-list div` 大卡片样式，导致依赖排查信息在 warning 较多时显得臃肿。
@@ -187,3 +384,1024 @@
 - **P0-D 已修复**：ExportPage 新增 V2 发布门禁错误解析（`authoring_v2_export_blocked:quality_state|unresolved_answers|hard_failures|issues=*` 与 `authoring_v2_export_compile_blocked:{json}`），分类为可操作指导，V2 下 canForce=false（与隐藏的强制导出按钮一致）。
 - **题组 AI 建议 UI 入口已落地**：UnifiedPreview 题组工作台新增「AI 题组建议」面板——「获取 AI 建议」按钮（llmExtractGroup，需已启用 profile）、建议卡片（建议题型 vs 当前题型、置信度、warnings）、「应用到题组」（applyLlmSuggestion，kind/layout/questions 三路径，置信度 <0.85 时禁用并说明）、持久化 `group.llmReview` 警告横幅渲染。新增样式。
 - 最终回归：cargo test --lib 533 通过 / 10 失败（全部为预存环境问题：8 个需私有 PDF 语料或 Python pypdf（本机 pip 无网络）、2 个 reqwest 请求头断言在 HEAD 基线同样失败）；`npm run check` 通过；`npm run e2e:ui-flow` 在 HEAD 基线同样失败（本机环境）。
+
+# 2026-09-13 跨仓库闭环第一轮侦察统一 findings（6 子代理 + 主代理抽查证实）
+
+## 证据分层说明
+- 下述每条标注：[产品E2E] / [service] / [schema] / [推断待复现]。
+
+## P0（阻断交付，必须修复）
+
+1. **hotspot 提交契约断裂** [service+schema，行号抽查证实]
+   - 学生端 FigureNode.vue:65-67 点击热点提交 `hotspot.hotspotId`；AnswerSlotNode.vue:116-119 同。
+   - 服务端 reading-v2-loader.ts:484-487 要求非文本提交值 ∈ 该 slot 解析出的 option bank label（大写化），否则 `reading_v2_submission_invalid`；reading-sessions.ts:317 `requireComplete:true` 使终审整体 500。
+   - 生产端 hotspotId 来源：editorCommands.ts:56-62 `set_slot_placement` 生成 `${slotId}-hotspot`；SelectionInspector.tsx:48 `crypto.randomUUID()`。DiagramHotspotV2 无 label 关联字段（content-doc-v2.ts:100-105）。
+   - PDF2Test 编译器无 hotspot 校验：reading_source_v2.rs:369 diagram_hotspot answer-kind 检查落在 `_ => true`。
+   - 结论：热点题"能点但不可提交/计分"。修复方向：hotspotId ≡ 该 slot answerKey 的 option label（导出重写或编辑期约束），编译器+发布门拒绝无法映射的热点，PDF2Test 预览按学生语义渲染热点按钮。
+
+2. **Electron V2 图片资源 URL** [推断待复现，代码链证实]
+   - contracts-v2.ts:145-147 `readingAssetUrl` 返回相对 `/api/exam/reading/...`；FigureNode.vue:4 `:src="assetUrl"`、:47。
+   - 所有 API 走 resolveApiUrl→`http://127.0.0.1:<port>`（examApi.ts:72-96），listening 资源显式用它（examApi.ts:227-229），reading 图片是唯一例外。
+   - app:// 页面内相对路径 → `app://app/api/...` → protocol.js:89-120 只服务打包文件 → resolveBundledAsset 找不到 → 404（resourceOverlayManager.js:267-296）。
+   - 复现步骤：Electron 打开含 figure 的 V2 考试 → Network 过滤 `reading/.*assets` → 确认 404；手动改 `http://127.0.0.1:<port>/api/...` 应出图。修复：readingAssetUrl 经 resolveApiUrl。
+
+3. **batch 发布 `./releases/<batchId>/` 布局与学生端硬编码 `resources/${examId}` 不兼容** [service，行号抽查证实]
+   - nas_package_v2.rs publish_items_core：script/resourcesBase/assetManifest 重写为 `./releases/{batch_id}/...`，staging 整目录 rename 到 releases/<batchId>。
+   - 学生端 reading-asset-resolver.ts:107,122 硬编码 `safeJoinNasRoot(root, 'resources/${examId}')`；resourcesBase 只校验不参与解析（NasJs:120-122）。
+   - 影响：batch 发布的资产学生端必然 404/integrity fail；单考发布布局吻合无此问题。修复（生产侧，不改学生端抽象）：batch 布局保持资源位于 reading 根 `resources/<examId>/`（manifest 的 script 可留在 releases/，assetManifest/resourcesBase 必须指向根级 resources/<examId>），并让 probe/nas-student-contract 对 batch 布局复验。
+
+4. **EDIT_VERSION_CONFLICT 页面级死路** [service+E2E]
+   - useCanonicalEditor.ts:118-126 保存失败仅置状态；ExamWorkspacePage.tsx:129-139 返回/发布/重识别均先 flush（抛错被 withBusy 吞，不导航）；reload() 先 persist 且失败被吞（useCanonicalEditor.ts:243-245）→ 冲突永久，只能重启。
+   - 触发面：识别重跑 bump edit_version + processing 事件跳过 reload（ExamWorkspacePage.tsx:61-67）。
+   - 修复：saveState failed/conflict 提供"重试保存/放弃本地修改并重载"；返回按钮 flush 失败给确认对话框而非静默拦截。
+
+## P1
+
+5. **共享契约漂移** [schema，SHA 实算证实]
+   - PDF2Test contracts/ielts-authoring-ir-v2.schema.json = 61b05bf59dd094c2679e8fb2761a3ec7082c8842e1d2953a9e162665e345fa31（20070B，含 recognitionBlockers/recognitionBlockerTargets/recognitionBlockerTarget 定义）。
+   - 学生镜像 developer/contracts/authoring/ = ee09788cc01074eef9dd79c6bf9dbd87036e11f137fd52ae945c885b4a648271（19553B）。
+   - diff 恰为上述三段（19a20-27、422a431-439），全部 optional；其余 9 个 schema 与 contract-manifest 结构双仓一致。
+   - 同步机制已存在：PDF2Test scripts/verify-schema-contract.mjs（--peer-root）+ 学生 developer/tests/cross-repo/authoring-schema-mirror.cjs（断言 manifest 逐字节+逐文件 hash）。
+   - 决策：canonical owner = PDF2Test（producer）；把 2 个文件同步到学生镜像，方向 PDF2Test→学生，字段保留为 optional（用户任务书允许）。
+   - 学生端 student-repo 的 verify-schema-contract.mjs 默认 peer 根 `../NAS` 不存在，须用 --peer-root 指向 IELTS-NASfor-WenDao\developer\contracts\authoring。
+
+6. **编译器校验缺口** [service]
+   - hotspot 有效性（hotspot.slotId↔answerSlots、figure_hotspot hostNode）全链无校验（同 P0-1）。
+   - hostNodeId 悬空无校验；questionNumber 唯一性不查（reading_source_v2.rs:90 排序静默）。
+   - unresolved answer 编译容忍（有意），靠发布门拦截；但学生 loader 更严（reading-v2-loader.ts:342 直接 fail）——发布门必须兜住。
+
+7. **apply/采纳命令写 V1 不写 canonical** [service]
+   - apply_vision_answer_candidates_core（llm_commands.rs:453-701）、apply_llm_suggestion_core 写 V1 authoring-ir.json；M1 权威是 library_items_v2 canonical DS → 采纳结果到不了新工作区。
+
+8. **视觉候选无 revision 绑定** [service]：vision-answer-candidates.json 与生成时识别 revision 无绑定（llm_commands.rs:459-461 直接读文件）；仅"已答不覆盖"间接保护。
+
+9. **issue 面分裂** [service]：用户看到的 deriveActionableIssues（actionableIssues.ts:105-162，6 code）≠ 发布门消费的 quality.issues/recognitionBlockers/SourceReview；recognitionBlockers 前端不渲染；DB actionable_issues_v1 表零读写。
+
+10. **发布门双盲** [service]：validate_authoring_v2_publish_readiness（authoring_v2_commands.rs:187-344）不含 stale cloud candidate、不读 user_edited、recognitionBlockers 仅 flag-on 时经 quality 生效；无学生端加载探针（runtime_validation.rs:282-326 仅静态）。
+
+11. **过期 localStorage 恢复稿覆盖新识别 ds** [service]：useCanonicalEditor.ts:145-157 整体覆盖+还原旧 version，无"放弃恢复"入口。
+
+12. **删答案位遗留悬挂 hotspot** [service]：patchDeleteAnswerSlot（authoringV2Patches.ts:353-366）不清理 node.hotspots 中指向被删 slot 的热点；UI 无法修复。
+
+13. **跨仓真实包 E2E 为零** [产品E2E]：学生端 Electron E2E（student_exam_altu_electron_flow.py）只消费手写 V1 fixture；PDF2Test 真实 publisher 包从未进真实学生 UI（nas-student-contract.mjs:10-11 自认 pending）。方案：dump:nas-fixture（真 publish 产物）→ 学生端 EXAM_RUNTIME_CONFIG 指向该目录 → Playwright CDP 驱动作答/提交/计分断言。
+
+14. **计分 E2E 无 is_correct 断言** [产品E2E]：主链只数 sqlite 行数（altu L248-271）。
+
+## P2/P3（择要）
+- unordered_set 预览无"选满禁用/slice"（学生端 ReadingExamV2Renderer.vue:42,190-195 有）；PDF2Test student 预览 inline text onChange 不写状态（ExamCanvas.tsx:334）；热点在 student 预览 no-op（:263-266）。
+- MatchingMatrix 矩阵版式 vs 学生平铺（值等价，有意分歧，记录即可）。
+- crop 支持不对称：PDF2Test 显示裁剪图+重映射热点，学生显示全图+原始 rect（FigureNode.vue:46-57）。
+- V1 payload answerKey 不剥离（ExamReadingService.ts:35-37，注释明示有意保留 V1 opaque payload）——legacy 行为，不破坏；重点保证 V2 边界。
+- checksum canonical JSON 双端等价（serde_json vs JS canonicalJson）需真实 E2E 证实。
+- direct canonical 现状：empty prompt 55/57、visual 5/5 失败、statement 0 覆盖、private-real=0；flags 全默认关；不宣布达标。
+- per-keystroke patch+整文档 clone 性能；TS/Rust expandExpression 校验分叉；窄窗 issue 定位无效；OPTION_TEXT_MISSING（分组选项）无定位属性。
+- 学生端 manifest 别名索引可被同名 dataKey 劫持（P3）；资源字节 SHA 读取时才校验（P3）。
+
+## 覆盖矩阵（Agent F，按证据层级）
+- 产品E2E 已覆盖：导入（PDF 钩子+DOCX 文件钩子）、编辑/保存/重开、返回按钮 12 步、取消/强杀恢复、publish-ready 发布链、direct canonical 工件断言（audit note）。
+- 仅 cargo/service：product_chain 9 测试（导入/识别/编辑/导出/发布/批次原子性）、NAS probe、学生 provider/loader 校验、phase6 计分语义。
+- 仅 schema/CLI：verify-schema-contract、nas-student-contract 镜像规则。
+- 完全未覆盖：学生端 Electron 加载真实 V2 包、V2 交互 UI、资源 UI 显示、UI 计分断言、真实识别→ready→发布。
+
+## 环境/命令速查
+- PDF2Test E2E：`npx tauri build --debug --no-bundle` → npm run e2e:tauri:direct-canonical（--keep）等；env：PDF2TEST_AUTOMATION_*、QLG_DIRECT_CANONICAL、LOCAL_RECOGNITION_BLOCKERS_GATE。
+- 学生端：npm run build:server && build:student-exam；py developer/tests/ci/run_static_suite.py；py developer/tests/e2e/suite_practice_flow.py；npm run verify:cross-repo-reading-v2；env：IELTS_PDF2TEST_REPO、EXAM_RUNTIME_CONFIG、IELTS_USER_DATA_PATH、EXAM_ADMIN_TEST_DATA_DIRECTORY。
+- 契约校验：node scripts/verify-schema-contract.mjs --peer-root F:\workspace\IELTS-NASfor-WenDao\developer\contracts\authoring；学生侧 node developer/tests/cross-repo/authoring-schema-mirror.cjs（IELTS_PDF2TEST_REPO=F:\workspace\PDF2Test）。
+
+## 2026-09-15 本轮 findings（三个缺口闭环）
+
+标注约定：**FACT** = 本轮实测/代码可查；**INFERENCE** = 由事实推出的判断；**HISTORY** = 上一轮或更早的结论，不作本轮验收。
+
+### F-R1-1（FACT，根因）`cargo build` 产出的是 dev 模式二进制
+- `src-tauri/tauri.conf.json` 同时有 `devUrl: http://localhost:1420` 与 `frontendDist: ../dist`。
+- 实测：`cargo build` 出的 exe 通过 CDP 读到的页面是 `ERR_CONNECTION_REFUSED / localhost 拒绝连接`（Microsoft Edge 错误页）——说明它在加载 `devUrl`，而无人监听 1420。
+- 结论：可验收的内嵌构建必须来自 `npx tauri build --debug --no-bundle`。这是上一轮「应用单独跑得起来、driver 第一条命令就死」的另一半根因。
+
+### F-R1-2（FACT）tauri-driver + msedgedriver 在本环境无法建立稳定会话
+- 报错：`session not created / unable to connect to renderer`、`chrome not reachable`、`invalid session id: session deleted as the browser has closed the connection`。
+- 参数矩阵（baseline / `--disable-gpu` / `--no-sandbox --disable-gpu` / `--disable-gpu-compositing`）只有 `--no-sandbox --disable-gpu` 能建立会话。
+- 采用替代通道：WebView2 自带 CDP（`--remote-debugging-port`），封装在 `scripts/e2e/lib/tauri-cdp-harness.mjs`。驱动真实 exe / 真实后端 / 真实 SQLite / 真实文件系统。
+- **FACT**：`--no-sandbox --disable-gpu` 放宽了渲染进程沙箱与 GPU 路径，属诊断参数；报告记 `diagnosticRun=true`，不得算作默认产品路径通过。
+
+### F-R1-3（FACT，本 agent 自身缺陷）harness 判定 bug
+- `tauri-cdp-smoke.mjs` / `tauri-cdp-product-chain.mjs` 都在 `try` 块里用 `report.steps`（此时仍是空数组）算 verdict，而 `report.steps` 要到 `finally` 才赋值 → 空数组让 `every()`/`filter()` 得出「通过」。
+- 实测后果：DOCX 那次 9 个步骤全失败，报告却写 `verdict=passed`。已修：判定移到 `finally` 里 `report.steps = recorder.steps` 之后，并加「步骤数为 0 也算失败」。
+- 教训：**harness 的判定逻辑本身必须被反向验证一次**，否则它会把失败洗成通过。
+
+### F-R2-1（FACT）工作区学生预览已接通，走官方编译闸门
+- `buildReadingSourceV2FromAuthoring` 之前**没有任何调用方**（全仓搜索为空）。现在由 `src/features/editor/studentPreview.ts` 调用：编译失败不渲染预览，只给可定位的 `code/targetId`；编译成功交给共享 `ExamCanvas` 的 `mode="student"` 渲染，不新增第三份渲染近似。
+- 真实链路证据：`student-preview-renders` 断言 `isStudentMode=true`、`hasAuthorTextarea=0`、`hasAuthorTools=0`、预览正文含刚保存的 `E2E EDIT CHECK 42`、初始无任何预填作答。
+- **FACT**：`student-preview-answering-isolated` 断言预览里作答后，作者答案 `["q1=TRUE","q2=FALSE","q3=NOT GIVEN"]` 前后完全一致，且无新修订、无保存触发。
+- **INFERENCE（限制）**：该次预览选择的选项恰好与作者答案相同（都是 q1=TRUE），隔离性证明偏弱。已把脚本改为**刻意选择与作者答案不同的选项**再断言，但改动后的这次运行结果需另行记录。
+
+### F-R2-2（FACT）共享选择上限与学生端不一致（已修）
+- 真实 `ReadingExamV2Renderer.vue:42` 用 `cardinality.max` 作为 `unordered_set` 的禁用阈值，legend 才用 `exact`。
+- `ExamCanvas.tsx` 原来用 `cardinality.exact ?? cardinality.max` → 作者预览会比学生端更早锁住选项。已改为 `cardinality.max`。
+
+### F-R2-3（FACT，契约差异，非渲染差异）内联 answer_slot 的选项分支不可达
+- 真实 `AnswerSlotNode.vue` 支持内联 `answer_slot` 的 radio/checkbox/select 选项（读 `node.options`）。
+- PDF2Test 的 `AnswerSlotNodeV2`（`src/types/content-doc-v2.ts:157`）**没有** `options` 字段，本流水线无法产出这种节点 → 该分支不可达，故不实现。
+
+### F-R3-1（FACT，需要后端对齐）`get_recognition_decision` 实际返回形状与契约不一致
+- 契约 §2.3 约定：`cloudStatus` / `localStatus` / `cloudReasonCode` / `items` / `summary`。
+- 实测后端返回：`{ chains: { local|cloud|source|adjudication: { state } }, actionable, autoApplied, editVersion, jobId, baseEditVersion, batchId, stale, summary, generatedAt }`——没有 `cloudStatus`，也没有 `items`。
+- 实测后果：面板渲染出 `云端核验状态未知（undefined）`——这正是任务书禁止的「假信息」。
+- 前端处理：`normalizeDecisionView` **两种形状都认**，优先契约字段，缺了回退 `chains` / `actionable` / `autoApplied`；缺字段一律降级成 `not_started`，绝不猜成完成。单测覆盖契约形状、实现形状、完全缺字段三种情况。
+- **待办**：请后端按契约补齐 `cloudStatus` / `localStatus` / `items`（或双方确认以 `chains` 为准并改契约文档）。
+
+### F-R4-1（FACT）真实样本的发布被质量门禁拦下，且前端无清除入口
+- `fixtures/parser/complex-reading.pdf` 导入后 4 项阻断：`QUALITY_NOT_READY`、`QUALITY_HARD_FAILURE`、`completion slot 没有可渲染的宿主节点`（target `group-2`）、`仍有显著源区域未被题目、passage 或有理由的忽略记录解释`（target `document`）。
+- 代码核查：`QUALITY_NOT_READY` / `QUALITY_HARD_FAILURE` 来自 `authoring_v2_commands.rs:418/432`，读的是 `quality.state` 与 `quality.hardFailures`；前端没有任何调用方触发质量重算或 review-state 变更（`refresh_quality_report` 无调用方）。
+- 结论：这是识别质量问题，属识别/云端 agent 范围。按任务书「门禁拦下是正确负例」，本轮不伪装成发布成功；**学生端链路因此未完成**。
+
+### F-R4-2（FACT）`complex-reading.md` 不是 `complex-reading.pdf` 的答案表
+- 实际导入该 PDF 后题面为 "Complex Fixture Passage / museum that moved its archive into a renovated warehouse"，工作区答案 q1=TRUE、q2=FALSE、q3=NOT GIVEN。
+- `.md` 写的是 1 TRUE / 2 FALSE / 3 TRUE / 4 diaries / 5 diaries → q3 与题面不一致。
+- 结论：该 `.md` 不能当人工期望答案表；Task 4 的人工答案表必须按实际导入题面另行人工核对。
+
+### F-R4-3（FACT）「选择文件夹」导入入口只收 PDF
+- `job_commands.rs:377` 的 `pick_pdf_folder_sources_core` 走 `list_pdf_files_in_dir` → 只列 PDF。
+- DOCX 必须走「选择文件」入口（`automation_source_files_from_env`，读 `PDF2TEST_AUTOMATION_SOURCE_FILES`，任意扩展名）。
+- 实测后果：DOCX 用「选择文件夹」入口时文件被静默丢弃，`picked-files` 永不出现，后续 9 步连锁失败。已修脚本按扩展名选入口。
+
+## 2026-09-15 补充轮 findings（门禁根因 + 预览覆盖 + 夹具裁定）
+
+### F-R5-1（FACT，P0，需后端修复）质量门禁对 `resolution` 完全无视——任何出现过硬失败的题稿永久无法发布
+这是本轮最重要的发现，它解释了 F-R4-1「发布被拦」的真正原因，并且**不是题稿质量问题，而是门禁逻辑缺陷**。
+
+`resolution`（用户「采用修正」/「保留当前内容」的落点）在两个独立位置被彻底忽略：
+
+1. **状态推导**（`src-tauri/src/ielts_grammar/quality.rs:211`）：
+   ```rust
+   let has_blocking = !hard_failures.is_empty();
+   ...
+   let state = if has_blocking { "blocked" } else if ... { "review_required" } else { "ready" };
+   ```
+   `has_blocking` 只看 `hard_failures` 是否为空。而 `hard_failures` 由 `push_issue`（同文件 `3717-3721`）在 `severity == "blocking"` 时**无条件**写入，从不读 `details.resolution`。
+   同文件 `213-220` 的注释声称已经修掉「resolving or ignoring an issue changed nothing」，但该修复只作用于 `unresolved_blocking_issues` 这一项（`221-231`）；`has_blocking` 分支在前、优先级更高，仍然无视 resolution。**修复不完整。**
+   更关键的是执行顺序：`refresh_quality_report`（`authoring_v2_commands.rs:977-992`）先调 `evaluate_quality` 生成 `hardFailures`，**之后**才 `preserve_issue_resolutions` 把 `resolution` 盖回 `issues`。`hardFailures` 早已定型，盖回 resolution 不可能再影响它。
+
+2. **发布门禁**（`src-tauri/src/authoring_v2_commands.rs:425-438`）：对 `quality.hardFailures[]` 逐条 push `QUALITY_HARD_FAILURE`，**同样没有 resolution 判断**。对比同函数 `455-468` 的 `unresolved_blockers` 是有 resolution 判断的——同一函数里两套标准。
+
+- 后果：只要一份题稿曾产生过任意一个 blocking issue，`state` 就恒为 `blocked`，`check_publish_preflight` 就恒返回 `QUALITY_HARD_FAILURE`。用户无论怎么修、怎么点「保留当前内容」，都无法发布。这不是「正确拦下坏题」，而是「好题也永远出不去」。
+- 归属：`ielts_grammar/quality.rs` 与 `authoring_v2_commands.rs`（后者在双 agent 契约里是**共享 append-only** 文件）。属识别/校验后端范围，**本 agent 不改**，仅交接。
+- 需要的修复方向（供后端参考，非本 agent 结论）：`has_blocking` 与 `hardFailures` 循环都应先过滤掉 `details.resolution ∈ {resolved, ignored}` 的 issue，或让 `hard_failures` 本身携带 issueId 以便按 resolution 过滤。修好后必须有回归测试覆盖「blocking issue 被 ignored 后 state 变 ready / preflight passed」。
+
+### F-R5-2（FACT）夹具裁定：`complex-reading.docx` 才是可用答案表夹具；`demanding-reading-passage-1.docx` 只有正文没有题目
+- `fixtures/parser/complex-reading.docx` 解压后 13 段，**含题干与答案表**：`Answers 1 TRUE 2 FALSE 3 NOT GIVEN 4 maps 5 diaries`。它是同族 `complex-reading.pdf/.txt/.md` 的兄弟，可作为 Task 5 的人工期望答案表来源（注意 F-R4-2：`.md` 的 q3 与 PDF 实际题面不一致，需以实际导入题面为准）。
+- `fixtures/parser/demanding-reading-passage-1.docx` 解压后 16 段，**只有 READING PASSAGE 1 标题、instructions 与正文段落，完全没有 Questions 1-13 的题干和选项**。解析器仍造出 13 个答案位，但无题干无选项 → 全部落成 text 交互槽。
+- 后果：该 DOCX 不是合格的端到端验收夹具（学生无从判断该填什么），本轮把它降级为「text 交互路径」的覆盖样本，不作为 Task 5 主夹具。
+
+### F-R5-3（FACT，本 agent 自身缺陷，已修）预览作答隔离步骤的两处缺陷
+1. **比较对象错误**：`student-preview-answering-isolated` 里为了「刻意选一个与作者答案不同的选项」，去查 `[data-testid="exam-canvas-v2-author"] input[type=radio]`。但作者画布在 `mode === "student"` 时已被卸载（这正是预览隔离的实现方式），查询恒为空 → `deliberatelyDiffersFromAuthor` 恒为 `false`，退化成「点第一个选项」。旧报告里的 `previewChecked: ["q1=TRUE"]` 与作者答案相同，隔离其实是**巧合**而非证明。
+   已修：作者答案快照在切到预览**之前**采集，并把快照注入预览侧的求值表达式做比较。
+2. **只覆盖 radio**：原步骤只找 `input[type=radio]`，遇到纯 text 交互的题稿直接失败（`no-candidate-radio`）。而真实学生端 `AnswerSlotNode.vue` 明确支持 text / radio / checkbox / select / dragdrop / hotspot 六种，只测一种等于没测全。
+   已修：按 radio/checkbox → text → 兜底 的优先级选择目标；选项类走真实鼠标点击，文本框走真实键盘输入（CDP `Input.insertText`），并如实记录 `inputMethod`；若受控组件未登记真实键盘输入则退化为原生 setter + `input` 事件并记录该退化。
+3. 同时给第 7 步加了「可作答性」断言：`radio+checkbox+text+hotspot == 0` 时直接失败——一份学生无法作答的题稿不该被判成「预览渲染通过」。
+
+### F-R5-4（FACT，产品缺口）`resolveIssue` 补丁在数据层已通，但没有任何 UI 触发它
+- 数据层齐全：`AuthoringPatchV2` 有 `{ op: "resolveIssue"; issueId; resolution: "resolved" | "ignored"; note? }`（`src/types/authoring-editor-v2.ts:74`）；前端 `src/services/authoringV2Patches.ts:395` 实现 `patchResolveIssue`；Rust `authoring_v2_commands.rs:1125 → resolve_issue` 处理它。
+- 但全仓检索无任何组件调用该 op。也就是说用户界面里**没有**「这个问题我确认过了 / 忽略」的入口。
+- 叠加 F-R5-1 后影响被放大：即便补上入口，当前门禁逻辑下点了也无效。两者必须一起修才能真正打通发布。
+- 归属：UI 入口属本 agent 的 `src/**`；但因为它单独修无效、且与识别/校验语义强耦合，先交接，待后端确认 resolution 语义后再落地，避免做出一按就假的按钮。
+
+### F-R5-5（FACT，已修）发布步骤证据过薄，无法交接「为什么发不出去」
+- 旧实现只记录 `outcome` 与 `manifestExists`，`blockers` 全丢。
+- 已修：第 10 步在点击发布后额外走真实 IPC 调 `get_publish_preflight`，把 `passed` / `editVersion` / 每条 blocker 的 `code` / `targetId` / `internal` 与 warnings 一并写进报告，作为门禁交接的原始证据。
+
+### F-R5-6（FACT）`RUNTIME_COMPILER_FAILED` 的真实原因：选项型槽位的答案键被写成 text 型
+从运行产物的 `quality.compilerProbes.v2Runtime` 直接读到（不再靠猜）：
+
+```
+RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION:q1:Slot interaction and answer key kind must agree; the student runtime rejects a mismatched key and the whole submission fails.
+RUNTIME_RESPONSE_ANSWER_KIND_MISMATCH:q1:response kind and answer key kind must agree.
+（q2、q3 同）
+```
+
+对照题稿实体（`authoring-ir-v2.shadow.json`）：
+
+| 实体 | 实际值 |
+| --- | --- |
+| `answerSlots.q1.interaction` | `radio` |
+| `group-1.taskType` | `true_false_not_given` |
+| `group-1-responses.kind` | `choice`（`optionBankRef` = `group-1-option-bank`，选项 TRUE/FALSE/NOT GIVEN 齐全） |
+| `answerKey.q1` | **`{kind:"text", values:["TRUE"]}`** ← 应为 `{kind:"option", labels:["TRUE"]}` |
+
+也就是说：题面与选项都对，**只有答案键的类型错了**。真实学生端要求「非 text 槽位的答案键必须是 option 型」，否则拒绝整份提交。这是识别/自动产出答案键的缺陷，属另一 agent 范围，本 agent 只交接、不改。
+
+另注：`recognitionBlockers` 里还有 `QUESTION_NUMBER_MISSING`（targets `group-1`/`group-2`），而 `answerSlots` 实际都有 `questionNumber`，两者不一致，一并交后端确认。
+
+### F-R5-7（FACT，本 agent 已修）TS 运行时校验缺同一条判定——预览因此显示假完成
+- Rust 侧有 `RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION`；TS 侧 `src/services/readingRuntimeV2.ts` 的 `validateReadingExamSourceV2` **没有**这条检查（它只查 `RUNTIME_OPTION_BANK_MISSING` 等结构问题）。
+- 后果链：TS 校验通过 → `buildReadingSourceV2FromAuthoring` 不抛错 → 预览把题面完整渲染出来、学生能作答 → 作者看到「一切正常」→ 点发布只收到一句「这道题存在必须修复的内容缺陷」。这就是任务书禁止的**假完成**。
+- 已修：新增导出 `validateReadingAnswerKeyKinds(source)`，与 Rust 同一条判定（`text` 槽位要 text 型答案键，其余要 option 型；`unresolved` 不算类型不匹配）。
+  - **刻意不并入** `validateReadingExamSourceV2`：那条路径被 `assertReadingExamSourceV2` 直接 throw，并进去会把整份预览一起挡掉，作者连学生视图都看不到，反而无从判断。单独暴露 → 预览保留学生视图，同时明确报出「提交/计分会失败」。
+- 预览侧接线：`compilePreviewSource` 的 `summary` 新增 `answerKeyIssues`；`describePreviewPublishLimitation` 新增 `runtimeIssueCount`；工作区新增 `workspace-preview-runtime-issues` 区块（可点击定位回编辑态的具体答案位）。
+- 新增 5 个单测（选项型槽位+文本型答案键 → 报出且仍可渲染；正确配型 → 不报；`unresolved` → 不报；文本槽位正确配型 → 不报；限制说明含「提交」）。前端合计 **122 passed**，`tsc --noEmit` 干净。
+- E2E 侧新增第 12 步 `preview-and-gate-agree`：只要门禁报出 `RUNTIME_COMPILER_FAILED`，预览就必须已报出答案键类型问题，否则直接判失败。把「预览不得假完成」变成可执行断言，而不是靠人工看截图。
+
+### F-R5-8（FACT）一致性断言第一版过粗，被真实数据证伪后收紧
+第 12 步第一版写的是「门禁报 `RUNTIME_COMPILER_FAILED` ⇒ 预览必须报出答案键类型问题」。它在 `demanding-reading-passage-1.docx` 上**失败**了：
+
+```
+[step] FAILED preview-and-gate-agree :: 预览与门禁不一致：门禁报 RUNTIME_COMPILER_FAILED，但预览没有报出任何答案键类型问题（预览显示假完成）
+```
+
+查探针明细后确认断言本身有错，不是产品有错：`RUNTIME_COMPILER_FAILED` 有多个来源。三次运行的真实探针码：
+
+| 夹具 | 探针 issueCodes |
+| --- | --- |
+| `complex-reading.pdf` | `RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION`, `RUNTIME_RESPONSE_ANSWER_KIND_MISMATCH` |
+| `complex-reading.docx` | 同上 |
+| `demanding-reading-passage-1.docx` | `RUNTIME_ANSWER_UNRESOLVED`, `RUNTIME_RESPONSE_KIND_OPTION_SOURCE_MISMATCH` |
+
+第三个夹具的槽位全是 `text`、答案全是未填，预览的类型检查**本来就该**报 0 条。所以断言收紧为「只在该原因码确实属于预览已覆盖的那一类、而预览却没报出时才失败」，并新增 `previewUnmappedProbeCodes` 如实记录「门禁拦下但预览没有专门呈现区」的原因码（这些原因仍通过问题列表的 `ANSWER_MISSING`、预览的 `answeredSlots`、门禁阻断数暴露）。
+**该断言已被观测到真实失败过一次**，因此不是「永不触发的装饰断言」。
+
+### F-R5-9（FACT，小问题，未修）选项正文与标签重复，学生端会显示成「TRUE TRUE」
+预览截图 `06-student-preview.png` 里 T/F/NG 三个选项渲染为 `TRUE TRUE` / `FALSE FALSE` / `NOT GIVEN NOT GIVEN`。
+- 渲染侧与真实学生端一致（`AnswerSlotNode.vue` 也是 `<strong>{label}</strong> {contentText(content)}`），所以不是渲染缺陷。
+- 根因在数据：`optionBank.options[].content` 的文本与 `label` 相同。属识别侧产出问题，本 agent 只记录。
+
+### F-R6-1（FACT，P0，本 agent 自身缺陷，已修）写路径还有**第二层**漂移：没把请求包进 `input`
+上一轮修掉了字段名漂移（`{itemId,decisions[]}` → `{requestId,batchId,baseEditVersion,accept[],reject[]}`），
+契约漂移检查器随即报「0 处破坏性不一致」。但写路径**仍然是坏的**，因为还有一层：
+
+- Tauri 命令签名是 `async fn apply_recognition_decisions(input: Value, app: AppHandle)`
+  （`src-tauri/src/lib.rs:980`）→ IPC 参数必须整体包在 `input` 键里。
+- 我原来的 `src/api/recognitionClient.ts` 把 `requestId/batchId/baseEditVersion/accept/reject` **平铺**在顶层，
+  真实后端于是返回：
+  ```
+  invalid args `input` for command `apply_recognition_decisions`: command apply_recognition_decisions missing required key input
+  ```
+- **契约漂移检查器存在结构性盲区**：它只比对 Rust **结构体**的字段名（`TS_MAP` ↔ struct），
+  看不到**命令包装层**（`input: Value`）。所以「0 处破坏性不一致」与「写路径坏了」可以同时成立。
+  这类漂移**只能靠真实 IPC 调用**发现——静态检查永远看不到。
+- 已修：请求包进 `input`；新增 2 个单测把「顶层只能有 `input` 一个键」钉死（`recognitionClient.test.ts` 11 → 13 项）。
+- 教训（写入本轮方法论）：**契约检查通过 ≠ 接线可用**。凡是跨 IPC 边界的形状，必须至少有一次真实调用证据。
+
+### F-R6-2（FACT）学生端存在真实跨仓产品级 E2E，是 Task 5 学生侧的正确验收通道
+`IELTS-NASfor-WenDao/developer/tests/e2e/reading_v2_student_flow.py` 正是任务书第 5 项要的链路：
+
+> 真实 Electron 学生端加载 PDF2Test 发布的 ReadingExamSourceV2 包 → NAS 目录 → manifest 发现 →
+> V2 loader 校验 → V2 渲染 → 图片显示 → hotspot 作答 → 提交 → 服务端校验与计分（`reading_answers.is_correct`）。
+> 同时断言学生端 HTTP payload 不含 answerKey（V2 安全边界）。
+
+- 输入：作者仓 `artifacts/nas-e2e-fixture`（P1/P2/P3），由 `src-tauri/src/product_chain.rs` 的
+  `#[ignore]` 测试 `dump_published_v2_visual_package_for_student_e2e` 产出。
+- 该 dump **走真实 export + NAS publish**（`dump_v2_visual_package_for_part`），学生端消费的是 publisher 原样输出；
+  `create_export_folder` 明确「不重写 payload、不重算校验和」，因此哈希校验是真校验。
+- **但它的输入是预先做好的 `READY_AUTHORING_FIXTURE`（quality 已 ready 的手工题稿），不是本轮真实导入的 PDF/DOCX。**
+  因此它能验收**学生侧**，不能替代「本轮导入 → 发布」的耦合验收。二者必须分开写，不得混为一谈。
+- 环境前置（本沙箱实测）：`playwright`（python）需装；`server/dist` 与 `dist/student-exam` 必须先移出，
+  否则 `build:server` / `vite build` 触发 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`（沙箱批量删除保护，非产品缺陷）。
+
+---
+
+## 2026-09-15 续行 R7 findings（撤销语义 + 断言自检）
+
+### F-R7-1（FACT，P0，本 agent 自身缺陷，已修）「撤销自动修正」是假完成：撤销被实现成 reject 决策
+
+**现象**：面板「已自动修正 N 项」折叠组里的「撤销」按钮，点击后显示「已保持现状 1 项」，
+但**权威稿里的自动修正原样留着**。用户以为撤销了，其实没有。
+
+**根因（两层，缺一不可）**：
+
+1. 面板实现与契约不符。契约 §4.4 写「显示「已自动修正」+ 撤销（用 `undo`）」，
+   §6.1 第 6 条写「撤销按钮（提交 undo 作为 editor 命令）」。
+   而 `RecognitionPanel.tsx` 实现的是 `submit(item.decisionId, [item], "reject")`。
+2. 后端 reject 的语义**本来就不是撤销**。`src-tauri/src/reconcile/commands.rs` 拒绝分支：
+
+   ```rust
+   // ── 拒绝：只改状态，不碰权威稿 ──────────────────────────────────
+   for decision_id in &request.reject {
+       ...
+       items[index].status = DecisionStatusV1::Rejected;
+       store::set_decision_status(...)?;
+       outcomes.push(DecisionOutcomeV1 {
+           kind: DecisionOutcomeKindV1::Rejected,
+           message: "已拒绝该建议，权威稿未改动。",   // ← 明确不回滚
+           ...
+       });
+   }
+   ```
+
+   即：reject 对一条**已经写入过**的 `auto_fixed` 项，只把 decision 状态改成 rejected，
+   自动修正写进 `answerKey` 的值**不会**被改回。两者叠加 = 界面说成功、稿子没变。
+
+**为什么单测和契约检查器都没抓到**：这是**语义**错配，不是字段错配。
+两边各自的字段都合法、调用都成功、`outcomes[].kind` 也是合法的 `rejected`，
+没有任何一层会报错——只有把「按钮文案」和「权威稿是否真的变了」放在一起看才会暴露。
+
+**修复**：撤销改为把 `undo` 当**编辑器命令**提交，经 `apply_editor_commands` 的版本化事务
+（版本 CAS + 幂等 + journal）改回旧值。
+
+- `recognitionDecisions.ts` 新增 `parseUndoPatch(undo)`：严格校验 `setAnswer` 形状，
+  认不出来返回 `undefined`。
+- `RecognitionPanel.tsx`：有可用补丁才给按钮；没有则显示「这条没有带可撤销的信息，
+  请在题面上手动改回原值。」——**宁可让用户手动改，也不给一个按了不生效的「撤销」**。
+- `ExamWorkspacePage.tsx`：`applyAuthoringV2Patches` 离线试算 → `editor.applyPatch` →
+  `await editor.flush()`。离线试算这一步是必要的：`applyPatch` 内部 `catch` 掉本地应用失败
+  只置 `saveState="failed"`、**不向调用方抛错**，直接 `flush()` 会在什么都没写的情况下
+  正常 resolve，于是又变成一次假完成。
+
+**残余（已交接，见 §6 of `HANDOFF_2026-09-15_frontend_write_path_and_undo_fixed.md`）**：
+`build_view` 把**所有** `resolution == AutoFixed` 的项无条件推进 `auto_applied`（不看 `status`），
+所以撤销后该项仍列在「已自动修正」组里。契约未规定撤销后该条状态（`DecisionStatusV1`
+没有「已撤销」）。我这一侧只做了**纯展示层**标记（会话内记住已撤销的 decisionId），
+没有发明后端语义、没有额外写 decision 状态。
+
+### F-R7-2（FACT，本 agent 自身缺陷，已修）第 9 步第一版是**空断言**
+
+「撤销通道」步骤第一版把探针值写成 `{kind:"unresolved"}`，而被选中的槽位 `q27`
+**原值本来就是 `{kind:"unresolved"}`**。于是断言 `kind !== "unresolved"` 恒成立，
+读回来相等什么也证明不了——**只有版本号 1→2 是真实证据**。
+
+已修正为：写入值必须与原值不同（相同则直接抛错拒绝执行），并断言读回值等于写入值
+**且**不等于原值。修正后证据：`valueActuallyChanged: true`，`versionBefore=1 → 2 → 3`，
+`canonicalValueAfterUndo = {kind:"text",values:["E2E-UNDO-PROBE"]}`，最后还原成功。
+
+**教训（与 F-R5-3 / F-R5-8 同类，第三次）**：断言「某值等于 X」时，必须先确认
+「不等于 X」也是可能的，否则断言会退化成恒真。已固化为脚本里的显式守卫。
+
+### F-R7-3（FACT）契约与交接文档的状态表已过期，且检查器的盲区需要补护栏
+
+`HANDOFF_2026-09-15_frontend_contract_drift.md` §1 与 `RECOGNITION_LOOP_CONTRACT.md` §10.2
+仍写「写入面至今未修，是当前唯一阻塞」「2 处破坏性不一致」，而实际已是
+**0 处破坏性 / 1 处需要留意**，写入面也已用真实 IPC 验证通过。
+
+更值得记录的是 **F-R6-1 的盲区还在**：`contract-drift.mjs` 只比对 Rust **结构体**字段名，
+**不解析 `#[tauri::command]` 的参数名**，所以「字段名全对但没包 `input`」这种漂移
+它永远报「0 处破坏性不一致」。`apply_editor_commands` 也是同一签名形态。
+已在交接文档里向对方提出补护栏建议（解析命令参数名，对 `Value`/`input` 形态要求前端包 `input`）。
+两个文件都在契约 §1.1 划给对方的独占写入区，**我没有改动**，只新建了一份回复交接。
+
+---
+
+## 2026-09-15 续行 R8 findings（验收判定假绿 + 运行档案）
+
+### F-R8-1（FACT，P0，本 agent 自身缺陷，已修）完整链报告的最终判定是假绿：`blocked` 不参与 verdict
+
+**现象**：`scripts/e2e/tauri-cdp-product-chain.mjs` 在「发布被质量门禁拦下、`manifest.js` 根本没生成、
+学生端没有任何产物」的情况下，仍然 `verdict=passed`、`process.exit(0)`。
+
+**根因**（`tauri-cdp-product-chain.mjs` 旧 finally 块）：
+
+```js
+const failed = report.steps.filter((s) => s.status === "failed");
+const blocked = report.steps.filter((s) => s.status === "blocked");
+if (report.verdict !== "cannot-run") {
+  report.verdict = failed.length || report.steps.length === 0 ? "failed" : "passed";
+}
+report.summary = { failed: ..., blocked: blocked.map((s) => s.name) };
+```
+
+`blocked` 被算出来、写进 `summary`，**然后就不参与任何判定**。只有 `failed` 会否掉通过。
+
+**受影响的历史报告：15 份**（全部是 `publish-via-workspace-button` = blocked 却 verdict=passed）。
+清单与复核命令见 `artifacts/e2e-cdp/VERDICT_DEFECT_NOTE.md`；报告**未删除**，作为缺陷证据保留。
+
+**为什么这个缺陷特别危险**：它不在产品里，而在**验收工具**里。
+产品一直在诚实地说「发布被拦下了」（`outcome=blocked_by_quality_gate`、`preflight.passed=false`、
+`manifestExists=false`），是**报告层**把这份诚实结论翻译成了「通过」。
+于是「本轮真实导入 → 发布 → 学生端」明明一步没走完，却有一份绿色的证据可以引用。
+
+**修复**：判定抽成纯函数 `scripts/e2e/lib/chain-verdict.mjs` + 19 条回归测试
+（`scripts/e2e/lib/chain-verdict.test.mjs`，已并入 `npm test`）。规则：
+
+| 情形 | verdict | 退出码 |
+|---|---|---|
+| 必需步骤缺失/未执行 | `incomplete` | 2 |
+| 必需步骤 failed（**任何**步骤失败都算，不只必需步骤） | `failed` | 1 |
+| 必需步骤 blocked（含发布被门禁拦下） | `blocked` | 4 |
+| 步骤全过但产物不完整（manifest / 题目 JS / 资源清单） | `failed` | 1 |
+| `--expect-blocked` 且门禁正确拦下 | `passed-negative-case` | 0 |
+| `--scope=edit-preview-specialty` | `passed-specialty` | 0 |
+| CANNOT-RUN | `cannot-run` | 3 |
+
+**实测对照**（同一夹具、同一二进制，`demanding-reading-passage-3.pdf`）：
+
+```text
+修复前：  verdict=passed    exit=0     ← 假绿（publish blocked，manifest 未生成）
+修复后：  verdict=blocked   exit=4     ← 同一个运行，如实报告
+负例模式：verdict=passed-negative-case exit=0
+```
+
+**顺带修掉的第二个判定洞**：判定原本写在 `if (recorder) {...}` 里。
+CANNOT-RUN 时 `recorder` 还是 `null`，于是这种运行**根本不执行判定**，
+`verdict` 停在下方的初值、`exitCode` 是 `undefined`。
+实测暴露：一次 `staleBuild` 的 CANNOT-RUN 报出 `verdict=failed exit=undefined`。
+已改为**无条件判定**，并把 `verdictReason` 一并写进报告。
+
+### F-R8-2（FACT）本沙箱下「默认档案」（不带测试专用安全参数）跑不起来
+
+任务书要求「不含测试专用安全参数的运行证据，与 CDP 诊断运行分开记录」。
+为此把 `--no-sandbox --disable-gpu` 从默认值改成**显式开启**（`--diagnostic-args`），
+并新增 `runProfile`：`cdp-default`（无测试专用安全参数）/ `cdp-diagnostic`（有）。
+
+**受控对照实验**（假设 → 运行 → 结果）：
+
+- 假设：`--no-sandbox --disable-gpu` 在本沙箱是必需项，不是可选项。
+- 运行 A：`--pdf demanding-reading-passage-3.pdf`（默认档案，`securityArgs: []`）
+  → 12 步中 11 步 **failed**，全部报 `CDP 连接已关闭`；`library-page-loads` 就在等
+  `library-page-after-reload` 时超时，app 输出停在 `[library] v2 migration: scanned=0 …`，
+  `appProcessExitCode=null`。即 renderer 在第一步之前就死了。
+- 运行 B：同一夹具 + `--diagnostic-args` → 11 passed / 1 blocked（正常）。
+- 结果：假设成立。**本沙箱内所有可得证据都是 `runProfile=cdp-diagnostic`。**
+- 停止条件：已确认差异可归因于这两个参数（唯一变量），不再重复试验。
+
+**如实记录**：因此本轮**没有**任何 `cdp-default` 的通过证据；默认档案在本环境
+只能得到 CANNOT-RUN 级别的失败。这一条不得被表述为「默认产品路径已验证」。
+
+### F-R8-3（FACT，工具摩擦）`package.json` 的脚本级改动会触发 staleBuild
+
+`assertBuildFresh` 按 mtime 比对 `package.json`，所以只加一条 npm script 也会判 staleBuild
+（实测：加 `e2e:chain` 等脚本后，下一次运行 CANNOT-RUN 指向 `package.json @ 22:39:18 > exe @ 22:34:20`）。
+
+`scripts` 不影响构建产物，只有 `dependencies`/`devDependencies` 影响。
+但**没有**按「依赖指纹」收窄这个检查：判定构建是否新鲜需要构建时刻的指纹，
+而构建由 `tauri build` 完成、不落这份状态，靠 mtime 是当前唯一可靠手段。
+收窄会削弱「exe 与源码一致」这条安全属性，而绕过手段（`--tolerate-concurrent-edits`）
+会把容忍项**逐文件记进报告**，本来就是透明的。
+
+**因此采取的做法**：不改判定规则；需要引用证据时**先重建再运行**（保证 `tolerated` 为空），
+非产物相关的容忍（如仅 `scripts` 变化）用 `--tolerate-concurrent-edits` 并在报告里留痕。
+
+---
+
+## F-R9-1（P0，产品）：发布阻塞的最后一公里是门禁误判，不是数据
+
+**结论**：`WORD_LIMIT_UNPARSED` 在一个**按字母选的 summary completion** 上被误判为 blocking，
+导致 `quality.state` 恒为 `blocked`、发布永远被拦。
+
+**证据**（`artifacts/e2e-cdp/run-publish-attribution-2026-09-15T23-02-36-674Z`）：
+
+```text
+group-1.taskType        = summary_completion
+group-1.wordLimit       = undefined                      ← 门禁因此判 blocking
+group-1.normalizedText  = "Questions 27 - 31 Complete the summary using the list of words
+                           and phrases, A-H, below. Write the correct letter, A-H, in boxes 27-31 …"
+```
+
+题目要求填**字母 A–H**，这类 summary completion 在 IELTS 里本就没有 word limit，
+源文里也确实没有。而 `quality.rs:1548-1563` 对**所有** completion 类型都要求 `wordLimit` 存在。
+
+**为什么这条最要紧**：它是本轮「先解除真实发布阻塞」的唯一残余障碍。
+同一夹具上，走真实界面填完 14 个答案之后 `hardFailures` 已经从
+`["WORD_LIMIT_UNPARSED","ANSWER_KEY_MISSING_SLOT","RUNTIME_COMPILER_FAILED"]` 降到
+`["WORD_LIMIT_UNPARSED"]` —— 也就是说**其余阻塞都真的被数据修复清掉了**。
+
+## F-R9-2（P0，产品）：「可见、可点、不可解决」的问题
+
+`WORD_LIMIT_UNPARSED` 的 `suggestedActions = ["edit_text","confirm_table"]`，两个动作都是死路：
+
+- `edit_text`：判定读 `instructionSignature.wordLimit`（`quality.rs:1362`），
+  而 `instructionSignature` 的写入者只有 `set_task_type`（只改 `taskType`）与
+  `set_question_expression`（只改 `expectedQuestionNumbers`/`expectedSlotCount`）。
+  **`replace_text` 不在其中** —— 用户改多少文字都不会重算 `wordLimit`。
+- `confirm_table`：门禁无视 `resolution`（见 F-R9-3），标成 `ignored` 也不会放行。
+
+于是问题列表给出一个「点得动、但永远不会消失」的阻断项。
+这正是任务书要求验证的「用户能完成修复，而不只是看到错误」——答案是**不能**。
+
+## F-R9-6（P0，产品）：`edit_text` 是死路 —— 运行时已证实
+
+F-R9-2 原先只有代码层结论（「没有写入路径，就不可能被改掉」）。现已补上运行时证据。
+
+保存路径 `apply_patch` → `refresh_quality_report`（只读存储的 signature）→ `validate_authoring`
+（纯 serde schema 校验），**没有一处重算 `instructionSignature`**。
+
+实测（`artifacts/e2e-cdp/run-publish-attribution-2026-09-15T23-14-01-281Z`）：
+把 `group-1-instructions-text` 改成 `原文 + " Write ONE WORD ONLY."`（正是 `edit_text` 建议的动作），
+补丁成功、**版本 16 → 17（真的保存了）**，而：
+
+```text
+instructionSignature.normalizedText  unchanged = true   (670 字 → 670 字，逐字节相同)
+instructionSignature.wordLimit       undefined → undefined
+WORD_LIMIT_UNPARSED                  still blocking
+wordLimitCleared                     = false
+```
+
+**说明文字改了、存了，签名一个字都没动。** 用户按问题给的建议动作做了，问题不会消失。
+
+## F-R9-7（探针自身，已修）：点击点落在行内元素包围盒的空白处
+
+第一次尝试编辑说明文字失败（`notes: ["group-1: 没能进入原位编辑器"]`），
+看上去像「说明文字不可编辑」——**那是探针的假阳性，不是产品缺陷**。
+
+原因：该节点是 670 字、跨多行的**行内** `<span>`。`clickSelector` 点的是**联合包围盒中心**，
+而对跨行行内元素来说那个点可能落在空白区域（某行较短时），点击于是落在父元素上、进不了编辑。
+改成点「首行靠左边缘」（`r.left + 6, r.top + 8`）后编辑器正常打开
+（`run-…T23-16-59-183Z`，`path = real-ui-inline-editor`）。
+
+**结论**：说明文字**可以**在真实 UI 里原位编辑。探针现在记录 `clickStrategy`
+（`first-line-edge` / `bbox-center`），避免再把「点偏了」报成「产品不可用」。
+**这正是本轮第三次由我自己的工具造成的假结论**（前两次见 F-R9-5）。
+
+## F-R9-3（P0，门禁）：同一份预检、同一个动作、两个答案（运行时复现 ×2）
+
+受控 A/B：唯一变量是把所有 blocking 问题标成 `ignored`。两个独立夹具、三次运行结果一致：
+
+| blocker 码 | 标成 `ignored` 之后 | 对应代码 |
+| --- | --- | --- |
+| `ISSUE_UNRESOLVED` | **清掉** | `authoring_v2_commands.rs:455-468`（读了 resolution） |
+| `QUALITY_HARD_FAILURE` | **仍在** | `authoring_v2_commands.rs:430-438`（不读 resolution） |
+| `QUALITY_NOT_READY` | **仍在** | `quality.rs:211` `has_blocking = !hard_failures.is_empty()` |
+
+实测（`run-…T22-55-55-165Z`）：
+
+```text
+resolution-phase applyResult     = ok
+resolution-phase hardFailures    = ["SLOT_HOST_MISSING","SIGNIFICANT_REGION_UNASSIGNED","RUNTIME_COMPILER_FAILED"]
+resolution-phase preflight.passed = false
+resolution-phase blockerCodes    = ["QUALITY_NOT_READY","QUALITY_HARD_FAILURE"]   ← ISSUE_UNRESOLVED 消失
+```
+
+这为前一轮那份**静态审读**提供了运行时证据。语义后果比「完全没生效」更糟：
+用户以为处理完了，发布仍然不可能。
+
+## F-R9-4（前端，已修）：同一根因的泛化重复
+
+实测一份缺 14 个答案的题稿，预检返回 **34 条** blocker，其中同一个根因被表达了三次：
+
+```text
+QUALITY_NOT_READY:1, QUALITY_HARD_FAILURE:3, ANSWER_MISSING:14, ISSUE_UNRESOLVED:16
+```
+
+`QUALITY_HARD_FAILURE`（`internal` 是质量码、targetId 为空、文案泛化）在已有带具体目标的记录时
+是纯重复。已在前端去掉：**真实产物回放 34 → 31**（两次独立运行一致）。
+
+**当时故意未合并**的部分：`ISSUE_UNRESOLVED`(16) 与 `ANSWER_MISSING`(14) 描述同一个事实，
+但它们是两个子系统各起的码。合并需要一条跨子系统的「码别名」权威表（后端领域）。
+这一条**在本轮被部分推翻**：跨来源的同一根因确实需要别名表，而且其中一族
+（本地 `ANSWER_UNRESOLVED` ↔ 门禁 `ANSWER_MISSING`）的别名**是可证明的**，见 F-R9-8。
+
+### F-R9-4 二次核对（FACT）：原结论成立，我中途那次「更正」才是错的
+
+原文写「`complex-reading.pdf` 的 group-2 上有**两条** `SLOT_HOST_MISSING`（同 code、同 target、
+两条不同事实）」。本轮我一度把它「更正」成「两条逐字节相同，是后端重复推送」——
+**那次更正是错的**，因为我比的是 **preflight 的 blocker 条目**，而 preflight 只携带
+`internal = issueId`，两条的 issueId **撞了**，所以看起来逐字节相同。
+
+回**质量报告**（`issues` 数组，不是 preflight）核对，两条确实是**两个不同事实**：
+
+```json
+{"issueId":"phase4-SLOT_HOST_MISSING-group-2","code":"SLOT_HOST_MISSING","targetId":"group-2",
+ "suggestedActions":["edit_text","confirm_table"],"message":"completion slot 没有可渲染的宿主节点。"}
+{"issueId":"phase4-SLOT_HOST_MISSING-group-2","code":"SLOT_HOST_MISSING","targetId":"group-2",
+ "suggestedActions":["confirm_table","edit_text"],"message":"table completion 没有可渲染的 table stimulus。"}
+```
+
+来源：`artifacts/e2e-cdp/run-publish-attribution-2026-09-15T22-55-55-165Z/report.json`
+（探针保留的原始 `issues`，含 `raw`）。
+
+**真正的缺陷比原来写的更严重，而且是两层的：**
+
+1. **`issueId` 不是唯一键。** 后端 `issue()` 把 `issueId` 拼成 `phase4-{code}-{target_id}`，
+   于是「同一个 code + 同一个 target 上的两个不同事实」得到**同一个 issueId**。
+2. **preflight 因此丢信息。** `ISSUE_UNRESOLVED` 只带 `internal = issueId`，
+   两条不同事实在 API 边界上变成**两条不可区分的记录**。前端拿到的东西里
+   已经没有「这是两条」的信息了 —— 所以前端按 `code:targetId` 收成一行，
+   **会静默吞掉其中一个事实**。
+
+推论（对任务二/任务三都成立）：`resolution` 是按 `issueId` 存的。既然 issueId 会撞，
+**按 issueId 继承 resolution 是不安全的** —— 这正好印证任务书那句
+「`resolution` 只能继承到『仍然是同一个事实』的问题上（不能只按旧 `issueId`）」。
+
+**前端这边的处置**：不去假装能分开（数据里已经分不开了），而是**把这个损失变成可见的**——
+校验脚本会统计「门禁里同键但 `userMessage` 不同的条目」，把它们记进报告；
+PDF 夹具上应为 0，`complex-reading.pdf` 上应为 2。真正的修法在后端（见 F-R9-11）。
+
+**教训（这次是双重的）**：我先是**对**的，然后被自己一次未经核对的「更正」带偏。
+两次都犯同一个错：**拿二手字段（计数 / 已被压平的 preflight）去推断一手事实**。
+断言「A 与 B 相同/不同」之前，必须看 A、B 本身。
+
+## F-R9-11（P0，后端，未修，已交接）：`issueId` 不唯一 → preflight 丢事实 + resolution 不安全
+
+见上面 F-R9-4 二次核对。三件事需要后端定：
+
+1. `issueId` 加判别位（例如带上一个稳定序号或 message hash），让它**真的是唯一键**；
+2. `ISSUE_UNRESOLVED` 的 `internal` 别只放 issueId，至少能让前端看出「这是两条」；
+3. `resolution` 的继承判定不能只看 issueId（撞键时会串）。
+
+**未修**：`quality.rs` / `authoring_v2_commands.rs` 是后端领域（共享文件我只 append）。
+已在交接文档 §5/§6 报给后端。
+
+## F-R9-8（P0，前端，已修）：同一根因因「两个子系统各起一个码」而重复占行
+
+**这是 F-R9-4 里那条「故意未合并」的同族问题，但发生在本地的码与门禁的码之间。**
+实测 `demanding-reading-passage-3.pdf`：14 个答案位未解析，于是同一道题渲染**两行**：
+
+| 来源 | code | 严重级 | 文案 |
+| --- | --- | --- | --- |
+| 本地闭包 `deriveActionableIssues` | `ANSWER_UNRESOLVED` | warning | 第 27 题还没有答案。 |
+| 发布门禁 `check_publish_preflight` | `ANSWER_MISSING` | blocker | 这道题还有答案没有填写。 |
+
+去重键是 `code:targetId`，两个码不同 → 撞不上 → 46 行里有 14 行是纯重复。
+
+**为什么这次的别名是可证明的（而不是猜的）**：两个实现用的是**同一个谓词**。
+
+```rust
+// src-tauri/src/authoring_v2_commands.rs:439-446
+.filter(|(_, value)| value.get("kind").and_then(Value::as_str) == Some("unresolved"))
+```
+```ts
+// src/features/editor/actionableIssues.ts（本地闭包）
+if (!answer || answer.kind === "unresolved") { ... }
+```
+
+两边都在筛 `answerKey[slot].kind === "unresolved"`，targetId 也都是那个 slotId。
+同一个谓词、同一个目标 → 同一个事实、同一个用户动作。所以：
+`ROOT_CAUSE_ALIASES = { ANSWER_UNRESOLVED: "ANSWER_MISSING" }`（**只登记这一族**，
+别名表越短越安全）。合并时保留**本地**文案（带题号，比门禁的「这道题…」具体）
+但把级别提到 blocker（发布确实被它拦下）。
+
+**真实界面证据**（`run-issue-list-2026-09-15T23-31-41-068Z`，8 条断言全通过）：
+
+```text
+gate raw=34 warnings=1 expectedGate=18 expectedLocal=14
+rendered=32
+同一根因（归一后）在界面上只占一行 :: {"duplicated":[],"total":32}
+门禁来源的行数 = 独立算法算出的期望 :: {"rendered":18,"expected":18}
+本地来源的行数 = 独立算法算出的期望（没有被多删）:: {"rendered":14,"expected":14}
+```
+
+46 → 32 行，14 行纯重复消失，且**本地那 14 行一条没少**（防止用「多删」凑数）。
+
+## F-R9-9（P1，后端，未修，已交接）：`BLOCKER_LIST_TRUNCATED` 说「仅显示前 20 条」，但什么都没截
+
+```rust
+// src-tauri/src/authoring_v2_commands.rs:430 / 447 / 469  每类各自 take(20)
+for failure in hard_failures.iter().take(20) { ... }
+for slot_id in unresolved_answers.iter().take(20) { ... }
+for issue in unresolved_blockers.iter().take(20) { ... }
+// :480  但触发条件是**总数** >= 20，且返回的是**完整**数组
+if blockers.len() >= 20 {
+    warnings.push(json!({ "code": "BLOCKER_LIST_TRUNCATED", "message": "问题较多，仅显示前 20 条。" }));
+}
+```
+
+两个问题：
+1. **本夹具上什么都没被截断**（hardFailures 3、未解析答案 14、unresolved blockers 16，
+   三类都没到 20），但总数 34 ≥ 20 → 照样发警告。界面于是出现
+   「仅显示前 20 条」旁边**列着 46 行**的自相矛盾（实测 `rendered=46` 那次运行）。
+2. 截断是**按类**发生的，文案却按**整表**说，且不说是哪一类被砍。真出现 30 条
+   hardFailures 时，用户会被砍掉 10 条而不知道少看的是什么。
+
+**没有修**：`authoring_v2_commands.rs` 是后端领域文件（我只在共享文件上 append）。
+已在交接文档里报给后端。
+
+## F-R9-10（我自己的工具，已修）：期望行数算法只算了「门禁那半」
+
+第四次自查出的假结论。第二版脚本的期望算法只对 `get_publish_preflight` 的返回建模，
+而界面的行是 `mergePublishGateIssues(本地闭包, 门禁)`。于是：
+
+```text
+[assert] FAIL 渲染行数 = 独立算法算出的期望行数 :: {"rendered":46,"expected":32}
+```
+
+我一度准备把它记成「产品多渲染 14 行」。核对后：多出来的 14 行**正是**本地闭包对
+14 个未解析答案位产生的 warning，产品行为是对的，**是我的算法少算了一半**。
+
+修法（同时避免下一次再犯）：
+- 期望拆成两半：`expectedGateRowCount(blockers, warnings, localKeys)` 与
+  `expectedLocalIssues(ds)`（后者独立重写产品语义，且它的键**要占位**——被吸收的
+  14 条门禁 `ANSWER_MISSING` 不能再算一次）；
+- 断言按 `data-issue-source` 分开比，而不是拿总数比；
+- 加「本地那半没有被多删」这条反向断言，堵住「靠多删满足去重」的假绿；
+- 为了让脚本能分辨来源，给行加了 `data-issue-code` / `data-issue-source`
+  两个机器可读属性（`ExamWorkspacePage.tsx`）。**光看 code 分不出来源**：
+  本地与门禁都可能写 `ANSWER_MISSING`。
+
+**教训**：独立算法要独立**完整**。只对一半输入建模，比没有断言更危险 ——
+它会把「我算漏了」稳定地呈现成「产品错了」。
+
+## F-R9-5（探针自身，已修）：字段名猜错会造成反向结论
+
+第一版探针读 `issue.actions`，而后端 `issue()` 真正写出的字段是 **`suggestedActions`**
+（`quality.rs:3668`）。结果是所有问题都显示成「没有建议动作」——那是探针的假阴性。
+**教训**：诊断脚本读后端字段时，必须先从构造函数确认字段名，不能按直觉猜；
+已在探针里两个名字都读并保留原始对象。
+
+同一类错误在阶段 A 也发生过一次：选项位回退到「第一个 optionBank 的标签」，
+而 `optionBanks` 里 group-1/group-3 是空数组，于是 9 个槽位被探针自己跳过、
+却被记成了「没有 UI 入口」。真实情况是那 9 个槽位各有 3–4 个可见单选项控件。
+已改为**直接问 DOM 要合法标签**，并把 `probeSkippedSlots` 与 `slotsWithoutUiEntry` 分开统计；
+探针自跳过任何槽位时判定记为 `inconclusive-probe-incomplete`，不允许得出「改完也不行」的结论。
+
+
+
+
+
+
+
+---
+
+# 2026-09-16 续行 R10 findings（去重身份 + 验收判定 + 持久化撤销）
+
+## F-R9-12（P0，前端，已修）：按门禁 code 去重会**整条吞掉**一个阻断问题
+
+`mergePublishGateIssues` 原先用 `code:targetId` 当去重键。门禁把**所有**质量码都塞进
+`ISSUE_UNRESOLVED` 这**一个** code 里，于是两个**完全不同的**阻断问题共用
+`ISSUE_UNRESOLVED:document`，第二条被当成重复丢掉。
+
+实测 `complex-reading.pdf`：门禁 **8 条** blocker，界面只剩 **3 行** ——
+`SIGNIFICANT_REGION_UNASSIGNED`（「仍有显著源区域未被…解释」）**完全不可见**。
+它不是被折叠，是**从来没有渲染过**。用户会看到「问题都处理完了」而发布仍被拦。
+
+来源：`artifacts/e2e-cdp/run-issue-list-2026-09-15T23-36-44-422Z/report.json`。
+
+**修**：去重键改成「根因 + 目标」，根因从 `internal`（`phase4-<质量码>-<目标>`）读出来
+（`rootCauseOf`）。修复后同一夹具渲染 5 行，两个 `document` 根因各自成行。
+
+**这条是「不同问题被隐藏」，与「同一问题重复显示」是相反方向的错误** ——
+任务书明确要求两者同时检查，不能只看条数变少。
+
+## F-R9-13（P0，前端，已修）：把「根因 + 目标」当唯一身份 → 隐藏 group-2 的第二条事实
+
+**这是上一轮我自己的修法带来的新错误，方向相反。**
+
+修完 F-R9-12 之后我把 `根因 + 目标` 当成了**唯一身份**。但实测 `complex-reading.pdf` 的
+group-2 上有**两条不同事实**：
+
+```json
+{"issueId":"phase4-SLOT_HOST_MISSING-group-2","suggestedActions":["edit_text","confirm_table"],
+ "message":"completion slot 没有可渲染的宿主节点。"}
+{"issueId":"phase4-SLOT_HOST_MISSING-group-2","suggestedActions":["confirm_table","edit_text"],
+ "message":"table completion 没有可渲染的 table stimulus。"}
+```
+
+两条的 `issueId` **撞了**（`issueId` 拼成 `phase4-{code}-{target}`，不是唯一键），
+到了 preflight 只剩 `internal = issueId`，于是「根因 + 目标」也分不开这两条 ——
+按它去重又是**吞掉一条**。
+
+**修**：`sameFact()` 分两种情形判，都是可解释的：
+- **跨来源**（本地闭包 vs 门禁）同根因同目标 = 同一件事。两个子系统各写一句文案是
+  **设计如此**（本地「第 27 题还没有答案。」vs 门禁「这道题还有答案没有填写。」），
+  文案不同**不能**当两条事实 —— 否则同一道题白占两行（实测 14 道题多 14 行）。
+- **同来源**还要 `userMessage` 也相同才算同一条。文案不同就是两条事实，**两条都留**。
+
+修复后 `complex-reading.pdf` 的 group-2 渲染 **2 行**（两条事实都在）。
+
+**根因仍在后端**（见 F-R9-11）：`issueId` 必须真的唯一，`resolution` 才能安全地按它继承。
+后端给出稳定事实 id 之前，前端只能退到「来源 + 文案」来区分 —— 这是权宜之计，
+已在代码注释里写明。
+
+**教训（两次都犯同一个错）**：先按 code 去重（吞根因），再按「根因+目标」去重（吞事实）。
+两次都是**用了一个不够细的键，并把它当成权威身份**。正确做法是先问
+「这条键凭什么能唯一标识一个事实」，答不上来就不能用它去重。
+
+## F-R10-1（P0，验收判定，已修）：必需步骤的 skipped / not-executable / 未知状态会漏到 `passed`
+
+`computeChainVerdict` 原先只查三样：`missing`（步骤名不在数组里）、
+`failed`（`status === "failed"`）、`blocked`（`status === "blocked"`）。
+于是状态是 `skipped`、`not-executable`、`pending`，或者干脆**拼错**的必需步骤，
+三样都不占，**直接走到最后的 `passed`**。
+
+最坏的一条路径：发布被门禁正确拦下 + 另一步 `skipped` → `otherBlocked.length === 0`
+成立 → 判 `passed-negative-case`（退出码 0）。**负例模式因此会变成一条永远绿色的通道。**
+
+**修**：加 `notOutcome`（必需步骤里状态不在 `{passed, failed, blocked}` 的），
+必须排在 `blocked` / 负例之前判；`not-executable` 单独判 `not-executable`(5)，
+其余判 `incomplete`(2)。并在最后加一条自检：`passed.length === required.length`，
+将来规则被改坏也会被拦住，而不是让没覆盖到的状态静默变绿。
+
+**不是白名单枚举**：列出的是「有结论」的三个状态，其余一律按「没有明确结论」处理 ——
+免得将来冒出第四个状态又漏过去。
+
+**回归**：+7 条（`scripts/e2e/lib/chain-verdict.test.mjs`，26 → 33）。
+真实 recorder 只产出 `passed/blocked/failed`，所以这条是**纯护栏**，不改变现有行为。
+
+## F-R10-2（P1，验收脚本，已修）：过期候选以「按钮消失」为成功证据
+
+`stale-suggestion-protected` 原先在「接受按钮不存在」时**直接 return 成功**：
+
+```js
+if (!hasAccept) {
+  return { ..., acceptAvailable: false, note: "旧建议已不可接受（过期/已处理），用户修改未被覆盖" };
+}
+```
+
+既没读值、也没看决策状态、更没重开。按钮消失可能只是面板渲染问题，
+而权威稿里用户的值**可能已经被覆盖** —— 那样这个场景会给出**假绿**。
+
+**修**：三条都必须成立，缺一条判失败：
+1. **用户内容**：读权威稿比对（接受尝试之后、重开之后各比一次）；
+2. **实际 outcome**：后端 `stale` 必须为真（它由 `baseEditVersion` 与当前版本比较得出，
+   是**后端事实**，不是按钮可见性），且该决策有确定的 `resolution`；
+3. **重开持久化**：① ② 与 `resolution` 重开后一致。
+
+`acceptAvailable` 降级为**线索记录**，不参与判定；返回里加
+`protectedEvidence: "user-value-intact + backend-stale-flag + survives-reopen"`
+把通过依据写清楚。
+
+## F-R10-3（P0，前端，已修）：撤销以会话内 `Set` 作为完成依据
+
+`RecognitionPanel` 用一个会话内的 `Set<decisionId>` 记「我点过撤销」，并据此显示
+「已撤销」。**刷新页面/重开/换会话，这个 Set 就没了** —— 界面又会把「撤销」按钮放回来，
+而用户以为已经撤销完了。这正是任务书说的「以会话内 Set 作为完成依据」。
+
+后端**没有**持久化的「已撤销」状态：`RecognitionResolutionV1` 只有
+`agreed | auto_fixed | needs_review | unverifiable`，`build_view` 还会把 `auto_fixed`
+的项无条件留在 `autoApplied` 里。所以**不能靠状态码判**，也**不能凭空发明一个**。
+
+**修**：撤销的语义本身是**可观测的持久化事实** —— `undo` 补丁带着「改回哪个值」，
+只要权威稿里那个答案位已经等于它，撤销就已生效（无论是刚点的、上次会话点的、
+还是用户自己手改回去的）。新增纯函数 `isUndoAlreadyApplied(undo, answerKey)`，
+面板改成按 `answerKey` 现算，删掉会话 `Set`。重开/刷新后判定不变。
+
+**回归**：+7 条（`recognitionDecisions.test.ts`，25 → 32）。
+
+## F-R10-4（构建，**未查明原因**）：`npx vite build` 瞬时失败一次
+
+实测一次：`npx vite build` 失败（只有一帧栈 `at async Object.defaultBuildApp`），
+随后 `npx tauri build` 因为 `dist/` 没更新而在 1.05s 内「成功」返回，
+于是 exe 相对源码变旧 —— 被新鲜度护栏正确拦下为 `cannot-run`(3)，**没有产生假绿**。
+
+**未能复现**：同一目录、同一命令随后连续成功（`vite exit=0` / `tauri exit=0`）。
+没有残留的 `ielts-author-studio.exe` 进程（已用 `tasklist` 确认），因此不是「应用占着 dist」。
+
+**我自己的工具缺陷（已修）**：当时把构建输出接进了 `| tail -2`，**管道把退出码换成了 `tail` 的 0**，
+于是 `&&` 继续执行、真正的原因行被截掉。现在改为：完整日志落盘
+（`artifacts/vite-build.log`、`artifacts/tauri-build.log`）+ 显式检查退出码 + `set -o pipefail`。
+
+**诚实边界**：**原因未查明**，我不编一个解释。可依赖的是护栏：
+构建失败不会被当成通过，而是 `cannot-run`。
+
+---
+
+# R11（2026-09-16）后端交付已到，但**交付物编译不过** —— 任务 6 仍不可开始
+
+## F-R11-1（P0，后端，**未修**）：后端交付的 `auto_pipeline.rs` 无法编译，全链与全部 E2E 被挡
+
+**背景**：R10 时我判断任务 6「被后端阻塞」。本轮复核发现后端**确实已交付** ——
+`src-tauri/src/reconcile/**`（`mod reconcile;` 已注册进 `lib.rs:87`，两个命令薄壳在
+`lib.rs:972/986`）、`src-tauri/src/schema/recognition_v1.rs`、两个契约 JSON Schema，
+且写入面契约漂移已收敛为 **0 处破坏性不一致**（`node scripts/recognition/contract-drift.mjs`，exit=0）。
+也就是说：**R10 记的「等后端交付」这一条已经满足。**
+
+**但交付物不编译。** 两次独立构建，错误完全一致：
+
+| 错误 | 位置 |
+|---|---|
+| `E0596` cannot borrow `entry` as mutable | `src/auto_pipeline.rs:564:9` |
+| `E0716` temporary value dropped while borrowed | `src/auto_pipeline.rs:595:43` |
+| `E0716` 同上 | `src/auto_pipeline.rs:607:43` |
+| `E0716` 同上 | `src/auto_pipeline.rs:615:43` |
+
+`error: could not compile `ielts-author-studio` (lib) due to 4 previous errors`。
+
+**归属已核实**：`git diff --stat src-tauri/src/auto_pipeline.rs` = `446 insertions(+), 0 deletions(-)`，
+全部是**未提交新增**（`extract_docx_plain_text` / `docx_part_plain_text`）。
+`auto_pipeline.rs` 按契约 §1.1 属后端独占写入面，我**只读**，因此**未改动**。
+
+**后果**：无法产出可验收二进制 → 完整链、问题列表校验、候选按钮流程全部 `cannot-run`。
+这不是「候选为空」那种内容层阻塞，而是**构建层阻塞**：连跑都跑不了。
+
+**为什么这比 R10 的判断更严重**：R10 我写「等后端交付即可跑」。现在交付到了，
+却发现交付物本身是坏的 —— 说明「交付」不等于「可验收」。**交付的判定标准必须是
+「在稳定点上能编译并跑通链路」，不是「文件出现了」。**
+
+## F-R11-2（P1，协作）：工作树在验证期间被并发修改，导致结果不可归因
+
+用 `find -printf '%T@ %s %p'` 在每次构建前后取指纹对比，**两次构建期间都有后端写入**：
+
+| 构建 | 期间被改的文件 | 大小 |
+|---|---|---|
+| 第 1 次 | `processing/scheduler.rs` | 41873 → 42620 |
+| 第 2 次 | `ielts_grammar/instruction_signature.rs` | 20018 → 20047 |
+| 第 2 次 | `ielts_grammar/quality.rs` | 162185 → 164972 |
+
+看到 `quality.rs` / `instruction_signature.rs` 在动，推测正在处理 R9 交接单第 2 条
+（`WORD_LIMIT_UNPARSED` 误判）——方向正确，但此刻树不编译。
+
+**方法论教训**：构建/验证必须**同时**记录「构建前后源码指纹」，否则
+「这次构建对应哪个版本」是无法回答的。上一轮我用 exe mtime 判新鲜度（被动），
+本轮改成**主动指纹对比**，才看见并发写入。没有这个对比，我会把
+「某次构建失败」错误地归因给一个已经不再存在的版本。
+
+## F-R11-3（已确认，非缺陷）：写入面契约漂移已收敛
+
+R9/R10 期间交接单（`HANDOFF_2026-09-15_frontend_contract_drift.md`）记「写入面未修」，
+其后果是「点『采用修正』是静默空操作」。本轮实测：`recognitionClient.ts` **已按交接单 §3.1 修好**
+（对外 `decisions[]`，对内发 `{requestId, batchId, baseEditVersion, accept[], reject[]}`，
+并把 `outcomes[]` 归一成 `accepted/rejected/stale/failed`）。
+
+`node scripts/recognition/contract-drift.mjs` → **`契约漂移检查：0 处破坏性不一致，1 处需要留意`**（exit=0），
+唯一提示是 `RecognitionDecisionViewV1` 上多出 `jobId`/`generatedAt`（仅提示，非破坏性）。
+
+**结论**：那份交接单的 §1/§3「写入面仍未修」**已过期**，不应再被引用为当前状态。
+（这正是「二手结论会过期」的又一例：交接单是别人写的快照，不能替代当场复测。）
+
+---
+
+## R11 续（同日 11:11 之后）：后端修好构建；稳定事实 id 已交付并采用
+
+### F-R11-1 已解除：后端在 11:11 自行修掉那 4 个编译错误
+
+`auto_pipeline.rs` 于 `11:11:22` 被后端再次修改（141877 → 142012）。随后构建：
+
+```text
+vite build    → VITE_EXIT=0
+tauri build   → TAURI_EXIT=0   error_count=0
+构建期间并发写入 → 无（指纹 diff 为空）
+```
+
+**交接单 `HANDOFF_2026-09-16_build_broken_blocks_all_e2e.md` 的阻塞已失效**，
+不必再按「构建坏了」处理。保留该文件作为历史（它记录的 4 个错误、行号与归属核实仍然成立）。
+
+### F-R11-4（P0，已交付并采用）：后端给出**稳定事实 id**，任务书第 3 条的前置条件已满足
+
+任务书第 3 条原文：「等待后端稳定事实 ID；在此之前不能把 rootCause + targetId 当作可靠唯一身份。」
+
+后端已交付。`src-tauri/src/ielts_grammar/quality.rs` 的 `issue()`：
+
+```rust
+// The previous scheme `phase4-{code}-{target_id}` collapsed two genuinely different
+// problems reported against the same target into one id (e.g. the two
+// `SLOT_HOST_MISSING` variants in `validate_completion_host`...).
+//   (1) two different facts on the same target get different ids; and
+//   (2) the same fact recomputed on a later save yields an *identical* id
+"issueId": format!("phase4-{code}-{target_id}-{slug}")
+```
+
+它同时修掉了 F-R9-12/F-R9-13 的**两个相反方向**：撞键（吞事实）与不可复算。
+`preflight` 把该 id 放进 `ISSUE_UNRESOLVED` 的 `internal`（`authoring_v2_commands.rs:478`），
+所以前端**确实拿得到**。
+
+**我做的采用（`src/features/editor/actionableIssues.ts`）**：
+
+- 新增 `factId?: string` 与 `factIdOf(blocker)` —— **只有 `ISSUE_UNRESOLVED` 的 `internal` 才是 id**；
+  `QUALITY_HARD_FAILURE` 的 `internal` 是质量码本身，取它就把质量码当成了 id。
+- `sameFact()` 里把 `factId` 当**单向判据**：id 不同 ⇒ 一定是两条事实（哪怕文案逐字相同）；
+  id 相同或某一侧缺失 ⇒ **不作结论**，继续比文案。
+  **单向是关键**：旧载荷的 id 会撞键，拿它「断言同一」就会重演 F-R9-13。
+  单向使用保证**合并永远不比上一轮更多**。
+- **顺带修掉一个真实缺陷**：门禁行的 `issueId` 原本拼成 `gate:{根因}:{目标}:{code}`，
+  在「同 code + 同目标的两条不同事实」上撞键 —— 而它就是 React 的 `key`
+  （`ExamWorkspacePage` 的 `<li key={issue.issueId}>`）。现在用 `factId` 当 key。
+- 行上新增 `data-issue-fact-id`，校验脚本据此断言。
+
+**真实二进制验证**（exe `11:16:55`，含本轮前端改动；`runProfile=cdp-diagnostic`）：
+
+| 运行 | 结果 |
+| --- | --- |
+| `run-issue-list-2026-09-16T10-17-13-157Z`（PDF） | **8/8 断言通过，`verdict=passed exit=0`**；`expected=16, renderedDistinct=16, missing=[], duplicated=[]`；`rendered=32`，逐键 `mismatches=[]` |
+| `run-issue-list-2026-09-16T10-17-56-776Z`（complex-reading 负控） | **7/7 通过，`exit=0`**；`expected=4, renderedDistinct=4, missing=[], duplicated=[]`；`rendered=5`（3 → 5），`mismatches=[]` |
+
+即：**稳定事实 id 全部到达界面，且不隐藏、不重复** —— 两个方向同时成立。
+
+### F-R11-5（已解除）：预检现在尊重 `resolution`
+
+`authoring_v2_commands.rs` 的 `unresolved_blockers` 过滤条件新增：
+
+```rust
+&& !matches!(issue.pointer("/details/resolution").and_then(Value::as_str),
+              Some("resolved") | Some("ignored"))
+```
+
+这正是 R10 交接单第 2 条「门禁无视 `resolution`」。**已修**，
+「用户看得到错误、永远修不掉」的死路不再由这一条造成。
+
+### F-R11-6（P0，未解除）：**无云 profile 时候选按钮流程结构上不可达**
+
+任务书第 6 条要求「完成真实候选按钮流程」。实测 5 个场景全部 `not-executable`，
+报告里的事实是：
+
+```json
+{ "batchId": null,
+  "chainStates": { "adjudication": {"state":"not_run"}, "cloud": {"state":"not_run"},
+                   "local": {"state":"not_run"}, "source": {"state":"not_run"} },
+  "actionableCount": 0, "needsReviewCount": 0, "autoFixedCount": 0 }
+```
+
+**不是夹具碰巧没有候选，而是 reconcile 根本没跑。** 根因在
+`src-tauri/src/processing/scheduler.rs`：
+
+```rust
+let launch_cloud = cloud_will_run && resolved_profile.is_some();
+...
+if !launch_cloud {
+    // 无云端（或未解析到 profile）：本地稿即可检查
+    ...advance(STAGE_READY_FOR_REVIEW, ...);
+    return;          // ← 提前返回：reconcile 永远不会被调用
+}
+```
+
+`resolved_profile` 来自 `job.active_llm_profile_id`（或 progress 的 `cloudProfileId`）。
+E2E harness 每次运行都用**全新的临时数据目录**（`PDF2TEST_AUTOMATION_DATA_DIR`），
+因此**一个 profile 都没有** → `launch_cloud=false` → 提前返回 → `batchId=null`。
+
+**两个后果**：
+
+1. 任务书第 6 条的「真实候选按钮流程」在**任何无凭据环境**（含 CI）里都跑不了 ——
+   这不是脚本缺陷，是产品流程的前置条件。要跑通，需要真实云 profile，
+   或给 harness 一个「指向 localhost 的失败 profile」以便 `launch_cloud=true`
+   （云端会失败，但 `Some(Err)` 分支仍会进 reconcile，候选来自本地 vs 原文件核验）。
+   **这是一个测试设计决定，我没有单方面去造**。
+2. 契约 §3.2 宣称 `source`（原文件核验）是一条独立链、有自己的 `state`/`reasonCode`，
+   §4.2 也列了 `ANSWER_SOURCE_*` 一族。但**无云时整段 reconcile 被跳过**，
+   于是「只有原文件核验」这条路径**在产品里不可达**。这值得后端确认是有意为之还是缺口。
+
+**这一条不因 F-R11-1 的解除而解除**：构建好了、后端交付到了，
+但候选流程仍需要云 profile 才能产生对象。
