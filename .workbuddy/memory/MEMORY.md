@@ -3,8 +3,29 @@
 ## 工程约定
 - **产品是 Tauri 应用**，不是 CLI（见 `AGENTS.md`）。CLI/脚本只作夹具与诊断，不得用 CLI 通过代替产品链路验证。
 - 测试基线口径：`cd src-tauri && cargo test --lib --no-fail-fast`。
-  历史：671（09-15 交接）→ 684（四代理落盘）→ **687（09-16 主线程补测）**，`11 ignored` 长期不变。
+  历史：671（09-15 交接）→ 684（四代理落盘）→ 687（09-16 主线程补测）→ **693（09-16 R1/R2/R3/R5 落地）**，
+  `11 ignored` 长期不变。
 - 用户指定协作边界：我侧只做 `src-tauri/` 后端；`src/` 前端需另派。跨文件并发代理必须文件集互斥。
+
+## 写测试的夹具约定（重要）
+- **会写库的用例（接受 / 撤销 / 自动应用）必须用真实 golden 稿**：
+  `fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json`（槽位 q14/q15，选项库 A–E）。
+  手写精简权威稿会被 `apply_editor_commands_tx` → `refresh_quality_report` + `validate_authoring`
+  拒掉（`AUTHORING_SCHEMA_INVALID:missing field displayLabel`），失败原因伪装成「夹具不合格」，
+  把真正要验证的逻辑掩盖掉。
+- 只读用例（如无云路径判链路状态）才可用精简稿。
+- `mod tests` 里 **`super::rules::…` 无效**（`super` 指向 `commands`，不是 `reconcile`）；
+  要用 `crate::reconcile::rules::…`。
+- `store::read_decision_file` / `read_candidate` / `read_current_batch`（`reconcile/store.rs`）是
+  验证「是否真的落盘」的标准入口，优于断言内存结构。
+
+## 待办语义的唯一判据
+- `DecisionItemV1::is_actionable()`（`schema/recognition_v1.rs`）= `resolution != AutoFixed
+  && status ∈ {Open, Failed}`。`build_view` 与调度器 `actionableCount` **都必须用它**。
+- 「仍生效的自动修正」判据：`resolution == AutoFixed && status == Accepted`
+  （只排除 `Undone` 会漏掉 `Superseded`，导致失效规则对 AutoFixed 项完全无效）。
+- `Failed` 的 `severity` **不**强制为 Blocker：severity 表达「是否阻断发布」，
+  Failed 表达「自动写入是否成功」，强行升级会污染发布质量门。
 
 ## 本机环境坑（Windows / 本仓库）
 - **Bash 工具不可用**（`dirname`/`cd`/`ls` 均报 command not found），一律改用 PowerShell。

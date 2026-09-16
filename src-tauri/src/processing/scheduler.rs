@@ -1350,5 +1350,136 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    /// `not_run` 必须**原样透传**，不得被折叠成 `failed`。
+    ///
+    /// 这是「无云导入」在任务行里的唯一真相来源。折叠成 `failed` 会让用户去排查一个
+    /// 根本不存在的云端故障（这正是修复前的实际表现）。四种已知状态逐一钉死；未知值
+    /// 仍保守归为失败——不能因为「不认识」就报成功。
+    #[test]
+    fn chain_status_keeps_not_run_distinct_from_failed() {
+        assert_eq!(chain_status_to_job_status("not_run"), "not_run");
+        assert_eq!(chain_status_to_job_status("succeeded"), "succeeded");
+        assert_eq!(chain_status_to_job_status("partial"), "partial");
+        assert_eq!(chain_status_to_job_status("unusable"), "failed");
+        assert_eq!(chain_status_to_job_status("something_new"), "failed");
+    }
+
+    /// 无云路径的**产品级**锁定（调度器这一层）。
+    ///
+    /// 修复前：`!launch_cloud` 分支在发布「可编辑」之后直接 `return`，reconcile 从未被调用，
+    /// 于是本地候选快照 / 原文核验 / 批次与决策**全部没有落盘**——前端拿不到任何可解释的
+    /// 证据链，产品语义上等于「没做识别」。修复后这条路径照常跑完核心，只把云端如实标成
+    /// `not_run`（其注入点被显式设成返回 `Err`，因此一旦有人改坏前置判断，会得到显式错误
+    /// 而不是静默的假成功）。
+    ///
+    /// 与 `reconcile::commands` 里同场景的核心层测试互补：那条证明**核心**行为正确，
+    /// 这条证明**调度器确实接上了核心**——两者的接缝正是缺口所在。
+    #[test]
+    fn local_only_cycle_runs_reconcile_and_reports_cloud_not_run() {
+        use crate::job_store::{make_job, save_job};
+        use crate::library::repository::{
+            open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput,
+        };
+        use crate::reconcile::store::{read_candidate, read_current_batch, read_decision_file};
+        use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir, write_json};
+        use crate::{CreateJobInput, SourceFile, WorkflowStep};
+        use uuid::Uuid;
+
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-localonly-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).expect("app dirs");
+
+        let mut job = make_job(CreateJobInput {
+            title: Some("local-only".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["t".to_string()]),
+            llm_profile_id: None,
+        });
+        job.current_step = WorkflowStep::Authoring;
+        job.source_files = vec![SourceFile {
+            file_id: "file-1".to_string(),
+            original_name: "source.pdf".to_string(),
+            stored_name: "stored.pdf".to_string(),
+            file_type: "pdf".to_string(),
+            sha256: "0".repeat(64),
+            size_bytes: 1,
+            role: "MainQuestion".to_string(),
+            imported_at: chrono::Utc::now(),
+        }];
+        save_job(&root, &job).expect("save job");
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).expect("job dirs");
+        write_json(
+            &job_dir(&root, &job.job_id).join("authoring-ir.json"),
+            &serde_json::json!({"schemaVersion":"IeltsAuthoringIRV2","exam":{"title":"t"},"taskGroups":[],"answerSlots":{},"answerKey":{},"quality":{"coverageStatus":{"unassignedSourceNodeIds":[]}}}),
+        )
+        .expect("authoring-ir");
+        write_json(
+            &job_dir(&root, &job.job_id).join("document-ir.json"),
+            &serde_json::json!({"pages":[{"pageIndex":0,"lines":[{"text":"A passage about birds."}]}]}),
+        )
+        .expect("document-ir");
+
+        let canonical = serde_json::json!({
+            "schemaVersion": "IeltsAuthoringIRV2",
+            "exam": {"title": "t"},
+            "taskGroups": [{
+                "taskId": "task-1",
+                "taskType": "sentence_completion",
+                "displayRange": {"kind":"range","start":14,"end":14},
+                "responseGroups": [{"responseGroupId":"rg-1","kind":"text_entry","slotIds":["slot-14"]}]
+            }],
+            "answerSlots": {
+                "slot-14": {"slotId":"slot-14","questionNumber":14,"interaction":"text","sourceAnchors":[]}
+            },
+            "answerKey": {"slot-14": {"kind":"text","values":["stencilling"]}},
+            "quality": {"coverageStatus": {"unassignedSourceNodeIds": []}}
+        });
+        {
+            let conn = open_library_connection(&root).expect("db");
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: &job.job_id,
+                    modality: "reading",
+                    title: "t",
+                    status: "action_required",
+                    source_asset_id: None,
+                },
+            )
+            .expect("shell");
+            seed_canonical_ds(&conn, &job.job_id, &canonical.to_string(), "action_required")
+                .expect("seed canonical");
+        }
+
+        let report = run_local_only_recognition_cycle(&root, &job.job_id, 0)
+            .expect("无云路径必须跑通，而不是报错或跳过");
+
+        assert_eq!(
+            report.cloud_status, "not_run",
+            "云端必须如实报 not_run，而不是 failed"
+        );
+        assert_eq!(report.reconcile_status, "succeeded", "裁决链必须跑完");
+
+        // 落盘证据：跳过 reconcile 时这些东西一个都不会有。
+        let batch_id = read_current_batch(&root, &job.job_id).expect("当前批次必须已登记");
+        assert!(
+            read_decision_file(&root, &job.job_id, &batch_id).is_some(),
+            "无云路径也必须留下决策文件（本地候选 + 原文核验 + 裁决）"
+        );
+        assert!(
+            read_candidate(
+                &root,
+                &job.job_id,
+                &batch_id,
+                crate::reconcile::store::LOCAL_CANDIDATE_FILE
+            )
+            .is_some(),
+            "本地候选快照必须落盘，否则裁决无据可依"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 

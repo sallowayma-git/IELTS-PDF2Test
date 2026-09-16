@@ -465,6 +465,12 @@ impl DecisionItemV1 {
     ///
     /// 一律**不是**待办：`Accepted` / `Rejected`（用户已处理）、`Superseded`（已过期）、
     /// `Undone`（用户已撤销）；`AutoFixed`（已自动写入权威稿）也不算待办。
+    ///
+    /// **为什么不把 `Failed` 的 `severity` 强制成 `Blocker`**：两者表达的是不同轴上的事实。
+    /// `severity` 回答「这条内容问题是否阻断发布」，`Failed` 回答「这条建议的自动写入是否
+    /// 成功」。一条 Warning 级建议自动应用失败，并不因此变成阻断发布的内容缺陷——强行升级
+    /// 会污染发布质量门，也会让「必改项」这个数字失去意义。真正需要保证的是**它必须被看见
+    /// 且必须计数**，那由本判据（可见性）与 `summary`（计数）共同保证。
     pub fn is_actionable(&self) -> bool {
         self.resolution != DecisionResolutionV1::AutoFixed
             && matches!(self.status, DecisionStatusV1::Open | DecisionStatusV1::Failed)

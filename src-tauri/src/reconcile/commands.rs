@@ -188,13 +188,16 @@ fn build_view(
     let mut actionable = Vec::new();
     let mut auto_applied = Vec::new();
     for item in items {
-        // 仍生效的自动修正：后台已写入权威稿，前端只作展示。
+        // 「仍生效的自动修正」：已写入权威稿**且仍然在位**。
         //
-        // **必须同时排除已撤销的项**：撤销只把 `status` 翻成 `Undone`，`resolution`
-        // 仍是 `AutoFixed`。若只看 `resolution`，撤销后的项会继续以「已自动修正」的
-        // 身份出现（甚至给出撤销入口），「撤销后不再展示、不再可撤销」的闭环就断了。
+        // 两个条件都不可少：
+        // - `resolution == AutoFixed` 必须有 `status == Accepted` 陪跑。仅看 `resolution`
+        //   会把 `Undone`（用户已撤销）与 `Superseded`（目标此后被用户改动）也收进来——
+        //   撤销只翻 `status`，resolutions 不变。那两种状态下权威稿里**已经不存在**这条
+        //   修正了，继续以「已自动修正」展示会凭空多出一个事实，甚至给出撤销入口。
+        //   这正是「撤销闭环」与「内容变化后失效」两条规则在呈现层的落点。
         if item.resolution == DecisionResolutionV1::AutoFixed
-            && item.status != DecisionStatusV1::Undone
+            && item.status == DecisionStatusV1::Accepted
         {
             auto_applied.push(item);
             continue;
@@ -257,7 +260,10 @@ pub(crate) fn get_recognition_decision_core(
     };
     let items = store::load_decision_items(&conn, &batch.batch_id)?;
     let current = store::current_edit_version(&conn, item_id)?.unwrap_or(batch.base_edit_version);
-    let view = build_view(&batch, items, current);
+    // 权威稿用于判定「已写入的修正是否仍生效」。读不到时传 `None`：判定取保守
+    // （保持原状），绝不凭空宣称某条修正已失效。
+    let canonical = get_canonical_ds(&conn, item_id)?.map(|(ds, _)| ds);
+    let view = build_view(&batch, items, current, canonical.as_ref());
     serde_json::to_value(view).map_err(|error| error.to_string())
 }
 
@@ -545,7 +551,9 @@ pub(crate) fn apply_recognition_decisions_core(
     request.validate()?;
     let request = request.normalized();
 
-    let mut conn = open_library_connection(root)?;
+    // 只读连接：本函数的写入一律走 `conn_tx`（编辑事务）或 `store::`（决策状态），
+    // 这条连接只用于读取（幂等查询、批次/决策项、权威稿）。
+    let conn = open_library_connection(root)?;
     let payload = serde_json::to_string(&request).map_err(|error| error.to_string())?;
 
     // 幂等：同一 request_id 重复提交只生效一次。请求体不同则报错（复用 id 是 bug）。
@@ -569,6 +577,11 @@ pub(crate) fn apply_recognition_decisions_core(
     let item_id = batch.library_item_id.clone();
     let mut items = store::load_decision_items(&conn, &batch.batch_id)?;
     let before = store::current_edit_version(&conn, &item_id)?.unwrap_or(batch.base_edit_version);
+    // 权威稿在本次调用开头读一次，供**撤销前提复核**与**接受前提复核**共用。
+    // 其间只有 `reject` 会写库，而它只动 `recognition_decisions_v1`、不碰权威稿，
+    // 所以这份读在整段流程内始终有效。读命令不写库。
+    let canonical = get_canonical_ds(&conn, &item_id)?;
+    let canonical_value = canonical.as_ref().map(|(value, _)| value.clone());
 
     let mut outcomes: Vec<DecisionOutcomeV1> = Vec::new();
     let now = chrono::Utc::now().to_rfc3339();
@@ -659,6 +672,26 @@ pub(crate) fn apply_recognition_decisions_core(
             });
             continue;
         };
+        // 前提复核：当时写入的值必须**仍在权威稿里**。用户若在自动修正之后又改过该
+        // 槽位（`Some(false)`），回滚会把用户的新改动一并覆盖——必须拒绝。
+        //
+        // 视图侧已把这类项呈现为 `Superseded` + `USER_EDITED_AFTER_APPLY`，但**呈现不等于
+        // 强制**：数据库里它仍是 `Accepted`，若只靠前端不显示撤销入口，一个直接调用命令的
+        // 客户端就能绕过。执行层必须自己守住这条边界。
+        // 判定不出（`None`：非 setAnswer 补丁 / 缺值 / 读不到权威稿）时取保守——但保守的
+        // 方向是「允许撤销」还是「拒绝」？此处选**放行**：`None` 多因补丁不是答案写入，
+        // 那不是「用户改过」的证据，拒绝会平白阻断正常的撤销。
+        if applied_answer_still_in_place(canonical_value.as_ref(), item) == Some(false) {
+            outcomes.push(DecisionOutcomeV1 {
+                decision_id: decision_id.clone(),
+                kind: DecisionOutcomeKindV1::Failed,
+                reason_code: Some(reason::USER_EDITED_AFTER_APPLY.to_string()),
+                message: "该槽位在自动修正之后已被修改，撤销会覆盖你的改动，已拒绝。".to_string(),
+                applied_at: item.applied_at.clone(),
+                undo: None,
+            });
+            continue;
+        }
         undo_commands.push(undo);
         undo_indices.push(index);
     }
@@ -715,39 +748,17 @@ pub(crate) fn apply_recognition_decisions_core(
         accepted_indices.push(index);
     }
 
-    let (mut conn_tx, canonical) = (open_library_connection(root)?, get_canonical_ds(&conn, &item_id)?);
-    let canonical_value = canonical.as_ref().map(|(value, _)| value.clone());
+    let mut conn_tx = open_library_connection(root)?;
     let mut applied_indices: Vec<usize> = Vec::new();
     let mut superseded: Vec<(usize, String)> = Vec::new();
 
     if !accepted_indices.is_empty() {
-        // 逐项版本复核：目标槽位当前值必须与建议生成时的「本地值」一致。
+        // 逐项版本复核：建议的前提是否仍然成立（目标内容相对生成建议时未被改动）。
+        // 判定集中在 `resolution_premise_holds`，此处不再内联复刻，避免两处口径分叉。
         let mut runnable: Vec<usize> = Vec::new();
         for index in &accepted_indices {
             let item = &items[*index];
-            let is_answer_field = item.field == crate::schema::recognition_v1::DecisionFieldV1::Answer;
-            let unchanged = match canonical_value.as_ref() {
-                Some(canonical) if is_answer_field => {
-                    answer_compare_key(canonical_answer(canonical, &item.target.target_id))
-                        == answer_compare_key(item.local_value.as_ref())
-                }
-                // 非答案字段没有通用的「当前值读取器」，改用权威稿里的编辑痕迹：
-                // 目标节点（或目标自身）被标记 `user_edited` 即认为已被改动。
-                // 这正好覆盖「用户只改了别处」的情形——目标干净就照常应用，
-                // 而不是一有版本变化就整批作废。
-                Some(canonical) => {
-                    let node_id = item
-                        .target
-                        .node_id
-                        .as_deref()
-                        .unwrap_or(&item.target.target_id);
-                    !is_user_edited(canonical, node_id)
-                        && !is_user_edited(canonical, &item.target.target_id)
-                }
-                // 读不到权威稿：无法证明目标未被改动，保守不写入。
-                None => false,
-            };
-            if unchanged {
+            if resolution_premise_holds(canonical_value.as_ref(), item) {
                 runnable.push(*index);
             } else {
                 superseded.push((*index, reason::USER_EDITED.to_string()));
@@ -909,8 +920,11 @@ pub(crate) fn apply_recognition_decisions_core(
     // 该函数按 `library_item_id` 过滤，于是恒查不到、被 `unwrap_or_else` 静默回退，
     // 「从数据库重读」这条路径实际是死代码。
     let refreshed = store::load_batch_by_id(&conn, &batch.batch_id)?
-        .map(|row| build_view(&row, items.clone(), after))
-        .unwrap_or_else(|| build_view(&batch, items.clone(), after));
+        .map(|row| {
+            let canonical = get_canonical_ds(&conn, &item_id).ok().flatten().map(|(ds, _)| ds);
+            build_view(&row, items.clone(), after, canonical.as_ref())
+        })
+        .unwrap_or_else(|| build_view(&batch, items.clone(), after, None));
 
     let result = ApplyRecognitionDecisionsResultV1 {
         schema_version: APPLY_RECOGNITION_DECISIONS_RESULT_V1_SCHEMA_VERSION.to_string(),
@@ -1329,7 +1343,7 @@ mod tests {
             decision_item("autofixed-1", DecisionStatusV1::Accepted, DecisionResolutionV1::AutoFixed),
         ];
 
-        let view = build_view(&batch, items, 5);
+        let view = build_view(&batch, items, 5, None);
 
         let mut actionable_ids: Vec<&str> = view
             .actionable
@@ -1418,7 +1432,7 @@ mod tests {
                 .expect("batch row");
             let items = store::load_decision_items(&conn, "batch-1").expect("items");
             assert_eq!(
-                build_view(&row, items, 0).actionable.len(),
+                build_view(&row, items, 0, None).actionable.len(),
                 1,
                 "尚未处理的项必须出现在待办中"
             );
@@ -1451,11 +1465,405 @@ mod tests {
             "接受状态必须跨重开存活（这是「重开不丢已处理状态」的机制本身）"
         );
         assert!(
-            build_view(&row, items, 0).actionable.is_empty(),
+            build_view(&row, items, 0, None).actionable.is_empty(),
             "已接受的项在重开后不得重新冒出来"
         );
 
         drop(conn);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 云端桩哨兵：无云路径下**绝不允许被调用**。用它当哨兵——一旦核心在
+    /// `cloud_enabled = false` 时仍去请求云端，本测试立刻 panic，而不是静默通过。
+    fn sentinel_cloud_runner(
+        _root: &Path,
+        _job_id: &str,
+        _profile_id: Option<&str>,
+    ) -> CommandResult<Value> {
+        panic!("cloud runner must never be invoked when cloud_enabled = false");
+    }
+
+    /// 一份「单题 sentence_completion」的最小权威稿，答案位 `slot-14` 的当前值为 `answer`。
+    /// 仅供**无云路径**测试使用：那条路径只读不写（没有云端建议可自动应用），
+    /// 因而不需要能通过 `validate_authoring` 的完整稿。
+    /// 凡是**会写库**的用例一律用 [`canonical_from_golden`]，理由见该函数。
+    fn sentence_completion_canonical(answer: &Value) -> Value {
+        json!({
+            "schemaVersion": "IeltsAuthoringIRV2",
+            "exam": {"title": "t"},
+            "taskGroups": [{
+                "taskId": "task-1",
+                "taskType": "sentence_completion",
+                "displayRange": {"kind":"range","start":14,"end":14},
+                "responseGroups": [{"responseGroupId":"rg-1","kind":"text_entry","slotIds":["slot-14"]}]
+            }],
+            "answerSlots": {
+                "slot-14": {"slotId":"slot-14","questionNumber":14,"interaction":"text","sourceAnchors":[]}
+            },
+            "answerKey": {"slot-14": answer.clone()},
+            "quality": {"coverageStatus": {"unassignedSourceNodeIds": []}}
+        })
+    }
+
+    /// 自动修正写入的值（正 patch 的 value）：夹具选项库里的 **B**。
+    fn applied_option() -> Value {
+        json!({"kind":"option","labels":["B"],"assignment":"unordered_set"})
+    }
+
+    /// 修正**之前**的值（逆 patch 要恢复的目标）：夹具选项库里的 **A**。
+    fn original_option() -> Value {
+        json!({"kind":"option","labels":["A"],"assignment":"unordered_set"})
+    }
+
+    /// 一份**合法**的 V2 权威稿（取自 `fixtures/golden/synthetic/ielts/
+    /// early-approaches-authoring-v2.json`），答案位 `q14` 的当前值被替换为 `slot_answer`。
+    ///
+    /// 为什么必须用真实夹具，而不是手写一份最小 JSON：撤销与接受都要经
+    /// `apply_editor_commands_tx` → `refresh_quality_report` + `validate_authoring`，
+    /// 那是**强类型 schema 校验**。手写的精简稿会因缺 `displayLabel` 这类必填字段被拒
+    /// （`AUTHORING_SCHEMA_INVALID:missing field ...`），失败原因就变成「夹具不合格」，
+    /// 把真正要验证的撤销/失效逻辑掩盖掉——这正是第一版测试踩到的坑。
+    fn canonical_from_golden(slot_answer: &Value) -> Value {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read fixture {}: {error}", path.display()));
+        let mut canonical: Value = serde_json::from_str(&raw).expect("fixture must be valid JSON");
+        canonical["answerKey"]["q14"] = slot_answer.clone();
+        canonical
+    }
+
+    /// 播种一个「已自动修正、等待用户查看」的批次。
+    ///
+    /// `slot_value` 是权威稿 `q14` 的**当前值**，它决定这条修正是否仍然生效：
+    /// - 等于 [`applied_option`] ⇒ 修正仍在位（撤销应放行、视图应示为已修正）；
+    /// - 其它值 ⇒ 用户改过该槽位（撤销应被拒、视图应示为失效）。
+    ///
+    /// 返回 `(root, item_id, batch_id, item)`。
+    fn seed_applied_batch(
+        tag: &str,
+        slot_value: &Value,
+    ) -> (PathBuf, String, String, DecisionItemV1) {
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-{tag}-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).expect("app dirs");
+        let item_id = format!("{tag}-item");
+        let batch_id = format!("batch-{tag}");
+
+        let mut item = decision_item(
+            "q14",
+            DecisionStatusV1::Accepted,
+            DecisionResolutionV1::AutoFixed,
+        );
+        item.field = DecisionFieldV1::Answer;
+        item.local_value = Some(original_option());
+        item.proposed_patch = Some(crate::reconcile::rules::answer_patch("q14", &applied_option()));
+        item.undo = Some(crate::reconcile::rules::answer_patch(
+            "q14",
+            &original_option(),
+        ));
+        item.auto_applied = true;
+        item.applied_at = Some("2026-09-16T00:00:00Z".to_string());
+
+        let decision = RecognitionDecisionV1 {
+            schema_version: RECOGNITION_DECISION_V1_SCHEMA_VERSION.to_string(),
+            batch_id: batch_id.clone(),
+            item_id: item_id.clone(),
+            job_id: item_id.clone(),
+            base_edit_version: 0,
+            generated_at: "2026-09-16T00:00:00Z".to_string(),
+            chain_status: ChainStatusSummaryV1 {
+                local: ChainStatusV1::Succeeded,
+                cloud: ChainStatusV1::NotRun,
+                source: ChainStatusV1::Succeeded,
+                cloud_reason_code: Some(reason::CLOUD_DISABLED.to_string()),
+                source_reason_code: None,
+            },
+            items: vec![item.clone()],
+            summary: DecisionSummaryV1 {
+                agreed: 0,
+                auto_fixed: 1,
+                needs_review: 0,
+                unverifiable: 0,
+            },
+        };
+
+        let conn = open_library_connection(&root).expect("db");
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: &item_id,
+                modality: "reading",
+                title: "t",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .expect("shell");
+        seed_canonical_ds(
+            &conn,
+            &item_id,
+            &canonical_from_golden(slot_value).to_string(),
+            "action_required",
+        )
+        .expect("seed canonical");
+        store::upsert_batch(&conn, &decision).expect("batch");
+        store::replace_decision_items(&conn, &decision).expect("items");
+        drop(conn);
+
+        (root, item_id, batch_id, item)
+    }
+
+    /// 当前权威稿里 `q14` 的答案值。
+    fn q14_answer(root: &Path, item_id: &str) -> Value {
+        let conn = open_library_connection(root).expect("db");
+        let (canonical, _) = get_canonical_ds(&conn, item_id)
+            .expect("read canonical")
+            .expect("canonical present");
+        canonical_answer(&canonical, "q14")
+            .cloned()
+            .expect("q14 answer present")
+    }
+
+    /// 无云分支的回归锁定（R1）：`cloud_enabled = false` 时**仍要跑完 reconcile 并落盘**。
+    ///
+    /// 修复前该分支在发布「可编辑」之后直接 `return`：本地候选快照、原文核验、批次与
+    /// 决策**全部缺失**——前端拿不到任何可解释的证据链，产品语义上等于「没做识别」。
+    /// 修复后只把云端如实标成 `not_run`（`CLOUD_DISABLED`），其余链路照常走完。
+    ///
+    /// 「不得用假失败 profile 绕过产品缺口」这一条由哨兵桩守住：注入点若被调用即 panic。
+    #[test]
+    fn no_cloud_branch_still_runs_reconcile_and_persists_local_evidence() {
+        let (root, job_id) = seed_bridge_job(
+            &sentence_completion_canonical(&json!({"kind":"text","values":["stencilling"]})),
+            &json!({"pages":[{"pageIndex":0,"lines":[{"text":"A passage about birds and weather."}]}]}),
+        );
+
+        let report =
+            run_recognition_cycle_core(&root, &job_id, None, false, 0, &sentinel_cloud_runner)
+                .expect("无云路径仍必须跑完 reconcile，而不是跳过");
+
+        // (1) 云端如实呈现「未运行」，而不是被折叠成 failed。
+        assert_eq!(
+            report["cloudCandidateStatus"].as_str(),
+            Some("not_run"),
+            "未启用云端必须呈现为 not_run；谎报 failed 会让用户以为云端出故障"
+        );
+        // (2) 本地候选正常产出。
+        assert_eq!(
+            report["localCandidateStatus"].as_str(),
+            Some("succeeded"),
+            "无云路径下本地候选必须正常产出"
+        );
+        // (3) 本地链真的跑过（「跳过 reconcile 后返回空壳」会把这里留成 not_run）。
+        assert_ne!(
+            report["chains"]["local"]["state"].as_str(),
+            Some("not_run"),
+            "本地链为 not_run 说明 reconcile 根本没跑——正是修复前跳过分支的症状"
+        );
+        // (4) 批次、决策与本地候选快照都已落盘：这就是前端可解释性的全部来源。
+        let batch_id = report["batchId"].as_str().expect("batchId present");
+        let decision = read_decision_file(&root, &job_id, batch_id)
+            .expect("无云路径也必须留下决策文件（本地候选 + 原文核验 + 裁决）");
+        assert_eq!(decision.batch_id, batch_id);
+        assert!(
+            store::read_candidate(&root, &job_id, batch_id, store::LOCAL_CANDIDATE_FILE).is_some(),
+            "本地候选快照必须落盘，否则裁决无据可依"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 撤销闭环的持久化（R5）。与上面「接受状态跨重开存活」形成对称覆盖。
+    ///
+    /// 端到端走一次**真实撤销命令**：回滚权威稿 → 持久化 `Undone` → 重开数据库仍为
+    /// `Undone`，且该状态在**所有出口**都成立——不再出现在待办、不再以「已自动修正」
+    /// 展示、也不能再被撤销一次。
+    ///
+    /// 之所以要「重开」而不是同连接复读：`store::set_decision_status` 写的是 SQLite，
+    /// 只有断连重开才能排除「其实只改了内存里的 `items`」这种假通过。
+    #[test]
+    fn undo_rolls_back_canonical_and_survives_a_reopen() {
+        // 权威稿当前值 == 修正写入的值 ⇒ 撤销应当放行。
+        let (root, item_id, batch_id, item) = seed_applied_batch("undo", &applied_option());
+        // 夹具里那条 undo patch 恢复的值。
+        let restore = original_option();
+
+        let result = apply_recognition_decisions_core(
+            &root,
+            ApplyRecognitionDecisionsRequestV1 {
+                request_id: "req-undo-1".to_string(),
+                batch_id: batch_id.clone(),
+                base_edit_version: 0,
+                accept: vec![],
+                reject: vec![],
+                undo: vec![item.decision_id.clone()],
+            },
+        )
+        .expect("undo must run");
+
+        // (1) 结果如实报 Undone，而不是静默成功。
+        assert_eq!(
+            result["outcomes"][0]["kind"].as_str(),
+            Some("undone"),
+            "撤销结果必须如实报 undone：{result}"
+        );
+        // (2) 权威稿真的回到修正前的值——这是「回滚」的实质。
+        assert_eq!(
+            q14_answer(&root, &item_id),
+            restore,
+            "撤销后 q14 必须回到修正前的值"
+        );
+        // (3) 撤销项在本连接内就已不再待办，也不再以「已自动修正」身份展示。
+        {
+            let conn = open_library_connection(&root).expect("db");
+            let row = store::load_batch_by_id(&conn, &batch_id).expect("load").expect("row");
+            let items = store::load_decision_items(&conn, &batch_id).expect("items");
+            let (canonical, _) = get_canonical_ds(&conn, &item_id).expect("ok").expect("present");
+            let view = build_view(&row, items, 0, Some(&canonical));
+            assert!(
+                view.actionable.is_empty(),
+                "已撤销的项不得重新成为待办（否则用户会被要求重复处理同一件事）"
+            );
+            assert!(
+                view.auto_applied.is_empty(),
+                "已撤销的项不得继续以「已自动修正」身份展示：\
+                 撤销只翻 status，resolution 仍是 AutoFixed，若只看 resolution 就会漏在这"
+            );
+        } // 连接断开——等价于应用退出。
+
+        // ── 重开数据库：撤销状态必须仍在，且所有出口一致。────────────────────
+        let conn = open_library_connection(&root).expect("reopen db");
+        let items = store::load_decision_items(&conn, &batch_id).expect("items");
+        assert_eq!(items.len(), 1, "重开后裁决项数量不得变化");
+        assert_eq!(
+            items[0].status,
+            DecisionStatusV1::Undone,
+            "撤销状态必须跨重开存活（这是「撤销闭环」的机制本身）"
+        );
+        let row = store::load_batch_by_id(&conn, &batch_id).expect("load").expect("row");
+        let canonical = get_canonical_ds(&conn, &item_id).expect("ok").expect("present").0;
+        let view = build_view(&row, items, 0, Some(&canonical));
+        assert!(view.actionable.is_empty(), "重开后已撤销项不得回到待办");
+        assert!(view.auto_applied.is_empty(), "重开后已撤销项不得回到 autoApplied");
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 内容变化后 resolution 失效（R3）：**修正写入之后用户又改了同一槽位**时，
+    /// 原修正的前提已消失，视图不得再把它呈现为「已修正」，撤销也必须被拒绝。
+    ///
+    /// 两个出口各自独立断言，因为它们是两条防线：
+    /// - 呈现层（`build_view`）：`Accepted` ⇒ `Superseded` + `USER_EDITED_AFTER_APPLY`；
+    /// - 执行层（撤销命令）：即便前端不显示撤销入口，直接调用命令也必须被拒——
+    ///   否则回滚会把用户的新改动一并覆盖。
+    ///
+    /// 反向对照见 `applied_resolution_stays_visible_while_the_slot_is_untouched`：
+    /// 未改动时同一套代码必须仍然呈现为已修正，证明该规则不会「一有改动就整批作废」。
+    #[test]
+    fn applied_resolution_is_superseded_once_the_user_edits_the_slot() {
+        // 权威稿当前值 != 修正写入的值 ⇒ 用户改过该槽位，原修正的前提已消失。
+        // 用夹具选项库里的 **C**：既可被 `validate_authoring` 接受，也确实是「另一个答案」。
+        let user_edit = json!({"kind":"option","labels":["C"],"assignment":"unordered_set"});
+        let (root, item_id, batch_id, item) = seed_applied_batch("supersede", &user_edit);
+
+        // 呈现层：不得再示为「已自动修正」，也不得变成一个「待办」。
+        {
+            let conn = open_library_connection(&root).expect("db");
+            let row = store::load_batch_by_id(&conn, &batch_id).expect("load").expect("row");
+            let items = store::load_decision_items(&conn, &batch_id).expect("items");
+            let (canonical, _) = get_canonical_ds(&conn, &item_id).expect("ok").expect("present");
+            let view = build_view(&row, items, 1, Some(&canonical));
+
+            assert!(
+                view.auto_applied.is_empty(),
+                "槽位已被用户改动，这条修正不再生效，不得继续以「已自动修正」展示"
+            );
+            assert!(
+                view.actionable.is_empty(),
+                "失效项不是待办（用户已经自己处理了该槽位），不得要求他再确认一次"
+            );
+        }
+
+        // 执行层防线：直接调用撤销命令也必须被拒绝。
+        let refused = apply_recognition_decisions_core(
+            &root,
+            ApplyRecognitionDecisionsRequestV1 {
+                request_id: "req-supersede-refused".to_string(),
+                batch_id: batch_id.clone(),
+                base_edit_version: 0,
+                accept: vec![],
+                reject: vec![],
+                undo: vec![item.decision_id.clone()],
+            },
+        )
+        .expect("命令本身不应报错，而应如实返回 failed 结果");
+
+        assert_eq!(
+            refused["outcomes"][0]["kind"].as_str(),
+            Some("failed"),
+            "用户已改动的槽位不得被回滚覆盖：{refused}"
+        );
+        assert_eq!(
+            refused["outcomes"][0]["reasonCode"].as_str(),
+            Some(reason::USER_EDITED_AFTER_APPLY),
+            "必须给出精确原因码，便于前端解释为何不能撤销"
+        );
+        assert_eq!(
+            q14_answer(&root, &item_id),
+            user_edit,
+            "被拒绝的撤销绝不能改动权威稿——用户的新改动必须原样保留"
+        );
+
+        drop(open_library_connection(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 上一条测试的反向对照：**目标未被改动**时，同一条「失效」规则不得误伤——
+    /// 修正仍生效、仍呈现为已自动修正，且撤销照常放行。
+    ///
+    /// 没有这条对照，「失效规则」可以被实现成「只要编辑版本变了就整批作废」而测试全绿，
+    /// 那正是要避免的过度失效。
+    #[test]
+    fn applied_resolution_stays_visible_while_the_slot_is_untouched() {
+        // 权威稿当前值 == 修正写入的值 ⇒ 修正仍然生效。
+        let (root, item_id, batch_id, item) = seed_applied_batch("intact", &applied_option());
+
+        {
+            let conn = open_library_connection(&root).expect("db");
+            let row = store::load_batch_by_id(&conn, &batch_id).expect("load").expect("row");
+            let items = store::load_decision_items(&conn, &batch_id).expect("items");
+            let (canonical, _) = get_canonical_ds(&conn, &item_id).expect("ok").expect("present");
+            // 编辑版本推进到 1（用户改了**别的**地方），但 q14 保持修正后的值。
+            let view = build_view(&row, items, 1, Some(&canonical));
+            assert_eq!(
+                view.auto_applied.len(),
+                1,
+                "目标未被改动时，修正仍然生效，必须照常呈现为已自动修正"
+            );
+            assert!(view.actionable.is_empty(), "生效中的自动修正不是待办");
+        }
+
+        let undone = apply_recognition_decisions_core(
+            &root,
+            ApplyRecognitionDecisionsRequestV1 {
+                request_id: "req-intact-undo".to_string(),
+                batch_id: batch_id.clone(),
+                base_edit_version: 0,
+                accept: vec![],
+                reject: vec![],
+                undo: vec![item.decision_id.clone()],
+            },
+        )
+        .expect("undo must run");
+        assert_eq!(
+            undone["outcomes"][0]["kind"].as_str(),
+            Some("undone"),
+            "目标未被改动时撤销必须放行（否则该规则会误伤正常撤销）：{undone}"
+        );
+
+        drop(open_library_connection(&root));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
