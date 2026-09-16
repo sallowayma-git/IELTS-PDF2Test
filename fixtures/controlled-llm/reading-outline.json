@@ -1,0 +1,30 @@
+{
+  "_comment": "受控模型服务的『自然形态』云端输出。它模拟真实模型对一份 IELTS Reading 导入件的回答，用于让整条链路（网关解析 → 形状归一 → 三路比较 → 裁决 → 持久化）在**确定性**输入上运行。字段形状与 llm_gateway.rs 的 validate_cloud_outline_output 要求一致：title(string) / groups(array) / confidence(number) / answerKey(object) / 每组 kind+layoutHint+notesText+range+questionIds+slots。",
+  "title": "Early Approaches to Reading",
+  "groups": [
+    {
+      "kind": "sentence_completion",
+      "range": [14, 14],
+      "layoutHint": "list",
+      "questionIds": ["q14"],
+      "notesText": "Complete the sentence with ONE WORD from the passage.",
+      "instructionsText": "Complete the sentences below using ONE WORD ONLY from the passage.",
+      "confidence": 0.9,
+      "evidence": {
+        "quotes": [{ "pageIndex": 1, "text": "A passage about birds and weather." }]
+      },
+      "slots": [
+        {
+          "questionNumber": 14,
+          "answer": { "kind": "text", "values": ["stencilling"], "normalization": "ielts_default" },
+          "evidence": {
+            "quotes": [{ "pageIndex": 1, "text": "A passage about birds and weather." }]
+          }
+        }
+      ]
+    }
+  ],
+  "answerKey": {},
+  "confidence": 0.9,
+  "warnings": []
+}

@@ -2040,6 +2040,257 @@ mod tests {
         );
     }
 
+    /// 极简 HTTP 服务：对收到的每个请求回一份固定的 chat-completions 响应。
+    ///
+    /// 这是「受控模型服务」在测试里的落地形态；给前端用的可执行版本是
+    /// `scripts/controlled-llm-service.mjs`（同一个样本文件、同一种应答）。
+    ///
+    /// 返回 `(base_url, 停止句柄)`。**调用方不要 join 服务线程**：网关只在解析失败时重试，
+    /// 正常路径只发一次请求，而 accept 循环会一直等下一个连接——join 必然把用例挂死。
+    /// 线程随测试进程结束而结束，端口是随机分配的，不会互相干扰。
+    fn spawn_controlled_model_service(response_body: String) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind controlled service");
+        let addr = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                // 必须把请求体读完再回写：否则客户端还在发 body 时会收到 RST，
+                // 得到一个与「受控服务」无关的传输错误，把要验证的东西掩盖掉。
+                let mut request = Vec::<u8>::new();
+                let mut chunk = [0u8; 4096];
+                let mut header_end: Option<usize> = None;
+                let mut content_length = 0usize;
+                loop {
+                    if let Some(end) = header_end {
+                        if request.len() >= end + content_length {
+                            break;
+                        }
+                    }
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            request.extend_from_slice(&chunk[..read]);
+                            if header_end.is_none() {
+                                if let Some(position) = request
+                                    .windows(4)
+                                    .position(|window| window == b"\r\n\r\n")
+                                {
+                                    header_end = Some(position + 4);
+                                    let headers =
+                                        String::from_utf8_lossy(&request[..position]).to_lowercase();
+                                    content_length = headers
+                                        .lines()
+                                        .find_map(|line| line.strip_prefix("content-length:"))
+                                        .and_then(|value| value.trim().parse::<usize>().ok())
+                                        .unwrap_or(0);
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    response_body.as_bytes().len(),
+                    response_body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://127.0.0.1:{}/v1", addr.port())
+    }
+
+    fn controlled_llm_outline() -> Value {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/controlled-llm/reading-outline.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read fixture {}: {error}", path.display()));
+        let mut outline: Value = serde_json::from_str(&raw).expect("fixture must be valid JSON");
+        // `_comment` 只是给人看的说明，不参与协议。
+        if let Some(object) = outline.as_object_mut() {
+            object.remove("_comment");
+        }
+        outline
+    }
+
+    /// Task 27：受控模型服务 → **真实网关** → 比较 → 持久化。
+    ///
+    /// 与既有用例的分工必须分清，**两层证据不可互相代替**：
+    /// - `stub_cloud_runner` 那类用例把云端结果**直接塞进注入点**，验证的是裁决逻辑；
+    /// - 本用例验证**网关这一段本身**：真起一个 HTTP 服务、真发请求，真走
+    ///   `openai_chat_content` → `parse_llm_json_content` → `validate_cloud_outline_output`
+    ///   的解析与校验，再把解析结果交给核心裁决、落盘成候选与决策。
+    ///
+    /// 样本与预期：`fixtures/controlled-llm/reading-outline.json` +
+    /// `fixtures/controlled-llm/expected-decisions.json`；前端可执行版本是
+    /// `scripts/controlled-llm-service.mjs` 加一份指向它的 profile。
+    ///
+    /// 刻意**不**覆盖 `make_cloud_paper_generation_input` 的取原文与拼 prompt 部分——
+    /// 那段依赖真实文件的抽取产物，属于导入链路的职责；本用例只给网关喂一份带
+    /// `sourceText` 的输入。这个边界是明说的，不是省略。
+    #[test]
+    fn controlled_model_service_drives_candidates_through_the_real_gateway() {
+        let outline = controlled_llm_outline();
+
+        // 受控服务：应答体是标准 chat-completions 信封，`content` 里才是 outline JSON。
+        let response_body = json!({
+            "id": "controlled-llm-0001",
+            "object": "chat.completion",
+            "model": "controlled-outline-v1",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": outline.to_string()}
+            }]
+        })
+        .to_string();
+        let base_url = spawn_controlled_model_service(response_body);
+
+        let (root, job_id) = seed_bridge_job(
+            &json!({
+                "schemaVersion": "IeltsAuthoringIRV2",
+                "exam": {"title": "t"},
+                "taskGroups": [{
+                    "taskId": "task-1",
+                    "taskType": "sentence_completion",
+                    "displayRange": {"kind":"range","start":14,"end":14},
+                    "responseGroups": [{"responseGroupId":"rg-1","kind":"text_entry","slotIds":["slot-14"]}]
+                }],
+                "answerSlots": {
+                    "slot-14": {"slotId":"slot-14","questionNumber":14,"interaction":"text","sourceAnchors":[]}
+                },
+                "answerKey": {"slot-14": {"kind":"unresolved"}},
+                "quality": {"coverageStatus": {"unassignedSourceNodeIds": []}}
+            }),
+            &json!({"pages":[{"pageIndex":0,"lines":[{"text":"A passage about birds and weather."}]}]}),
+        );
+
+        // profile 指向受控服务。落盘格式与 `llm_profiles.rs::profiles_path` 一致。
+        let profile = json!({
+            "profileId": "controlled-outline",
+            "name": "Controlled Outline Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": base_url,
+            "model": "controlled-outline-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        });
+        assert!(
+            crate::llm_profiles::save_profiles(&root, &[profile.clone()]).is_ok(),
+            "profile 必须能落盘，否则网关取不到 baseUrl"
+        );
+        let profile = crate::llm_profiles::find_profile(&root, "controlled-outline")
+            .expect("profile readable through the same path the gateway uses");
+
+        // ── 1) 真实网关：真 HTTP + 真解析 + 真校验 ────────────────────────────
+        let parsed = crate::llm_gateway::run_llm_gateway(
+            &root,
+            &job_id,
+            "generate_pdf_reading_outline",
+            &json!({
+                "profile": profile,
+                "sourceText": "A passage about birds and weather.",
+            }),
+            None,
+        )
+        .expect("受控服务必须能让真实网关成功返回");
+
+        assert_eq!(
+            parsed["groups"][0]["kind"].as_str(),
+            outline["groups"][0]["kind"].as_str(),
+            "网关解析后的题组类型必须与样本一致：{parsed}"
+        );
+        assert_eq!(
+            parsed["groups"][0]["slots"][0]["answer"], outline["groups"][0]["slots"][0]["answer"],
+            "网关解析后的答案值必须与样本一致（说明走的是解析路径，不是把样本直接透传）"
+        );
+        // 网关的观测记录：本命令确实调用过，且成功。这是「走的是真实网关」的旁证。
+        let calls = std::fs::read_to_string(job_dir(&root, &job_id).join("llm-calls.jsonl"))
+            .expect("网关必须留下 llm-calls.jsonl");
+        assert!(
+            calls.contains("generate_pdf_reading_outline") && calls.contains("\"ok\":true"),
+            "网关调用记录里必须有本次成功的调用：{calls}"
+        );
+
+        // ── 2) 比较 + 持久化：把网关结果按调度器的方式交给核心裁决 ─────────────
+        let cloud_value = parsed.clone();
+        let report = run_recognition_cycle_core(
+            &root,
+            &job_id,
+            Some("controlled-outline"),
+            true,
+            0,
+            &move |_root, _job_id, _profile_id| Ok(cloud_value.clone()),
+        )
+        .expect("裁决必须跑完");
+
+        let cloud_status = report["cloudCandidateStatus"].as_str().unwrap_or("");
+        assert!(
+            cloud_status == "succeeded" || cloud_status == "partial",
+            "受控服务应答合法，云端链必须可用，实际为 {cloud_status}"
+        );
+
+        let batch_id = report["batchId"].as_str().expect("batchId present").to_string();
+        let decision = read_decision_file(&root, &job_id, &batch_id)
+            .expect("决策必须落盘（数据库与 job 目录各一份）");
+
+        // 把逐项裁决投影成稳定形态，供人工审阅与后续固化为预期样本。
+        let projection: Vec<Value> = decision
+            .items
+            .iter()
+            .map(|item| {
+                json!({
+                    "decisionId": item.decision_id,
+                    "targetId": item.target.target_id,
+                    "field": item.field,
+                    "resolution": item.resolution,
+                    "reasonCode": item.reason_code,
+                    "status": item.status,
+                    "isActionable": item.is_actionable(),
+                    "localValue": item.local_value,
+                    "cloudValue": item.cloud_value,
+                    "sourceValue": item.source_value,
+                    "hasProposedPatch": item.proposed_patch.is_some(),
+                    "autoApplyEligible": report["autoApplied"]
+                        .as_array()
+                        .map(|applied| applied.iter().any(|id| id == &json!(item.decision_id)))
+                        .unwrap_or(false),
+                })
+            })
+            .collect();
+        let projection = json!({
+            "cloudCandidateStatus": cloud_status,
+            "localBaselineFrozen": report["localBaselineFrozen"],
+            "items": projection,
+        });
+
+        // ── 3) 与预期样本逐字对齐 ──────────────────────────────────────────────
+        //
+        // 断言的是**投影**（稳定字段）而不是整份 item：内部字段增删不应该把用例变成噪音，
+        // 但凡是前端看得见、或决定它能否被处理的东西（resolution / status / 待办 /
+        // 有无补丁 / 三个来源的值 / 是否能自动应用）都必须被钉住。
+        let expected_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/controlled-llm/expected-decisions.json");
+        let expected_raw = std::fs::read_to_string(&expected_path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", expected_path.display()));
+        let mut expected: Value =
+            serde_json::from_str(&expected_raw).expect("expected fixture must be valid JSON");
+        if let Some(object) = expected.as_object_mut() {
+            object.remove("_comment");
+        }
+        assert_eq!(
+            projection, expected,
+            "受控服务场景的实际结果与预期样本不一致；若这是有意的行为变更，请同步更新 \
+             fixtures/controlled-llm/expected-decisions.json"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 内容变化后 resolution 失效（R3）：**修正写入之后用户又改了同一槽位**时，
     /// 原修正的前提已消失，视图不得再把它呈现为「已修正」，撤销也必须被拒绝。
     ///

@@ -1,0 +1,21 @@
+{
+  "_comment": "受控模型服务场景的预期决策。由 reconcile::commands::tests::controlled_model_service_drives_candidates_through_the_real_gateway 断言；断言的是**投影**（稳定字段），不是整份 item，以免内部字段增删把用例变成噪音。来源：fixtures/controlled-llm/reading-outline.json 经真实网关解析 → 三路比较 → 裁决 → 持久化后的实测结果。",
+  "cloudCandidateStatus": "succeeded",
+  "localBaselineFrozen": true,
+  "items": [
+    {
+      "decisionId": "d:slot:slot-14:answer",
+      "targetId": "slot-14",
+      "field": "answer",
+      "resolution": "needs_review",
+      "reasonCode": "SUBSTANTIVE_DIVERGENCE",
+      "status": "open",
+      "isActionable": true,
+      "localValue": { "kind": "unresolved" },
+      "cloudValue": { "kind": "text", "normalization": "ielts_default", "values": ["stencilling"] },
+      "sourceValue": null,
+      "hasProposedPatch": true,
+      "autoApplyEligible": false
+    }
+  ]
+}
