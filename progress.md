@@ -1301,3 +1301,83 @@ PDF/DOCX 完整链→学生端     → 未运行
 **本轮仍不宣称任何完整链通过。** 已通过的都标注了层级：
 前端单测层（191）、问题列表真实界面层（cdp-diagnostic）。
 **没有**默认路径（cdp-default）通过证据，**没有**真实云服务调用，**没有**学生端计分证据。
+
+---
+
+# R12 恢复检查点与 Git 基线
+
+## R12-1 备份（提交前完成）
+
+目录：`F:/workspace/PDF2Test-git-backup-20260916-120855/`
+
+| 内容 | 说明 |
+| --- | --- |
+| `dot-git/` | 完整 `.git` 元数据（9.6M） |
+| `index.original` | **原始索引备份**（53427 字节） |
+| `repo.bundle` | `git bundle verify` → **「records a complete history」**，HEAD `f119b2a` |
+| `working-tree-modified.patch` | 550609 字节，全部已跟踪改动 |
+| `status-before.txt` | `-uall` 全量状态 |
+| `untracked/` | 62 个未跟踪文件（保留原路径） |
+| `HEAD.txt`、`log.txt` | 基线快照 |
+
+**踩坑**：`git bundle create /f/...` 报 `Unable to create ...repo.bundle.lock: No such file or directory`
+—— 原生 Windows git 不认 MSYS 的 `/f/` 路径，必须写 `F:/...`。第一次备份因此断在 bundle 那一步，
+`&&` 链后面的未跟踪文件复制没跑；已重做并核实（62 个文件）。
+
+## R12-2 旧提交 `c8c3d3b`：**不可恢复**（有限检查结论）
+
+| 检查 | 结果 |
+| --- | --- |
+| `git cat-file -t c8c3d3b` | `fatal: Not a valid object name` —— 对象库里根本没有 |
+| 全部本地 ref | 只有 `refs/heads/main`、`refs/remotes/origin/main`（均 `f119b2a`）+ 一个 `refs/codex/...` |
+| `refs/codex/...` → `e111d2f` | 类型是 **tree**，不是提交，不含历史 |
+| 远端 `ls-remote --heads` | 只有 `refs/heads/main` = `f119b2a` |
+| 兄弟仓库（IELTS Atlas / IELTS-NASfor-WenDao / TeachingAssistantWorkstation） | 均无该对象 |
+
+**结论**：旧历史在本机与远端都不可恢复。按任务书要求，
+**不伪造原提交历史**，改为明确提交为**恢复检查点**。
+
+## R12-3 恢复检查点提交（已推送）
+
+```
+540b76d chore(recovery): checkpoint the restored working tree (multi-agent, attribution pending)
+93 files changed, 26301 insertions(+), 217 deletions(-)
+```
+
+- **刻意不是干净的功能提交**：提交信息里写明它**混合了多个 agent 的工作**且**不主张归属**。
+- 推送：`f119b2a..540b76d  main -> main`；`ls-remote` 确认远端 `refs/heads/main` = `540b76d`。
+- **没有 `git add .`**：分两步 —— `git add -u`（44 个已跟踪改动）+ 逐条显式 `git add -- <path>`（49 个未跟踪文件）。
+- **排除 13 个临时诊断文件**（已备份、未提交）：`gitcheck*_out.txt`、`status2_out.txt`、`status3_out.txt`、
+  `tmp_build.txt`、`tmp_build2.txt`、`tmp_ls.txt`、`src-tauri/{stash,status,test,verify,who}_out.txt`、
+  `scripts/e2e/.patch-issue-list.mjs`。
+
+## R12-4 归属分类（供后续拆分提交）
+
+| 类别 | 内容 |
+| --- | --- |
+| 历史修复（工作树携带） | `reading_source_v2.rs`、`schema/{common,mod}.rs`、`product_chain.rs`、`artifact_store.rs`、`nas_package_v2.rs`、`library/migration.rs`、`llm_commands.rs`、`src/exam-canvas/*`、`src/styles/*`、`src/utils/userFacingError*`、`src/api/{desktopDialogs,tauriCommands,workspaceClient}.ts` |
+| 当前后端工作 | `src-tauri/src/reconcile/**`（新）、`schema/recognition_v1.rs`（新）、`ielts_grammar/{quality,instruction_signature}.rs`、`auto_pipeline.rs`、`processing/**`、`llm_gateway.rs`、`llm_suggestions.rs`、`library/schema.rs`、`contracts/recognition-*.json`、`scripts/recognition/**` |
+| 前端（含本 agent 的识别去重/撤销改动 + M4 direct-canonical 改动） | `src/features/editor/{actionableIssues,ExamWorkspacePage,RecognitionPanel,recognitionDecisions,conflictRecovery,studentPreview}*`、`src/api/recognitionClient*`、`useCanonicalEditor.ts`、`SelectionInspector.tsx`、`src/services/*` |
+| 临时诊断（未提交） | 上面 13 个 |
+
+## R12-5 本机 Git 元数据的异常（已记录，未继续修）
+
+- `refs/remotes/origin/*` **无法在本地建立**：`git fetch origin` 打印
+  `* [new branch] main -> origin/main`、`FETCH_HEAD` 也写对了，但
+  `.git/refs/remotes/` 仍是空的、`for-each-ref` 里没有它。
+- `git update-ref refs/remotes/origin/main 540b76d` **返回 exit 0 却没有生效**，
+  也没有生成 loose ref 文件 → 本沙箱对 `.git/refs/remotes/` 的写入被静默丢弃。
+- 影响：本地算不出 ahead/behind；**不影响推送**（远端状态以 `ls-remote` 为准，已确认 `540b76d`）。
+- 未做破坏性修复（未删 refs、未 `gc`、未重打包）。
+
+## R12-6 状态
+
+```text
+恢复检查点   → 540b76d 已推送（远端 ls-remote 确认）
+功能提交     → 尚未做（归属拆分是下一步）
+服务测试     → tsc 干净；vitest 191 passed / 12 files；vite exit=0 / tauri exit=0
+真实产品验收 → 问题列表真实界面 8/8 + 7/7（cdp-diagnostic）；候选按钮流程与完整链**未通过**
+```
+
+**未完成项继续保留**：撤销残留（`build_view` 的 AutoFixed + Undone）、无云本地核验与受控候选场景、
+A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
