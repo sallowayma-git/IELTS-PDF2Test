@@ -2526,6 +2526,46 @@ This happens when a runtime is dropped from within an asynchronous context.
 两次云端开启的运行各自复现（线程号不同 → 不是同一条日志被重复读），而云端关闭、批次正常
 产出的那次**完全没有**。两者退出方式相同，所以 panic 与模型调用路径绑定，不是退出残留。
 
+### 9.4 根因链：A3/A4 的模型调用**没有**放进阻塞线程池（而云端预取放了）
+
+代码排除法把根因收敛到了一个点。链条如下（全部为只读核对，后端文件**未改动**）：
+
+```
+scheduler.rs:595  run_recognition_cycle(...)            ← 同步 fn，被【直接】调用
+  └ scheduler.rs:718 source_verifier 闭包
+      └ auto_pipeline.rs:1511 verify_source_answers_through_gateway   （同步 fn）
+          └ auto_pipeline.rs:1546 run_llm_gateway                     （同步 fn）
+              └ llm_gateway.rs:390 reqwest::blocking::Client::builder()…build()
+                  ⇒ 函数返回时 drop client ⇒ drop 其内部 Runtime ⇒ 在 async worker 上 panic
+```
+
+三条支撑证据：
+
+1. **调用点是异步上下文，且没有 `spawn_blocking`。** `run_recognition_cycle` 的调用方
+   （`scheduler.rs:595`）与 `.await`（同函数 `:584`）在同一函数体内 —— 即它跑在 tokio
+   worker 线程上。`processing/scheduler.rs` 里 **`spawn_blocking` 出现次数为 0**。
+2. **同一个文件里，云端预取是包了的。** `scheduler.rs:405` 的
+   `generate_cloud_reading_outline` 外面套着 `tauri::async_runtime::spawn_blocking`，
+   注释还写着「模型调用移入阻塞线程池，不占 async runtime」。
+   **这条规则只落到了云端预取，没落到 A3/A4。** 这正好解释了实测的
+   `outline:1 / a3:0`：outline 走了阻塞池所以成功，A3 没有所以 panic。
+3. **应用代码里没有任何别的 `Runtime` 可以 drop。** 全仓 `src-tauri/src` 检索
+   `Runtime::new` / `new_current_thread` 无命中；唯一启用 `blocking` 的 HTTP 客户端是
+   `Cargo.toml:32` 的 `reqwest = { version = "0.12", features = […, "blocking", …] }`。
+   panic 是「在异步上下文里 drop 运行时」，所以能 drop 的运行时只可能是它。
+
+**为什么后端自己的测试抓不到**：`reconcile/commands.rs:2254` 等用例在
+`#[test]` 的**同步线程**里调 `run_llm_gateway`，那里 drop 运行时是合法的，
+永远不会 panic。缺陷只在「从 async 上下文直接调」时出现——那正是产品路径。
+
+**建议修法**（与 `scheduler.rs:405` 保持一致，一行模式）：
+把 `scheduler.rs:595` 的 `run_recognition_cycle(...)` 放进
+`tauri::async_runtime::spawn_blocking` 并 `.await` 其 join 结果；
+或退一步，在 `run_llm_gateway` 内部把 `reqwest::blocking` 换成异步 `reqwest`。
+
+**尚可再确认一步**：带 `RUST_BACKTRACE=1` 重跑可拿到 panic 的完整栈。
+本报告未做这一步——因为无论栈指向哪里，修法都是上面那一条，且排除法已把候选收敛到唯一。
+
 ### F-R15-8（后端，未修，P0，阻塞任务书第 6 条）：模型调用路径在异步上下文里 drop 运行时
 
 - **最小复现**：`node scripts/e2e/tauri-cdp-controlled-service.mjs --diagnostic-args`。
@@ -2552,6 +2592,8 @@ This happens when a runtime is dropped from within an asynchronous context.
   云端**关闭**时批次反而正常（`source=not_run/EVIDENCE_MISSING`），所以是「启用模型 → 整条
   链崩」而不是「模型没接上」。
 - **归属**：调用链在 `processing/**`、`llm_gateway.rs`（后端独占区）。本轮**未改动**这些文件。
+- **根因位置**：`processing/scheduler.rs:595`（A3/A4 的模型调用未放进阻塞线程池），
+  完整链条与建议修法见 §9.4。
 - **附带交付**：为了让这条根因以后不用再翻日志，受控服务脚本新增 `report.appPanics`
   （`extractAppPanics`），把 panic 提到报告顶层，并在 A3 失败文案里指向它。
   **验证状态要说清**：函数已对**三份真实日志**验证（16:12、16:52、18:40 各提取到 1 条，
