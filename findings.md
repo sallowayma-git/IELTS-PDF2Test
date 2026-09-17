@@ -3252,6 +3252,10 @@ A3 的输入（待核验槽位集合）没变 → 复用首次结论 → `chains
 其中 `CLOUD_SLOT_MISSING` 那些条目的建议值是「（无）」，却同样给了「采用修正」按钮——
 语义可疑，但**这是既有设计，本轮未改**（改动会牵动按钮流程的验收判据，需要自己的验收）。
 
+> **补丁为什么一条都没有——完整因果链见 §13.7。** 简言之：云端对真实槽位无值 →
+> 不构成答案分歧 → A4 从未被调用 → 补丁从未产生。不是「产生了又被丢弃」。
+> 因此本节的「归属」准确说法是**上游（云端候选）**，不是裁决层。
+
 ### 13.4 `verification-status-matches-chains`：从「空转通过」到「真通过」
 
 这一条在修复时暴露出它**长期假通过**的完整链条（结论与并发 agent 一致，此处补前端侧实测）：
@@ -3308,3 +3312,68 @@ statusLine: "云端发现 29 处建议"     ← 期望 == 实际
 **教训**：并发 agent 改同一文件时，`git status` 的 M 标记会「凭空消失」——
 不是你的改动被回滚，而是对方提交时把工作区一起带上了。判断某句话是谁写进去的，
 要用 `git log -S "<那句话>"`，而不是看 `git status`。
+
+### 13.7 按钮不可执行的完整因果链（把 §13.2 与 §13.3 串成一条）
+
+§13.2（重跑不产新批次）与 §13.3（无补丁）**不是两个独立问题，是同一个根因的两种表现**。
+
+实测数据（本次运行的 `decision.json`，29 条）：
+
+| `field` | `resolution` | 条数 | local | cloud | source | `reasonCode` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `slot_placement` | `needs_review` | 1（`cloud-q14`） | 无 | **有** | 无 | `SUBSTANTIVE_DIVERGENCE` |
+| `answer` | `unverifiable` | 14（`q27`–`q40`） | 有 | **无** | 无 | `EVIDENCE_MISSING` |
+| `source_coverage` | `needs_review` | 14（`q27`–`q40`） | 有 | **无** | 无 | `SUBSTANTIVE_DIVERGENCE` |
+
+**云端对 `q27`–`q40` 一个值都没给。** 而 A4 的入选条件是
+`needs_adjudication()`（`reconcile/adjudicate.rs:229`）：
+
+```rust
+cloud_usable
+    && item.field == DecisionFieldV1::Answer
+    && matches!(item.resolution, NeedsReview | Unverifiable)
+    && item.reason_code != USER_EDITED
+    && item.reason_code != DEPENDENCY_BLOCKED
+    && has_answer_divergence(item)   // 三路里「确实给出值」的答案必须互不相同
+```
+
+- `q27`–`q40` 的 14 条 `answer` 项：只有 `local` 一路有值，
+  `has_answer_divergence` 的 `distinct.len() > 1` **为假**（`None` 不算一种取值）
+  → 不构成分歧 → 不入 A4。
+- 唯一的 `cloud-q14` 有云端值，但它的 `field` 是 `slot_placement`，
+  被 `item.field == Answer` 挡在 A4 之外。
+- 另 14 条 `source_coverage` 同样不是 `answer` 字段，也不入 A4。
+
+于是 `eligible` 为空 → `apply_adjudication` 在 `adjudicate.rs:401` 直接返回 `Succeeded`
+（「没有需要模型裁定的分歧」）→ **A4 一次都不调用**（`a4: 0`，与 `llm-calls.jsonl` 里
+没有 `adjudicate_divergence` 一致）→ 没有任何 `proposed_patch`（补丁只在 A4 裁定
+「采用某一路答案」之后产生，见 `adjudicate.rs:342`）→ 三条按钮场景全部不可执行。
+
+**为什么云端对真实槽位无值**：受控样本的目标是 `q14`，而本仓夹具是 `q27`–`q40`
+（脚本注释已写明这一点）。脚本准备了**派生样本**（目标改成 `q27`）正是为此，
+但派生样本的重跑**没有产出新批次**（§13.2：batch_id 内容寻址）——于是
+`decision.json` 仍是首次那批，云端照旧只回答 `q14`。
+
+**完整因果链**：
+
+```
+派生样本重跑 → retry_processing
+  → batch_id = (job_id, source_sha256, base_edit_version) 三者未变 → batch_id 不变
+  → 复用首次的冻结快照与首次云端候选
+  → 云端对 q27–q40 始终无值
+  → has_answer_divergence 为假 → needs_adjudication 为假 → eligible 为空
+  → A4 从不调用（a4: 0），adjudication 如实报 Succeeded
+  → 没有 proposed_patch
+  → accept / undo / late-model 三个场景全部 not-executable
+```
+
+**这条链上没有任何一环是「错」的**：batch_id 内容寻址是对的（保证幂等）、
+`has_answer_divergence` 只看有值的链是对的（`None` 不该算一种取值）、
+`field == Answer` 的限定是对的（槽位放置不是答案分歧）。**堵点在于验收工具
+没有能力把「不同的输入」送进去**——它依赖 `retry_processing` 造新批次，
+而重试的语义恰恰是「同一输入再算一次」。
+
+**给后端的最小交接**：要验按钮流程，需要一条能**改变云端候选**的路径
+（换夹具使其与样本目标一致，或提供强制重核验/换样本的入口），
+而不是继续依赖 `retry_processing`。这也解释了 §13.3 里那个「按钮可见却没有补丁」
+的表面矛盾——补丁不是被丢掉的，而是**从头到尾没有任何一条候选走到会产出补丁的那一步**。
