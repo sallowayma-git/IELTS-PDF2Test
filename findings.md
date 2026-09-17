@@ -2406,8 +2406,8 @@ taskId 稳定为 `missing-answer:q27+…+q40`，定位命中 `group-1-stimulus-b
 下一步要推进它，需要让 C 阶段的重试真正执行（允许覆盖已有草稿后重跑）——这属于后端侧能力
 （`retry_processing` 与草稿保护的交互），本轮只提交证据与工具，不动后端代码。
 
-`tauri-cdp-recognition-buttons.mjs` 的 5 个场景之所以全部 `not-executable`，正是卡在这一环：
-没有批次 → 没有候选项 → 按钮流程没有对象可执行。**这是同一个根因的下游表现。**
+`tauri-cdp-recognition-buttons.mjs` 的 5 个场景之所以全部 `not-executable`，
+**不是**因为「没有批次」——第八节查清了：批次是产出的，卡住的是原文核验链。见下。
 
 ### 顺带清理：12 个命令输出残留
 
@@ -2418,5 +2418,49 @@ taskId 稳定为 `missing-answer:q27+…+q40`，定位命中 `group-1-stimulus-b
 `.workbuddy/memory/**` 按仓库护栏**不动**。
 
 至此 `git status` 除 `.workbuddy/memory/**` 外干净。
+
+## 八、把 recognition-buttons 的「无法执行」查到底（F-R15-7），并修正 F-R12-2 的表述
+
+### 起因：数据库里对不上的两件事
+
+`inspect-run-db` 打开 issue-list 的 run 时发现 `recognition_batches_v1` **有 1 行**、
+`local_status=succeeded`、`reconcile_status=succeeded`、`actionable_count=14`
+——**批次是产出的**。而 `freeze-order` / `timeline` 的 run 里没有批次。
+差别在于：后两者**刻意不打开工作区**（它们要观测「只导入不打开」这个条件）。
+
+### F-R15-7（验收工具，已修）：`not-executable` 的归因两处都不准
+
+**第一处：等得太短。** 旧版导入后 `sleep(2000)` 就读决策视图，而实测批次在 **6.2 秒**才落盘
+（修正后报告里 `candidateWait={"waitedMs":6274,"batchId":"rec-…-v1-f13bd65cb5f5","localState":"succeeded"}`）。
+改为轮询等批次（120 秒超时，或本地链进终态），并把 `candidateWait` 写进报告。
+
+**第二处：文案把原因说反了。** 旧文案是「本仓当前没有真实候选项（actionable/autoApplied 为空）」，
+而实测 `actionableCount=14`。真实原因是：**14 条候选全部没有可采纳/可拒绝的动作**
+（`needsReview=0`、`autoFixed=0`、其余 14 条无可操作动作），因为 `source` 链
+`not_run`/`EVIDENCE_MISSING`：「原文件没有可核验的文本证据，结论只能标记为无法判断。」
+（后端侧对应 `unverifiable_count=14`。）
+
+改成按真实情况分岔：真的没有候选 → 说「没有候选」；候选存在但无可操作项 → 说出条数分布
+并附 source 链状态。顶层 `verdictReason` 也去掉了「例如没有真实候选项」这个会把原因带偏的举例。
+
+> **我自己的判断也被实测修正了一次。** 我先怀疑是「读得太早」，等待修复确实必要（2s < 6.2s），
+> 但**单独修等待并不能让场景可执行**——5 个场景仍然 `not-executable`，真正的阻塞是原文核验链。
+
+### F-R12-2 的表述修正：「无云导入无批次」不准确
+
+| 观测条件 | 结果 | 证据 |
+| --- | --- | --- |
+| 导入后**不打开工作区** | 无批次 | `freeze-order` A 阶段、`timeline`（冻结 `canonical_not_seeded`） |
+| 导入后**打开工作区**（用户正常流程） | **有批次** | `issue-list` / `recognition-buttons` 的库里 `recognition_batches_v1` 有行、`local_status=succeeded`、`actionable_count=14` |
+
+**所以在用户正常流程下，批次是会产出的。** 无批次只出现在「不打开工作区」的观测条件下
+（没人播种 → 冻结必然 `canonical_not_seeded` 失败）。`freeze-order` 的 A 阶段正是这种条件，
+它测到的「无批次」是**设计造成的**，不代表用户会遇到。上一节据此写的「无云导入无批次」
+过于笼统，这里更正。
+
+**真正卡住 A3/A4 按钮流程的是另一件事**：`source` 链 `not_run` / `EVIDENCE_MISSING`
+（原文件没有可核验的文本证据）→ 14 条候选全部无法判断 → 没有可采纳/可拒绝的项。
+这与 R14 的 F-R14-4（A3 的网关调用只留下输入缓存，没有调用记录、没有输出、服务端零 POST）
+指向**同一条链**，交后端。
 
 

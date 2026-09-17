@@ -253,7 +253,30 @@ async function main() {
   await openPanel();
 
   // ---- 候选可用性：这是所有场景的前提 ----
-  const decision = await readDecision();
+  //
+  // **必须轮询等批次落盘**，不能读完草稿就立刻读决策视图：
+  //   - 草稿是「播种」出来的（打开工作区即产生），而批次要等本地识别真正跑完才出现；
+  //   - 实测同一份夹具：导入后草稿很快就有，而 `local_status=succeeded` 出现在约 36 秒后
+  //     （见 issue-list run 的库里 `recognition_batches_v1` 有 1 行、`actionable_count=14`）。
+  // 旧版在这里只读一次，于是 5 个场景全部被判成「本仓当前没有真实候选项」——
+  // **那不是产品没有候选项，是验收脚本读得太早**（假阴性）。
+  // 现在轮询到批次出现或本地链进入终态为止，超时才如实报「无法执行」。
+  const candidateStartedAt = Date.now();
+  let decision = await readDecision();
+  const batchDeadline = Date.now() + 120000;
+  while (Date.now() < batchDeadline) {
+    if (decision.batchId) break;
+    const localState = decision.chains?.local?.state ?? null;
+    if (["succeeded", "partial", "unusable", "failed", "canceled"].includes(localState)) break;
+    await sleep(3000);
+    decision = await readDecision();
+  }
+  report.candidateWait = {
+    waitedMs: Date.now() - candidateStartedAt,
+    batchId: decision.batchId,
+    localState: decision.chains?.local?.state ?? null,
+  };
+
   const reviewItems = decision.actionable.filter((i) => i.resolution === "needs_review");
   const autoFixedItems = decision.autoApplied.filter((i) => i.resolution === "auto_fixed");
   report.candidates = {
@@ -262,11 +285,31 @@ async function main() {
     actionableCount: decision.actionable.length,
     needsReviewCount: reviewItems.length,
     autoFixedCount: autoFixedItems.length,
+    // 「其余」= 既不是「待确认」也不是「已自动修正」的候选。
+    otherCount: decision.actionable.length - reviewItems.length - autoFixedItems.length,
   };
 
+  // 「无法执行」的原因必须说准，因为它直接决定该找谁修。
+  //
+  // 旧文案一律写「本仓当前没有真实候选项（actionable/autoApplied 为空）」，
+  // 而实测这一版是 `actionableCount=14`、`needsReview=0`、`autoFixed=0`：
+  // **候选是产出的**，只是 14 条全部没有可采纳/可拒绝的动作（后端记为 unverifiable，
+  // 因为 `source` 链 `not_run`/`EVIDENCE_MISSING`：「原文件没有可核验的文本证据」）。
+  // 「没产出候选」与「产出了但判不了」是两件完全不同的事，前者查调度，后者查原文核验。
+  const sourceChain = decision.chains?.source ?? null;
   const NO_CANDIDATES =
-    "本仓当前没有真实候选项（actionable/autoApplied 为空）：按钮流程的前提不成立。"
-    + "任务书要求此时记为无法执行，不得跳过或判 passed。";
+    decision.actionable.length === 0
+      ? "本仓当前没有真实候选项（actionable/autoApplied 为空）：按钮流程的前提不成立。"
+        + "任务书要求此时记为无法执行，不得跳过或判 passed。"
+      : `候选存在但没有**可操作**的项：actionable=${decision.actionable.length} 条，其中`
+        + `needsReview=${reviewItems.length}、autoFixed=${autoFixedItems.length}、`
+        + `其余 ${decision.actionable.length - reviewItems.length - autoFixedItems.length} 条无可采纳/可拒绝动作`
+        + (sourceChain
+          ? `；原文核验链 source=${sourceChain.state}/${sourceChain.reasonCode ?? "-"}`
+            + (sourceChain.message ? `（${sourceChain.message}）` : "")
+          : "")
+        + "。按钮流程需要有「待确认」或「已自动修正」的项才有对象。"
+        + "任务书要求此时记为无法执行，不得跳过或判 passed。";
 
   // ---- 场景 1：接受建议 ----
   const acceptTarget = reviewItems[0];

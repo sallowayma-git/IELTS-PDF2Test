@@ -127,7 +127,12 @@ export function computeScenarioVerdict({ scenarios = [] } = {}) {
   if (notExecutable.length) {
     return finish(
       "not-executable",
-      `以下场景本次**无法执行**（前提不成立，例如没有真实候选项）：${notExecutable.join(", ")}。这不等于通过。`
+      // 顶层只报「哪些场景没跑成」，**不替它们编原因**：原因在各场景自己的
+      // `detail.reason` 里（可能是「真的没有候选项」，也可能是「候选存在但全部无法判断」，
+      // 这两件事的修复方向完全不同）。旧文案举例「例如没有真实候选项」，实测会把
+      // `actionableCount=14` 那种情况也带偏成「没有候选项」。
+      `以下场景本次**无法执行**（前提不成立）：${notExecutable.join(", ")}。` +
+        "各场景的具体原因见 `scenarios[].detail.reason`。这不等于通过。"
     );
   }
   return finish("passed", `全部 ${passed.length} 个场景通过`);
