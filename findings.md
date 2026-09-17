@@ -2409,4 +2409,14 @@ taskId 稳定为 `missing-answer:q27+…+q40`，定位命中 `group-1-stimulus-b
 `tauri-cdp-recognition-buttons.mjs` 的 5 个场景之所以全部 `not-executable`，正是卡在这一环：
 没有批次 → 没有候选项 → 按钮流程没有对象可执行。**这是同一个根因的下游表现。**
 
+### 顺带清理：12 个命令输出残留
+
+仓库根与 `src-tauri/` 下还散着 12 个 `*_out.txt`（`gitcheck_out.txt`、`status2_out.txt`、
+`tmp_build.txt`、`stash_out.txt` …）。抽查确认它们全是 PowerShell 重定向残留
+（内容里还留着 `Set-Location "F:\workspace\PDF2Test"; git status …` 这类命令行本身），
+没有产品价值，已移到 `tmp/command-output-residue/`（**移动不是删除**，可逆）。
+`.workbuddy/memory/**` 按仓库护栏**不动**。
+
+至此 `git status` 除 `.workbuddy/memory/**` 外干净。
+
 
