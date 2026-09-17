@@ -2566,7 +2566,22 @@ scheduler.rs:595  run_recognition_cycle(...)            ← 同步 fn，被【�
 **尚可再确认一步**：带 `RUST_BACKTRACE=1` 重跑可拿到 panic 的完整栈。
 本报告未做这一步——因为无论栈指向哪里，修法都是上面那一条，且排除法已把候选收敛到唯一。
 
-### F-R15-8（后端，未修，P0，阻塞任务书第 6 条）：模型调用路径在异步上下文里 drop 运行时
+### F-R15-8（后端，已修，P0，原阻塞任务书第 6 条）：模型调用路径在异步上下文里 drop 运行时
+
+> **处置（2026-09-17 本轮）：已修。** 把整段同步识别周期放进**一次**阻塞边界
+> （`run_cycle_in_blocking_boundary` → `spawn_blocking`），使 A3 `verify_source_answers` /
+> A4 `adjudicate_divergence` 的 blocking HTTP 客户端的**创建、请求、释放**全部发生在该边界内；
+> 周期失败经 `settle_cycle_failure` 落**持久化终态**（join 失败 `RECOGNITION_CYCLE_JOIN_FAILED`、
+> 普通失败 `RECONCILE_FAILED`，被取消则判 `cancelled` 而非 `failed`），不再停在 processing、
+> 也不伪装成核验成功。回归证据（单测 + 真机受控服务）见 `progress.md` 的
+> 「2026-09-17 A3/A4 阻塞边界」小节。**下面这段复现记录保留为修复前的证据快照，不再代表当前状态。**
+>
+> 顺带纠正本条目里的一个观察：当时记为「`verification-status-matches-chains` **PASSED**」，
+> 那次通过是**空转通过**——受控验收脚本把 `chainSnapshot()` 的键（`local`/`cloud`/…）直接展开
+> 传给 `expectedStatusText()`，而该函数解构的是 `cloudStatus`/`sourceStatus`/…，四个形参全
+> `undefined`，规则在第 3 条就返回常量「题稿已生成，可以开始编辑」。批次产不出来时真实文案
+> 恰好也是这句，于是「期望 == 实际」在两边都空的场景里成立。本轮已把这层映射补成
+> `expectedStatusForSnapshot()`，断言才真正被数据驱动。
 
 - **最小复现**：`node scripts/e2e/tauri-cdp-controlled-service.mjs --diagnostic-args`。
   该脚本写入一个启用的受控 profile，前端按产品正常判定自动 `cloudEnabled=true`

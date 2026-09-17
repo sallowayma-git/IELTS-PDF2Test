@@ -1,5 +1,86 @@
 # Progress
 
+## 2026-09-17 A3/A4 阻塞边界：真机 panic 修复 + 缺失批次归因（本轮）
+
+### 本轮提交
+
+PDF2Test：`8e1df28`（修复，**仅后端**）→ `85b76ec`（受控验收脚本两处断言/观测缺陷）→ 本小节所在提交（记录）
+
+### 修了什么（对应 findings.md 的 F-R15-8，原判 P0）
+
+`reqwest::blocking` 客户端在已进入 async 运行时的线程上创建或释放会 panic，真机命中
+`Cannot drop a runtime in a context where blocking is not allowed`（tokio `blocking/shutdown.rs:51`），
+任务悬挂在 `cloud_recognition`、批次根本不产出。修法：整段同步识别周期放进**一次**
+`spawn_blocking` 边界（只挪客户端不够——换个出口仍会踩），失败经 `settle_cycle_failure`
+落持久化终态；取消判 `cancelled` 而非 `failed`；不用 `finalize_ready_without_lease` 兜底
+（那会把失败写成 `ready_for_review`，又是一次伪装成功）。
+
+### 测试与联调实测
+
+| 项 | 结果 |
+| --- | --- |
+| `cargo test --lib` | **727 passed / 0 failed / 11 ignored**（基线 723，本轮新增 4） |
+| 受控服务真机验收 `report.appPanics` | **1 → 0** |
+| `a3-a4-requests-reach-service` | FAILED（`a3:0`，网关 `{input:1, output:0}`）→ **PASSED** |
+| `controlled-service-drives-candidates` | FAILED（无批次）→ **PASSED** |
+| 构建可归因性 | exe `78f993f4…`，frontendInputs `6d48be6471fb`，backendInputs `887d538272dc` |
+
+同一脚本、同一夹具（`demanding-reading-passage-3.pdf`，mode 序列 `normal×3 → partial → fail`）
+修复前后对照：
+
+| 场景 | 修复前 `6eaefd15`（19:44） | 修复后 `78f993f4`（21:03） |
+| --- | --- | --- |
+| `controlled-service-drives-candidates` | FAILED（无批次，四链 `not_run`） | **PASSED** |
+| `a3-a4-requests-reach-service` | FAILED（A3 输入缓存有、服务端零 POST） | **PASSED** |
+| `verification-status-matches-chains` | PASSED（**空转通过**，见下） | FAILED → 本轮已修（`85b76ec`） |
+| `late-model-result-does-not-overwrite-user-edit` | FAILED（重跑后没有产出批次） | FAILED（新批次里没有「待确认且带可应用补丁」的候选，前提不成立） |
+| `a3-partial-not-reported-as-complete` | FAILED（`source=not_started`） | FAILED（`source=succeeded`，期望 `partial`） |
+| `a3-model-failure-not-reported-as-complete` | FAILED（`source=not_started`） | FAILED（`source=succeeded`，期望 `partial`） |
+| `accept-manual-candidate` / `undo-manual-accept` | not-executable | not-executable（同上：无带补丁候选） |
+
+`verification-status-matches-chains` 那次 PASSED 是**空转通过**：脚本把 `chainSnapshot()` 的键
+直接展开传给 `expectedStatusText()`，形参名不匹配导致规则退化成常量，而当时真实文案恰好
+等于该常量。`85b76ec` 补上映射后，用本次运行的真实快照复算得到「云端发现 29 处建议」，
+与当时的 DOM 文案逐字一致——即**前端与准则其实是一致的**，此前只是断言没在断言。
+
+### 缺失批次：**不是** panic 引起的；两种场景实测都没有批次
+
+新增 `--open-workspace` 后分别实测（同一二进制 `78f993f4`，无云导入，各观测 120 秒 / 39 个采样点）：
+
+| 场景 | 批次 | 应用日志 |
+| --- | --- | --- |
+| 导入后**不打开**工作区 | 始终无（`batchId=null`，四链 `not_run`） | `freeze local candidate snapshot failed … canonical_not_seeded:…` |
+| 导入后**1.0 秒即打开**工作区（1.03 秒可见） | 始终无（同上） | **同一条** `canonical_not_seeded` |
+
+机制（已定位到函数）：识别周期的冻结步骤要求权威稿已存在
+（`scheduler.rs:959` `get_canonical_ds(...).ok_or_else(|| "canonical_not_seeded:…")`），
+而**播种权威稿只发生在读工作区条目时**（`library/commands.rs:26` 的按需 `migrate_single_item`，
+以及发布预检）。导入路径本身不播种 → 后台周期第一次冻结就必然失败；等页面打开时，任务
+已经失败且没有人再替它重试，所以「打开页面」也救不回来。
+
+结论有两点，都写进后续任务：一是缺失批次与本次 panic **是两个独立缺陷**（panic 在更晚的
+A3/A4 阶段，这里倒在更早的冻结阶段）；二是**后台处理依赖打开页面**这条设计不仅不该被
+视为正常，而且在实测里**即使打开了也无效**——它是一场通常输掉的竞速。
+
+### 本轮新暴露、尚未判定的一条
+
+`a3-partial-*` / `a3-model-failure-*` 修复前是 `not_started`（压根没跑），修复后变成
+`succeeded`（周期跑完了）。这两个场景正是 findings.md 里写明「要等 F-R15-8 修好、A3 真的
+跑出部分返回/调用失败之后才能判」的那两条。现在数据有了，但**尚不能判定**是
+「A3 在该轮次根本没被调用（无可核验项 → `model_status=NotRun`）」还是「模型通道失败/
+部分返回没有被如实反映到链状态」。要分清需要带 `--keep` 重跑并检查该轮次的
+`verify_source_answers-input/output` 与 `llm-calls.jsonl`——本轮运行结束后作业目录已被回收，
+无法事后判定。**本轮不把它算作已修复，也不算作已确认的产品缺陷。**
+
+### 登记为后续任务（本轮不做）
+
+1. **权威稿播种时机**：把播种从「读工作区条目时按需触发」提前到导入/入队路径（或至少在冻结
+   之前），让无云导入不再依赖用户打开页面。对应上面那张两场景表。
+2. **预检与发布口径不一致**（用户指定登记，本轮不混入）。上一轮的同类项记在本文件
+   「2026-09-14 确认轮复核」一节（`已修：预检复刻同一步播种`），本轮按用户口径重新登记待查。
+3. **重试结果被丢弃**：即 findings.md 的 **F-R15-9**（`queue.rs` 的 `retry()` 返回的
+   「到底有没有入队」被 `scheduler.rs` 丢掉，前端只能无条件宣称已入队）。
+
 ## 2026-09-14 确认轮复核 → 修掉 3 处残留（接手续行 · 第四轮）
 
 ### 本轮提交链
