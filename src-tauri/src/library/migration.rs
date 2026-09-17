@@ -4,6 +4,12 @@
 //! →（V1 转换后续接入）→ 无候选时保留 `migration_required` 外壳。
 //! 幂等：`upsert_item_shell` 不覆盖已存在行；`seed_canonical_ds` 只填空缺权威稿，
 //! 已被用户编辑的稿件永不被迁移覆盖。
+//!
+//! 两个入口，职责分离：
+//! - [`ensure_initial_canonical`]：**后台导入链**的首次初始化（只播种，不做兼容修复），
+//!   由 `processing::scheduler::run_job_inner` 在冻结本地基线**之前**调用；
+//! - [`migrate_single_item`]：存量数据的**按需**入口（工作区打开、发布预检），
+//!   已有稿时才会走 `repair_shadow_seed` 兼容修复。
 
 use std::fs;
 use std::path::Path;
@@ -151,20 +157,33 @@ pub(crate) fn migrate_existing_items(root: &Path) -> CommandResult<MigrationRepo
     Ok(report)
 }
 
-/// 迁移单个 item（get_workspace_item 首次访问的按需填充）：返回是否填充了权威稿。
-pub(crate) fn migrate_single_item(root: &Path, job_id: &str) -> CommandResult<bool> {
-    let job_path = job_dir(root, job_id);
+/// **首次初始化**首稿（幂等）：把已成功产出的本地 artifact 播种成权威稿。
+///
+/// 这是后台导入链的初始化入口。它与 [`migrate_single_item`] 的区别在于**不做存量
+/// 兼容修复**（[`repair_shadow_seed`]）：那一步会把 job 目录里既有的旧 shadow 写回
+/// 权威稿，是给历史数据准备的修复路径；新导入若走它，一次迟到的 shadow 覆写就会
+/// 盖掉用户编辑。新导入只需要「没有稿就播种」这一件事。
+///
+/// 幂等性由 [`seed_canonical_ds`] 的 `canonical_ds_json IS NULL` 写入条件保证：
+/// 已有稿（先前导入播的、或用户编辑过的）一律原样保留，重复调用零副作用。
+///
+/// 返回值语义（调用方必须区分，不得混淆）：
+/// - `Ok(true)`：调用后权威稿**可用**；
+/// - `Ok(false)`：artifact 里没有可辨认的题稿候选（如非阅读稿）——没什么可播；
+/// - `Err`：DB / 文件读取失败——**本该有稿却读不到**，一律上抛，不得用 `false` 冒充。
+pub(crate) fn ensure_initial_canonical(root: &Path, job_id: &str) -> CommandResult<bool> {
     let conn = super::repository::open_library_connection(root)?;
     if let Some(existing) = get_item(&conn, job_id)? {
         if existing.has_canonical_ds {
-            return repair_shadow_seed(&conn, root, job_id);
+            return Ok(true);
         }
     }
     let Some((authoring, _source)) = candidate_authoring(root, job_id) else {
+        // 没有候选：不建壳、不写稿，如实返回 false。
         return Ok(false);
     };
     if get_item(&conn, job_id)?.is_none() {
-        let job_json: Value = fs::read(job_path.join("job.json"))
+        let job_json: Value = fs::read(job_dir(root, job_id).join("job.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or(Value::Null);
@@ -179,7 +198,25 @@ pub(crate) fn migrate_single_item(root: &Path, job_id: &str) -> CommandResult<bo
             },
         )?;
     }
-    seed_canonical_ds(&conn, job_id, &authoring.to_string(), "action_required")
+    seed_canonical_ds(&conn, job_id, &authoring.to_string(), "action_required")?;
+    // 写入条件带 `IS NULL`：并发的另一次播种可能先到，因此以**重新读取**为准，
+    // 而不是把 `seed_canonical_ds` 的返回值当成「现在有没有稿」。
+    Ok(get_item(&conn, job_id)?.map(|item| item.has_canonical_ds).unwrap_or(false))
+}
+
+/// 迁移单个 item（按需填充入口：工作区首次访问 / 发布预检）。
+///
+/// 返回是否**本次填充**了权威稿。已有稿的条目只走存量兼容修复，返回值是该修复是否
+/// 生效；没有稿的条目委托给首次初始化 [`ensure_initial_canonical`]。
+pub(crate) fn migrate_single_item(root: &Path, job_id: &str) -> CommandResult<bool> {
+    let conn = super::repository::open_library_connection(root)?;
+    if let Some(existing) = get_item(&conn, job_id)? {
+        if existing.has_canonical_ds {
+            return repair_shadow_seed(&conn, root, job_id);
+        }
+    }
+    drop(conn);
+    ensure_initial_canonical(root, job_id)
 }
 
 #[cfg(test)]
@@ -397,6 +434,93 @@ mod tests {
             "迟到覆写的 shadow 不得写回用户编辑过的 canonical"
         );
         assert_eq!(version, 2);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 首次初始化：无稿则播种、有稿则原样保留；**绝不做存量兼容修复**。
+    ///
+    /// 与 `migrate_single_item` 的分工是这条测试的核心。后者对已有稿会走
+    /// `repair_shadow_seed`（把 job 目录里的 shadow 写回 canonical），那是给历史数据
+    /// 的修复路径；后台导入链若走它，一次迟到的 shadow 覆写就会盖掉用户编辑。
+    #[test]
+    fn ensure_initial_canonical_seeds_once_and_never_repairs_over_user_edits() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        seed_job(&root, "job-a", true);
+
+        // (1) 无 DB 行 + 有 artifact ⇒ 建壳并播种。
+        assert!(ensure_initial_canonical(&root, "job-a").unwrap());
+        {
+            let conn = super::super::repository::open_library_connection(&root).unwrap();
+            let item = get_item(&conn, "job-a").unwrap().expect("必须建立外壳行");
+            assert!(item.has_canonical_ds, "必须播种出权威稿");
+            assert_eq!(item.current_edit_version, 1);
+        }
+
+        // (2) 用户编辑（真实编辑事务，版本推进到 2）。
+        let conn = super::super::repository::open_library_connection(&root).unwrap();
+        let mut tx_conn = conn;
+        crate::library::repository::apply_editor_commands_tx(
+            &mut tx_conn,
+            &crate::library::repository::ApplyEditorCommandsInput {
+                item_id: "job-a".into(),
+                base_version: 1,
+                request_id: None,
+                commands: vec![],
+                title: Some("用户改的标题".into()),
+            },
+            &|_, _| Ok(()),
+            &|_| Ok(()),
+        )
+        .unwrap();
+
+        // (3) 迟到识别覆写 shadow（内容不同）。
+        let mut late_shadow = serde_json::json!({
+            "schemaVersion": "IeltsAuthoringIRV2",
+            "exam": { "title": "迟到识别覆写的 shadow" },
+            "taskGroups": []
+        });
+        late_shadow["exam"]["title"] = serde_json::json!("迟到识别覆写的 shadow");
+        fs::write(
+            crate::util::job_dir(&root, "job-a").join(AUTHORING_V2_SHADOW_FILE),
+            serde_json::to_vec(&late_shadow).unwrap(),
+        )
+        .unwrap();
+
+        // (4) 再次初始化：幂等，且**不得**把 shadow 写回 canonical。
+        assert!(ensure_initial_canonical(&root, "job-a").unwrap());
+        let (ds, version) = get_canonical_ds(&tx_conn, "job-a").unwrap().unwrap();
+        assert_eq!(
+            ds.pointer("/exam/title").and_then(Value::as_str),
+            Some("用户改的标题"),
+            "首次初始化绝不覆盖已有稿（含用户编辑），也不得走 shadow 修复路径"
+        );
+        assert_eq!(version, 2, "重复初始化不得重置用户编辑推进的版本");
+
+        // (5) 对照：同一个方向上 `migrate_single_item` 才会尝试兼容修复（这里因
+        // canonical 已被编辑、且 journal 非空而不动），证明两条路径确实不同。
+        let _ = migrate_single_item(&root, "job-a").unwrap();
+        let (ds_after, version_after) = get_canonical_ds(&tx_conn, "job-a").unwrap().unwrap();
+        assert_eq!(ds_after.pointer("/exam/title").and_then(Value::as_str), Some("用户改的标题"));
+        assert_eq!(version_after, 2);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// 没有 artifact 候选时必须如实返回 `false`，且**不留下**空壳行——
+    /// 空壳行会让题库多出一条永远打不开的条目。
+    #[test]
+    fn ensure_initial_canonical_reports_false_without_a_candidate() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        seed_job(&root, "job-empty", false);
+
+        assert!(!ensure_initial_canonical(&root, "job-empty").unwrap());
+        let conn = super::super::repository::open_library_connection(&root).unwrap();
+        assert!(
+            get_item(&conn, "job-empty").unwrap().is_none(),
+            "没有候选时不得建壳"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

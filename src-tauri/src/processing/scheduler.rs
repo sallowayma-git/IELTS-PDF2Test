@@ -452,6 +452,36 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         return;
     }
 
+    // ── 首稿初始化（幂等，必须在冻结之前）──────────────────────────────
+    // 本地 artifact 已成，但**权威稿还没建**。播种此前只发生在 `set_item_status_ready`
+    // 里，也就是**冻结之后**——而冻结要读权威稿来投影本地候选，于是它必然以
+    // `canonical_not_seeded` 失败：无云导入整条比较链被跳过，有云导入也失去了可信基线。
+    // 顺序因此固定为：初始化 → 取基线 → 冻结 → 发布可编辑。
+    //
+    // 「不打开工作区也能继续」正是靠这里：初始化由后台无条件完成，不依赖前端
+    // 打开工作区触发按需迁移。
+    let mut freeze_error: Option<String> = None;
+    let init_result = tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        let job_id = job_id.clone();
+        move || crate::library::migration::ensure_initial_canonical(&root, &job_id)
+    })
+    .await
+    .unwrap_or_else(|error| Err(format!("processing_join:{error}")));
+    match init_result {
+        Ok(true) => {}
+        Ok(false) => {
+            // artifact 里没有可辨认的题稿候选：不冻结、不裁决。这不是把失败掩码掉，
+            // 而是一次如实降级——原因写进 `last_error_code` 供 UI / 诊断区分。
+            eprintln!("[processing] no authoring candidate to seed initial canonical for {job_id}");
+            freeze_error = Some("CANONICAL_INIT_NO_CANDIDATE".to_string());
+        }
+        Err(error) => {
+            eprintln!("[processing] initial canonical seeding failed for {job_id}: {error}");
+            freeze_error = Some(format!("CANONICAL_INIT_FAILED:{error}"));
+        }
+    }
+
     // 批次基线：本地稿定稿时的编辑版本。**必须在草稿发布「可编辑」之前**冻结，
     // 否则用户若在「发布」与「读 baseline」之间改稿，基线版本会被抬高，而后续
     // 云端裁决若按当前稿重投影本地候选，就会把用户编辑误当成本地识别结果。
@@ -460,28 +490,23 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     // 让批次 id（由 job_id + 源文件哈希 + 版本三者派生）指向一个并不存在的批次，冻结出的
     // 快照与真实稿并不对应——这比「没有快照」更危险，因为它**看起来是可信的**。
     // 读取失败与冻结失败同等对待：不冻结、不裁决、不自动写入。
-    let mut freeze_error: Option<String> = None;
-    let base_edit_version = match current_edit_version_of(&app, &job_id).await {
-        Some(version) => {
-            // 冻结本地候选快照（与 base_edit_version 同一时刻），**早于**可编辑发布。
-            // `run_recognition_cycle_core` 走 `resolve_local_snapshot` 的「复用已冻结候选」
-            // 分支，因此稍后的云端裁决比对的是冻结时的本地结果，而不是用户编辑后的当前稿，
-            // 「云端运行期间用户改了稿」才能被识别，迟到结果才不会覆盖用户修改。
-            if let Err(error) = freeze_local_candidate_snapshot(&root, &job_id, version) {
-                eprintln!("[processing] freeze local candidate snapshot failed for {job_id}: {error}");
+    //
+    // 版本与稿件**由冻结函数在同一次读取中取回**（`get_canonical_ds` 一次查询同时返回
+    // 两列），调用方无从"读新 DS 却贴旧版本"。
+    let base_edit_version = if freeze_error.is_none() {
+        match freeze_local_candidate_snapshot(&root, &job_id) {
+            Ok(version) => version,
+            Err(error) => {
+                eprintln!(
+                    "[processing] freeze local candidate snapshot failed for {job_id}: {error}"
+                );
                 freeze_error = Some(error);
+                // 占位值：下面的 `freeze_error.is_some()` 分支保证它既不参与冻结也不参与裁决。
+                0
             }
-            version
         }
-        None => {
-            eprintln!(
-                "[processing] base edit version unreadable for {job_id}; \
-                 refusing to freeze or adjudicate on an unknown baseline"
-            );
-            freeze_error = Some("READ_BASE_VERSION_FAILED".to_string());
-            // 占位值：下面的 `freeze_error.is_some()` 分支保证它既不参与冻结也不参与裁决。
-            0
-        }
+    } else {
+        0
     };
 
     if launch_cloud {
@@ -912,24 +937,11 @@ fn summarize_cycle_report(report: Value) -> RecognitionCycleReport {
     }
 }
 
-/// 当前 canonical 编辑版本（批次基线的冻结值）。
-///
-/// `None` 表示**读取失败或 item 行不存在**，二者都不代表版本 0。调用方必须把它当成
-/// 「基线不可用」处理，不得用 `unwrap_or(0)` 折叠——0 是合法版本，用 0 顶替会让批次 id
-/// 指向一个不存在的批次，冻结出的快照看似可信却与实际稿无关。
-async fn current_edit_version_of(app: &AppHandle, job_id: &str) -> Option<i64> {
-    let root = app_root(app).ok()?;
-    let job_id = job_id.to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        let conn = open_library_connection(&root).ok()?;
-        crate::reconcile::store::current_edit_version(&conn, &job_id)
-            .ok()
-            .flatten()
-    })
-    .await
-    .ok()
-    .flatten()
-}
+// 原先这里有一个独立的 `current_edit_version_of`：先单独读版本，再由冻结函数单独读稿。
+// 那是「新稿 + 旧版本」的温床——两次读之间的一次保存就会让批次 id 指向内容不符的批次。
+// 现在版本与稿件由 `freeze_local_candidate_snapshot` 一趟查询同时取回，该函数已删除。
+// 与之配套的语义保留：读不到版本**不得**退化成 0（0 是合法版本），一律按「基线不可用」
+// 处理——上抛、不冻结、不裁决。
 
 /// 在草稿发布「可编辑」**之前**冻结本地候选快照（与 base_edit_version 同一时刻）。
 ///
@@ -941,19 +953,21 @@ async fn current_edit_version_of(app: &AppHandle, job_id: &str) -> Option<i64> {
 ///
 /// 幂等安全：`batch_id` 由输入与版本派生，重试必然复用同一快照，不会因重复冻结产生偏差。
 ///
+/// **版本来自这次读取本身**，不由调用方传入：`get_canonical_ds` 一趟查询同时取回
+/// 稿件与 `current_edit_version`，两者天生一致。若让调用方先单独读版本、函数再单独读稿，
+/// 两次读之间的一次保存就会产出「新稿 + 旧版本」的批次——批次 id 指向一个与快照内容
+/// 不对应的批次，比「没有快照」更危险，因为它看起来是可信的。返回冻结时采用的版本，
+/// 调用方必须用它（而不是任何先前读到的值）作为本次裁决的基线。
+///
 /// **每一步失败都必须上抛，不得静默吞掉。** 调用方拿「冻结成功」当作「迟到结果不覆盖
 /// 用户修改」护栏的前提：一旦快照缺失，`resolve_local_snapshot`（`reconcile/engine.rs`）
 /// 会退回「按当前稿现场重投影」分支，裁决就会把用户编辑后的稿当成本地识别结果，
 /// 于是「云端运行期间用户改了稿」永远检测不到、迟到结果照样覆盖用户修改——正是本
 /// 修复要消灭的缺陷。因此这里把连接 / 取稿 / 落盘三处失败逐一如实上抛。
-fn freeze_local_candidate_snapshot(
-    root: &Path,
-    job_id: &str,
-    base_edit_version: i64,
-) -> Result<(), String> {
+fn freeze_local_candidate_snapshot(root: &Path, job_id: &str) -> Result<i64, String> {
     let conn = open_library_connection(root)
         .map_err(|error| format!("open_library_connection_failed:{error}"))?;
-    let (canonical, _current_version) =
+    let (canonical, base_edit_version) =
         crate::library::repository::get_canonical_ds(&conn, job_id)
             .map_err(|error| format!("read_canonical_failed:{error}"))?
             .ok_or_else(|| format!("canonical_not_seeded:{job_id}"))?;
@@ -970,7 +984,7 @@ fn freeze_local_candidate_snapshot(
     );
     store::write_candidate(root, &batch_id, &snapshot, store::LOCAL_CANDIDATE_FILE)
         .map_err(|error| format!("write_local_snapshot_failed:{error}"))?;
-    Ok(())
+    Ok(base_edit_version)
 }
 
 async fn advance(
@@ -1217,7 +1231,11 @@ async fn set_item_status_ready(app: &AppHandle, job_id: &str) {
                     return Ok::<(), String>(());
                 }
             }
-            crate::library::migration::migrate_single_item(&root, &job_id)?;
+            // 首稿初始化**刻意不在这里**：它已由 `run_job_inner` 在冻结之前显式完成
+            // （`ensure_initial_canonical`）。放在这里会让「发布可编辑」早于本地基线冻结
+            // 发生，冻结就会因为读不到权威稿而失败。存量数据的按需迁移入口仍在
+            // `library::commands::get_workspace_item_core`（打开工作区）
+            // 与 `authoring_v2_commands::get_publish_preflight_core`（发布预检）。
             let conn = open_library_connection(&root)?;
             let status = crate::library::repository::get_canonical_ds(&conn, &job_id)?
                 .filter(|(ds, _)| ds.pointer("/quality/state").and_then(Value::as_str) == Some("ready"))
@@ -1507,7 +1525,8 @@ mod tests {
     /// 因此它**永远测不到真函数内部的静默吞错**（连接失败 return、canonical 缺失 return、
     /// `let _ =` 忽略写盘失败）。这里直接调用真函数，双向断言：
     ///   1. canonical 未就绪 ⇒ 必须返回 `Err`（过去是静默 `return`）；
-    ///   2. canonical 就绪 ⇒ 真正落盘，且 `resolve_local_snapshot` 复用该快照。
+    ///   2. canonical 就绪 ⇒ 真正落盘，且 `resolve_local_snapshot` 复用该快照；
+    ///   3. 返回的版本**就是**这趟读取到的行版本——批次 id 与实际快照必须同源。
     ///
     /// 为什么失败必须上抛：冻结失败会让 `resolve_local_snapshot` 退回「按当前稿重投影」，
     /// 于是迟到云端结果会覆盖用户修改。调度器正是据此丢弃云端结果、跳过裁决并把
@@ -1527,10 +1546,9 @@ mod tests {
         ensure_app_dirs(&root).unwrap();
         let job_id = "freeze-real-job";
         ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
-        let base_edit_version = 0_i64;
 
         // (1) canonical 未就绪：过去静默 return（调用方误以为已冻结），现在必须上抛。
-        let error = freeze_local_candidate_snapshot(&root, job_id, base_edit_version)
+        let error = freeze_local_candidate_snapshot(&root, job_id)
             .expect_err("canonical 未就绪时冻结必须失败并上抛，而不是静默返回");
         assert!(
             error.contains("canonical_not_seeded"),
@@ -1568,8 +1586,13 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        freeze_local_candidate_snapshot(&root, job_id, base_edit_version)
+        let base_edit_version = freeze_local_candidate_snapshot(&root, job_id)
             .expect("canonical 就绪时冻结必须成功");
+        // (3) 返回的版本必须是**行里那个版本**（外壳行初始为 1），不是调用方凭空给的 0。
+        assert_eq!(
+            base_edit_version, 1,
+            "冻结返回的版本必须来自本次 (稿, 版本) 同源读取，而不是调用方传入的占位值"
+        );
 
         let source_sha256 = commands::source_sha256_for_job(&root, job_id);
         let batch_id = commands::recognition_batch_id(job_id, &source_sha256, base_edit_version);
@@ -1608,6 +1631,97 @@ mod tests {
             answer,
             Some("frozen_answer"),
             "真函数落盘的快照必须优先于用户编辑后的当前稿"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 目标 1（阶段一）的**顺序锁定**：初始化必须发生在冻结之前。
+    ///
+    /// 修复前的顺序是「冻结 → `set_item_status_ready`（它才播种）」：冻结读不到权威稿，
+    /// 必然以 `canonical_not_seeded` 失败，于是无云导入整条比较链被跳过、有云导入失去
+    /// 可信基线。本测试用真实数据把两个顺序都跑一遍——旧顺序必须失败，新顺序必须成立，
+    /// 且**全程不打开工作区**（这正是「停留在题库页面也能完成处理」的含义）。
+    #[test]
+    fn initial_canonical_seeding_precedes_freeze_without_opening_the_workspace() {
+        use crate::library::migration::ensure_initial_canonical;
+        use crate::library::repository::{
+            get_canonical_ds, open_library_connection, upsert_item_shell, UpsertItemInput,
+        };
+        use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir};
+        use uuid::Uuid;
+
+        let root = std::env::temp_dir()
+            .join(format!("pdf2test-init-order-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job_id = "order-job";
+        ensure_job_dirs(&job_dir(&root, job_id)).unwrap();
+
+        // 本地识别 artifact（导入管道写出的 shadow，形状与真实产物一致）。
+        let authoring = json!({
+            "schemaVersion": "IeltsAuthoringIRV2",
+            "exam": { "title": "order" },
+            "taskGroups": [{
+                "taskId": "t1", "taskType": "short_answer",
+                "responseGroups": [{ "responseGroupId": "r1", "slotIds": ["q1"] }]
+            }],
+            "answerSlots": { "q1": { "questionNumber": 1, "answer": "seeded_answer" } },
+            "answerKey": { "q1": "seeded_answer" }
+        });
+        std::fs::write(
+            job_dir(&root, job_id).join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
+            serde_json::to_vec(&authoring).unwrap(),
+        )
+        .unwrap();
+
+        // 入队时建的壳：有行、无稿（等价于 `queue_import` 之后、识别收尾之前的状态）。
+        {
+            let conn = open_library_connection(&root).unwrap();
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: job_id,
+                    modality: "reading",
+                    title: "order",
+                    status: "processing",
+                    source_asset_id: None,
+                },
+            )
+            .unwrap();
+        }
+
+        // 旧顺序（先冻结）：必须失败——这就是本修复要消灭的状态，写进断言以免回退。
+        let old_order = freeze_local_candidate_snapshot(&root, job_id)
+            .expect_err("冻结先于初始化时必然读不到权威稿");
+        assert!(
+            old_order.contains("canonical_not_seeded"),
+            "旧顺序的失败原因应可定位，实际为：{old_order}"
+        );
+
+        // 新顺序（后台先初始化，再冻结）：不打开工作区即可建立首稿与批次。
+        assert!(
+            ensure_initial_canonical(&root, job_id).unwrap(),
+            "本地 artifact 已产出，后台初始化必须建立首稿"
+        );
+        let version = freeze_local_candidate_snapshot(&root, job_id)
+            .expect("初始化之后冻结必须成功——否则无云导入的比较链会被整条跳过");
+        assert_eq!(version, 1, "冻结版本必须来自 (稿, 版本) 的同源读取");
+
+        let source_sha256 = commands::source_sha256_for_job(&root, job_id);
+        let batch_id = commands::recognition_batch_id(job_id, &source_sha256, version);
+        let stored = store::read_candidate(&root, job_id, &batch_id, store::LOCAL_CANDIDATE_FILE)
+            .expect("本地候选快照必须真正落盘，供后续比较复用");
+        assert_eq!(stored.base_edit_version, version);
+
+        // 幂等：重复初始化不重建、不覆盖、不推进版本（重试导入安全）。
+        assert!(ensure_initial_canonical(&root, job_id).unwrap());
+        let conn = open_library_connection(&root).unwrap();
+        let (ds, version_after) = get_canonical_ds(&conn, job_id).unwrap().unwrap();
+        assert_eq!(version_after, 1, "重复初始化不得推进/重置版本");
+        assert_eq!(
+            ds.pointer("/answerKey/q1").and_then(Value::as_str),
+            Some("seeded_answer"),
+            "重复初始化必须保留原有稿件"
         );
 
         let _ = std::fs::remove_dir_all(&root);
