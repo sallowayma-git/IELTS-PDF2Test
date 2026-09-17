@@ -3159,3 +3159,152 @@ taskGroup group-1 stimulus     : 601 字（同一段摘要，含 slot-node-q27�
   （`tmp_test_processing.txt` / `tmp_build.txt` / `tmp_ice.txt` …），不是我的残留。
   它们在 `.gitignore` 之外但均为未跟踪文件，本轮按**路径精确提交**自己的文件，未去动它们
   （动了可能打断对方的下一步命令）。§七记过的同类清理针对的是我自己那批。
+
+---
+
+## 十三、A3/A4 阻塞边界的复核（前端侧，2026-09-17 晚）
+
+本节是 §12.10 第 6 条「A3/A4 按钮验收仍等后端」的**续做**。用户原话：
+「A3/A4 按钮验收等待后端修复后再继续。」后端已把 F-R15-8 修掉（`8e1df28`，
+`run_cycle_in_blocking_boundary` 把整段同步周期放进一次 `spawn_blocking`），
+本节回答「修好之后 A3/A4 走到哪一步」。
+
+### 13.1 F-R15-8 确已解除（独立复跑两次，逐项一致）
+
+| 观测 | §11 的失败现场 | 本次 |
+| --- | --- | --- |
+| `appPanics` | 1 条 `Cannot drop a runtime…` | **`[]`** |
+| 网关 A3 痕迹 | `{input:1, output:0}` | **`{input:1, output:1}`** |
+| 受控服务收到 | `a3:0` | **`a3:1`** |
+| `controlled-service-drives-candidates` | FAILED（无批次） | **passed** |
+| `a3-a4-requests-reach-service` | FAILED | **passed** |
+| `llm-calls.jsonl` | **不存在** | 存在，A3 `ok:true` |
+| `source-verification.json` | 无 | `status: succeeded`，14 条 findings 全 `confirmed` |
+
+后端回归 8/8 通过，且**正反两向都有**：正向用例让 A3 穿过真实异步边界打到本地受控服务；
+反向用例刻意用修复前的写法，日志里真的复现了
+`Cannot drop a runtime in a context where blocking is not allowed`。
+「修好了」不是靠「不再报错」推断的，而是靠**反向用例仍能复现旧 panic** 证明的——
+这一点值得保留：只有正向用例时，「没 panic」也可能只是没跑到那条路。
+
+### 13.2 回答「尚未判定的一条」：A3 在该轮次**确实没有被调用**
+
+并发 agent 在 `progress.md` 里留了一条待判：
+
+> 「尚不能判定是『A3 在该轮次根本没被调用（无可核验项 → `model_status=NotRun`）』还是
+> 『模型通道失败/部分返回没有被如实反映到链状态』。要分清需要带 `--keep` 重跑并检查该轮次的
+> `verify_source_answers-input/output` 与 `llm-calls.jsonl`——本轮运行结束后作业目录已被回收，
+> 无法事后判定。」
+
+本次运行的作业目录**还在**（脚本默认保留 run dir）。证据（两次运行逐项一致）：
+
+`llm-calls.jsonl`：
+
+| 命令 | 次数 | 时刻（UTC） |
+| --- | --- | --- |
+| `verify_source_answers` | **1** | 21:32:43（首次导入） |
+| `generate_pdf_reading_outline` | 4 | 21:32:48 / 21:37:52 / 21:42:55 / 21:47:59 |
+
+即**三次重跑都重新调了 outline，A3 一次都没再调**。
+
+**为什么**：批次 ID 是**内容寻址**的——`batch_id = (job_id, source_sha256, base_edit_version)`
+（见 `scheduler.rs` 候选落盘的注释）。重跑时这三者都没变，于是 `batch_id` 不变：
+
+```
+recognition/current.json  → batchId = rec-import-20260917213203-201de082-v1-f13bd65cb5f5
+recognition/ 下只有一个 *.source-verification.json，时间 21:32:43（= 首次）
+```
+
+而脚本的 `rerunRecognition()` 要求 `decision.batchId !== previousBatchId` 才算「拿到新批次」，
+该条件永远为假 → **每次等满 `timeoutMs = 300000` 才返回**。三次重跑的时刻间隔
+（21:37:52 / 21:42:55 / 21:47:59，各差约 5 分钟）正好是这个超时值，与推断吻合。
+
+A3 的输入（待核验槽位集合）没变 → 复用首次结论 → `chains.source` 保持 `succeeded`。
+因此场景 7/8 期望的 `source: partial` 在当前夹具上**不可能被驱动出来**。
+
+**判定**：这属于「验收工具无法驱动 A3 重跑」的**能力缺口**，
+**不是**「模型通道失败没有被如实反映到链状态」。要把两者分开，需要让输入真的变化
+（换夹具、改本地答案、或提供强制重核验的入口），而不是再重跑一次。
+**本轮不把它算作已修复，也不算作已确认的产品缺陷。**
+
+### 13.3 按钮层仍不可执行：不是「按钮不显示」，而是「没有可应用补丁」
+
+29 条候选的 `proposedPatch` **全部为空**：
+
+| 分组 | 条数 | `resolution` | `cloudValue` |
+| --- | --- | --- | --- |
+| `cloud-q14`（`LOCAL_SLOT_MISSING`） | 1 | `needs_review` | `["stencilling"]` |
+| `q27`–`q40`（`CLOUD_SLOT_MISSING`） | 14 | `needs_review` | 无 |
+| `q27`–`q40`（`ANSWER_CONFLICT_UNVERIFIED`） | 14 | `unverifiable` | 无 |
+
+脚本按「`status === "open"` 且 `proposedPatch` 存在」筛候选，因此
+`accept-manual-candidate` / `undo-manual-accept` / `late-model-result-…` 三条全部
+`not-executable` / `failed`。
+
+**但界面与脚本的判据不同，这点必须说清**：`canAccept()`
+（`src/features/editor/recognitionDecisions.ts:163`）只要求
+`resolution !== "unverifiable" && status === "open"`，**不检查补丁**。
+实测面板 DOM 里因此渲染了 **15 个「采用修正」按钮**（面板全文含
+「… → 建议：stencilling 采用修正 保持现状」，以及每条 `CLOUD_SLOT_MISSING` 的
+「→ 建议：（无） 采用修正 保持现状」）。
+
+即：**「按钮可见」与「可执行」是两件事**。当前状态是「按钮可见、但没有一条带可应用补丁」。
+其中 `CLOUD_SLOT_MISSING` 那些条目的建议值是「（无）」，却同样给了「采用修正」按钮——
+语义可疑，但**这是既有设计，本轮未改**（改动会牵动按钮流程的验收判据，需要自己的验收）。
+
+### 13.4 `verification-status-matches-chains`：从「空转通过」到「真通过」
+
+这一条在修复时暴露出它**长期假通过**的完整链条（结论与并发 agent 一致，此处补前端侧实测）：
+
+- 脚本把 `chainSnapshot()` 的键（`local`/`cloud`/…）直接展开传给 `expectedStatusText()`，
+  而该函数解构的是 `cloudStatus`/`sourceStatus`/… → 四个形参全 `undefined` →
+  规则在第 3 条 `if (!cloudStatus || …)` 就返回常量「题稿已生成，可以开始编辑」。
+- R14 时 cloud 链是 `not_run`，前端真实文案**恰好也是**这句 → 期望 == 实际，长期假通过。
+- 本轮四链全 `succeeded`，前端改说「云端发现 29 处建议」，期望值仍停在旧句 → 暴露。
+- 另有**场景 6 缺 `openPanel()`**：场景 1 重跑识别后工作区重挂，`recognitionOpen` 回到默认
+  关闭，`[data-testid="workspace-recognition-cloud"]` 随之从 DOM 消失 → 读到 `null`。
+  （场景 7/8 一直有 `openPanel()` + 等待，只有场景 6 漏了。）
+
+**前端侧实测**（复用该次运行的 appdata 直接启动应用，不重跑整条链路）：
+
+| 时点 | 面板 | 状态行 |
+| --- | --- | --- |
+| 打开工作区后（未点面板） | 不存在（`aria-expanded=false`） | `null` |
+| 点开面板后 | 存在 | **「云端发现 29 处建议」** |
+| 再等 4s | 存在 | 同上（稳定） |
+
+`errorPresent: false`、`panicLines: []`。**前端渲染是正确的**：四链全 `succeeded` + 29 条
+待处理，就该说「云端发现 29 处建议」。
+
+修好映射与 `openPanel()` 后复跑，场景 6 详情：
+
+```
+chains: {local: succeeded, cloud: succeeded, source: succeeded, adjudication: succeeded}
+pendingCount: 29
+statusLine: "云端发现 29 处建议"     ← 期望 == 实际
+```
+
+### 13.5 本轮复跑的场景总表
+
+| 场景 | 结果 | 归属 |
+| --- | --- | --- |
+| `controlled-service-drives-candidates` | passed | — |
+| `a3-a4-requests-reach-service` | passed | — |
+| `verification-status-matches-chains` | passed | 修好映射与 `openPanel()` 之后 |
+| `expected-sample-reproducible` | not-executable | 样本目标 q14 不在本仓夹具（前提不成立） |
+| `accept-manual-candidate` / `undo-manual-accept` | not-executable | 无带补丁候选（§13.3，后端裁决层） |
+| `late-model-result-…` | failed | 同上 |
+| `a3-partial-…` / `a3-model-failure-…` | failed | 验收工具无法驱动 A3 重跑（§13.2） |
+
+`verdict = failed`，但**失败项的归属已全部落到具体位置**，没有一条是「不知道」。
+
+### 13.6 协作备注：同一个文件被两个 agent 在同一分钟改
+
+我在 21:30 改 `tauri-cdp-controlled-service.mjs` 修字段名 bug 时，另一 agent 在**同一分钟**
+修了**同一个 bug**，加了功能完全相同的 `expectedStatusForSnapshot()`。处置：删掉我重复的
+`statusTextInput()`，保留对方已接线的那份（3 处调用点都已改）；我独有的
+「场景 6 缺 `openPanel()`」修复保留。两个改动最终由 `85b76ec` 一并提交。
+
+**教训**：并发 agent 改同一文件时，`git status` 的 M 标记会「凭空消失」——
+不是你的改动被回滚，而是对方提交时把工作区一起带上了。判断某句话是谁写进去的，
+要用 `git log -S "<那句话>"`，而不是看 `git status`。
