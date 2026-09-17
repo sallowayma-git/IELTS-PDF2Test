@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeChainVerdict,
   computeScenarioVerdict,
+  describePreflightDisagreement,
   EDIT_PREVIEW_REQUIRED_STEPS,
   evaluatePublication,
   EXIT_CODES,
@@ -25,7 +26,7 @@ function stepsWith(overrides = {}) {
 function completePublication() {
   return {
     publishDetail: { manifestExists: true, preflight: { passed: true } },
-    publicationFacts: { scriptFiles: ["v2-p1.js"], resourceManifestExists: true }
+    publicationFacts: { runtimeScripts: ["releases/cb5e39b4/early-approaches.js"], resourceManifestExists: true }
   };
 }
 
@@ -54,7 +55,7 @@ describe("完整链判定：发布未发生不得报通过", () => {
   it("manifest 缺失 → 即使步骤自称成功也不通过", () => {
     const failures = publicationFailuresFor({
       publishDetail: { manifestExists: false, preflight: { passed: true } },
-      publicationFacts: { scriptFiles: ["v2-p1.js"], resourceManifestExists: true }
+      publicationFacts: { runtimeScripts: ["releases/cb5e39b4/early-approaches.js"], resourceManifestExists: true }
     });
     expect(failures.join()).toContain("manifest.js 未落盘");
     const r = computeChainVerdict({ steps: stepsWith(), publicationFailures: failures });
@@ -62,23 +63,48 @@ describe("完整链判定：发布未发生不得报通过", () => {
     expect(r.exitCode).not.toBe(0);
   });
 
-  it("题目 JS 与资源清单缺失同样不通过", () => {
+  it("题目运行时脚本与资源清单缺失同样不通过", () => {
     const failures = publicationFailuresFor({
       publishDetail: { manifestExists: true, preflight: { passed: true } },
-      publicationFacts: { scriptFiles: [], resourceManifestExists: false }
+      publicationFacts: { runtimeScripts: [], resourceManifestExists: false }
     });
     expect(failures).toHaveLength(2);
     const r = computeChainVerdict({ steps: stepsWith(), publicationFailures: failures });
     expect(r.verdict).toBe("failed");
   });
 
-  it("预检与发布不一致（步骤过但 preflight.passed=false）不通过", () => {
+  it("题目脚本的判定必须按 manifest 的 entry.script，而不是包根 v2-p*.js", () => {
+    // R14 实测（F-R14-6）：真实成功的发布在包根只有 manifest.js，
+    // 运行时脚本在 releases/<batchId>/<examId>.js。旧规则会把它判成「没有题目 JS」。
     const failures = publicationFailuresFor({
-      publishDetail: { manifestExists: true, preflight: { passed: false } },
-      publicationFacts: { scriptFiles: ["v2-p1.js"], resourceManifestExists: true }
+      publishDetail: { manifestExists: true, preflight: { passed: true } },
+      publicationFacts: {
+        runtimeScripts: ["releases/1237a710/early-approaches.js"],
+        resourceManifestExists: true,
+        // 包根没有任何 v2-p*.js —— 旧规则看的就是这个字段
+        scriptFiles: []
+      }
     });
-    expect(failures.join()).toContain("预检未通过");
-    expect(computeChainVerdict({ steps: stepsWith(), publicationFailures: failures }).verdict).toBe("failed");
+    expect(failures).toEqual([]);
+  });
+
+  it("预检与发布不一致：**作为独立观察上报**，不用「产物缺失」来描述成功发布", () => {
+    const publishDetail = {
+      manifestExists: true,
+      preflight: { passed: false, blockers: [{ code: "QUALITY_NOT_READY" }, { code: "QUALITY_NOT_READY" }] }
+    };
+    // 产物齐全 → failures 为空：发布**确实发生了**，不能因为预检口径不一致就说没产物。
+    expect(publicationFailuresFor({ publishDetail, publicationFacts: completePublication().publicationFacts })).toEqual([]);
+    const note = describePreflightDisagreement(publishDetail);
+    expect(note).toContain("passed=false");
+    expect(note).toContain("QUALITY_NOT_READY");
+    // 去重后只报一次 code。
+    expect(note.match(/QUALITY_NOT_READY/g)).toHaveLength(1);
+    // 预检通过、或根本没有预检读数时，不产生这条观察。
+    expect(describePreflightDisagreement({ manifestExists: true, preflight: { passed: true } })).toBeNull();
+    expect(describePreflightDisagreement({ manifestExists: true })).toBeNull();
+    // 发布没成功时也不该报「发布已成功」。
+    expect(describePreflightDisagreement({ manifestExists: false, preflight: { passed: false } })).toBeNull();
   });
 
   it("没有发布步骤详情时不当作产物齐全", () => {

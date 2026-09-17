@@ -1,0 +1,295 @@
+import { describe, expect, it } from "vitest";
+import type { AnswerSlotV2, IeltsAuthoringIRV2, ResponseGroupV2, TaskGroupV2 } from "../../types";
+import type { ActionableIssueV1 } from "./actionableIssues";
+import { buildUserTasks, rootCausesOf, splitVisibleTasks, USER_TASK_VISIBLE_LIMIT } from "./userTasks";
+
+// 证据层级：pure unit。断言的是**本轮任务书第 3/4/5 条**那三条互相牵制的规则：
+//   1. 同一问题不重复显示（连续缺答并成区间、同一题组并成一条）；
+//   2. 不同问题不被隐藏（未知码降级而不是丢弃；泛化行只在**原因被完整表达**时才隐藏）；
+//   3. 每条任务都有真能解决问题的按钮（动作种类受限，且必须指向一个真实目标）。
+//
+// 这些规则彼此拉扯：「少显示几条」与「别藏问题」在任何一次改动里都只有一个能赢。
+// 所以这里既断言「合并发生了」，也断言「一个根因都没丢」。
+
+function group(responseGroupId: string, slotIds: string[]): ResponseGroupV2 {
+  return {
+    responseGroupId,
+    kind: "text_entry",
+    slotIds,
+    cardinality: { min: 1, max: 1 },
+    assignment: "per_slot",
+    scoringPolicy: "per_slot_binary",
+    duplicatePolicy: "reject_submission",
+    allowOptionReuse: false,
+    sourceAnchors: [],
+    prompt: []
+  } as unknown as ResponseGroupV2;
+}
+
+function task(taskId: string, responseGroups: ResponseGroupV2[]): TaskGroupV2 {
+  return {
+    taskId,
+    taskType: "sentence_completion",
+    responseGroups,
+    displayRange: { kind: "range", start: 1, end: 1 },
+    instructions: [],
+    instructionSignature: {
+      normalizedText: "",
+      taskType: "sentence_completion",
+      expectedQuestionNumbers: [],
+      expectedSlotCount: 0,
+      evidenceAnchors: [],
+      confidence: 1
+    },
+    sourceAnchors: [],
+    quality: { score: 1, sourceCoverage: 1, hardFailures: [] },
+    reviewState: "unreviewed"
+  } as TaskGroupV2;
+}
+
+function slot(slotId: string, questionNumber: number): AnswerSlotV2 {
+  return {
+    slotId,
+    questionNumber,
+    displayLabel: String(questionNumber),
+    hostType: "prompt",
+    interaction: "radio",
+    participation: "scoring",
+    sourceAnchors: [],
+    confidence: 1
+  } as AnswerSlotV2;
+}
+
+function makeDs(input: {
+  taskGroups: TaskGroupV2[];
+  answerSlots: Record<string, AnswerSlotV2>;
+}): IeltsAuthoringIRV2 {
+  return {
+    schemaVersion: "IeltsAuthoringIRV2",
+    jobId: "job-1",
+    exam: { examId: "exam-1", title: "T", language: "en", tags: [], sourceFiles: [] },
+    modality: "reading",
+    taskGroups: input.taskGroups,
+    answerSlots: input.answerSlots,
+    answerKey: {},
+    assets: [],
+    sourceDocumentId: "doc-1"
+  } as unknown as IeltsAuthoringIRV2;
+}
+
+/** 一条原始问题行。`rootCause` 显式给出，模拟 `mergePublishGateIssues` 的产物。 */
+function issue(id: string, code: string, targetId: string, rootCause?: string): ActionableIssueV1 {
+  return {
+    issueId: id,
+    targetId,
+    severity: "blocker",
+    code,
+    userMessage: `m-${id}`,
+    source: "gate",
+    rootCause: rootCause ?? code
+  };
+}
+
+/** 三个连续题位的题组（第 11–13 题）。 */
+const DS = makeDs({
+  taskGroups: [task("task-1", [group("rg-1", ["q11", "q12", "q13"])])],
+  answerSlots: { q11: slot("q11", 11), q12: slot("q12", 12), q13: slot("q13", 13) }
+});
+
+describe("缺答案：连续题号并成一个区间（任务书第 3 条）", () => {
+  it("第 11/12/13 题缺答案 → 一条「第 11–13 题缺少答案」，动作为「去填写」", () => {
+    const summary = buildUserTasks(DS, [
+      issue("i1", "ANSWER_MISSING", "q11"),
+      issue("i2", "ANSWER_MISSING", "q12"),
+      issue("i3", "ANSWER_MISSING", "q13")
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    const [task] = summary.tasks;
+    expect(task.kind).toBe("missing-answer");
+    expect(task.title).toBe("第 11–13 题缺少答案");
+    expect(task.actions.map((a) => a.id)).toEqual(["fill-answer"]);
+    // 合并后的任务必须保留**底层问题关联**：三行原始问题都在 covers 里。
+    expect(task.covers).toEqual(["i1", "i2", "i3"]);
+    expect(rootCausesOf([
+      issue("i1", "ANSWER_MISSING", "q11"),
+      issue("i2", "ANSWER_MISSING", "q12"),
+      issue("i3", "ANSWER_MISSING", "q13")
+    ], task)).toEqual(["ANSWER_MISSING"]);
+  });
+
+  it("不连续的缺答分成两条任务（不能为了「少显示」把第 11 题和第 20 题并成一条）", () => {
+    const ds = makeDs({
+      taskGroups: [task("task-1", [group("rg-1", ["q11", "q20"])])],
+      answerSlots: { q11: slot("q11", 11), q20: slot("q20", 20) }
+    });
+    const summary = buildUserTasks(ds, [issue("i1", "ANSWER_MISSING", "q11"), issue("i2", "ANSWER_MISSING", "q20")]);
+    expect(summary.tasks.map((t) => t.title)).toEqual(["第 11 题缺少答案", "第 20 题缺少答案"]);
+  });
+
+  it("同一道题被本地闭包与门禁各写一行时只出一条（根因别名归一）", () => {
+    // 本地记 `ANSWER_UNRESOLVED`、门禁记 `ANSWER_MISSING`；`mergePublishGateIssues` 会把根因
+    // 归一成 `ANSWER_MISSING`。这里模拟归一后的两行落在同一个 slot 上。
+    const summary = buildUserTasks(DS, [
+      issue("i1", "ANSWER_UNRESOLVED", "q11", "ANSWER_MISSING"),
+      issue("i2", "ANSWER_MISSING", "q11", "ANSWER_MISSING")
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].covers).toEqual(["i1", "i2"]);
+  });
+});
+
+describe("题组内部问题：并成一条「没有识别完整」，两个动作都在（任务书第 3 条）", () => {
+  it("题干/stimulus/slot host 指向同一题组时只出一条，动作为「查看原文」+「重新识别」", () => {
+    const summary = buildUserTasks(DS, [
+      issue("i1", "PROMPT_EMPTY", "rg-1"),
+      issue("i2", "STIMULUS_MISSING", "rg-1"),
+      issue("i3", "SLOT_HOST_MISSING", "rg-1")
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    const [task] = summary.tasks;
+    expect(task.kind).toBe("incomplete-recognition");
+    expect(task.title).toBe("第 11–13 题没有识别完整");
+    // 两个动作分别可操作 —— 「不同修复动作保留可分别操作的入口」。
+    expect(task.actions.map((a) => a.id)).toEqual(["view-source", "retry-recognition"]);
+    expect(task.actions.map((a) => a.label)).toEqual(["查看原文", "重新识别"]);
+  });
+
+  it("指向答案位的问题会归到它所属的题组（而不是散成三条）", () => {
+    const summary = buildUserTasks(DS, [
+      issue("i1", "PROMPT_EMPTY", "q11"),
+      issue("i2", "STIMULUS_MISSING", "q12")
+    ]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].taskId).toBe("incomplete-recognition:rg-1");
+  });
+});
+
+describe("泛化行：只有阻塞原因被**完整**表达时才隐藏（任务书第 4 条）", () => {
+  it("有具体任务且原因被完整表达 → 泛化行隐藏", () => {
+    const summary = buildUserTasks(DS, [
+      issue("i1", "ANSWER_MISSING", "q11"),
+      issue("g1", "QUALITY_NOT_READY", "QUALITY_NOT_READY", "QUALITY_NOT_READY")
+    ]);
+    // 只剩那条具体的缺答任务。
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].kind).toBe("missing-answer");
+    // 被隐藏的行仍计入 mergedRowCount（验收脚本据此断言「真的合并了」）。
+    expect(summary.mergedRowCount).toBeGreaterThan(0);
+  });
+
+  it("`QUALITY_HARD_FAILURE` 带着**具体**根因时不算泛化行，必须按根因归类而不是丢掉", () => {
+    // 门禁用 `QUALITY_HARD_FAILURE` 这个 code 承载「有硬失败」，根因在 `internal` 里
+    // （`mergePublishGateIssues` 把它写进 `rootCause`）。这类行的根因是**具体**的，
+    // 按 `GENERIC_ONLY` 一律当泛化丢掉就会藏起一条真实阻断。
+    const summary = buildUserTasks(DS, [issue("g2", "QUALITY_HARD_FAILURE", "q12", "ANSWER_MISSING")]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].kind).toBe("missing-answer");
+    expect(summary.tasks[0].title).toBe("第 12 题缺少答案");
+  });
+
+  it("**没有**具体任务时泛化行是唯一线索，必须显示", () => {
+    const summary = buildUserTasks(DS, [issue("g1", "QUALITY_NOT_READY", "QUALITY_NOT_READY", "QUALITY_NOT_READY")]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].kind).toBe("structure-incomplete");
+    expect(summary.tasks[0].title).toBe("这组题的结构还不完整，暂时不能导出。");
+  });
+
+  it("**原因没有被表达**的失败不被隐藏：门禁报 A 与 B，只有 A 有任务，B 必须仍出现", () => {
+    // 这是本轮修正的关键一条。上一版写的是「有任意具体任务就隐藏全部泛化/结构行」——
+    // 那会藏掉尚未被解释的发布失败：用户看到「还有 1 处需要处理」，而发布其实被另外一条拦着。
+    const summary = buildUserTasks(DS, [
+      issue("i1", "ANSWER_MISSING", "q11"),
+      issue("s1", "RUNTIME_COMPILER_FAILED", "document", "RUNTIME_COMPILER_FAILED")
+    ]);
+    const kinds = summary.tasks.map((t) => t.kind);
+    expect(kinds).toContain("missing-answer");
+    // 编译器失败没有被任何具体任务表达 → 必须如实再给一条。
+    expect(kinds).toContain("structure-incomplete");
+    const unexplained = summary.tasks.find((t) => t.taskId === "structure-incomplete:unexplained");
+    expect(unexplained).toBeDefined();
+    expect(unexplained!.covers).toEqual(["s1"]);
+  });
+
+  it("RUNTIME_COMPILER_FAILED 与它自己的具体原因并存时，只显示具体原因", () => {
+    // 编译器失败与「缺答案」是**同一件事**的两条记录（都指向 q11）时不该占两行。
+    const summary = buildUserTasks(DS, [
+      issue("i1", "ANSWER_MISSING", "q11"),
+      issue("s1", "RUNTIME_COMPILER_FAILED", "q11", "ANSWER_MISSING")
+    ]);
+    expect(summary.tasks.map((t) => t.kind)).toEqual(["missing-answer"]);
+  });
+});
+
+describe("未知码不丢弃（「不同问题不被隐藏」的兜底）", () => {
+  it("没见过的质量码降级成「处理失败 → 重试处理」，而不是被丢掉", () => {
+    const summary = buildUserTasks(DS, [issue("i1", "SOMETHING_BRAND_NEW", "q11")]);
+    expect(summary.tasks).toHaveLength(1);
+    expect(summary.tasks[0].kind).toBe("processing-failed");
+    expect(summary.tasks[0].actions.map((a) => a.id)).toEqual(["retry-recognition"]);
+    expect(summary.tasks[0].covers).toEqual(["i1"]);
+  });
+
+  it("列表被截断的提示不进普通界面（它只是内部说明）", () => {
+    const summary = buildUserTasks(DS, [issue("t1", "BLOCKER_LIST_TRUNCATED", "BLOCKER_LIST_TRUNCATED", "BLOCKER_LIST_TRUNCATED")]);
+    expect(summary.tasks).toEqual([]);
+  });
+});
+
+describe("每条任务都有真能解决问题的按钮（任务书第 5 条）", () => {
+  it("所有动作都在允许集合内，且都带一个非空目标", () => {
+    const summary = buildUserTasks(DS, [
+      issue("i1", "ANSWER_MISSING", "q11"),
+      issue("i2", "PROMPT_EMPTY", "rg-1"),
+      issue("i3", "ASSET_MISSING", "q12"),
+      issue("i4", "SOMETHING_BRAND_NEW", "q13")
+    ]);
+    const allowed = new Set(["fill-answer", "view-source", "retry-recognition"]);
+    for (const task of summary.tasks) {
+      expect(task.actions.length).toBeGreaterThan(0);
+      for (const action of task.actions) {
+        expect(allowed.has(action.id)).toBe(true);
+        expect(action.targetId.trim().length).toBeGreaterThan(0);
+        expect(action.label.trim().length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("不提供「确认」「忽略」这类点了不改变门禁结果的按钮", () => {
+    const summary = buildUserTasks(DS, [issue("i1", "ANSWER_MISSING", "q11"), issue("i2", "PROMPT_EMPTY", "rg-1")]);
+    const labels = summary.tasks.flatMap((t) => t.actions.map((a) => a.label));
+    expect(labels.some((label) => /确认|忽略/.test(label))).toBe(false);
+  });
+});
+
+describe("headline 与折叠", () => {
+  it("没有问题时不生成卡片，只说「可以导出」", () => {
+    const summary = buildUserTasks(DS, []);
+    expect(summary.tasks).toEqual([]);
+    expect(summary.headline).toBe("可以导出");
+  });
+
+  it("有问题时说「还有 N 处需要处理」", () => {
+    const summary = buildUserTasks(DS, [issue("i1", "ANSWER_MISSING", "q11"), issue("i2", "PROMPT_EMPTY", "rg-1")]);
+    expect(summary.headline).toBe("还有 2 处需要处理");
+  });
+
+  it("超过阈值先折叠，展开后全部可见（不再是「仅显示前 N 条」）", () => {
+    const slots: Record<string, AnswerSlotV2> = {};
+    const issues: ActionableIssueV1[] = [];
+    for (let index = 0; index < USER_TASK_VISIBLE_LIMIT + 3; index += 1) {
+      // 题号间隔 2，保证每条都自成一条任务。
+      const number = index * 2 + 1;
+      slots[`q${number}`] = slot(`q${number}`, number);
+      issues.push(issue(`i${index}`, "ANSWER_MISSING", `q${number}`));
+    }
+    const ds = makeDs({ taskGroups: [task("task-1", [group("rg-1", Object.keys(slots))])], answerSlots: slots });
+    const summary = buildUserTasks(ds, issues);
+    expect(summary.tasks).toHaveLength(USER_TASK_VISIBLE_LIMIT + 3);
+    const collapsed = splitVisibleTasks(summary.tasks, false);
+    expect(collapsed.visible).toHaveLength(USER_TASK_VISIBLE_LIMIT);
+    expect(collapsed.hiddenCount).toBe(3);
+    const expanded = splitVisibleTasks(summary.tasks, true);
+    expect(expanded.visible).toHaveLength(USER_TASK_VISIBLE_LIMIT + 3);
+    expect(expanded.hiddenCount).toBe(0);
+  });
+});

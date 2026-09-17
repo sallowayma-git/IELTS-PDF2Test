@@ -1405,3 +1405,678 @@ E2E harness 每次运行都用**全新的临时数据目录**（`PDF2TEST_AUTOMA
 
 **这一条不因 F-R11-1 的解除而解除**：构建好了、后端交付到了，
 但候选流程仍需要云 profile 才能产生对象。
+
+---
+
+## R12（2026-09-16 14:00–14:40）：构建归因、无云四链与撤销协议的当前事实
+
+本轮任务书六项产品集成。开工先做现状核查，随后被两个**后端在途缺陷**挡住
+（F-R12-1 编译、F-R12-2 顺序），如实记录如下。
+
+### F-R12-1 后端在途改动一度不编译（`E0596`×2），阻断一切真实 E2E
+
+`src-tauri/src/reconcile/commands.rs` 在 14:04:20 被写入后，`cargo build` 报：
+
+```
+error[E0596]: cannot borrow `items` as mutable, as it is a captured variable in a `Fn` closure
+   --> src\reconcile\commands.rs:801:41   （accept 分支，第 799 行的 &|tx, _version| 闭包）
+error[E0596]: cannot borrow `items` as mutable, as it is a captured variable in a `Fn` closure
+   --> src\reconcile\commands.rs:901:37   （undo 分支，第 899 行的闭包）
+```
+
+两处同型：闭包按 `Fn` 捕获 `items`，闭包内却要 `&mut items[i]`。属后端独占区
+（`reconcile/**`），前端侧**未做任何修改**，只出交接单
+`Plan With Files/Dual_Recognition/HANDOFF_2026-09-16_r12_undo_closure_borrow.md`。
+
+**后端已于 14:08:18 自行修复**（`cargo check` 通过，仅 107 条告警）。
+这是 F-R11-1 的同型复发：后端在途改动未编译就落盘，且落盘时间正好在构建进行中。
+
+### F-R12-2 冻结快照早于权威稿播种 —— 无云与有云**两条**路径都产不出批次与候选
+
+这是本轮最重要的发现，也是任务书第 3、5、6 项至今不通过的真实原因。
+
+`processing/scheduler.rs` 的执行顺序：
+
+| 行 | 内容 |
+| --- | --- |
+| 464 | `freeze_local_candidate_snapshot(...)` ← 需要 `get_canonical_ds` 已存在 |
+| 495 | `set_item_status_ready(...)` ← 它内部（第 996 行）才调 `migrate_single_item` **播种**权威稿 |
+| 508 | 冻结失败 ⇒ 拒绝裁决（14:04:47 新增的加严逻辑） |
+| 529 | `run_local_only_recognition_cycle(...)` ← 因此永远到不了 |
+
+`migrate_single_item`（`library/migration.rs:155`）是按需播种，生产路径上只有三个调用点：
+`get_workspace_item_core`（`library/commands.rs:26`）、`get_publish_preflight_core`
+（`authoring_v2_commands.rs:83`）、`set_item_status_ready`（`scheduler.rs:996`）——
+**没有一个早于第 464 行的冻结**。而产品**不会**在导入后自动打开工作区
+（`LibraryItemRow` 的 `onClick` 才 `onOpen`），所以这不是竞态，是**确定性**失败。
+
+真实二进制（`sha256 5961c9cf…`，清单自陈 `inputsDriftedDuringBuild: false`，
+即与工作树逐字节对应）上的实测：无云导入 `demanding-reading-passage-3.pdf` 后，
+`processing_jobs_v2` 的行是
+
+```
+stage=ready_for_review  local_status=succeeded  cloud_status=not_run
+reconcile_status=failed actionable_count=0
+last_error_code=canonical_not_seeded:import-20260916131334-d7ab7039
+```
+
+而 `recognition_batches_v1` / `recognition_decisions_v1` / `recognition_decision_journal_v1`
+**各 0 行**；`get_recognition_decision` 返回 `batchId=null` 且四链全 `not_run`。
+
+**结论**：后端已把「无云分支不再提前 return」修好（`run_local_only_recognition_cycle`
+确实存在且被调用），但**上游的冻结顺序**让它在第一步就失败。修好顺序后，
+第 3 项（无云有批次）、第 5 项（候选按钮）才有前提。交接单：
+`Plan With Files/Dual_Recognition/HANDOFF_2026-09-16_r12-2_freeze_before_seed.md`。
+
+**有云路径同样被这一处顺序阻断**：`scheduler.rs:543–546` 在 `freeze_error.is_some()` 时
+丢弃云端结果并跳过裁决。所以「接上可用云端就会有候选」目前也不成立——
+在顺序修好之前，第 5 项不必再去排查前端按钮。
+
+### F-R12-3 我自己的等待条件恒真（工具缺陷，已修）
+
+`get_recognition_decision` 在**尚未**产生批次时也返回视图，其 `chains` 是四条 `not_run`
+（后端 `load_latest_batch` 为 None 的分支）。我原先的等待条件写成
+`if (view.batchId || view.chains) break;` —— `chains` 恒存在，条件**恒真**，
+于是循环立刻退出，把「还没开始识别」误报成「四条链全 not_run」，
+制造了一个**假失败**（第一次 local-chain 运行即如此）。
+
+修法：判据改为「**批次出现**或**本地链进入终态**」。同一处隐患也存在于
+`tauri-cdp-recognition-write-path.mjs`（其注释「只要有 batch 或 chains 就算识别已落盘」
+本身就是错的），已一并修正。
+
+### F-R12-4 「假 fresh」的根治：从 mtime 启发式改为内容哈希清单
+
+任务书要求「构建必须关联源码、dist 和 exe，避免旧前端被新 exe 包入后仍判 fresh」。
+本轮先把 `assertBuildFresh` 从「源码 vs exe」升级为**三段链**
+（前端输入 → dist → exe，后端输入 → exe），并补 7 条回归（含用户点名的
+「旧 dist + 新 exe」）。该护栏**当场生效**：14:05 那次失败的构建重跑了 `npm run build`
+产出新 dist 却没产出 exe，护栏立刻报 `exe 早于 dist` 并拒绝验收。
+
+但 mtime 只能证明顺序、不能证明内容，且会被两个 agent 的并发写入淹没。因此进一步引入
+**构建清单**（`scripts/e2e/lib/build-manifest.mjs` + `scripts/e2e/build-app.mjs`）：
+
+- 构建脚本显式分两步（`npm run build` → `tauri build --no-bundle --config <file>`），
+  逐步取**内容哈希**，最后写 `artifacts/build-manifests/<exeSha256>.json`；
+- 构建期间若前端/后端输入漂移，清单标记 `inputsDriftedDuringBuild` 并以退出码 4 退出
+  ——**不可归因的二进制不得用于验收**；
+- 护栏改为**内容优先**：清单三段哈希与当前工作树一致 ⇒ fresh（与 mtime 无关）；
+  找不到清单才退回 mtime 三段链。前端两段不豁免，后端段可在
+  `--tolerate-concurrent-edits` 下豁免并原样列出。
+
+`scripts/e2e/lib/build-freshness.test.mjs` 现有 **14** 条回归，覆盖：
+用户点名的「旧 dist + 新 exe」、`exe 早于 dist`、dist 缺失、
+「内容一致但 mtime 被推新（mtime 误报、内容放行）」、
+「内容变了但 mtime 未变（mtime 看不见、内容抓住）」、
+后端段豁免、清单自陈漂移、exe 换内容后不误用旧清单。
+
+本轮首次用该机制产出的可归因二进制：`sha256 5961c9cf…`，
+`frontendInputs e2627a34… / dist f515ee85… / backendInputs a05b7a30…`，
+`inputsDriftedDuringBuild: false`。
+
+### F-R12-5 隔离 localhost 协议测试服务已就位（任务书第 4 项，待校准样本）
+
+`scripts/e2e/lib/fake-llm-gateway.mjs`：独立进程、只监听 127.0.0.1 的
+OpenAI 兼容 `/v1/chat/completions` 替身。它不是 mock——产品通过真实的 `reqwest`
+调用访问它，与访问真实网关走同一条代码路径，因此请求体形状、鉴权头、超时/重试、
+JSON 解析与校验器都被真实覆盖；它**不接触**产品的 SQLite/文件，候选只能由产品自己算出来。
+
+已确认协议细节（供后续校准样本）：
+- 端点 `{baseUrl}/chat/completions`；`http` 仅允许回环/私有/链路本地主机
+  （`llm_gateway.rs:169–188`），`localhost` 合法；
+- 请求体：`{model, temperature, messages:[{system},{user}], response_format?}`；
+- 响应取 `/choices/0/message/content`，再把该字符串按 JSON 解析；
+- `generate_pdf_reading_outline` 的输出契约：`{title, groups[], answerKey{}, confidence, warnings[]}`，
+  每个 group 需 `kind`（白名单）/`layoutHint`/`notesText`/`range[2]`/`evidence.quotes[]`
+  （校验器 `validate_cloud_outline_output`，`llm_gateway.rs:1191`）；
+- profile 落盘 `config/llm-profiles.json`，密钥落盘 `config/secrets/<id>.key`
+  （需 `EPIC8_ALLOW_PLAINTEXT_SECRET_FALLBACK=1`）；`launch_cloud` 只要求**解析出 profileId**，
+  不要求密钥存在。
+
+**样本尚未校准完成**：样本要在「与本地稿结构对齐」的前提下故意分歧才能产出
+`needs_review` 候选，而本地稿在 F-R12-2 修好前根本无法生成。因此本项**未完成**，
+下一轮应在顺序修复后按「先取真实本地稿 → 由它派生分歧样本」的方式校准，
+而不是凭空写死一份答案。
+
+---
+
+## R13（2026-09-16 晚）撤销接线、可归因重建与受控服务
+
+### F-R13-1 本机安全删除护栏会让 vite 的 `emptyDir` 失败（构建基础设施）
+
+一次完整 vite 构建产出 50+ 个 assets，而本机 `node-safe-delete` 护栏对**单回合批量删除**
+有配额（实测阈值 50）。`emptyDir(dist/assets)` 因此抛
+`[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":54,"threshold":50,...}`，
+构建失败；更糟的是**抛之前它已经删掉一部分**，`dist` 停在半删状态（实测 54 → 剩 6）。
+
+解法不是关护栏（那是保护用户文件的机制，不该为构建让路），而是让这次构建
+**根本不需要批量删除**：`build-app.mjs` 在跑前端构建前把旧 `dist` 整体 `rename` 到
+`tmp/dist-prev-<stamp>`（重命名是一次目录项操作，不是删除），vite 于是在全新空目录上构建，
+`emptyDir` 面对空目录无事可做。副产品是 `dist` 内容 100% 来自本次构建，清单里的 `dist`
+哈希更干净（不会混进上一版残留 asset）。`tmp/` 与 `dist/` 均已被 `.gitignore` 覆盖。
+
+### F-R13-2 手工接受的项会从识别视图里**整体消失**，撤销闭环对它不成立（后端独占区）
+
+`Plan With Files/Dual_Recognition/CONTROLLED_LLM_SCENARIO_2026-09-16.md` §4 明确要求：
+「点接受 → 题稿 `q14` 写入 `stencilling`，该项离开待办，**撤销入口出现**」，
+并强调「撤销对**手工接受**的项也应按同一闭环退出」。
+
+代码读下来这条闭环不成立，两个独立的阻断点：
+
+1. **呈现层把该项丢掉了。** `build_view`（`reconcile/commands.rs:202-215`）只把
+   `resolution == AutoFixed && status == Accepted` 的项放进 `autoApplied`；
+   其余走 `is_actionable()`（`schema/recognition_v1.rs:481-484`）＝
+   `resolution != AutoFixed && status ∈ {Open, Failed}`。
+   而**手工接受**一条 `needs_review` 项时，后端只改 `status → Accepted`、
+   `auto_applied → false`（`commands.rs:788`），**`resolution` 保持 `needs_review`**。
+   于是它既不满足 `autoApplied`（resolution 不是 AutoFixed），也不满足 `is_actionable`
+   （status 不是 Open/Failed）→ **两份列表都不进**，前端 `normalizeDecisionView` 的
+   `items` 由 `autoApplied + actionable` 拼出，该项直接不存在 → 界面无从渲染撤销入口。
+2. **命令层也会拒绝。** 撤销分支的门是
+   `if status != Accepted || resolution != AutoFixed → RECOGNITION_NOT_UNDOABLE`
+   （`commands.rs:662-671`）。即使前端硬发 `undo[]`，手工接受的项也会被判不可撤销。
+
+补充：接受路径**确实**算出了撤销补丁（`commands.rs:790` 调
+`adjudicate::undo_patch_for`），所以数据层面「可回滚的目标值」是有的 ——
+缺的是「把该项呈现出来」与「放开命令层的门」这两步。
+
+**归属**：`reconcile/commands.rs`、`schema/recognition_v1.rs` 均在后端独占区，本轮**未改**，
+只出交接单 `HANDOFF_2026-09-16_r13_manual_accept_undo_gap.md`。
+本条的**实证**由 `scripts/e2e/tauri-cdp-controlled-service.mjs` 的
+`undo-manual-accept` 场景给出（真实界面点击 + 真实权威稿 + 后端视图三处对照）。
+
+### F-R13-3 受控模型服务样本已由后端校准（F-R12-5 的阻塞解除）
+
+后端于 14:25 交付 `fixtures/controlled-llm/{reading-outline.json,expected-decisions.json}`
+与 `scripts/controlled-llm-service.mjs`，并附前端执行文档。
+F-R12-5 记录的「样本未校准」阻塞因此解除：不再需要「先取真实本地稿再派生样本」，
+样本本身是后端从实测投影反推并写死、且被 Rust 用例逐字断言的唯一真源。
+
+踩坑（后端已记录，前端同样适用）：样本里 `evidence.quotes[].pageIndex` **必须 ≥ 1**，
+网关把 0 判为非法（`cloud_outline_group_quote_invalid`）。
+
+### F-R13-4 `cloudEnabled` 根本不是应用设置字段（旧脚本里的死代码）
+
+`AppSettingsV1`（`src/features/settings/appSettings.ts`）只有
+`keepSourceFiles / nasDestination / localConcurrency / cloudConcurrency / developerMode`，
+**没有 `cloudEnabled`**。因此 `tauri-cdp-recognition-buttons.mjs` 里那句
+`localStorage.setItem(..., { cloudEnabled: false })` 读不回来，是**会骗人的死代码**
+（读起来像「本脚本关掉了云端」，其实没关）。已删除并加注说明。
+
+云端是否启用由**机制**决定，不是由这个设置决定：
+`useImportFiles.ts:26-28` 自己 `listLlmProfiles()`，只要存在一个
+`enabled && profileId !== "profile-local-placeholder"` 的 profile，就
+`cloudEnabled = true` 并把它当 `cloudProfileId`。所以：
+- 无云运行靠 **全新数据目录**（没有 `config/llm-profiles.json` → 只剩 placeholder）；
+- 有云运行靠 **写一个真实 profile**（`tauri-cdp-controlled-service.mjs` 就是这么做的），
+  不需要去点任何开关。
+
+### F-R13-5 撤销按钮已改走正式后端命令（任务书第 1 项，代码完成）
+
+`recognitionClient.ts` 早先已支持 `undo[]` / `undone`；本轮完成接线：
+- `RecognitionPanel.tsx`：撤销按钮改为 `applyRecognitionDecisions({decisions:[{decisionId, action:"undo"}]})`，
+  与接受/拒绝共用同一 `submit` 路径；删除 `onUndoAutoFix` 这条**编辑器补丁**老路
+  （它只改权威稿、改不动决策状态，是上一轮的假完成来源）；
+- `recognitionDecisions.ts`：新增 `undoState()`（判据优先级：后端 `status==="undone"` →
+  权威稿值已等于撤销目标 → 有无可回滚补丁）与 `decisionStatusLabel()`
+  （修掉「已撤销」被嵌套三元显示成「处理失败」的缺陷）；`isDecided()` 纳入 `undone`；
+- `ExamWorkspacePage.tsx`：随之移除 `onUndoAutoFix` 与仅供它使用的两个 import。
+
+单测：新增 19 条（`undoState` 六条、`isDecided`/`decisionStatusLabel` 六条、
+wire 层 `action:"undo"` 与 `undone` 归一七条）。全量 217 passed（原 198）。
+注意其中一条**既有**断言必须同步修改：它断言 `args.input` 恰好等于
+`{requestId,batchId,baseEditVersion,accept,reject}`，而 wire 现在必须多带 `undo: []`。
+
+### F-R13-6 无云四链验收：任务书第 3 项**未达成**（确定性，非竞态）
+
+用新可归因二进制 `ad934efa…` 跑 `node scripts/e2e/tauri-cdp-local-chain.mjs`：
+
+```
+library-page-loads-cloud-off  passed
+import-pdf                    passed
+chains-pdf                    FAILED  batchId=null，chains 四条全 not_run
+import-docx                   passed
+chains-docx                   FAILED  batchId=null，chains 四条全 not_run
+verdict = failed
+```
+
+PDF 与 DOCX **症状完全一致**，与 F-R12-2 的根因吻合（`reconcile_status=failed`、
+`last_error_code=canonical_not_seeded:<jobId>`、`recognition_batches_v1` 0 行）。
+因此任务书第 3 项的两个要求同时不成立：
+
+1. **「有 batch」**——不成立：批次根本没建。
+2. **「本地核验状态准确」**——不成立：`processing_jobs_v2.local_status = succeeded`，
+   而 `get_recognition_decision` 报 `local: not_run`。链状态取自批次行，
+   无批次时视图只能用四条 `not_run` 兜底，于是**把一次成功的本地识别报成「从未运行」**。
+   这一条与第 1 条是**两个不同的问题**，顺序修好后仍需复核（详见 R12-2 交接单第 4 节）。
+3. 「云端明确未运行」——这一条**形式上成立但无意义**：云端确实 `not_run`，
+   但四条链全 `not_run`，无法据此判断云端是被正确禁用还是整条链没跑。
+
+构建新鲜度护栏这次走的是**清单模式**（`mode: "manifest"`）而非 mtime：
+`frontendInputs 6f104c05… / dist 69ca780e… / backendInputs c02a5a59…` 三段内容哈希全部一致，
+`ok: true`。这正是 F-R12-4 想要的效果——判定依据是内容，不是时间戳。
+
+### F-R13-7 后端正在改的是**裁决调用预算**，与本轮两个缺陷无关（避免误判）
+
+护栏第二次拒绝验收，理由是**后端输入**变了
+（`c02a5a59… → c12ebf0c…`，`src-tauri/src/processing/scheduler.rs`）。
+核查后确认后端在途改的是 **A4 裁决调用预算 + 受约束修复**
+（`run_recognition_cycle_core_with_adjudicator`、`MAX_ADJUDICATION_MODEL_CALLS`、
+`MAX_CONSTRAINED_REPAIRS`、把校验器原话回给模型再问一次），
+**没有**动冻结顺序（462 行仍早于 495 行），也**没有**动撤销门与 `build_view`
+（已逐行确认 `resolution == AutoFixed && status == Accepted` 与 `is_actionable()` 均未变）。
+
+因此 F-R12-2（无批次）与 F-R13-2（手工接受撤销闭环）的结论**不受该在途改动影响**。
+本轮受控服务验收以 `--tolerate-concurrent-edits` 针对 `ad934efa` 执行，
+报告中已标明该 exe 是**后端开始编辑之前**的可归因构建，结果描述的是该二进制。
+
+---
+
+# R14（2026-09-17）工作区收敛、前端契约适配与 A3/A4 联调
+
+承接后端两个提交（A3 = `937dda5`，A4 = `d353e9d`）。用户流程不变：
+导入 → 看到题稿 → 处理明确问题 → 预览 → 导出。本轮先同步契约，再验证交互。
+归属：前端（`src/**`）、E2E（`scripts/**`）、受控服务（`scripts/controlled-llm-service.mjs`）。
+**后端独占区本轮只读，未改一行。**
+
+## 一、契约核实（任务书第 1 条）：报告里的 Rust 字段名 ≠ 前端 JSON 字段名
+
+结论来自**读序列化路径**（`schema/recognition_v1.rs`、`reconcile/engine.rs`、`reconcile/source.rs`），
+不是读报告正文：
+
+| 项 | 线上事实 |
+| --- | --- |
+| 四路链 | `chains.{local,cloud,source,adjudication}`，每路 = `StageStatusV1` |
+| `StageStatusV1` | `{state, reasonCode?, message?, updatedAt?}`，**camelCase**；`reasonCode` 为 `None` 时**整个键不出现** |
+| `StageStateV1` 线上取值 | `queued / running / succeeded / partial / unusable / not_run / failed / canceled`（`snake_case`）。**没有** `not_started`、`unavailable`、`skipped`、`done` |
+| `DecisionItemV1.reasonCode` | **必填 `String`**（无 `skip_serializing_if`），永远出现 —— 前端不能当可选 |
+| 视图字段 | `schemaVersion / itemId / jobId / batchId / baseEditVersion / editVersion / stale / generatedAt / chains / summary / actionable / autoApplied` |
+
+**必须区分的一件事**：前端内部词表把 `not_run` 归一成 `not_started`、`unusable` 归一成
+`unavailable`（`CHAIN_STATE_TO_STATUS`）。那是**前端内部**叫法，不是后端线上值。
+写断言与交接单时必须分开，否则就会重复上一轮「按报告字段名猜线上形状」的错误。
+
+**A3 链状态的真实算法**（`reconcile/source.rs:656-676`）：
+
+```
+total == 0                    -> NotRun
+!has_text && confirmed == 0   -> NotRun
+confirmed == total            -> Succeeded
+其余                          -> Partial
+```
+
+`unusable_reason()` **只**覆盖 `model_status == Unusable`；`BudgetExhausted` 只写
+`model_reason_code`，**不改链状态、不改链 `reason_code`**。
+因此「A3 新增了 `SOURCE_VERIFY_BUDGET_EXHAUSTED`」对**逐项 code**成立，对**链状态**不成立。
+
+## 二、前端契约适配：空列表不等于核验成功（任务书第 2 条）
+
+删掉旧的一元 `describeCloudStatus(cloudStatus)`（它只要云端跑完就说「云端核验完成」），
+换成 `describeVerificationStatus({localStatus, cloudStatus, sourceStatus, adjudicationStatus, pendingCount})`：
+
+- `partial` 存在 → 「部分内容尚未完成校验，请检查标出的题目」；
+- 三路里只要有一路 ∈ `{partial, failed, unavailable, not_started, skipped}` → 一律**不能**说
+  「没有发现需要处理的问题」，没有待处理项时说「部分内容尚未完成校验」；
+- 只有三路**都**完成且 `pendingCount == 0` 才说「云端校验完成，没有发现需要处理的问题」。
+
+**一处刻意的保守选择**：A4 在「本地与云端没有分歧」时本来就该 `not_run`，那是**正常**的；
+但当前契约里没有「有无分歧」这一位，所以前端只能保守地说「部分完成」，不能升级成「没有发现问题」。
+这条由单测钉住（`recognitionClient.test.ts`，9 条用例，含「空列表不等于核验成功」）。
+新 reason code 只用于内部分类，不进任何用户文案。
+
+## 三、问题列表收敛成用户任务（任务书第 3/4/5 条）
+
+新增 `src/features/editor/userTasks.ts`（+17 条单测）。合并规则：
+连续缺答并成题号区间；同一题组的内部问题并成一条「这组题没有识别完整」；
+同目标同修复动作去重；**每条合并后的任务保留 `covers`（底层根因集合）**，供验收断言「没有隐藏」。
+未知码降级成 `processing-failed` 而**不丢弃**；`BLOCKER_LIST_TRUNCATED` 这类元信息不进界面。
+
+第 4 条（泛化问题只在阻塞原因被**完整**表达时才隐藏）落成：
+
+```ts
+const explained = new Set<string>();
+for (const task of tasks) for (const code of rootCausesOf(issues, task)) explained.add(code);
+const unexplained = [...genericIssues, ...structureIssues]
+  .filter((issue) => !GENERIC_ONLY.has(issueRootCause(issue)) && !explained.has(issueRootCause(issue)));
+```
+
+即「存在任意一个具体问题」**不足以**隐藏其他尚未解释的发布失败。
+
+补齐质量码表（对齐 `src-tauri/src/ielts_grammar/issue_codes.rs`）：`INCOMPLETE_RECOGNITION`
+从 22 个扩到 46 个，`MISSING_ANSWER`/`ANSWER_MISMATCH`/`STRUCTURE_INCOMPLETE` 各自补全。
+此前漏码会让真实阻断落进 `processing-failed`，是**界面说假话**的来源。
+
+### F-R14-1（前端，已修，P0）：门禁还没回来就说「可以导出」
+
+**最小复现**：打开工作区后立即读 `[data-testid="workspace-issue-list"]` 的 `data-can-export`。
+**预期**：门禁未返回时不得声称可导出。**实际**：`rendered cards=0 mergedRows=0 canExport=true`，
+而同一时刻 `get_publish_preflight` 报 **34 条阻断**。
+
+根因：面板挂载时 `preflight` 仍是 `undefined` → `issues` 为空 → 任务为空 → 空态直接渲染「可以导出」。
+即**用「还没查」冒充「查过了没问题」**。
+
+修复：`canExport` 增加「门禁确实读到了」这一条，并暴露 `data-preflight-state`（`loading|loaded|error`）
+供验收等待：
+
+```ts
+const canExport = taskSummary.tasks.length === 0 && Boolean(preflight) && !preflightError && editor.pendingCount === 0;
+```
+
+E2E 断言（`tauri-cdp-issue-list.mjs`）：`PASS 门禁还有阻断时界面不说「可以导出」
+:: {"canExport":"false","rawBlockers":34,"preflightState":"loaded"}`。
+
+### F-R14-2（前端，已修，P0）：内联填空题的「去填写」定位不到输入框
+
+**最小复现**：`demanding-reading-passage-3.pdf` 导入后点「第 11–13 题缺少答案」的「去填写」。
+**预期**：滚动到 `q27` 的输入控件。**实际**：定位失败并提示「当前题面上没有对应的元素」。
+
+根因：`answerSlots["q27"].hostNodeId` 指向的是 **stimulus 节点**（`group-1-stimulus-b032`），
+而真正渲染输入框的节点是 `taskGroups[0].stimulus[1].children[3]`（`id = "slot-node-q27"`，
+`type = answer_slot`）。`hostNodeId` 只走两跳，永远落不到控件上。
+
+修复：新增第三跳 `contentNodeIdsForSlot(draft, slotId)`（只遍历 `taskGroups`，找承载该槽位的内容节点 id），
+候选顺序变成 `[targetId, hostNodeId, ...contentNodeIds]`。
+E2E 断言：`PASS 至少有一条「去填写」真的定位到了题面上的答案控件
+:: {"target":"q27","scrolled":["group-1-stimulus-b032"]}`。
+
+附带修掉一处**假信息**：`locate-miss` 原先把具体题目位置也说成「整份文档级别」，
+现按目标是否为 `document` 分岔措辞。
+
+### F-R14-3（验收脚本，已修）：`Page.reload` 会打断 CDP 会话
+
+`tauri-cdp-issue-list.mjs` 原版在导入前 `Page.reload`，理由是「写 `cloudEnabled:false`」。
+但 `AppSettingsV1`（`src/features/settings/appSettings.ts`）**根本没有 `cloudEnabled` 这个字段**——
+重载只带来风险，不带来任何前置条件。实测重载后 `CDP 连接已关闭`，等待条件超时。
+已删除该重载（与 F-R13-4 是同一件事的另一半）。
+
+## 四、A3/A4 受控联调（任务书第 6 条）：**未达成，根因在后端**
+
+先回答任务书要求先核实的那一问：**原受控服务样本不覆盖 A3/A4**。
+`fixtures/controlled-llm/reading-outline.json` 只产 outline 候选，A3/A4 请求拿到它会被网关
+整份拒绝。本轮已给 `scripts/controlled-llm-service.mjs` 补上按 prompt 标记分派
+（`--- SLOTS BEGIN ---` → `verify_source_answers`；`--- DIVERGENCES BEGIN ---` → `adjudicate_divergence`）
+与 5 种模式（`normal|decline|partial|fail|garbage`），并用 curl 冒烟确认分派正确。
+
+**但真实联调在更前面就被挡住了：本次导入没有产出任何识别批次。**
+
+`artifacts/e2e-cdp/run-controlled-service-2026-09-17T16-12-34-283Z`：
+
+```
+controlled-service-drives-candidates        failed        没有产出批次
+expected-sample-reproducible                not-executable 样本目标 q14 在本仓夹具里不存在
+accept-manual-candidate                     not-executable 没有「待确认且带可应用补丁」的候选
+undo-manual-accept                          not-executable 同上
+a3-a4-requests-reach-service                not-executable（分类见下，**该分类是错的**）
+verification-status-matches-chains          passed
+late-model-result-does-not-overwrite-...    failed        重跑后没有产出批次
+a3-partial-not-reported-as-complete         failed        chains.source 实际 not_started
+a3-model-failure-not-reported-as-complete   failed        chains.source 实际 not_started
+```
+
+四路链全部 `not_started`（线上值 `not_run`），`batchId=null`。
+默认导入没批次，脚本按既有绕行「播种 + 重试」重试后**仍然**没批次，
+换派生样本重跑一次**仍然**没批次 —— 即 F-R12-2 的绕行在 `937dda5` 上已不再有效。
+
+唯一通过的是 `verification-status-matches-chains`：它用**独立实现**的规则算出「界面该说什么」，
+再与真实 DOM 逐字比对，并断言三路原因码没有泄漏进用户文案。这一条证明的是
+**前端契约适配本身正确**（含「有链路没跑完就不许说没有发现问题」），不证明 A3/A4 联通。
+
+### F-R14-4（后端，未修，已交接，P0）：A3 的网关调用只留下输入缓存，既没有结果也无法诊断
+
+这是本轮最值得交接的一条，因为它同时解释了「A3 为什么没结果」和「为什么查不出原因」。
+
+**证据（同一作业目录，三处互斥的事实同时成立）**：
+
+1. `cache/llm/verify_source_answers-input-1789661600016.json` **存在**（17:13:20 落盘），
+   说明 `run_llm_gateway("verify_source_answers", ...)` 已被进入，且请求是**真实**的：
+   `mode=verify_source_answers`、`slots` **14 项**（`q27`…，每项带 `localValue` 与 `questionNumber`）、
+   `pdfPath` 指向真实上传件、`profile.baseUrl = http://127.0.0.1:11435/v1`（受控服务）。
+2. 受控服务**全程零 POST**（它每收到一个 `/chat/completions` 都会打一行日志；
+   本次只收到 1 个 outline 请求）。
+3. 作业目录里**没有** `llm-calls.jsonl`，也**没有** `verify_source_answers-output-*.json`。
+
+**为什么第 3 点是硬矛盾**：`llm_gateway.rs:30-79` 的写法是「写输入缓存 → 执行 → **无论成败**
+追加一行 `llm-calls.jsonl` → 成功才写输出」。既然输入缓存写了、调用记录却没有，
+说明执行分支在**追加记录之前**就没有返回——`run_openai_compatible_source_verification_llm`
+要么 panic 掉了线程，要么永久阻塞。**两种机制都未被证实**，故本条只报事实、不报根因。
+
+**影响**：A3 在真实产品路径上**从未产生任何结果**，而且失败得**不可诊断**
+（唯一能说明原因的调用记录缺失）。任务书第 6 条里除「状态一致性」外的场景因此全部不可达。
+
+**归属**：`llm_gateway.rs` / `auto_pipeline.rs` / `processing/scheduler.rs` 全在后端独占区，
+本轮**未改**。已出交接单 `Plan With Files/Dual_Recognition/HANDOFF_2026-09-17_r14_a3_gateway_no_trace.md`。
+
+### F-R14-5（验收脚本，已修）：把「发起了但没到」误判成「前提不成立」
+
+`a3-a4-requests-reach-service` 原先只看「受控服务收到几个 A3/A4 请求」，收到 0 个就记
+`not-executable`，理由写成「本夹具里没有可核验的槽位」。
+但本次请求里**明明带了 14 个槽位**，输入缓存也在盘上 —— 那是**假解释**，
+等于用「前提不成立」掩盖「东西坏了」。
+
+已改为读作业目录的网关痕迹（输入/输出缓存 + `llm-calls.jsonl`）分三态判定：
+应用**没发起** → `not-executable`；应用**发起了但服务零 POST** → `failed`（并附三处证据）；
+服务收到 → 断言形状。同时把痕迹写进 `report.service.gatewayTraces` 便于交接。
+
+**修正后重跑一次（`run-controlled-service-2026-09-17T16-52-23-738Z`）**，同一证据再次出现，
+分类已正确：
+
+```
+[scenario] FAILED a3-a4-requests-reach-service :: A3（原文件核验）在应用侧已经发起（输入缓存 1 份），
+  却从未到达受控服务：服务收到的请求={"total":1,"outline":1,"a3":0,"a4":0}；
+  作业目录 llm-calls.jsonl 存在=false，网关痕迹={"verify_source_answers":{"input":1,"output":0}}。
+  输入缓存有、调用记录与输出都没有、服务端零 POST，说明这次调用既没有结果也无法诊断。
+
+gatewayTraces = { "files": ["verify_source_answers-input-1789663989376.json"],
+                  "byCommand": { "verify_source_answers": { "input": 1, "output": 0 } },
+                  "callRecordExists": false }
+```
+
+即 F-R14-4 是**可复现**的（两次独立运行、两个不同作业 id），不是一次性抖动。
+
+## 五、A3/A4 三个非成功态为什么测不到（任务书第 6 条其余部分）
+
+`mode=partial` / `mode=fail` 两个场景都因**没有批次**而失败：链状态恒为 `not_started`，
+断言「`chains.source` 应当是 `partial`」自然不成立。
+受控服务侧的分派与模式切换本身已用 `/health` 与 curl 验证可用，
+但**没有批次就没有对象**，这部分只能记**未验证**，不得记通过。
+
+
+## 六、真实导入—编辑—保存—预览—导出（任务书第 7 条）
+
+三轮真实全链路，用真实 Tauri 工作区（CDP 通道，`--diagnostic-args`，报告里 `runProfile=cdp-diagnostic`），
+每轮 10 张截图（`01-library` … `10-recognition-panel`）：
+
+| 夹具 | 入口 | 导入 | 编辑/保存 | 重开存活 | 学生预览 | 作答隔离 | 导出 | 报告目录 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `demanding-reading-passage-3.pdf` | `pick-folder` | ✅ | ✅ | ✅ | ✅ | ✅ | **blocked** | `run-chain-2026-09-17T16-40-53-718Z` |
+| `demanding-reading-passage-1.docx` | `pick-files` | ✅ | ✅ | ✅ | ✅ | ✅ | **blocked** | `run-chain-2026-09-17T16-42-31-472Z` |
+| `complex-reading.pdf`（带答案段） | `pick-folder` | ✅ | ✅ | ✅ | ✅ | ✅ | **blocked** | `run-chain-2026-09-17T16-43-09-693Z` |
+
+三轮都是 11 步 passed、1 步 **blocked**（`publish-via-workspace-button`），`verdict=blocked`、`exit=4`。
+**blocked 不是 passed**：判定明确写着「发布未发生，不得计为通过」。
+
+**导出为什么没发生（这是正确行为，不是缺陷）**：门禁给出的具体阻断——
+
+- `passage-3.pdf`：34 条 = `ISSUE_UNRESOLVED`×16 + `ANSWER_MISSING`×14（q27–q40）+ `QUALITY_HARD_FAILURE`×3
+  （`WORD_LIMIT_UNPARSED`、`ANSWER_KEY_MISSING_SLOT`、`RUNTIME_COMPILER_FAILED`）+ `QUALITY_NOT_READY`×1；
+  编译器探针 `RUNTIME_ANSWER_UNRESOLVED:q27…`：**这份 PDF 没有答案**，题面画得出来但发不出去。
+- `passage-1.docx`：34 条，同类（多出 `PROMPT_EMPTY`、`PROMPT_BOUNDARY_AMBIGUOUS`）。
+- `complex-reading.pdf`（唯一带 `## Answers` 段的夹具）：只剩 8 条 = `ISSUE_UNRESOLVED`×4 +
+  `QUALITY_HARD_FAILURE`×3（`SLOT_HOST_MISSING`、`SIGNIFICANT_REGION_UNASSIGNED`、`RUNTIME_COMPILER_FAILED`）
+  + `QUALITY_NOT_READY`×1。**答案已被解析**（没有 `ANSWER_MISSING`），剩下的是结构类阻断。
+
+**结论**：本仓现有的真实 PDF/DOCX 语料**都到不了可导出**，卡在内容/结构缺陷上，不是链路坏了。
+所以「导出成功路径 + 学生端可读性」必须另找一条**真实发布**来验证，见下。
+
+### 导出成功路径（真实 UI → 真实 publish_items → 真实 NAS 包）
+
+`tauri-publish-ready.mjs`（selenium）本轮连续两次死在驱动握手
+（`SessionNotCreatedError: session not created / chrome not reachable`、
+`NoSuchSessionError: session deleted as the browser has closed the connection`），
+连工作区都进不去 —— 与 F-R11 系列同型，属本机 WebView2 + tauri-driver 的稳定性问题。
+
+因此新增 `scripts/e2e/tauri-cdp-publish-ready.mjs`（CDP 通道），把这条成功路径搬到与其余验收同一条通道：
+
+```
+[publish-ready-cdp] verdict=passed exit=0
+steps: library-page-loads:passed | ready-item-visible-in-library:passed |
+       workspace-opens-for-ready-item:passed | publish-via-workspace-button:passed
+报告：artifacts/e2e-cdp/run-publish-ready-2026-09-17T16-51-08-159Z
+```
+
+产物（真实落盘）：`manifest.js`、`releases/<batchId>/early-approaches.js`、
+`releases/<batchId>/snapshots/…/{authoring-ir-v2,manifest-v2,reading-source-v2}.json`、
+`resources/early-approaches/asset-manifest.json`。
+**数据来源如实声明**：用 proven-ready 夹具播种（`fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json`），
+**不是**真实 PDF/DOCX 自动识别的产物；本套件只证明导出链，不证明自动识别能到 ready。
+
+### 学生端可读性：两道，都过
+
+1. **本仓契约脚本（已按真实规则修正，见 F-R14-6）**：
+   `node scripts/e2e/nas-student-contract.mjs --package <上面那个 nas-library>` → **22/22 PASS**，
+   逐项包含 `script-exists`、`script-sha256`、`script-register-parses`、`script-key-matches`、
+   `runtime-sha256`、`asset-manifest-sha256`、每个 asset 的 `file-sha256` / `file-byteLength`。
+   报告：`artifacts/e2e-cdp/nas-contract-publish-ready.json`。
+2. **学生端仓库自带的真实 loader 验收**（独立佐证）：
+   `cd F:/workspace/IELTS-NASfor-WenDao && IELTS_PDF2TEST_REPO=F:/workspace/PDF2Test npm run verify:cross-repo-reading-v2`
+   → `{"status":"PASS","authorRepo":"F://workspace//PDF2Test","examId":"early-approaches","slots":["q14","q15"],"sharedOptionCount":5}`
+
+**仍未验证（不得含糊）**：Electron 学生端**真实加载与作答一致性**属 M6 的 NAS 实测（需桌面运行），
+本轮**未做**，两份脚本都只到「读取规则 + 完整性绑定」这一层。
+
+### 扫描 PDF：**实测到不了可作答**（不是「没跑」，是跑了不行）
+
+样本：`fixtures/parser/image-only-reading.pdf`（29KB，含 `/Image` 而**无 `/Font`**，确属图像型）。
+`run-chain-2026-09-17T17-20-37-292Z`：
+
+```
+library-page-loads / import-pdf-via-folder-hook / background-pipeline-reaches-stable-stage
+  / workspace-opens / edit-body-and-save / edit-survives-reopen      passed
+student-preview-renders   FAILED  预览里没有任何可作答控件（slot=0），这份题稿学生无法作答
+student-preview-answering-isolated  FAILED  同上
+edit-after-preview-survives-reopen  FAILED  预览返回后无法再次进入原位编辑
+publish-via-workspace-button        blocked 5 条：QUESTION_RANGE_UNPARSED、V1_COMPATIBILITY_COMPILER_FAILED、
+                                             ISSUE_UNRESOLVED×2、QUALITY_NOT_READY×1
+verdict=failed exit=1
+```
+
+用户看到的提示是「预览与已保存的内容一致。还有 3 处问题没有处理完，修好之前这道题发不出去。」
+
+**结论**：在没有 OCR 的前提下，扫描 PDF 的题稿里**没有任何可作答槽位**，学生端根本无从作答，
+导出被门禁拦下。这不是本轮能解决的（需要 OCR 服务能力），因此**扫描 PDF 列为未验证**：
+OCR 通道（`transcribe_pdf_images`）既没有受控响应，也没有真实视觉模型凭据。
+**不写「通过」，也不写「没测」** —— 测了，结果是「当前不可用」。
+
+### F-R14-6（验收脚本，已修，P1）：学生端契约与产物判定用的是**旧布局**，会把成功的发布判成失败
+
+这是本轮第二个「工具在说假话」的缺陷，方向与 F-R14-1 相反（这次是假**红**）。
+
+**真实规则**（学生端 `NasJsDirectReadingAssetProvider.ts`）：运行时脚本从
+`manifest.entry.script` 解析（`:114` `asString(value.script, \`${assetId}.js\`)`，`:236`
+`safeJoinNasRoot(root, entry.script)`），当前 publisher 把它放在
+`./releases/<batchId>/<examId>.js`。真实学生端还会做两道完整性绑定：
+`checksums.scriptSha256`（整份脚本文本，`:381`）与 `checksums.runtimeSha256`
+（`canonicalJson(payload)`，`:393`），V2 条目还强制要求 `resourcesBase` + `assetManifest`。
+
+**旧脚本的实际行为**：`nas-student-contract.mjs` 检查 `path.join(packageDir, \`${examId}.js\`)`；
+`chain-verdict.evaluatePublication` 用 `^v2-p.*\.js$` 通配包根。上面那条**成功**的发布里，
+包根只有 `manifest.js`（运行时在 `releases/<batchId>/`），于是两者都判「没有题目 JS」。
+即：**这套契约根本回答不了「学生端能不能读我们的导出」** —— 它对正确的包也报失败。
+
+**修法**：两个脚本都改为按 `entry.script` 解析并断言文件存在；契约脚本补齐
+`scriptSha256` / `runtimeSha256` / `script-key-matches` / V2 `resourcesBase` 必填，
+并把包根旧布局降级为 `INFO`（不依赖、也不因它消失而报警）。
+单测同步：`chain-verdict.test.mjs` 把那条「预检不一致即失败」改成两条 ——
+产物缺失仍失败；`entry.script` 布局不再误判。
+
+### F-R14-7（后端，未修，待判定，P1）：`get_publish_preflight` 与实际可发布性口径不一致
+
+**最小复现**：用 proven-ready 夹具播种 → 打开工作区 → 调 `get_publish_preflight`（发布前）→
+点「发布」→ 再调一次（发布后）。
+
+**实测**：
+
+```
+preflightBefore = {"passed": false, "editVersion": 1,
+                   "blockers": [{"code":"QUALITY_NOT_READY","internal":"quality_state=review_required"}]}
+preflightAfter  = {"passed": false, "editVersion": 1, 同上}
+发布结果        = "发布完成：early-approaches"，产物齐全，学生端契约 22/22
+```
+
+即：**预检说不能发，发布却成功且产物完整**。两侧至少有一侧口径不对，需后端判定：
+`get_publish_preflight_core`（`authoring_v2_commands.rs:417-424`）在 `quality.state != "ready"` 时
+一律报 `QUALITY_NOT_READY`，而 `export_authoring_v2_core`（`:255-262`）要求
+`quality.state == Ready`，否则 `authoring_v2_export_blocked:quality_state=review_required`。
+两侧读的却是同一份持久化阴影（作业目录里发布后仍是 `state=review_required`、`hardFailures=0`）。
+
+**用户可见后果**：工作区会显示一条「这道题还有未确认的内容」的阻断任务，而「发布」按钮其实能成功。
+本轮**未改**任何后端文件，只把观察记进报告；`evaluatePublication` 已不再拿它当产物缺失
+（否则会把「发布成功」写成「没发布」），改由 `describePreflightDisagreement()` 单独上报。
+
+**归属**：`authoring_v2_commands.rs` 在后端独占区。相关文档见
+`Plan With Files/Dual_Recognition/HANDOFF_2026-09-17_r14_a3_gateway_no_trace.md` 第 4 节。
+
+
+## 七、本轮环境备注（不是产品结论，但会污染下次验收）
+
+1. **学生端仓库的 `server/dist` 被我改名挪开过**：`npm run verify:cross-repo-reading-v2` 第一步是
+   `npm run build:server`，它内部 `rmSync('server/dist', {recursive:true, force:true})`，
+   本机安全删除护栏按「单回合批量删除」配额拦下（`SAFE_DELETE_BULK_CONFIRM_REQUIRED count=54`）——
+   与 F-R13-1 同型，只是这次发生在**另一个仓库**里（那边的构建脚本我不能改）。
+   更糟的是护栏抛错前已经删掉一部分（54 → 41），`dist` 停在半删状态。
+   处置：把 `server/dist` 整体 `mv` 成 `server/dist-prev-r14`（重命名不是删除），
+   让测试在全新目录上重建 —— 重建后的 `server/dist` 正常，跨仓验收通过。
+   **`server/dist-prev-r14` 是半删的残留，我没有删除它**（护栏存在的意义就是别让我随手删），
+   需要清理请自行确认后处理。
+2. **selenium/tauri-driver 路径在本机不可用**：`tauri-publish-ready.mjs` 两次分别以
+   `SessionNotCreatedError: chrome not reachable` 与 `NoSuchSessionError: session deleted` 失败。
+   同一功能在 CDP 通道（`tauri-cdp-publish-ready.mjs`）一次通过。
+   下次要跑成功发布路径，请直接走 CDP 版本。
+3. **`--diagnostic-args`**：本轮所有真实工作区验收都带该参数，报告里 `runProfile=cdp-diagnostic`。
+   默认参数下 `tauri-cdp-issue-list.mjs` 多次无法启动（WebView2 渲染器不稳），
+   所以这些结果**不代表默认路径已通过**。
+
+
+## 八、用户视角总结（任务书要求的四问）
+
+### 1. 用户看到了什么
+
+导入 `demanding-reading-passage-3.pdf` 后，工作区顶部是 `已保存` 和 `问题 3 · 阻断 3`；
+问题列表里是**三条可执行的任务**（不是 34 条内部问题行）：
+
+| 任务 | 详情 | 按钮 |
+| --- | --- | --- |
+| ⚠ 第 27–40 题缺少答案 | — | 去填写（滚到 q27 的输入框） |
+| ⚠ 第 27–31 题没有识别完整 | 请对照原文件检查题干和答案。 | 查看原文（开原文件抽屉）、重新识别（真的重新入队） |
+| ⚠ 这道题还有内容没有处理完，暂时不能导出。 | 重新识别一次；仍然不行请把原文件重新导入。 | 重新识别 |
+
+34 条门禁阻断 → 3 条任务；没有任何问题码、版本号、批次号、slot、schema 出现在界面上。
+底部一句：「这道题存在必须修复的内容缺陷，请按问题列表逐项处理。」
+
+### 2. 每类问题怎么解决
+
+- **缺答案** → 「去填写」把用户送到那道题的输入框（本轮修掉定位不到控件的缺陷，F-R14-2）。
+- **识别不完整** → 「查看原文」打开原文件并定位到题组；「重新识别」真的重新入队，
+  完成后问题按新结果重算。
+- **结构性未完成** → 只能重试；重试无效时如实说明要重新导入原文件。
+- **没有任何问题** → 不生成问题卡片，只保留一句完成状态；且**门禁确实读到了**才说「可以导出」
+  （F-R14-1：读不到时说「可以导出」是把「还没查」冒充「查过了没问题」）。
+
+### 3. 哪些问题仍阻止导出
+
+本轮**真实 PDF/DOCX 语料全部无法导出**，而且这是**正确行为**：三份夹具都缺答案或缺结构，
+门禁逐条给出原因（`ANSWER_MISSING`、`ANSWER_KEY_MISSING_SLOT`、`WORD_LIMIT_UNPARSED`、
+`PROMPT_EMPTY`、`SLOT_HOST_MISSING`、`SIGNIFICANT_REGION_UNASSIGNED`、`RUNTIME_COMPILER_FAILED` …）。
+扫描 PDF 更前一步：题稿里 0 个可作答槽位。
+
+**后端侧仍有一处阻止 A3/A4 联调**：本次导入完全不产出识别批次（`batchId=null`，四路链全 `not_run`），
+且 F-R12-2 的「播种 + 重试」绕行已失效；A3 的网关调用还留下一个「有输入、无记录、无输出、零 POST」
+的半截痕迹（F-R14-4，已交接）。
+
+### 4. 三类验证分别到什么程度
+
+| 通道 | 结论 |
+| --- | --- |
+| **受控模型服务** | 服务侧已按请求分派 outline / A3 / A4 并支持 5 种模式（curl 冒烟通过）。**但端到端只通过 1/9 个场景**（`verification-status-matches-chains`，证明前端契约适配正确）；其余因**没有批次**或 **A3 不落地**而 failed / not-executable。**不得把「受控服务跑通」当作 A3/A4 已联通。** |
+| **真实云服务** | **未验证**：本轮没有真实供应商凭据，所有云端请求都指向 `127.0.0.1:11435` 的受控服务。 |
+| **学生端** | 本仓契约脚本 **22/22 PASS**（含 `scriptSha256` / `runtimeSha256` 两道完整性绑定）+ 学生端仓库自带真实 loader 验收 **PASS**。**Electron 真实加载与作答一致性未验证**（M6 范围，需桌面运行）。 |
+

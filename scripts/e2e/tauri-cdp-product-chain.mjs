@@ -34,6 +34,7 @@ import {
   CDP_CHANNEL_NOTE,
   CannotRunError,
   assertBuildFresh,
+  buildFreshReport,
   createStepRecorder,
   gitHead,
   gitWorktreeClean,
@@ -111,13 +112,7 @@ let recorder = null;
 async function main() {
   const tolerateConcurrentEdits = process.argv.includes("--tolerate-concurrent-edits");
   const fresh = assertBuildFresh({ exePath, tolerateConcurrentEdits });
-  report.identity.buildFresh = {
-    ok: true,
-    exeMtime: new Date(fresh.exeMs).toISOString(),
-    srcNewest: new Date(fresh.srcNewestMs).toISOString(),
-    srcNewestPath: fresh.srcNewestPath,
-    toleratedConcurrentEdits: fresh.tolerated
-  };
+  report.identity.buildFresh = buildFreshReport(fresh);
   report.identity.exeSha256 = sha256File(exePath);
   if (!fs.existsSync(pdfPath)) throw new CannotRunError(`验收 PDF 不存在：${pdfPath}`);
   report.identity.pdfSha256 = sha256File(pdfPath);
@@ -284,6 +279,10 @@ async function main() {
       { timeoutMs: 25000, label: "preview-dom" }
     );
     if (info.compileError) throw new Error(`预览显示编译错误：${info.compileError}`);
+    // 本轮任务书第一节：普通界面不得出现 `v1/v2/v3`、批次基线、editVersion 这类内部版本信息。
+    if (/\bv\d+\b/.test(String(info.revisionText ?? ""))) {
+      throw new Error(`预览文案里出现了内部版本号：${JSON.stringify(info.revisionText)}`);
+    }
     if (!info.isStudentMode) throw new Error("预览没有使用 student 模式渲染");
     if (info.hasAuthorTextarea > 0) throw new Error("预览里出现了作者态可编辑 textarea");
     if (info.hasAuthorTools > 0) throw new Error("预览里出现了作者态结构工具");
@@ -320,12 +319,21 @@ async function main() {
     await session.waitFor(`!!document.querySelector('[data-testid="exam-canvas-v2-author"]')`, { timeoutMs: 20000, label: "back-to-author" });
     const authorSnapshotBefore = await session.evaluate(snapshotExpr("exam-canvas-v2-author"));
 
-    // 切到预览，记录 revision，然后刻意给出与作者答案不同的作答。
+    // 切到预览，记录修订号，然后刻意给出与作者答案不同的作答。
     await session.clickSelector('[data-testid="workspace-mode-student"]');
     await session.waitFor(`!!document.querySelector('[data-testid="workspace-student-preview"]')`, { timeoutMs: 20000, label: "preview-again" });
+    // 修订号取自 `data-edit-version`（机器可读），**不是**预览那行文案：
+    // 本轮把 `v1/v2/v3` 从普通界面移除了，读文案会退化成「两次读到同一段静态文字」，
+    // 断言永远通过。同时顺带断言那行文案里确实没有版本号。
     const revisionInPreviewBefore = String(await session.evaluate(
+      `(() => { const el = document.querySelector('[data-testid="exam-workspace"]'); return el ? el.getAttribute('data-edit-version') : ''; })()`
+    ) ?? "");
+    const revisionTextInPreview = String(await session.evaluate(
       `(() => { const el = document.querySelector('[data-testid="workspace-preview-revision"]'); return el ? el.innerText : ''; })()`
     ) ?? "");
+    if (/\bv\d+\b/.test(revisionTextInPreview)) {
+      throw new Error(`预览文案里出现了内部版本号：${JSON.stringify(revisionTextInPreview)}`);
+    }
 
     // 在预览里挑一个「与作者答案不同」的可作答控件：优先选项类，其次文本框。
     // 关键：作者画布在 student 模式下已卸载，不能在预览 DOM 里再查作者画布
@@ -387,7 +395,7 @@ async function main() {
     }
 
     const revisionInPreviewAfter = String(await session.evaluate(
-      `(() => { const el = document.querySelector('[data-testid="workspace-preview-revision"]'); return el ? el.innerText : ''; })()`
+      `(() => { const el = document.querySelector('[data-testid="exam-workspace"]'); return el ? el.getAttribute('data-edit-version') : ''; })()`
     ) ?? "");
     await session.screenshot("07-preview-answered");
 

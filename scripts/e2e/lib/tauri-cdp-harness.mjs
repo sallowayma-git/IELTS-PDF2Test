@@ -27,6 +27,16 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 
+import {
+  BACKEND_INPUT_DIRS,
+  BACKEND_INPUT_FILES,
+  compareManifest,
+  DIST_DIR,
+  FRONTEND_INPUT_DIRS,
+  FRONTEND_INPUT_FILES,
+  loadManifestForExe,
+} from "./build-manifest.mjs";
+
 export const CDP_CHANNEL_LABEL = "webview2-cdp";
 export const CDP_CHANNEL_NOTE =
   "自动化参数 --remote-debugging-port（仅 127.0.0.1），属诊断参数，非产品默认启动配置";
@@ -57,53 +67,221 @@ export function freePort() {
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 构建新鲜度检查：源码比 exe 新 => staleBuild，判定为 CANNOT-RUN，不算通过。
+/**
+ * 构建链的三段输入定义。产物 exe **同时**内嵌两样东西：
+ *   1) 前端产物 `dist/**`（由 `vite build` 从 `src/**` 等前端输入生成）；
+ *   2) Rust 后端（由 `src-tauri/src/**` 等后端输入编译）。
+ * 因此「exe 是否等于当前源码」是一条三段链，而不是「源码 vs exe」两两比较：
+ *
+ *     frontendInputs  --vite build-->  dist  --tauri build-->  exe  <--cargo build--  backendInputs
+ *
+ * ⚠️ 这正是「假 fresh」的成因：`tauri build --no-bundle` 配 `beforeBuildCommand:""`
+ * **不会**重建前端。若只比较 `src` 与 `exe`，一次「旧 dist + 新 exe」会完全漏判——
+ * 只要 src 的 mtime 早于 exe（例如先改 src、后 build dist、再 build exe，或 exe 由
+ * 后端改动触发重建），旧的 dist 就会被新 exe 包进去而仍判 fresh。
+ *
+ * 判定的**首选**依据是内容哈希清单（`./build-manifest.mjs`，由
+ * `node scripts/e2e/build-app.mjs` 产出）：只要清单里三段哈希与当前工作树一致，
+ * exe 就是当前源码的产物，与 mtime 无关。找不到清单时才退回 mtime 三段链。
+ */
+
+function walkFiles(p, out) {
+  if (!fs.existsSync(p)) return;
+  const st = fs.statSync(p);
+  if (st.isDirectory()) {
+    for (const entry of fs.readdirSync(p)) walkFiles(path.join(p, entry), out);
+  } else {
+    out.push({ path: p, mtimeMs: st.mtimeMs });
+  }
+}
+
+function newestOf(files) {
+  return files.reduce((acc, f) => (f.mtimeMs > acc.mtimeMs ? f : acc), { path: null, mtimeMs: 0 });
+}
+
+function collect(root, dirs, files) {
+  const out = [];
+  for (const d of dirs) walkFiles(path.join(root, d), out);
+  for (const f of files) walkFiles(path.join(root, f), out);
+  return out;
+}
+
+/** 构建新鲜度检查（三段链：前端输入 → dist → exe，后端输入 → exe）。
+ *
+ * 任一段断裂即 `staleBuild`，判定为 CANNOT-RUN，不算通过：
+ *   - `dist` 缺失或比前端输入旧  => exe 内嵌的是陈旧前端（**不可容忍**）；
+ *   - `dist` 比 exe 新            => exe 早于前端产物，未包含最新前端（**不可容忍**）；
+ *   - 后端输入比 exe 新           => exe 早于后端源码（见下）。
  *
  * `tolerateConcurrentEdits`：本仓库有两个 agent 并行写入（识别/云端后端 agent 独占
  * `src-tauri/src/{processing,recognition,reconcile,llm_*}/**`）。当对方在本次构建之后
- * 继续落盘时，exe 相对**最新**源码永远是「陈旧」的，但这不代表本次运行的二进制不是
- * 从被验收的源码构建出来的。开启该选项时，函数不抛错，而是把这些**构建之后**才出现的
- * 文件原样列出来，由调用方写进报告，明确标注为「并发外部改动，不在本次验收范围」。
+ * 继续落盘时，exe 相对**最新后端源码**永远是「陈旧」的，但这不代表本次运行的二进制
+ * 不是从被验收的源码构建出来的。开启该选项时，**只**豁免「后端输入比 exe 新」这一类，
+ * 把它们原样列出，由调用方写进报告，标注为「并发外部改动，不在本次验收范围」。
+ * 前端两段（dist 陈旧 / exe 早于 dist）**不豁免**：前端 `src/**` 由本 agent 独占，
+ * 不存在并发写入，陈旧即是真实缺陷。
  */
 export function assertBuildFresh({ exePath, repoRoot: root = repoRoot, tolerateConcurrentEdits = false }) {
-  const walk = (p, out) => {
-    if (!fs.existsSync(p)) return;
-    const st = fs.statSync(p);
-    if (st.isDirectory()) {
-      for (const entry of fs.readdirSync(p)) walk(path.join(p, entry), out);
-    } else {
-      out.push({ path: p, mtimeMs: st.mtimeMs });
-    }
-  };
-  const files = [];
-  for (const d of ["src", "src-tauri/src"]) walk(path.join(root, d), files);
-  for (const f of [
-    "src-tauri/Cargo.toml",
-    "src-tauri/Cargo.lock",
-    "src-tauri/tauri.conf.json",
-    "package.json",
-    "package-lock.json",
-  ]) {
-    walk(path.join(root, f), files);
-  }
   const exeMs = fs.statSync(exePath).mtimeMs;
-  const newer = files.filter((f) => f.mtimeMs > exeMs).sort((a, b) => b.mtimeMs - a.mtimeMs);
-  if (newer.length && !tolerateConcurrentEdits) {
+  const exeSha = sha256File(exePath);
+  const manifest = loadManifestForExe(root, exeSha);
+  if (manifest) return assertFreshViaManifest({ root, exePath, exeMs, exeSha, manifest, tolerateConcurrentEdits });
+
+  const frontendInputs = collect(root, FRONTEND_INPUT_DIRS, FRONTEND_INPUT_FILES);
+  const backendInputs = collect(root, BACKEND_INPUT_DIRS, BACKEND_INPUT_FILES);
+  const distOutputs = collect(root, [DIST_DIR], []);
+  const allInputs = [...frontendInputs, ...backendInputs];
+
+  const frontendNewest = newestOf(frontendInputs);
+  const backendNewest = newestOf(backendInputs);
+  const srcNewest = newestOf(allInputs);
+  const distNewest = newestOf(distOutputs);
+
+  const iso = (ms) => new Date(ms).toISOString();
+  const rel = (p) => (p ? path.relative(root, p).replace(/\\/g, "/") : "(none)");
+
+  // 前端两段：硬失败，不因 tolerateConcurrentEdits 豁免。
+  const hardViolations = [];
+  if (distOutputs.length === 0) {
+    hardViolations.push(
+      `dist 不存在或为空（${path.join(root, DIST_DIR)}）：exe 内嵌的前端产物无法核对，先运行 \`npm run build\`。`
+    );
+  } else {
+    if (frontendNewest.mtimeMs > distNewest.mtimeMs) {
+      hardViolations.push(
+        `dist 落后于前端源码（${rel(frontendNewest.path)} @ ${iso(frontendNewest.mtimeMs)} > dist @ ${iso(distNewest.mtimeMs)}）：dist 是陈旧构建，先运行 \`npm run build\` 再 \`tauri build\`。`
+      );
+    }
+    if (distNewest.mtimeMs > exeMs) {
+      hardViolations.push(
+        `exe 早于 dist（dist @ ${iso(distNewest.mtimeMs)} > exe @ ${iso(exeMs)}）：exe 未包含最新前端产物，先运行 \`npx tauri build --debug --no-bundle\`。`
+      );
+    }
+  }
+
+  // 后端段：并发 agent 可能在本 agent 构建之后继续落盘 => 可豁免。
+  const backendNewer = backendInputs
+    .filter((f) => f.mtimeMs > exeMs)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  if (hardViolations.length) {
+    throw new CannotRunError(`staleBuild: ${hardViolations.join(" ")}`);
+  }
+  if (backendNewer.length && !tolerateConcurrentEdits) {
     throw new CannotRunError(
-      `staleBuild: 源码比 exe 新（${newer[0].path} @ ${new Date(newer[0].mtimeMs).toISOString()} > exe @ ${new Date(exeMs).toISOString()}）。请先重新构建再验收。`
+      `staleBuild: 后端源码/配置比 exe 新（${rel(backendNewer[0].path)} @ ${iso(backendNewer[0].mtimeMs)} > exe @ ${iso(exeMs)}）。` +
+        "请先重新构建再验收；若确认是并发 agent 的构建后改动，加 --tolerate-concurrent-edits。"
     );
   }
-  const newest = files.reduce((acc, f) => (f.mtimeMs > acc.mtimeMs ? f : acc), { path: null, mtimeMs: 0 });
+
   return {
+    mode: "mtime",
     exeMs,
-    srcNewestMs: newest.mtimeMs,
-    srcNewestPath: newest.path,
+    srcNewestMs: srcNewest.mtimeMs,
+    srcNewestPath: srcNewest.path,
+    frontendNewestMs: frontendNewest.mtimeMs,
+    frontendNewestPath: frontendNewest.path,
+    distNewestMs: distNewest.mtimeMs,
+    distNewestPath: distNewest.path,
+    backendNewestMs: backendNewest.mtimeMs,
+    backendNewestPath: backendNewest.path,
+    chainOk: true,
     tolerated: tolerateConcurrentEdits
-      ? newer.map((f) => ({
-          path: path.relative(root, f.path).replace(/\\/g, "/"),
-          mtime: new Date(f.mtimeMs).toISOString(),
+      ? backendNewer.map((f) => ({
+          path: rel(f.path),
+          mtime: iso(f.mtimeMs),
         }))
       : [],
+  };
+}
+
+/**
+ * 内容哈希判定：exe 的清单已找到，逐段比对当前工作树。
+ *
+ * 与 mtime 判定相比，它回答的是「内容对不对」而不是「谁更新」：
+ *   - 后端 agent 在我构建之后碰一下 `scheduler.rs`（mtime 变新、内容也可能变）：
+ *     若内容真的变了 => 后端段漂移；若只是 touch => 内容相同，不算漂移。
+ *   - `npm run build` 重新产出内容相同的 dist：mtime 判定会误报「exe 早于 dist」，
+ *     内容判定不会。
+ * 前端两段（frontendInputs / dist）**不豁免**；后端段在 `tolerateConcurrentEdits` 下豁免，
+ * 并把差异原样列出（「并发外部改动，不在本次验收范围」）。
+ */
+function assertFreshViaManifest({ root, exePath, exeMs, exeSha, manifest, tolerateConcurrentEdits }) {
+  const hard = compareManifest(root, manifest, ["frontendInputs", "dist"]);
+  const backend = compareManifest(root, manifest, ["backendInputs"]);
+  const segLabel = { frontendInputs: "前端输入", dist: "dist", backendInputs: "后端输入" };
+  const fmt = (d) =>
+    `${segLabel[d.segment] ?? d.segment}（清单 ${String(d.expected).slice(0, 12)} → 当前 ${String(d.actual).slice(0, 12)}` +
+    `${d.newestPath ? `，最新 ${d.newestPath}` : ""}，文件数 ${d.expectedFiles}→${d.actualFiles}）`;
+
+  const violations = [];
+  if (manifest.inputsDriftedDuringBuild) {
+    violations.push(
+      `清单自陈构建期间输入漂移（${(manifest.driftedSegments ?? []).join(", ")}）：该 exe 不可归因`
+    );
+  }
+  for (const d of hard.diffs) violations.push(fmt(d));
+  if (backend.diffs.length && !tolerateConcurrentEdits) {
+    for (const d of backend.diffs) violations.push(fmt(d));
+  }
+
+  if (violations.length) {
+    throw new CannotRunError(
+      `staleBuild（内容比对，清单 ${manifest.createdAt}）：exe 不是当前源码/前端的产物 —— ${violations.join("；")}。` +
+        "请运行 `node scripts/e2e/build-app.mjs` 重新构建。"
+    );
+  }
+
+  return {
+    mode: "manifest",
+    exeMs,
+    exeSha256: exeSha,
+    manifestCreatedAt: manifest.createdAt,
+    srcNewestMs: exeMs,
+    srcNewestPath: manifest.exePath,
+    frontendNewestMs: exeMs,
+    frontendNewestPath: `${manifest.frontendInputs.fileCount} 个前端输入（内容哈希一致）`,
+    distNewestMs: exeMs,
+    distNewestPath: `${manifest.dist.fileCount} 个 dist 产物（内容哈希一致）`,
+    backendNewestMs: exeMs,
+    backendNewestPath: `${manifest.backendInputs.fileCount} 个后端输入（内容哈希一致）`,
+    hashes: {
+      frontendInputs: manifest.frontendInputs.hash,
+      dist: manifest.dist.hash,
+      backendInputs: manifest.backendInputs.hash,
+    },
+    chainOk: true,
+    tolerated: tolerateConcurrentEdits
+      ? backend.diffs.map((d) => ({ path: d.newestPath ?? "(backend inputs)", reason: "内容已漂移" }))
+      : [],
+  };
+}
+
+/** 把 `assertBuildFresh` 的返回值规范成报告字段（含 dist 段），供各 E2E 统一写入
+ * `identity.buildFresh`。写入 dist 段是必需的：只记 `srcNewest` 时，报告读者无法看出
+ * exe 内嵌的到底是哪一版前端。 */
+export function buildFreshReport(fresh) {
+  const iso = (ms) => (ms ? new Date(ms).toISOString() : null);
+  return {
+    ok: true,
+    // `mode` 决定读者该怎么解释下面的字段：
+    //   "manifest" => 内容哈希比对通过，mtime 字段无意义（统一填 exe 时刻）；
+    //   "mtime"    => 没找到清单，退回时间戳三段链。
+    mode: fresh.mode ?? "mtime",
+    chain: "frontend-inputs -> dist -> exe; backend-inputs -> exe",
+    exeMtime: iso(fresh.exeMs),
+    exeSha256: fresh.exeSha256 ?? null,
+    manifestCreatedAt: fresh.manifestCreatedAt ?? null,
+    hashes: fresh.hashes ?? null,
+    srcNewest: iso(fresh.srcNewestMs),
+    srcNewestPath: fresh.srcNewestPath,
+    frontendNewest: iso(fresh.frontendNewestMs),
+    frontendNewestPath: fresh.frontendNewestPath,
+    distNewest: iso(fresh.distNewestMs),
+    distNewestPath: fresh.distNewestPath,
+    backendNewest: iso(fresh.backendNewestMs),
+    backendNewestPath: fresh.backendNewestPath,
+    toleratedConcurrentEdits: fresh.tolerated ?? [],
   };
 }
 
@@ -335,16 +513,29 @@ export class TauriCdpSession {
   async waitForPageReady(timeoutMs = 90000) {
     const deadline = Date.now() + timeoutMs;
     let lastText = "";
+    // 这个 `catch {}` 曾经把两类完全不同的故障混成同一句话「未渲染出可见文本」：
+    //   (a) 页面真的没有可见文本；(b) `evaluate` 每次都抛（连求值都做不到）。
+    // 两者的排查方向完全相反，所以这里把最后一次求值错误留下来。
+    let lastEvalError = null;
+    let lastUrl = null;
     while (Date.now() < deadline) {
       if (this.exitCode() !== null) throw new CannotRunError(`应用在页面就绪前退出（code=${this.exitCode()}）`);
       try {
         const text = await this.evaluate("document.body ? document.body.innerText : ''", { timeoutMs: 15000 });
         lastText = String(text ?? "");
+        lastEvalError = null;
         if (lastText.trim().length > 0) return lastText;
-      } catch {}
+        // 页面有 body 但没文本：把当前 URL 记下来，区分「没导航」与「导航了但白屏」。
+        lastUrl = await this.evaluate("location.href", { timeoutMs: 15000 }).catch(() => null);
+      } catch (error) {
+        lastEvalError = String(error?.message ?? error);
+      }
       await sleep(500);
     }
-    throw new CannotRunError(`页面在 ${timeoutMs}ms 内未渲染出可见文本（最后文本=${JSON.stringify(lastText.slice(0, 120))}）`);
+    const detail = lastEvalError
+      ? `求值持续失败（最后一次：${lastEvalError}）`
+      : `最后文本=${JSON.stringify(lastText.slice(0, 120))}，url=${String(lastUrl)}`;
+    throw new CannotRunError(`页面在 ${timeoutMs}ms 内未渲染出可见文本（${detail}）`);
   }
 
   /** 轮询直到表达式返回真值。 */

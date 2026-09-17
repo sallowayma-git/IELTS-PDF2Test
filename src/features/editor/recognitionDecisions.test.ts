@@ -4,6 +4,7 @@ import {
   autoFixedItems,
   canAccept,
   decisionActionLabel,
+  decisionStatusLabel,
   decisionTargetId,
   describeStaleness,
   emptyStateMessage,
@@ -13,7 +14,9 @@ import {
   isUndoAlreadyApplied,
   parseUndoPatch,
   pendingDecisionCount,
+  recognitionInFlight,
   reviewItems,
+  undoState,
   visibleDecisionItems
 } from "./recognitionDecisions";
 
@@ -44,6 +47,9 @@ function view(items: RecognitionDecisionItemV1[], partial: Partial<RecognitionDe
     stale: false,
     localStatus: "succeeded",
     cloudStatus: "succeeded",
+    // 四路链状态都在视图里。默认给「都跑完了」，个别用例再按需覆盖成 partial / not_run。
+    sourceStatus: "succeeded",
+    adjudicationStatus: "succeeded",
     summary: { agreed: 0, autoFixed: 0, needsReview: 0, unverifiable: 0 },
     items,
     ...partial
@@ -151,11 +157,16 @@ describe("待处理计数与过期提示", () => {
     expect(pendingDecisionCount(v)).toBe(2);
   });
 
-  it("批次过期时给出可读提示并带上两个版本号", () => {
+  it("批次过期时给出可读提示，且**不带版本号**（版本号不进普通界面）", () => {
     const v = view([], { stale: true, baseEditVersion: 7, currentEditVersion: 9 });
     const text = describeStaleness(v);
-    expect(text).toContain("v7");
-    expect(text).toContain("v9");
+    expect(text).toBeTruthy();
+    // 本轮任务书第一节：`v1/v2/v3`、批次基线、editVersion 这类内部版本信息不得出现在普通界面。
+    expect(text).not.toContain("v7");
+    expect(text).not.toContain("v9");
+    expect(text).not.toMatch(/\bv\d+\b/);
+    // 但必须说清「不会覆盖你的改动」这个用户真正关心的事实。
+    expect(text).toContain("不会覆盖");
   });
 
   it("没过期就没有提示", () => {
@@ -224,11 +235,12 @@ describe("parseUndoPatch — 撤销补丁必须能被真实应用，认不出来
 });
 
 // 任务书：「接入后端持久化撤销，不再以会话内 Set 作为完成依据。」
-// 后端**没有**持久化的「已撤销」状态码（`RecognitionResolutionV1` 只有
-// agreed/auto_fixed/needs_review/unverifiable），所以判据只能取自**权威稿本身**：
-// 撤销补丁说「改回哪个值」，稿里那个答案位已经等于它 → 撤销已生效。
-// 这是持久化事实，重开/刷新后同样成立；会话内 Set 一刷新就没了。
-describe("isUndoAlreadyApplied — 撤销是否生效只看权威稿，不看会话状态", () => {
+// 会话内 Set 一刷新就没了，不能当判据 —— 判据必须来自**持久化事实**。
+// 后端本轮新增了 `DecisionStatusV1::Undone`（撤销与回滚在同一编辑事务里落盘），
+// 所以**首选**判据是 `status === "undone"`（见 `undoState`）。
+// `isUndoAlreadyApplied` 退居次要：兜住废弃编辑器补丁路径写下的历史数据
+// （只回滚了权威稿、状态仍停在 `accepted`，只能靠稿里的值认出来）。
+describe("isUndoAlreadyApplied — 权威稿的值是否已等于撤销目标（次要判据）", () => {
   const undo = { op: "setAnswer", slotId: "slot-3", value: { kind: "text", values: ["maps"] } };
 
   it("稿里的值已等于撤销目标值 → 已撤销（重开后同样成立）", () => {
@@ -261,5 +273,104 @@ describe("isUndoAlreadyApplied — 撤销是否生效只看权威稿，不看会
   it("撤销补丁本身不可解析 → 未撤销（界面会走「没有可撤销的信息」那条分支）", () => {
     expect(isUndoAlreadyApplied(null, { "slot-3": { kind: "text", values: ["maps"] } })).toBe(false);
     expect(isUndoAlreadyApplied({ op: "deleteNode", nodeId: "n1" }, {})).toBe(false);
+  });
+});
+
+// 撤销入口的判据优先级：**后端持久化状态**优先于权威稿的值。
+// 这是本轮「撤销按钮改调正式后端撤销命令」的直接配套 —— 命令成功后后端把状态写成
+// `undone`，界面必须据此收掉按钮；只靠值比对会漏掉「值恰好相同」以外的所有情形。
+describe("undoState — 撤销入口该显示成什么", () => {
+  const undo = { op: "setAnswer", slotId: "slot-3", value: { kind: "text", values: ["maps"] } };
+  const autoFixed = (partial: Partial<RecognitionDecisionItemV1> = {}) =>
+    item({ decisionId: "a1", resolution: "auto_fixed", undo, status: "accepted", ...partial });
+
+  it("后端已持久化 undone → 已撤销（哪怕权威稿的值还没刷新过来）", () => {
+    // 关键：answerKey 仍是自动修正后的值，但状态说已撤销 —— 状态赢。
+    expect(undoState(autoFixed({ status: "undone" }), { "slot-3": { kind: "text", values: ["diaries"] } })).toBe("undone");
+  });
+
+  it("状态未更新但权威稿已等于撤销目标 → 已撤销（兜住废弃编辑器补丁路径的历史数据）", () => {
+    expect(undoState(autoFixed({ status: "accepted" }), { "slot-3": { kind: "text", values: ["maps"] } })).toBe("undone");
+  });
+
+  it("有撤销补丁、值也还没回去 → 给按钮", () => {
+    expect(undoState(autoFixed({ status: "accepted" }), { "slot-3": { kind: "text", values: ["diaries"] } })).toBe("available");
+  });
+
+  it("没有撤销补丁 → 不可撤销（不给按了不生效的按钮）", () => {
+    expect(undoState(item({ decisionId: "a2", resolution: "auto_fixed", status: "accepted" }), undefined)).toBe("unavailable");
+  });
+
+  it("值比对只对 auto_fixed 生效：待确认项不会被误报成已撤销", () => {
+    // 用户自己把某个待确认项的答案位改成了与撤销目标相同的值 —— 那不是「撤销已生效」。
+    const review = item({ decisionId: "r1", resolution: "needs_review", undo, status: "open" });
+    expect(undoState(review, { "slot-3": { kind: "text", values: ["maps"] } })).toBe("available");
+  });
+
+  it("用户改过目标时**仍然给按钮**：保护在后端，让用户看到那句话", () => {
+    // 后端会以 `USER_EDITED_AFTER_APPLY` 拒绝并给出文案。悄悄藏起按钮反而让用户
+    // 不知道「我的修改赢了」。
+    expect(undoState(autoFixed(), { "slot-3": { kind: "text", values: ["我自己的答案"] } })).toBe("available");
+  });
+});
+
+describe("isDecided — undone 是已解决，不是失败", () => {
+  it("undone 算已决策（不能再重复操作）", () => {
+    expect(isDecided(item({ decisionId: "d1", resolution: "auto_fixed", status: "undone" }))).toBe(true);
+  });
+
+  it("open 不算已决策", () => {
+    expect(isDecided(item({ decisionId: "d2", resolution: "needs_review", status: "open" }))).toBe(false);
+  });
+});
+
+describe("decisionStatusLabel — 已撤销不能被显示成「处理失败」", () => {
+  // 这里曾经是嵌套三元：`undone` 掉进 else 分支 → 用户成功撤销了，界面却报错。
+  it("undone 有自己的文案，且不含「失败」", () => {
+    const label = decisionStatusLabel(item({ decisionId: "d1", resolution: "auto_fixed", status: "undone" }));
+    expect(label).toContain("已撤销");
+    expect(label).not.toContain("失败");
+  });
+
+  it("accepted / rejected 文案不变", () => {
+    expect(decisionStatusLabel(item({ decisionId: "d2", resolution: "auto_fixed", status: "accepted" }))).toBe("已采用");
+    expect(decisionStatusLabel(item({ decisionId: "d3", resolution: "needs_review", status: "rejected" }))).toBe("已保持现状");
+  });
+
+  it("failed 显示为「处理失败，请重试」，**不带错误码**", () => {
+    // 本轮任务书第一节：错误码（`APPLY_REJECTED` / `USER_EDITED_AFTER_APPLY`）是给日志和
+    // 开发者看的，普通界面出现这种词只会让用户困惑。失败必须给出**下一步动作**。
+    const label = decisionStatusLabel(item({ decisionId: "d4", resolution: "needs_review", status: "failed", code: "APPLY_REJECTED" }));
+    expect(label).toBe("处理失败，请重试");
+    expect(label).not.toContain("APPLY_REJECTED");
+  });
+});
+
+describe("recognitionInFlight — 结果还在路上时面板不能把「没有结果」定格", () => {
+  // 回归 F-R14-1：批次是裁决之后才落盘的，面板通常先于批次打开；批次落地那一刻
+  // 外层重拉键的四个分量全都不变（`job.currentStep` 早已是 Authoring），于是面板
+  // 会一直显示「识别还没有产出可核对的结果」，而 IPC 已经能读到几十条候选。
+  it("一次都没读到视图 ⇒ 在途（可能是识别还没落盘，也可能是读命令失败）", () => {
+    expect(recognitionInFlight(undefined)).toBe(true);
+  });
+
+  it("没有批次 ⇒ 在途：「没有批次」只说明结论还没生成", () => {
+    // 后端在无批次时如实返回空视图（`get_recognition_decision_core`），
+    // 因此 batchId 为空是**未生成**，不是「没有问题」。
+    expect(recognitionInFlight(view([], { batchId: "" }))).toBe(true);
+  });
+
+  it("本地/云端在排队或运行 ⇒ 在途", () => {
+    expect(recognitionInFlight(view([], { localStatus: "running" }))).toBe(true);
+    expect(recognitionInFlight(view([], { cloudStatus: "queued" }))).toBe(true);
+    // 「本地先出稿、云端仍排队」是最常见的落点：本地已 succeeded，云端还 queued。
+    expect(recognitionInFlight(view([], { localStatus: "succeeded", cloudStatus: "queued" }))).toBe(true);
+  });
+
+  it("批次已到且两条链都到终态 ⇒ 不在途（不再空转轮询）", () => {
+    expect(recognitionInFlight(view([], { localStatus: "succeeded", cloudStatus: "succeeded" }))).toBe(false);
+    // 云端没跑（not_run→not_started）也是终态：不能因为「云端没跑」就无限轮询。
+    expect(recognitionInFlight(view([], { localStatus: "succeeded", cloudStatus: "not_started" }))).toBe(false);
+    expect(recognitionInFlight(view([], { localStatus: "succeeded", cloudStatus: "failed" }))).toBe(false);
   });
 });

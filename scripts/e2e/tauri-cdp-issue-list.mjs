@@ -1,27 +1,38 @@
 #!/usr/bin/env node
 /**
- * 问题列表的真实界面校验（WebView2 CDP 通道）。
+ * 问题列表的真实界面校验（WebView2 CDP 通道）——**任务卡版本**。
  *
  * 为什么单独一个脚本：R9 改了两处**用户可见**的行为，但当时只有单测 + 真实产物回放，
  * 没有在真实应用里看过一眼。任务书要求「用户能完成修复，而不只是看到错误」，
  * 那就必须在真实 DOM 上验证，而不是只在纯函数上验证。
  *
- * 校验四件事：
- *   1. **同一根因的泛化重复不再显示** —— 门禁对同一个根因会给出 `QUALITY_HARD_FAILURE`
- *      （targetId 为空、文案泛化）+ `ISSUE_UNRESOLVED`（带具体题位）两条记录。
- *      界面上不应再出现那条泛化的「这道题必须修复的内容缺陷。」。
- *   2. **逐「根因 + 目标」的渲染行数 = 独立算法期望** —— 一条断言同时管两件事：
- *      行数多了是「同一问题重复显示」，少了是「不同问题被隐藏」。
- *      任务书明确要求两者都成立，**不能只追求列表条数变少**。
- *   3. **两半都没被多删** —— 单独比「本地来源的行数」，防止用「多删」满足第 2 条那种假绿。
- *   4. **文档级问题点了要如实说明** —— `document` 级目标在题面上没有对应元素，
- *      以前点了静默无反应；现在必须出现 `workspace-locate-miss` 说明。
+ * ── 本轮（R14）改了什么，以及本脚本为什么跟着重写 ────────────────────────────
  *
- * 期望值用**独立算法**算出来（不复用被测实现），避免自己测自己。
- * 界面行来自 `mergePublishGateIssues(本地闭包, 门禁)`，**两半都要算**：
- * 第一版只算门禁那半，于是把本地那 14 行误判成「产品多渲染」。
- * 第二版按「根因 + 目标」当唯一身份，又把 group-2 上两条**不同事实**合成一行 ——
- * 那是**隐藏**问题，不是去重。现在按「同来源同文案才算同一条」判（见 `expectedFactCounts`）。
+ * 上一版脚本断言的是「逐条原始问题行的渲染行数 = 独立算法期望」。本轮问题列表改成
+ * **用户任务卡**：连续缺答并成一个题号区间、同一题组的内部问题并成一条、泛化行在
+ * 原因被完整表达后隐藏。行数对不上是**设计如此**，旧断言全部失效——但失效不等于
+ * 要求放宽：原来那两条互相牵制的硬要求（**同一问题不重复显示** + **不同问题不被隐藏**）
+ * 必须在新形状下继续被证明，所以断言换成：
+ *
+ *   1. **合并真的发生了** —— 任务数 < 门禁原始阻断条数，且 `data-merged-rows` > 0。
+ *      这条挡的是「其实没合并、只是行数恰好少」的假绿。
+ *   2. **一个根因都没被吞** —— 门禁里每个**带具体目标**的根因码，以及本地闭包报出的
+ *      每个根因码，都必须出现在某张任务卡的 `data-task-covers` 里。
+ *      这是「不同问题不被隐藏」在新形状下的等价命题（行不再逐条渲染，但归属可查）。
+ *   3. **泛化行不冒充任务** —— `QUALITY_NOT_READY` / `QUALITY_HARD_FAILURE` 是汇总，
+ *      不得出现在任何任务的 `data-task-covers` 里，也不得单独渲染成一张卡。
+ *   4. **每条任务都有真按钮** —— 每张卡至少一个 `button[data-action-id]`，动作只允许是
+ *      `fill-answer` / `view-source` / `retry-recognition`；不存在「确认」「忽略」这类
+ *      点了不改变门禁结果的按钮（本轮任务书第三节明确禁止）。
+ *   5. **按钮真的有作用** —— 三类动作各点一次，各断言一个**可观察的真实后果**：
+ *      `fill-answer` → 题面滚动到目标，或如实给出「不在题面上」（不允许静默无反应）；
+ *      `view-source` → 原文件抽屉真的打开；
+ *      `retry-recognition` → 真的把这道题重新加入识别队列（界面出现「已重新加入识别队列」）。
+ *      这一条放在最后执行，因为它会重启识别，会污染后续断言。
+ *   6. **界面里没有内部术语** —— 问题码、`v1/v2/v3`、`slot`、`schema`、`reasonCode`、
+ *      `batchId`、`editVersion` 都不得出现在任务卡的可见文本里（本轮任务书第一节）。
+ *
+ * 期望值仍用**独立算法**算出（不复用被测实现），避免自己测自己。
  *
  * 判定：各条都成立 → `passed`(0)；任一条不成立 → `failed`(1)；
  * 环境不满足 → `cannot-run`(3)。**没有** not-executable 这一档：
@@ -39,6 +50,7 @@ import {
   CDP_CHANNEL_NOTE,
   CannotRunError,
   assertBuildFresh,
+  buildFreshReport,
   gitHead,
   gitWorktreeClean,
   launchTauriAppCdp,
@@ -61,6 +73,7 @@ const runDir = path.join(repoRoot, "artifacts", "e2e-cdp", `run-issue-list-${new
 
 const report = {
   task: "issue-list-real-ui-verification",
+  shape: "user-task-cards",
   channel: CDP_CHANNEL_LABEL,
   channelNote: CDP_CHANNEL_NOTE,
   diagnosticRun: Boolean(extraArgs),
@@ -120,88 +133,28 @@ function gateRootCause(blocker) {
   return blocker.code;
 }
 
-/**
- * 一个门禁 blocker 携带的**稳定事实 id**（独立实现，与产品 `factIdOf` 对应）。
- *
- * 后端把 `issueId` 从 `phase4-{code}-{target}` 改成 `phase4-{code}-{target}-{slug}`
- * （`slug` 是判别性载荷的确定性哈希），preflight 把该 id 放进 `ISSUE_UNRESOLVED` 的
- * `internal`。**只有 `ISSUE_UNRESOLVED` 的 `internal` 才是 id** ——
- * `QUALITY_HARD_FAILURE` 的 `internal` 放的是质量码本身，取它就把质量码当成了 id。
- */
-function gateFactId(blocker) {
-  if (blocker.code !== "ISSUE_UNRESOLVED") return "";
-  return String(blocker.internal ?? "").trim();
-}
+/** 泛化汇总行：它们只说明「有硬失败」，不指向任何具体目标，不得冒充任务。 */
+const GENERIC_GATE_CODES = new Set(["QUALITY_HARD_FAILURE", "QUALITY_NOT_READY"]);
 
 /**
- * **独立算法：界面上每个「根因 + 目标」应该有几行。**
- *
- * 故意不复用 `actionableIssues.ts` 的实现——复用就等于自己测自己。
- * 这条断言**同时**管两件事（任务书要求两者都成立）：
- *   - 同一问题不重复显示（行数不能多）；
- *   - 不同问题不被隐藏（行数不能少）。
- * 所以比的是**逐「根因 + 目标」的计数**，不是总行数 —— 总数对得上也可能是
- * 「吞掉一条、同时多算一条」。
+ * **独立算法：门禁里哪些根因是「必须被某张任务卡接住」的。**
  *
  * 规则（与产品一致但独立写出）：
- *  - `QUALITY_HARD_FAILURE` 是泛化行：若它的 `internal`（质量码）已经出现在某条
- *    **带 targetId** 的记录里，这条泛化行应被去掉（它只是「有硬失败」的汇总）；
- *  - `ISSUE_UNRESOLVED` 的 `internal` 是 `phase4-<质量码>-<目标>[-<slug>]`，根因取开头大写段；
- *  - **同来源**（都是门禁）两条算同一事实的条件：根因相同 + 目标相同 + 文案相同，
- *    且**没有**两个不同的稳定事实 id。id 不同 ⇒ 一定是两条事实，**哪怕文案逐字相同**
- *    （这是本轮新加的保护：文案相同不再等于同一事实）；
- *  - **跨来源**（本地闭包 vs 门禁）同根因同目标算同一件事：两个子系统各写一句文案
- *    是设计如此，不能因此让同一道题占两行（实测会白多 14 行）；
- *  - **warnings 也要计入**（它们同样渲染成行）——第一版漏了这一点，
- *    于是把「32 行 vs 我算的 31」误判成产品多渲染了一行，其实多出来的是那条
- *    `BLOCKER_LIST_TRUNCATED` 警告。断言算错和产品出错必须分得清；
- *  - **本地已有的「根因 + 目标」会吸收门禁那一族**（级别提升、文案保留本地的）。
+ *  - 泛化汇总行（`QUALITY_HARD_FAILURE`）不算——它只是「有硬失败」的汇总；
+ *  - 其余每一条 blocker 的根因码都要有归属，**不论有没有 targetId**：
+ *    `RUNTIME_COMPILER_FAILED` / `SIGNIFICANT_REGION_UNASSIGNED` 的 targetId 就是
+ *    `document`，它们同样是用户必须处理的事，不能因为「没有具体题号」被吞掉。
  */
-function expectedFactCounts(blockers, warnings, localIssues) {
-  const specificRootCauses = new Set();
+function expectedGateRootCauses(blockers) {
+  const out = new Set();
   for (const b of blockers) {
-    if (b.code === "QUALITY_HARD_FAILURE") continue;
-    if (!(b.targetId ?? "")) continue;
-    specificRootCauses.add(gateRootCause(b));
+    if (GENERIC_GATE_CODES.has(b.code)) continue;
+    out.add(gateRootCause(b));
   }
-  const rowsByPair = new Map(); // 根因:目标 -> [{ message, factId }]
-  for (const b of blockers) {
-    if (b.code === "QUALITY_HARD_FAILURE" && specificRootCauses.has(b.internal ?? "")) continue;
-    const targetId = b.targetId ?? "";
-    const pair = gateRootCause(b) + ":" + (targetId || b.code);
-    if (!rowsByPair.has(pair)) rowsByPair.set(pair, []);
-    rowsByPair.get(pair).push({ message: b.userMessage ?? "", factId: gateFactId(b) });
-  }
-  // 逐对判「同一事实」并归并成等价类；等价类的个数就是这一对应有的行数。
-  const counts = new Map();
-  for (const [pair, rows] of rowsByPair) {
-    const open = [...rows];
-    let n = 0;
-    while (open.length) {
-      const seed = open.shift();
-      n += 1;
-      for (let i = open.length - 1; i >= 0; i -= 1) {
-        const other = open[i];
-        // 与产品 `sameFact` 同规则：id 不同 ⇒ 不是同一事实；
-        // 只有一侧有 id（或都没 id）⇒ **不作结论**，继续比文案。
-        const distinctFact = Boolean(seed.factId) && Boolean(other.factId) && seed.factId !== other.factId;
-        if (!distinctFact && seed.message === other.message) open.splice(i, 1);
-      }
-    }
-    counts.set(pair, n);
-  }
-  for (const w of warnings ?? []) counts.set(w.code + ":" + w.code, 1);
-
-  // 跨来源同事实：本地行会把门禁那一族吸收掉，只留本地那一行。
-  const localCounts = new Map();
-  for (const i of localIssues ?? []) {
-    const pair = aliasRootCause(i.code) + ":" + i.targetId;
-    localCounts.set(pair, (localCounts.get(pair) ?? 0) + 1);
-  }
-  for (const [pair, n] of localCounts) counts.set(pair, n);
-  return counts;
+  return out;
 }
 
+/** 本地闭包会报出哪些根因码（独立实现，与 `deriveActionableIssues` 对应）。 */
 function expectedLocalIssues(ds) {
   const out = [];
   for (const task of ds.taskGroups ?? []) {
@@ -224,15 +177,62 @@ function expectedLocalIssues(ds) {
   return out;
 }
 
+/** 从真实 DOM 读任务卡。 */
+const READ_TASKS = `(() => {
+  const root = document.querySelector('[data-testid="workspace-issue-list"]');
+  if (!root) return null;
+  const cards = [...root.querySelectorAll('li')].map((li) => {
+    const titleEl = li.querySelector('[data-testid^="workspace-task-title-"]');
+    const detailEl = li.querySelector('.workspace-task-detail');
+    const buttons = [...li.querySelectorAll('button[data-action-id]')].map((b) => ({
+      actionId: b.getAttribute('data-action-id'),
+      target: b.getAttribute('data-action-target'),
+      testid: b.getAttribute('data-testid'),
+      label: b.innerText.replace(/\\s+/g, ' ').trim(),
+    }));
+    return {
+      taskId: li.getAttribute('data-task-id'),
+      kind: li.getAttribute('data-task-kind'),
+      severity: li.getAttribute('data-severity'),
+      covers: (li.getAttribute('data-task-covers') || '').split(',').filter(Boolean),
+      title: titleEl ? titleEl.innerText.replace(/\\s+/g, ' ').trim() : '',
+      detail: detailEl ? detailEl.innerText.replace(/\\s+/g, ' ').trim() : '',
+      text: li.innerText.replace(/\\s+/g, ' ').trim(),
+      buttons,
+    };
+  });
+  const more = root.querySelector('[data-testid="workspace-tasks-more"]');
+  const clear = root.querySelector('[data-testid="workspace-tasks-clear"]');
+  return {
+    taskCount: Number(root.getAttribute('data-task-count') || 0),
+    mergedRows: Number(root.getAttribute('data-merged-rows') || 0),
+    canExport: root.getAttribute('data-can-export'),
+    preflightState: root.getAttribute('data-preflight-state'),
+    cards,
+    hasMore: Boolean(more),
+    moreText: more ? more.innerText.replace(/\\s+/g, ' ').trim() : null,
+    clearText: clear ? clear.innerText.replace(/\\s+/g, ' ').trim() : null,
+    headerText: (() => {
+      const el = document.querySelector('[data-testid="workspace-issues"]');
+      return el ? el.innerText.replace(/\\s+/g, ' ').trim() : null;
+    })(),
+  };
+})()`;
+
+/** 内部术语不得出现在普通界面的可见文本里。 */
+const INTERNAL_TERM_PATTERNS = [
+  { name: "问题码/枚举名", re: /\b[A-Z][A-Z0-9_]{3,}\b/ },
+  { name: "内部版本号", re: /\bv\d+\b/ },
+  { name: "slot", re: /slot/i },
+  { name: "schema", re: /schema/i },
+  { name: "reasonCode", re: /reason[\s_-]?code/i },
+  { name: "batchId/editVersion", re: /batch[\s_-]?id|edit[\s_-]?version/i },
+  { name: "批次基线", re: /批次基线/ },
+];
+
 async function main() {
   const fresh = assertBuildFresh({ exePath, tolerateConcurrentEdits: process.argv.includes("--tolerate-concurrent-edits") });
-  report.identity.buildFresh = {
-    ok: true,
-    exeMtime: new Date(fresh.exeMs).toISOString(),
-    srcNewest: new Date(fresh.srcNewestMs).toISOString(),
-    srcNewestPath: fresh.srcNewestPath,
-    toleratedConcurrentEdits: fresh.tolerated ?? [],
-  };
+  report.identity.buildFresh = buildFreshReport(fresh);
   report.identity.exeSha256 = sha256File(exePath);
   if (!fs.existsSync(fixturePath)) throw new CannotRunError(`夹具不存在：${fixturePath}`);
   report.identity.fixtureSha256 = sha256File(fixturePath);
@@ -248,9 +248,15 @@ async function main() {
   report.identity.browserArgs = session.browserArgs;
 
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-page" });
-  await session.evaluate(`(() => { window.localStorage.setItem("ielts-author-studio.app-settings.v1", JSON.stringify({ cloudEnabled: false })); location.hash = "#/library"; return true; })()`);
-  await session.cdp.send("Page.reload", {}, 30000).catch(() => {});
-  await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-after-reload" });
+  // **不做 `Page.reload`**（本轮实测它会把 CDP 会话打断：重载后 WebView2 的 page target
+  // 重建，`Runtime.evaluate` 直接报「CDP 连接已关闭」，脚本在等 `library-after-reload`
+  // 时超时，一次断言都跑不到）。上一版重载的理由是「让应用重新读 localStorage 里的
+  // `cloudEnabled:false`」，但这个理由不成立：
+  //   - `AppSettingsV1` 里**没有** `cloudEnabled` 这个字段（`appSettings.ts`），
+  //     它从来不会被 `readAppSettings()` 读到；
+  //   - `readAppSettings()` 每次调用都现读 localStorage，本来就不需要重载。
+  // 于是重载只带来风险、不带来任何前置条件。这里只把路由指回题库，应用启动时本来就在题库页。
+  await session.evaluate(`(() => { location.hash = "#/library"; return true; })()`);
 
   const before = await session.evaluate(`[...document.querySelectorAll('[data-testid="library-row"]')].map(r => r.getAttribute('data-item-id'))`);
   await session.clickSelector('[data-testid="library-import"]');
@@ -285,9 +291,8 @@ async function main() {
   const blockers = (pf.value?.blockers ?? []).map((b) => ({ code: b.code, targetId: b.targetId ?? null, internal: b.internal ?? "", userMessage: b.userMessage ?? "" }));
   const gateWarnings = (pf.value?.warnings ?? []).map((w) => ({ code: w.code, message: w.message ?? "" }));
   const localExpected = expectedLocalIssues(draft);
-  const expectedCounts = expectedFactCounts(blockers, gateWarnings, localExpected);
-  const expectedLocal = localExpected.length;
-  const expectedTotal = [...expectedCounts.values()].reduce((a, b) => a + b, 0);
+  const expectedGateCauses = expectedGateRootCauses(blockers);
+  const expectedLocalCauses = new Set(localExpected.map((i) => aliasRootCause(i.code)));
   report.gate = {
     passed: pf.value?.passed ?? null,
     rawBlockerCount: blockers.length,
@@ -295,156 +300,229 @@ async function main() {
     genericRows: blockers.filter((b) => b.code === "QUALITY_HARD_FAILURE").length,
     warningCount: gateWarnings.length,
     warningCodes: gateWarnings.map((w) => w.code),
-    expectedFactCounts: [...expectedCounts.entries()].sort(),
-    expectedLocalRows: expectedLocal,
-    expectedRenderedRows: expectedTotal,
+    expectedGateRootCauses: [...expectedGateCauses].sort(),
+    expectedLocalRootCauses: [...expectedLocalCauses].sort(),
+    expectedLocalRows: localExpected.length,
   };
-  console.log(`[issue-list] gate raw=${blockers.length} warnings=${gateWarnings.length} expectedLocal=${expectedLocal} expectedTotal=${expectedTotal} pairs=${expectedCounts.size}`);
+  console.log(`[issue-list] gate raw=${blockers.length} warnings=${gateWarnings.length} expectedGateCauses=${expectedGateCauses.size} expectedLocalCauses=${expectedLocalCauses.size}`);
 
-  // ---- 打开问题面板，读真实渲染的行 ----
+  // ---- 打开问题面板，读真实渲染的任务卡 ----
   await session.clickSelector('[data-testid="workspace-issues"]');
   await session.waitFor(`!!document.querySelector('[data-testid="workspace-issue-list"]')`, { timeoutMs: 15000, label: "issue-list-open" });
   // 页面**自己**也会去取一次 preflight（`ExamWorkspacePage` 的 useEffect），而这一步是异步的。
-  // 我在上面用 IPC 直接读门禁要快得多，于是会出现「面板已挂载、但 issues 还是空」的竞态：
-  // 实测有一次读到 0 行。必须等页面自己的门禁结论到位再断言，否则会得出
-  // 「渲染 0 行」这种既假又**空**的结论（0 行会让「没有泛化行」之类的断言自动通过）。
+  // 我在上面用 IPC 直接读门禁要快得多，于是会出现「面板已挂载、但任务还是空」的竞态。
+  //
+  // 必须等**门禁结论到位**再断言，判据是 `data-preflight-state`（`loading|loaded|error`）——
+  // 上一版等的条件是「有 li 或出现空态提示」，而空态提示在门禁回来**之前**就已经渲染，
+  // 于是等待立刻通过、读到 0 张卡，把「还没查完」误判成「产品没渲染」。
+  // 这正是本轮修掉的那个产品缺陷：门禁没回来时界面绝不能显示「可以导出」。
   await session.waitFor(
-    `document.querySelectorAll('[data-testid="workspace-issue-list"] li').length > 0`,
-    { timeoutMs: 30000, label: "issue-rows-populated" }
+    `(() => {
+      const el = document.querySelector('[data-testid="workspace-issue-list"]');
+      return !!el && el.getAttribute('data-preflight-state') !== 'loading';
+    })()`,
+    { timeoutMs: 40000, label: "issue-preflight-settled" }
   );
-  const rows = await session.evaluate(`(() => {
-    return [...document.querySelectorAll('[data-testid="workspace-issue-list"] li')].map((li) => {
-      const btn = li.querySelector('button');
-      return {
-        severity: li.getAttribute('data-severity'),
-        targetId: btn ? btn.getAttribute('data-issue-target-id') : null,
-        code: btn ? btn.getAttribute('data-issue-code') : null,
-        source: btn ? btn.getAttribute('data-issue-source') : null,
-        rootCause: btn ? btn.getAttribute('data-issue-root-cause') : null,
-        factId: btn ? btn.getAttribute('data-issue-fact-id') : null,
-        text: li.innerText.replace(/\\s+/g, ' ').trim(),
-      };
-    });
-  })()`);
-  report.rendered = { count: (rows ?? []).length, rows };
-  console.log(`[issue-list] rendered=${(rows ?? []).length}`);
+  let snapshot = await session.evaluate(READ_TASKS);
+  // 折叠时看不到的卡，其 `data-task-covers` 也不可见 —— 先展开，否则「不隐藏」的断言会假失败。
+  if (snapshot?.hasMore) {
+    await session.clickSelector('[data-testid="workspace-tasks-more"]');
+    await sleep(300);
+    const expanded = await session.evaluate(READ_TASKS);
+    report.expandedFrom = { before: snapshot.cards.length, moreText: snapshot.moreText, after: expanded.cards.length };
+    snapshot = expanded;
+  }
+  report.rendered = snapshot;
+  console.log(`[issue-list] rendered cards=${(snapshot?.cards ?? []).length} mergedRows=${snapshot?.mergedRows} canExport=${snapshot?.canExport}`);
 
-  const gateRows = (rows ?? []).filter((r) => r.source === "gate");
-  const localRows = (rows ?? []).filter((r) => r.source === "local");
-  report.rendered.bySource = { gate: gateRows.length, local: localRows.length };
+  const cards = snapshot?.cards ?? [];
+  const coveredCauses = new Set(cards.flatMap((card) => card.covers));
 
   // ---- 断言 0：列表非空（否则下面几条断言会退化成空断言）----
-  assert("问题列表确实渲染出了行（非空断言前置）", (rows ?? []).length > 0, { rendered: (rows ?? []).length });
+  assert("任务列表确实渲染出了任务卡（非空断言前置）", cards.length > 0, { rendered: cards.length, clearText: snapshot?.clearText ?? null });
 
-  // ---- 断言 0b：后端**稳定事实 id** 确实到达了界面，且逐行唯一 ----
-  // 这是任务书第 3 条「等后端稳定事实 id」的落地验收：不再靠文案猜身份。
-  // 两个方向一起查：
-  //   - 少了（missing）⇒ 某条事实被隐藏；
-  //   - 重了（duplicated）⇒ 同一事实重复显示。
-  // 被本地行吸收的门禁行不会渲染成门禁行，所以先从期望里剔除（同根因 + 同目标）。
-  const localKeys = new Set((localExpected ?? []).map((i) => aliasRootCause(i.code) + ":" + i.targetId));
-  const expectedFactIds = new Set();
-  for (const b of blockers) {
-    const id = gateFactId(b);
-    if (!id) continue;
-    if (localKeys.has(gateRootCause(b) + ":" + (b.targetId ?? ""))) continue;
-    expectedFactIds.add(id);
-  }
-  const renderedFactIds = gateRows.map((r) => r.factId).filter(Boolean);
-  const renderedFactIdSet = new Set(renderedFactIds);
-  const missingFactIds = [...expectedFactIds].filter((id) => !renderedFactIdSet.has(id));
-  const duplicatedFactIds = renderedFactIds.filter((id, index) => renderedFactIds.indexOf(id) !== index);
-  report.factIds = {
-    expected: expectedFactIds.size,
-    renderedDistinct: renderedFactIdSet.size,
-    missing: missingFactIds,
-    duplicated: duplicatedFactIds,
+  // ---- 断言 0b：门禁还有阻断时，界面绝不说「可以导出」----
+  // 「可以导出」以**当前题稿的后端发布检查**为准（本轮任务书第 5 条）。
+  // 实测撞到过一个假完成：面板挂载即显示「可以导出」，而同一时刻后端门禁报 34 条阻断——
+  // 因为门禁结论还没回来时列表是空的。这条把它钉住。
+  assert(
+    "门禁还有阻断时界面不说「可以导出」",
+    !(blockers.length > 0 && snapshot?.canExport === "true"),
+    { canExport: snapshot?.canExport, rawBlockers: blockers.length, clearText: snapshot?.clearText ?? null, preflightState: snapshot?.preflightState ?? null }
+  );
+
+  // ---- 断言 1：合并真的发生了 ----
+  // 「任务数 < 门禁原始阻断条数」+「界面自报合并掉的原始行数 > 0」两条一起看：
+  // 前者可能因为「本来就没几条」而偶然成立，后者由构建任务的算法直接给出。
+  assert(
+    "合并真的发生了（任务数 < 门禁原始条数，且界面自报 mergedRows > 0）",
+    cards.length < blockers.length && Number(snapshot?.mergedRows ?? 0) > 0,
+    { cards: cards.length, rawBlockers: blockers.length, mergedRows: snapshot?.mergedRows }
+  );
+
+  // ---- 断言 2（核心）：一个根因都没被吞 ----
+  // 这是「不同问题不被隐藏」在新形状下的等价命题：行不再逐条渲染，但每个根因都必须
+  // 出现在某张任务卡的 `data-task-covers` 里。**同时**查门禁与本地两半，
+  // 因为上一版脚本只算门禁那半，曾把本地那 14 行误判成「产品多渲染」。
+  const missingGateCauses = [...expectedGateCauses].filter((code) => !coveredCauses.has(code));
+  const missingLocalCauses = [...expectedLocalCauses].filter((code) => !coveredCauses.has(code));
+  report.coverage = {
+    expectedGate: [...expectedGateCauses].sort(),
+    expectedLocal: [...expectedLocalCauses].sort(),
+    rendered: [...coveredCauses].sort(),
+    missingGate: missingGateCauses,
+    missingLocal: missingLocalCauses,
   };
   assert(
-    "后端稳定事实 id 全部到达界面且逐行唯一（不隐藏、不重复）",
-    expectedFactIds.size > 0 && missingFactIds.length === 0 && duplicatedFactIds.length === 0,
-    report.factIds
+    "门禁里每个具体根因都被某张任务卡接住（不隐藏）",
+    expectedGateCauses.size > 0 && missingGateCauses.length === 0,
+    { expected: expectedGateCauses.size, missing: missingGateCauses }
   );
-
-  // ---- 断言 1：泛化重复不再显示 ----
-  // 用 `data-issue-code` 判，不再靠文案匹配：文案是后端的，改一个字断言就假绿。
-  const genericRendered = (rows ?? []).filter((r) => r.code === "QUALITY_HARD_FAILURE");
   assert(
-    "泛化 QUALITY_HARD_FAILURE 行不再出现",
-    blockers.some((b) => b.code === "QUALITY_HARD_FAILURE") && genericRendered.length === 0,
-    { gateHasGeneric: blockers.filter((b) => b.code === "QUALITY_HARD_FAILURE").length, renderedGeneric: genericRendered.length }
+    "本地闭包报出的根因也被接住（本地那半没被合并吃掉）",
+    expectedLocalCauses.size > 0 && missingLocalCauses.length === 0,
+    { expected: expectedLocalCauses.size, missing: missingLocalCauses }
   );
 
-  // ---- 断言 2（核心）：逐「根因 + 目标」的渲染行数 = 独立算法期望 ----
-  // 一条断言同时管两件事（任务书要求两者都成立）：
-  //   - 行数**多**了 = 同一问题重复显示；
-  //   - 行数**少**了 = 不同问题被隐藏。
-  // 比的是逐键计数而不是总数：总数对得上也可能是「吞掉一条、同时多算一条」。
-  // 键用界面输出的 `data-issue-root-cause`（不是 `data-issue-code`）：
-  // 门禁把**所有**质量码都写成 `ISSUE_UNRESOLVED`，只看 code 会把两个不同根因看成同一条。
-  const actualCounts = new Map();
-  for (const r of rows ?? []) {
-    const pair = `${r.rootCause}:${r.targetId}`;
-    actualCounts.set(pair, (actualCounts.get(pair) ?? 0) + 1);
+  // ---- 断言 3：泛化汇总行不冒充任务 ----
+  // 泛化行只在「原因没有被具体任务完整表达」时才该显示；本夹具里原因是被表达了的，
+  // 所以它不该出现在任何 covers 里，也不该单独成卡。
+  const genericClaimed = cards.filter((card) => card.covers.some((code) => GENERIC_GATE_CODES.has(code)));
+  const genericCards = cards.filter((card) => /还有未确认的内容|必须修复的内容缺陷/.test(card.text));
+  assert(
+    "泛化汇总行没有冒充成任务（原因已被具体任务表达）",
+    blockers.some((b) => b.code === "QUALITY_HARD_FAILURE") && genericClaimed.length === 0 && genericCards.length === 0,
+    {
+      gateHasGeneric: blockers.filter((b) => b.code === "QUALITY_HARD_FAILURE").length,
+      claimedBy: genericClaimed.map((c) => c.taskId),
+      genericCards: genericCards.map((c) => c.text),
+    }
+  );
+
+  // ---- 断言 4：每条任务都有真按钮，且动作种类合法 ----
+  const ALLOWED_ACTIONS = new Set(["fill-answer", "view-source", "retry-recognition"]);
+  const withoutAction = cards.filter((card) => card.buttons.length === 0);
+  const illegalActions = cards.flatMap((card) =>
+    card.buttons.filter((b) => !ALLOWED_ACTIONS.has(b.actionId)).map((b) => ({ taskId: card.taskId, actionId: b.actionId, label: b.label }))
+  );
+  // 「确认」「忽略」这类点了不改变门禁结果的按钮，本轮明确禁止。
+  const fakeButtons = cards.flatMap((card) =>
+    card.buttons.filter((b) => /确认|忽略|知道了|知道了，跳过/.test(b.label)).map((b) => ({ taskId: card.taskId, label: b.label }))
+  );
+  report.actions = cards.map((c) => ({ taskId: c.taskId, kind: c.kind, actions: c.buttons.map((b) => b.actionId) }));
+  assert(
+    "每条任务至少有一个真实动作按钮，且动作种类合法（无「确认」「忽略」这类假按钮）",
+    withoutAction.length === 0 && illegalActions.length === 0 && fakeButtons.length === 0,
+    { withoutAction: withoutAction.map((c) => c.taskId), illegalActions, fakeButtons }
+  );
+
+  // ---- 断言 5：任务卡文本里没有内部术语 ----
+  const leaks = [];
+  for (const card of cards) {
+    for (const pattern of INTERNAL_TERM_PATTERNS) {
+      const hit = pattern.re.exec(card.text);
+      if (hit) leaks.push({ taskId: card.taskId, term: pattern.name, hit: hit[0], text: card.text });
+    }
   }
-  const allPairs = new Set([...expectedCounts.keys(), ...actualCounts.keys()]);
-  const mismatches = [];
-  for (const pair of allPairs) {
-    const want = expectedCounts.get(pair) ?? 0;
-    const got = actualCounts.get(pair) ?? 0;
-    if (want !== got) mismatches.push({ pair, want, got, kind: got > want ? "重复显示" : "被隐藏" });
-  }
-  report.factCounts = { expected: [...expectedCounts.entries()].sort(), actual: [...actualCounts.entries()].sort() };
+  report.leaks = leaks;
+  assert("任务卡可见文本里没有内部术语（问题码 / v1 / slot / schema / batchId …）", leaks.length === 0, { leaks: leaks.slice(0, 8) });
+
+  // ---- 断言 6：顶部入口与列表说的是同一件事 ----
+  // 顶部此前显示原始问题条数（`问题 46 · 阻断 29`），用户点开却只看到 3 条任务——
+  // 「顶部计数」与「点开后的列表」必须收敛到同一个数字。
+  const headerMatch = /问题\s*(\d+)/.exec(String(snapshot?.headerText ?? ""));
   assert(
-    "每个 (根因, 目标) 的渲染行数 = 独立算法期望（同时抓重复与隐藏）",
-    mismatches.length === 0,
-    { mismatches: mismatches.slice(0, 8), pairs: allPairs.size, rendered: (rows ?? []).length }
+    "顶部入口显示的是任务数，与列表一致",
+    Boolean(headerMatch) && Number(headerMatch[1]) === Number(snapshot?.taskCount ?? -1),
+    { headerText: snapshot?.headerText, taskCount: snapshot?.taskCount }
   );
 
-  // ---- 断言 3：本地那半没有被合并吃掉 ----
-  // 断言 2 也可能靠**多删**满足；这条防止那种假绿。
-  const localCodes = [...new Set(localRows.map((r) => r.code))];
-  assert(
-    "本地来源的行数 = 独立算法算出的期望（没有被多删）",
-    localRows.length === expectedLocal && localCodes.every((c) => ["ANSWER_MISSING", "ANSWER_UNRESOLVED"].includes(c)),
-    { rendered: localRows.length, expected: expectedLocal, localCodes }
+  // ---- 断言 7：`fill-answer` 真的有作用（定位到答案控件）----
+  // 逐条点**每一个**「去填写」：
+  //   - 不允许**静默无反应**（点了既不滚动、也不给说明）；
+  //   - 至少有一条必须**真的滚动到题面元素** —— 否则「定位答案控件」这句话就没被证明，
+  //     只是「点了之后有话说」。实测这一条抓到过一个真缺陷：内联填空的答案输入框
+  //     渲染在 stimulus 内部，宿主元素带的是内容节点 id（`slot-node-q27`），
+  //     而定位只按 slotId 与 `hostNodeId`（那是 stimulus 节点 id）找，两跳全落空，
+  //     于是每一张「去填写」卡都只给出「找不到」。
+  const fillButtons = cards.flatMap((card) =>
+    card.buttons.filter((b) => b.actionId === "fill-answer").map((b) => ({ card, button: b }))
   );
-
-  // ---- 断言 4：确实发生了去重（否则上面几条可能是空断言）----
-  assert("确实去重了（渲染总行数 < 门禁原始条数）", (rows ?? []).length < blockers.length, { rendered: (rows ?? []).length, raw: blockers.length });
-
-  // ---- 断言 4：文档级问题点了要如实说明 ----
-  const docRow = (rows ?? []).find((r) => r.targetId === "document");
-  if (docRow) {
+  if (fillButtons.length) {
     await session.evaluate(`(() => {
-      const li = [...document.querySelectorAll('[data-testid="workspace-issue-list"] li')]
-        .find((el) => el.querySelector('button') && el.querySelector('button').getAttribute('data-issue-target-id') === 'document');
-      li.querySelector('button').click();
+      window.__issueScrolled = [];
+      const original = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = function (...args) {
+        const id = this.dataset.editorId || this.dataset.questionId || this.dataset.responseGroupId || null;
+        if (id) window.__issueScrolled.push(id);
+        if (original) return original.apply(this, args);
+      };
       return true;
     })()`);
-    const shown = await session.waitFor(`!!document.querySelector('[data-testid="workspace-locate-miss"]')`, { timeoutMs: 8000, label: "locate-miss" }).catch(() => false);
-    const notice = shown ? await session.evaluate(`document.querySelector('[data-testid="workspace-locate-miss"]').innerText.replace(/\\s+/g,' ').trim()`) : null;
-    assert("文档级问题点击后如实说明（不再静默无反应）", shown, { notice });
-    report.locateMissNotice = notice;
+    const perButton = [];
+    for (const { card, button } of fillButtons) {
+      await session.evaluate(`(() => { window.__issueScrolled = []; return true; })()`);
+      await session.clickSelector(`[data-testid="${button.testid}"]`);
+      await sleep(600);
+      const scrolled = await session.evaluate(`window.__issueScrolled`);
+      const missNotice = await session.evaluate(
+        `(() => { const el = document.querySelector('[data-testid="workspace-locate-miss"]'); return el ? el.innerText.replace(/\\s+/g,' ').trim() : null; })()`
+      );
+      perButton.push({ taskId: card.taskId, target: button.target, scrolled: scrolled ?? [], missNotice });
+    }
+    report.fillAnswer = perButton;
+    const silent = perButton.filter((entry) => !entry.scrolled.length && !entry.missNotice);
+    const located = perButton.filter((entry) => entry.scrolled.length > 0);
+    assert(
+      "每个「去填写」都有作用：滚动到目标或如实说明找不到（不静默无反应）",
+      silent.length === 0,
+      { silent }
+    );
+    assert(
+      "至少有一条「去填写」真的定位到了题面上的答案控件",
+      located.length > 0,
+      { located: located.map((entry) => ({ taskId: entry.taskId, target: entry.target, scrolled: entry.scrolled })), perButton }
+    );
   } else {
-    assert("夹具里存在 document 级问题（本断言的先决条件）", false, { targets: [...new Set((rows ?? []).map((r) => r.targetId))] });
+    assert("夹具里存在「去填写」任务（本断言的先决条件）", false, { kinds: cards.map((c) => c.kind) });
   }
 
-  // ---- 断言 5：可定位的问题仍然能定位（改动没有把正常定位弄坏）----
-  // 必须读**提示文本**，不能只判元素是否存在：提示是粘性的，只判存在的话
-  // 「上一条 document 的提示还挂着」和「这一条真的定位失败」看起来一模一样。
-  const locatableRow = (rows ?? []).find((r) => r.targetId && r.targetId !== "document" && /^q\d+$/.test(r.targetId));
-  if (locatableRow) {
-    await session.evaluate(`(() => {
-      const li = [...document.querySelectorAll('[data-testid="workspace-issue-list"] li')]
-        .find((el) => el.querySelector('button') && el.querySelector('button').getAttribute('data-issue-target-id') === ${JSON.stringify(locatableRow.targetId)});
-      li.querySelector('button').click();
-      return true;
-    })()`);
-    await sleep(800);
-    const noticeText = await session.evaluate(`(() => { const el = document.querySelector('[data-testid="workspace-locate-miss"]'); return el ? el.innerText.replace(/\\s+/g,' ').trim() : null; })()`);
-    assert("可定位的题位问题不显示「不在题面上」提示", noticeText === null, { targetId: locatableRow.targetId, noticeText });
-    report.locateAfterSlotClick = { targetId: locatableRow.targetId, noticeText };
+  // ---- 断言 8：`view-source` 真的打开原文件 ----
+  const sourceCard = cards.find((card) => card.buttons.some((b) => b.actionId === "view-source"));
+  if (sourceCard) {
+    const button = sourceCard.buttons.find((b) => b.actionId === "view-source");
+    await session.clickSelector(`[data-testid="${button.testid}"]`);
+    await sleep(900);
+    const drawer = await session.evaluate(
+      `(() => { const el = document.querySelector('[aria-label="原文件"]'); return el ? el.innerText.replace(/\\s+/g,' ').trim().slice(0, 200) : null; })()`
+    );
+    report.viewSource = { taskId: sourceCard.taskId, drawer };
+    assert("「查看原文」真的打开了原文件", Boolean(drawer), report.viewSource);
+    // 关掉抽屉，避免影响后续步骤。
+    await session.evaluate(`(() => { const btn = document.querySelector('[aria-label="原文件"] [aria-label="关闭"]'); if (btn) btn.click(); return true; })()`);
+    await sleep(400);
+  } else {
+    assert("夹具里存在「查看原文」任务（本断言的先决条件）", false, { kinds: cards.map((c) => c.kind) });
+  }
+
+  // ---- 断言 9（最后执行）：`retry-recognition` 真的重新入队 ----
+  // 这条会重启识别，会污染后续断言，所以放在最后。但它必须真的点一次 ——
+  // 「按钮存在」不等于「按钮有用」，本轮任务书第 5 条要的是后者。
+  const retryCard = cards.find((card) => card.buttons.some((b) => b.actionId === "retry-recognition"));
+  if (retryCard) {
+    const button = retryCard.buttons.find((b) => b.actionId === "retry-recognition");
+    await session.clickSelector(`[data-testid="${button.testid}"]`);
+    const shown = await session.waitFor(
+      `(() => { const el = document.querySelector('.workspace-notice'); return !!el && /重新加入识别队列/.test(el.innerText); })()`,
+      { timeoutMs: 20000, label: "retry-requeued" }
+    ).catch(() => false);
+    const noticeText = await session.evaluate(
+      `(() => { const el = document.querySelector('.workspace-notice'); return el ? el.innerText.replace(/\\s+/g,' ').trim() : null; })()`
+    );
+    report.retryRecognition = { taskId: retryCard.taskId, target: button.target, requeued: Boolean(shown), noticeText };
+    assert("「重新识别」真的把这道题重新加入识别队列", Boolean(shown), report.retryRecognition);
+  } else {
+    assert("夹具里存在「重新识别」任务（本断言的先决条件）", false, { kinds: cards.map((c) => c.kind) });
   }
 
   const failed = report.assertions.filter((a) => !a.ok);

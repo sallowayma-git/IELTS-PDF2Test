@@ -148,19 +148,48 @@ export function evaluatePublication({ publishDetail, publicationFacts } = {}) {
   if (publishDetail.manifestExists !== true) {
     failures.push("manifest.js 未落盘（manifestExists !== true）");
   }
-  const preflightPassed = publishDetail.preflight?.passed;
-  if (preflightPassed !== true) {
-    failures.push(`发布预检未通过（preflight.passed=${String(preflightPassed)}）`);
-  }
   const facts = publicationFacts ?? {};
-  if (!Array.isArray(facts.scriptFiles) || facts.scriptFiles.length === 0) {
-    failures.push("发布目录里没有题目 JS（v2-p*.js）");
+  // 「题目 JS 在不在」必须按 **manifest 的 `entry.script`** 判断，不能按包根目录的
+  // `v2-p*.js` 通配。当前 publisher 把运行时脚本放在 `releases/<batchId>/<examId>.js`，
+  // 学生端也是从 `entry.script` 解析（`NasJsDirectReadingAssetProvider.ts:114/:236`）。
+  // R14 实测：一条真实成功的发布在包根只有 `manifest.js`，旧规则因此把**成功的**发布
+  // 判成「没有题目 JS」—— 一个假阴性，见 F-R14-6。
+  const runtimeScripts = Array.isArray(facts.runtimeScripts) ? facts.runtimeScripts : [];
+  if (runtimeScripts.length === 0) {
+    failures.push("发布包里没有可解析的题目运行时脚本（manifest 的 entry.script 未指向存在的文件）");
   }
   if (facts.resourceManifestExists !== true) {
     failures.push("发布目录里没有资源清单（resources/<examId>/asset-manifest.json）");
   }
   return failures;
 }
+
+/**
+ * 发布成功、但发布前**或**发布后的 `get_publish_preflight` 报 `passed=false`。
+ *
+ * 这**不**是「产物缺失」，所以**不**进 `evaluatePublication` 的 failures ——
+ * 用产物缺失去描述它会把「发布成功」说成「没发布」。它是一个独立的产品观察，
+ * 由调用方记进报告。
+ *
+ * 实测依据（F-R14-6）：proven-ready 夹具下，发布前后两次预检都是
+ * `passed=false / QUALITY_NOT_READY / quality_state=review_required`，
+ * 而发布**成功**且产物齐全（manifest + releases/<id>/<exam>.js + resources，
+ * 且 `scriptSha256` / `runtimeSha256` 全部对得上）。
+ */
+export function describePreflightDisagreement(publishDetail) {
+  if (!publishDetail) return null;
+  if (publishDetail.manifestExists !== true) return null;
+  const passed = publishDetail.preflight?.passed;
+  if (passed === true) return null;
+  if (passed === undefined) return null;
+  const codes = (publishDetail.preflight?.blockers ?? [])
+    .map((b) => b?.code ?? b)
+    .filter(Boolean);
+  return `发布已成功且产物齐全，但 get_publish_preflight 报 passed=${String(passed)}`
+    + `${codes.length ? `（${[...new Set(codes)].join(", ")}）` : ""}`
+    + " —— 预检口径与实际可发布性不一致，需后端判定哪一侧为准。";
+}
+
 
 /**
  * 计算完整链（或专项）判定。

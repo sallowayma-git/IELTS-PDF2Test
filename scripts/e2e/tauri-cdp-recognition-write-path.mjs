@@ -26,6 +26,7 @@ import {
   CDP_CHANNEL_NOTE,
   CannotRunError,
   assertBuildFresh,
+  buildFreshReport,
   createStepRecorder,
   gitHead,
   gitWorktreeClean,
@@ -82,13 +83,7 @@ async function call(command, args) {
 
 try {
   const fresh = assertBuildFresh({ exePath, tolerateConcurrentEdits: true });
-  report.identity.buildFresh = {
-    ok: true,
-    exeMtime: new Date(fresh.exeMs).toISOString(),
-    srcNewest: new Date(fresh.srcNewestMs).toISOString(),
-    srcNewestPath: fresh.srcNewestPath,
-    toleratedConcurrentEdits: fresh.tolerated ?? [],
-  };
+  report.identity.buildFresh = buildFreshReport(fresh);
   report.identity.exeSha256 = sha256File(exePath);
 
   // PDF 必须先进 runDir/pdfs：harness 把 PDF2TEST_AUTOMATION_PDF_DIR 指向那里，
@@ -144,14 +139,19 @@ try {
   let batchId = null;
   let editVersion = 0;
   await recorder.run("read-recognition-decision", async () => {
+    // ⚠️ 不能把 `view.chains` 当「识别已落盘」的判据：`get_recognition_decision` 在**尚未**
+    // 产生批次时也会返回一个视图，其 `chains` 是四条 `not_run`（后端 `load_latest_batch`
+    // 为 None 的分支）。用 `|| chains` 会让循环立刻退出，把「还没开始」当成「已落盘」。
+    // 正确判据是**批次出现**或**本地链进入终态**。
     const deadline = Date.now() + 120000;
     let view = null;
     while (Date.now() < deadline) {
       const r = await call("get_recognition_decision", { itemId });
       if (r?.ok && r.value) {
         view = r.value;
-        // 只要有 batch 或 chains 就算识别已落盘，不必等满时限。
-        if (view.batchId || view.chains) break;
+        const localState = view.chains?.local?.state ?? null;
+        const terminalLocal = ["succeeded", "partial", "unusable", "failed", "canceled"].includes(localState);
+        if (view.batchId || terminalLocal) break;
       }
       await sleep(2000);
     }

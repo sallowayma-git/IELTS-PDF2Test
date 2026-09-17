@@ -279,29 +279,33 @@ describe("compilePreviewSource — 答案键类型与槽位交互的一致性（
 });
 
 describe("describePreviewPublishLimitation — 预览与发布的差距", () => {
-  it("有未保存修改时是 warning，并点明发布用的是已保存版本", () => {
-    const note = describePreviewPublishLimitation({ pendingCount: 3, savedVersion: 7, blockerCount: 0 });
+  it("有未保存修改时是 warning，并点明发布用的是已保存内容（**不带版本号**）", () => {
+    const note = describePreviewPublishLimitation({ pendingCount: 3, blockerCount: 0 });
     expect(note.level).toBe("warning");
     expect(note.message).toContain("3");
-    expect(note.message).toContain("v7");
+    // 本轮任务书第一节：`v1/v2/v3` 这类内部版本计数不得进入普通界面。
+    expect(note.message).not.toMatch(/\bv\d+\b/);
+    expect(note.message).toContain("已保存");
   });
 
   it("有阻断问题时是 warning，并说明发不出去", () => {
-    const note = describePreviewPublishLimitation({ pendingCount: 0, savedVersion: 2, blockerCount: 4 });
+    const note = describePreviewPublishLimitation({ pendingCount: 0, blockerCount: 4 });
     expect(note.level).toBe("warning");
     expect(note.message).toContain("4");
+    expect(note.message).toContain("发不出去");
   });
 
   it("答案键类型不匹配时是 warning，并说明学生提交会被判无效", () => {
-    const note = describePreviewPublishLimitation({ pendingCount: 0, savedVersion: 2, blockerCount: 0, runtimeIssueCount: 3 });
+    const note = describePreviewPublishLimitation({ pendingCount: 0, blockerCount: 0, runtimeIssueCount: 3 });
     expect(note.level).toBe("warning");
     expect(note.message).toContain("3");
     expect(note.message).toContain("提交");
   });
 
-  it("干净草稿是 info，并说明预览与已保存版本一致", () => {
-    const note = describePreviewPublishLimitation({ pendingCount: 0, savedVersion: 5, blockerCount: 0 });
+  it("干净草稿是 info，并说明预览与已保存内容一致（**不带版本号**）", () => {
+    const note = describePreviewPublishLimitation({ pendingCount: 0, blockerCount: 0 });
     expect(note.level).toBe("info");
-    expect(note.message).toContain("v5");
+    expect(note.message).toContain("一致");
+    expect(note.message).not.toMatch(/\bv\d+\b/);
   });
 });

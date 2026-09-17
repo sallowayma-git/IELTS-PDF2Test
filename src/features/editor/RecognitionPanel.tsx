@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyRecognitionDecisions,
-  describeCloudStatus,
+  describeVerificationStatus,
   getRecognitionDecision,
   type DecisionBatchOutcomeV1,
   type RecognitionDecisionItemV1,
@@ -11,6 +11,7 @@ import {
   autoFixedItems,
   canAccept,
   decisionActionLabel,
+  decisionStatusLabel,
   decisionTargetId,
   describeStaleness,
   emptyStateMessage,
@@ -18,22 +19,21 @@ import {
   formatEvidence,
   groupByDependency,
   isDecided,
-  isUndoAlreadyApplied,
-  parseUndoPatch,
   pendingDecisionCount,
-  reviewItems
+  recognitionInFlight,
+  reviewItems,
+  undoState
 } from "./recognitionDecisions";
 import { toUserFacingError } from "../../utils/userFacingError";
-import type { AuthoringPatchV2 } from "../../types";
 
 // 识别建议面板（契约 §2.3 / §2.4 / §2.6 的前端侧）。
 //
 // 界面只呈现**一份**统一建议集合：
 //   - 顶部一行云端状态（没跑 / 在跑 / 完成 / 失败 / 不可用 + 稳定原因码）；
 //   - 汇总计数（一致 / 已自动修正 / 待确认 / 无法验证）；
-//   - 「已自动修正」单独一组、默认折叠，只提供撤销；撤销走**编辑器事务**
-//     （`undo` 补丁 + 版本递增），不是 reject 决策 —— reject 只改状态、不回滚权威稿，
-//     用它做撤销会让界面显示「已保持现状」而自动修正仍留在稿里；
+//   - 「已自动修正」单独一组、默认折叠，只提供撤销；撤销走**正式后端命令**
+//     （`apply_recognition_decisions` 的 `undo[]`）：后端在**同一个编辑事务**里回滚权威稿
+//     并把决策状态落成 `undone`，所以「值改回去了」和「决策不再算已修正」一起成立；
 //   - 「待确认」「无法验证」逐条一张卡：当前值 vs 建议值 + 证据引文；
 //     无法验证的**不给**「采用修正」，只能「保持现状」；
 //   - 依赖组整组同向（单独接受会造成结构损坏）。
@@ -51,21 +51,16 @@ export interface RecognitionPanelProps {
   /** 应用成功后通知外层重新加载权威稿（版本会变）。 */
   onApplied: () => void;
   /**
-   * 撤销一项自动修正：把 `undo` 当作**编辑器命令**提交，经版本化事务改回旧值。
-   * 必须由外层接到编辑器的 `applyPatch` + `flush`，不能在这里直接写权威稿。
-   */
-  onUndoAutoFix: (patch: AuthoringPatchV2) => Promise<void>;
-  /**
    * 当前**已保存**权威稿的答案位。
    *
-   * 「这一项撤销过了吗」必须从它推出来（见 `isUndoAlreadyApplied`），不能用会话内状态：
-   * 后端没有持久化的「已撤销」状态码，而会话内的 `Set` 一刷新就没了，
-   * 界面又会把「撤销」按钮放回来 —— 那是**假完成**。
+   * 只作为「已撤销」的**次要**判据（见 `undoState`）：权威事实是后端持久化的
+   * `status === "undone"`。留着它是因为废弃的编辑器补丁撤销只回滚了稿、没写状态，
+   * 那批历史数据得靠稿里的值认出来。
    */
   answerKey: Record<string, unknown> | undefined;
 }
 
-export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, onApplied, onUndoAutoFix, answerKey }: RecognitionPanelProps) {
+export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, onApplied, answerKey }: RecognitionPanelProps) {
   const [view, setView] = useState<RecognitionDecisionViewV1 | undefined>();
   const [loadError, setLoadError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
@@ -88,13 +83,38 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
 
   useEffect(() => { void load(); }, [load, refreshKey]);
 
+  // ── 结果晚到时的自刷新 ────────────────────────────────────────────────
+  //
+  // 面板打开的时刻通常**早于**批次落盘：批次是裁决之后才写的，本地链也会先出稿、
+  // 云端继续排队。而外层给的重拉键在批次落地那一刻**全都不变**——`job.currentStep`
+  // 在本地识别结束时就已是 `Authoring`，之后的云端识别、原文件核验、裁决都不会再动它
+  // （实测 `job.json` 的终值就是 `Authoring`）。于是面板会一直停在
+  // 「识别还没有产出可核对的结果」，而同一时刻 IPC 已经能读到几十条候选。
+  //
+  // 处理：只要「还没有批次」或「还有链路在排队/运行」，就按节拍自己重拉，
+  // 直到结果齐了、或到达上限。上限是必须的：一个永远不会跑识别的题不该被无限轮询，
+  // 而「刷新」按钮始终在，用户随时可以手动重拉。
+  const POLL_INTERVAL_MS = 2500;
+  const MAX_POLLS = 48; // ≈2 分钟：一次真实导入的本地+云端+裁决都在这之内落定
+  const [pollCount, setPollCount] = useState(0);
+
+  useEffect(() => {
+    if (pollCount >= MAX_POLLS) return;
+    if (!recognitionInFlight(view)) return;
+    const timer = window.setTimeout(() => {
+      setPollCount((value) => value + 1);
+      void load();
+    }, POLL_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [load, view, pollCount]);
+
   const autoFixed = useMemo(() => autoFixedItems(view), [view]);
   const review = useMemo(() => reviewItems(view), [view]);
   const groups = useMemo(() => groupByDependency(review), [review]);
   const staleness = describeStaleness(view);
   const pending = pendingDecisionCount(view);
 
-  async function submit(groupKey: string, items: RecognitionDecisionItemV1[], action: "accept" | "reject") {
+  async function submit(groupKey: string, items: RecognitionDecisionItemV1[], action: "accept" | "reject" | "undo") {
     if (!view || busyGroup) return;
     const key = `${view.batchId}:${groupKey}:${action}`;
     if (!requestIds.current.has(key)) requestIds.current.set(key, crypto.randomUUID());
@@ -111,15 +131,25 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
       const parts: string[] = [];
       if (result.accepted.length) parts.push(`已采用 ${result.accepted.length} 项`);
       if (result.rejected.length) parts.push(`已保持现状 ${result.rejected.length} 项`);
+      if (result.undone.length) parts.push(`已撤销 ${result.undone.length} 项，权威稿已改回自动修正前的值`);
       if (result.replayed) parts.push("这次是重试，没有重复写入");
       // superseded 不是失败：题稿已经被用户改过，这条建议不再适用（你的修改赢了）。
-      if (result.stale.length) parts.push(`${result.stale.length} 项因为题稿已经改过而没有应用，你的修改保持不变`);
-      if (result.failed.length) parts.push(`${result.failed.length} 项没有应用成功（${result.failed[0].code}）`);
+      // 重复撤销也会走这里（后端 `RECOGNITION_ALREADY_RESOLVED`），不该报成错误。
+      if (result.stale.length) parts.push(`${result.stale.length} 项因为题稿已经改过或已经处理过而没有再次应用，你的修改保持不变`);
+      if (result.failed.length) {
+        // 失败原因用**后端那句话**（它已经是给用户看的文案），但**不带错误码**：
+        // 错误码是给日志和开发者用的，普通界面出现 `USER_EDITED_AFTER_APPLY`
+        // 这种词只会让用户困惑（本轮任务书第一节）。
+        const first = result.failed[0];
+        const suffix = result.failed.length > 1 ? `（共 ${result.failed.length} 项）` : "";
+        parts.push(`${first.message || "没有应用成功"}${suffix}`);
+      }
       setNotice(parts.join("；") || "已记录这次处理。");
       // 写入返回里已经带了归一化后的 view（契约 §5「无需二次读取」），直接用，省一次往返。
       if (result.view) setView(result.view);
       else await load();
-      if (result.accepted.length) onApplied();
+      // 接受与撤销都会改权威稿、递增版本 → 都要让外层重新加载。
+      if (result.accepted.length || result.undone.length) onApplied();
     } catch (error) {
       setNotice(toUserFacingError(error, "这次处理没有生效，请重试。").userMessage);
     } finally {
@@ -128,28 +158,17 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
   }
 
   /**
-   * 撤销一项自动修正。
+   * 撤销一项自动修正 —— 走**正式后端命令**，不再是编辑器补丁。
    *
-   * **不能**走 reject：后端拒绝分支的语义是「只改状态，不碰权威稿」，那样界面会
-   * 说「已保持现状」而权威稿里自动修正原样留着。这里把 `undo` 交给编辑器的
-   * 版本化事务，值真的改回去、版本真的递增，失败也会 reject 出来如实告知。
+   * 编辑器补丁那条老路只能改权威稿，**改不动决策状态**：值回去了、状态还是 `accepted`，
+   * 界面继续把它算作「已自动修正」，重开后撤销按钮又冒出来。现在把这一项交给
+   * `apply_recognition_decisions` 的 `undo[]`，后端在同一个编辑事务里回滚 + 落 `undone`。
    *
-   * 这里**不再**记录「我点过撤销」：改完值之后，权威稿本身就说明了一切
-   * （`isUndoAlreadyApplied` 会在渲染时按 `answerKey` 重新判定），
-   * 所以重开、刷新、换会话都不会把「撤销」按钮放回来。
+   * 强制保护也在后端：用户若在自动修正之后又改过这个槽位，后端返回
+   * `USER_EDITED_AFTER_APPLY` 并拒绝回滚，界面如实显示那句话，绝不覆盖用户的改动。
    */
-  async function undoAutoFix(item: RecognitionDecisionItemV1, patch: AuthoringPatchV2) {
-    if (busyGroup) return;
-    setBusyGroup(item.decisionId);
-    setNotice(undefined);
-    try {
-      await onUndoAutoFix(patch);
-      setNotice("已把这一项改回自动修正前的值。");
-    } catch (error) {
-      setNotice(toUserFacingError(error, "撤销没有生效，题稿保持原样。").userMessage);
-    } finally {
-      setBusyGroup(undefined);
-    }
+  function undoAutoFix(item: RecognitionDecisionItemV1) {
+    return submit(item.decisionId, [item], "undo");
   }
 
   return (
@@ -168,7 +187,17 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
       {view ? (
         <>
           <p className="workspace-recognition-status" data-testid="workspace-recognition-cloud">
-            {describeCloudStatus(view.cloudStatus, view.cloudReasonCode)}
+            {describeVerificationStatus({
+              localStatus: view.localStatus,
+              cloudStatus: view.cloudStatus,
+              // `source`/`adjudication` 必须带进来：丢掉它们就只能把「没核验」说成「核验完成」
+              // （A3/A4 之后 source 会 partial、adjudication 会 not_run）。
+              sourceStatus: view.sourceStatus,
+              adjudicationStatus: view.adjudicationStatus,
+              // 待处理条数用 `pendingDecisionCount`（含 `failed`），不是 `summary.needsReview`：
+              // 后者漏掉「处理失败」的项，会让状态行说「没有需要处理的问题」而卡片还在。
+              pendingCount: pending
+            })}
           </p>
           <ul className="workspace-recognition-summary" data-testid="workspace-recognition-summary">
             <li data-count="agreed">一致 {view.summary.agreed}</li>
@@ -176,7 +205,6 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
             <li data-count="needs_review">待确认 {view.summary.needsReview}</li>
             <li data-count="unverifiable">无法验证 {view.summary.unverifiable}</li>
           </ul>
-          <p className="workspace-recognition-meta">题稿版本 v{view.currentEditVersion} · 批次基线 v{view.baseEditVersion}</p>
 
           {staleness ? (
             <p className="workspace-notice warning" role="alert" data-testid="workspace-recognition-stale">
@@ -193,29 +221,33 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
               {autoFixedOpen ? (
                 <ul>
                   {autoFixed.map((item) => {
-                    const undoPatch = parseUndoPatch(item.undo);
-                    // 「已撤销」= 权威稿里那个答案位已经等于撤销补丁要改回的值。
-                    // 这是**持久化事实**，不是会话内记忆：重开/刷新后同样成立。
-                    const undone = isUndoAlreadyApplied(item.undo, answerKey);
+                    // 「已撤销」优先看后端持久化的状态，其次才是权威稿的值（见 `undoState`）。
+                    const state = undoState(item, answerKey);
+                    const busy = busyGroup === item.decisionId;
                     return (
-                      <li key={item.decisionId} data-decision-id={item.decisionId} data-undone={undone ? "true" : "false"}>
+                      <li
+                        key={item.decisionId}
+                        data-decision-id={item.decisionId}
+                        data-undone={state === "undone" ? "true" : "false"}
+                        data-undo-state={state}
+                      >
                         <span>{item.userMessage}</span>
                         <span className="workspace-recognition-values">
                           现在：{formatDecisionValue(item.cloudValue ?? item.localValue)}
                         </span>
-                        {undone ? (
+                        {state === "undone" ? (
                           <span className="workspace-recognition-undone" data-testid={`workspace-recognition-undone-${item.decisionId}`}>
                             已撤销，已改回自动修正前的值。
                           </span>
-                        ) : undoPatch ? (
+                        ) : state === "available" ? (
                           <button
                             className="ghost small"
                             data-testid={`workspace-recognition-undo-${item.decisionId}`}
                             disabled={Boolean(busyGroup)}
-                            onClick={() => void undoAutoFix(item, undoPatch)}
-                          >{busyGroup === item.decisionId ? "正在撤销…" : "撤销"}</button>
+                            onClick={() => void undoAutoFix(item)}
+                          >{busy ? "正在撤销…" : "撤销"}</button>
                         ) : (
-                          // 没有可用的撤销补丁就不放按钮：宁可让用户手动改回去，
+                          // 后端没有可回滚的补丁就不放按钮：宁可让用户手动改回去，
                           // 也不给一个按了不生效的「撤销」。
                           <span className="workspace-recognition-undone" data-testid={`workspace-recognition-undo-unavailable-${item.decisionId}`}>
                             这条没有带可撤销的信息，请在题面上手动改回原值。
@@ -286,8 +318,8 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
                         </p>
                       ) : null}
                       {decided ? (
-                        <p className="workspace-recognition-decided">
-                          {item.status === "accepted" ? "已采用" : item.status === "rejected" ? "已保持现状" : `处理失败（${item.code}）`}
+                        <p className="workspace-recognition-decided" data-status={item.status}>
+                          {decisionStatusLabel(item)}
                         </p>
                       ) : (
                         <div className="button-row">

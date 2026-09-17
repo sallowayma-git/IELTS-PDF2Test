@@ -36,6 +36,7 @@ import {
   CDP_CHANNEL_NOTE,
   CannotRunError,
   assertBuildFresh,
+  buildFreshReport,
   gitHead,
   gitWorktreeClean,
   launchTauriAppCdp,
@@ -188,13 +189,7 @@ function notExecutable(name, reason) {
 async function main() {
   const tolerateConcurrentEdits = process.argv.includes("--tolerate-concurrent-edits");
   const fresh = assertBuildFresh({ exePath, tolerateConcurrentEdits });
-  report.identity.buildFresh = {
-    ok: true,
-    exeMtime: new Date(fresh.exeMs).toISOString(),
-    srcNewest: new Date(fresh.srcNewestMs).toISOString(),
-    srcNewestPath: fresh.srcNewestPath,
-    toleratedConcurrentEdits: fresh.tolerated ?? [],
-  };
+  report.identity.buildFresh = buildFreshReport(fresh);
   report.identity.exeSha256 = sha256File(exePath);
   if (!fs.existsSync(fixturePath)) throw new CannotRunError(`夹具不存在：${fixturePath}`);
   report.identity.fixtureSha256 = sha256File(fixturePath);
@@ -215,7 +210,16 @@ async function main() {
 
   // ---- 准备：题库 → 导入 → 工作区 → 面板 ----
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-page" });
-  await session.evaluate(`(() => { window.localStorage.setItem("ielts-author-studio.app-settings.v1", JSON.stringify({ cloudEnabled: false })); location.hash = "#/library"; return true; })()`);
+  // 注意：这里**不**去写 `cloudEnabled` —— `AppSettingsV1`
+  // （`src/features/settings/appSettings.ts`）根本没有这个字段，写了也读不到，
+  // 是一句会骗人的死代码（旧版留着它，读起来像「本脚本关掉了云端」，其实没关）。
+  //
+  // 本脚本的「无云」是由**数据目录机制**保证的，不是靠这行代码：harness 每次用全新的
+  // `PDF2TEST_AUTOMATION_DATA_DIR`，里面没有 `config/llm-profiles.json`，
+  // `listLlmProfiles` 因此只回一个 `profile-local-placeholder`，
+  // `useImportFiles` 据此算出 `cloudEnabled = false`（见 `useImportFiles.ts` 第 26-28 行）。
+  // 要跑**有云**的按钮流程请用 `tauri-cdp-controlled-service.mjs`，它会写真实 profile。
+  await session.evaluate(`(() => { location.hash = "#/library"; return true; })()`);
   await session.cdp.send("Page.reload", {}, 30000).catch(() => {});
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-after-reload" });
 

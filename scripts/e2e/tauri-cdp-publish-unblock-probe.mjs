@@ -38,6 +38,7 @@ import {
   CDP_CHANNEL_NOTE,
   CannotRunError,
   assertBuildFresh,
+  buildFreshReport,
   gitHead,
   gitWorktreeClean,
   launchTauriAppCdp,
@@ -227,13 +228,7 @@ async function waitForVersionAbove(previous) {
 async function main() {
   const tolerateConcurrentEdits = process.argv.includes("--tolerate-concurrent-edits");
   const fresh = assertBuildFresh({ exePath, tolerateConcurrentEdits });
-  report.identity.buildFresh = {
-    ok: true,
-    exeMtime: new Date(fresh.exeMs).toISOString(),
-    srcNewest: new Date(fresh.srcNewestMs).toISOString(),
-    srcNewestPath: fresh.srcNewestPath,
-    toleratedConcurrentEdits: fresh.tolerated ?? [],
-  };
+  report.identity.buildFresh = buildFreshReport(fresh);
   report.identity.exeSha256 = sha256File(exePath);
   if (!fs.existsSync(fixturePath)) throw new CannotRunError(`夹具不存在：${fixturePath}`);
   report.identity.fixtureSha256 = sha256File(fixturePath);

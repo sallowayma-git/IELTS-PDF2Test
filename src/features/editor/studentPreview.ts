@@ -89,10 +89,13 @@ export interface PreviewPublishLimitation {
  *
  * 预览渲染的是**当前内存草稿**，而发布读的是**已保存的权威稿**。有未保存修改时
  * 二者不同，必须明说，否则用户会以为预览里的改动已经能发布了。
+ *
+ * **刻意不收 `savedVersion`**（本轮任务书第一节）：`v1/v2/v3` 是内部并发保护的计数，
+ * 不是用户概念。以前这里会渲染「发布时只会使用已保存的 v7」，用户既不知道 v7 是什么，
+ * 也无法据此做任何事。参数干脆不提供，避免以后又有人把它拼回文案里。
  */
 export function describePreviewPublishLimitation(input: {
   pendingCount: number;
-  savedVersion: number;
   blockerCount: number;
   /** 答案键类型与槽位不匹配的槽位数（真实学生端会在提交阶段拒绝整份提交）。 */
   runtimeIssueCount?: number;
@@ -101,9 +104,9 @@ export function describePreviewPublishLimitation(input: {
   let level: "info" | "warning" = "info";
   if (input.pendingCount > 0) {
     level = "warning";
-    parts.push(`当前预览包含 ${input.pendingCount} 项尚未保存的修改；发布时只会使用已保存的 v${input.savedVersion}。`);
+    parts.push(`当前预览包含 ${input.pendingCount} 项还没有保存的修改；发布时只会使用已保存的内容。`);
   } else {
-    parts.push(`预览与已保存的 v${input.savedVersion} 一致。`);
+    parts.push("预览与已保存的内容一致。");
   }
   if (input.runtimeIssueCount && input.runtimeIssueCount > 0) {
     level = "warning";
@@ -111,7 +114,7 @@ export function describePreviewPublishLimitation(input: {
   }
   if (input.blockerCount > 0) {
     level = "warning";
-    parts.push(`发布门禁还有 ${input.blockerCount} 项阻断问题，修好之前这道题发不出去。`);
+    parts.push(`还有 ${input.blockerCount} 处问题没有处理完，修好之前这道题发不出去。`);
   }
   return { level, message: parts.join("") };
 }

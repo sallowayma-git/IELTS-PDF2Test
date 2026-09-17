@@ -46,6 +46,8 @@
     "verify:phase7:listening-contract": "node scripts/verify-phase7-listening-contract.mjs",
     "verify:phase7:listening-package": "node scripts/verify-phase7-listening-package.mjs",
     "verify:recognition:contract": "node scripts/recognition/contract-drift.mjs",
+    "build:app": "node scripts/e2e/build-app.mjs",
+    "e2e:local-chain": "node scripts/e2e/tauri-cdp-local-chain.mjs",
     "e2e:chain": "node scripts/e2e/tauri-cdp-product-chain.mjs --diagnostic-args",
     "e2e:chain:negative": "node scripts/e2e/tauri-cdp-product-chain.mjs --diagnostic-args --expect-blocked",
     "e2e:chain:edit-preview": "node scripts/e2e/tauri-cdp-product-chain.mjs --diagnostic-args --scope=edit-preview-specialty",

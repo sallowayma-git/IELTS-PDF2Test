@@ -38,13 +38,16 @@ export function autoFixedItems(view: RecognitionDecisionViewV1 | undefined): Rec
 /**
  * 解析 `auto_fixed` 项的撤销补丁（契约 §4.4 / §6.1）。
  *
- * 撤销**必须**把 `undo` 当作一条编辑器命令提交，经 V2 patch 事务把值改回修正前。
- * 这里曾经是 `submit(..., "reject")`：而后端 reject 的语义是
- * 「只改状态，不碰权威稿」（`reconcile/commands.rs` 的拒绝分支），于是界面说
- * 「已保持现状」、权威稿里自动修正却原样留着 —— 正是「假完成」。
+ * **它不再被前端拿去当编辑器命令执行**（那是本轮废弃的路子，见 `undoState`）。
+ * 现在只用来回答一个问题：后端**有没有**可回滚的目标？
+ *   - 认得出形状 → 后端 `apply_recognition_decisions` 的 `undo[]` 有东西可回滚；
+ *   - 认不出 → 这条没有可撤销的信息，界面就不该给「按了不生效」的按钮。
  *
- * 形状认不出来时返回 `undefined`：宁可不给按钮让用户手动改回，也不给一个
- * 按了没用的「撤销」。
+ * 两个历史教训都钉在这里，别再走回去：
+ *   - 曾经用 `submit(..., "reject")` 当撤销：后端 reject 的语义是「只改状态、不碰权威稿」，
+ *     于是界面说「已保持现状」、权威稿里自动修正原样留着 —— 假完成；
+ *   - 曾经用编辑器 setAnswer 补丁当撤销：值确实改回去了，但**决策状态仍是 `accepted`**，
+ *     界面继续把它算作「已自动修正」，重开后又冒出来 —— 同样是假完成。
  */
 export function parseUndoPatch(undo: unknown): AuthoringPatchV2 | undefined {
   if (!undo || typeof undo !== "object" || Array.isArray(undo)) return undefined;
@@ -72,17 +75,19 @@ function sameAnswerValue(a: unknown, b: unknown): boolean {
 }
 
 /**
- * 撤销**是否已经生效** —— 只看权威稿里的值，不看任何会话内状态。
+ * 撤销**是否已经生效** —— 只从权威稿的值推断，不看任何会话内状态。
  *
- * 为什么必须这样判（本轮修正）：面板原先用一个会话内的 `Set<decisionId>` 记「我点过撤销」，
- * 那是**完成依据**而不是事实依据 —— 刷新页面、换一台机器、或后端重放，
+ * 为什么不能用会话内状态（本轮修正）：面板原先用一个会话内的 `Set<decisionId>` 记
+ * 「我点过撤销」，那是**完成依据**而不是事实依据 —— 刷新页面、换一台机器、或后端重放，
  * 这个 Set 就没了，界面又会把「撤销」按钮放回来。
  *
- * 后端目前**没有**持久化的「已撤销」状态：`RecognitionResolutionV1` 只有
- * `agreed | auto_fixed | needs_review | unverifiable`，`build_view` 也会把
- * `auto_fixed` 的项无条件留在 `autoApplied` 里。所以不能靠状态码判。
+ * **注意它现在只是次要信号。** 后端已经新增持久化的 `DecisionStatusV1::Undone`
+ * （撤销与回滚在同一编辑事务里落盘，见 `reconcile/commands.rs` 的撤销分支），
+ * 判「已撤销」应当优先读 `status === "undone"`（见 `undoState`）。
+ * 这个函数保留，是为了兜住一个真实的窗口：**废弃的编辑器补丁撤销**只改了权威稿、
+ * 没写状态；那批历史数据的状态仍是 `accepted`，只能靠稿里的值认出来。
  *
- * 但撤销的语义本身是**可观测的持久化事实**：`undo` 补丁带着「改回哪个值」，
+ * 撤销的语义本身是**可观测的持久化事实**：`undo` 补丁带着「改回哪个值」，
  * 只要权威稿里那个答案位已经等于这个值，撤销就已经生效（无论是刚点的、
  * 上次会话点的、还是用户自己手改回去的）。重开后依然成立。
  *
@@ -93,6 +98,41 @@ export function isUndoAlreadyApplied(undo: unknown, answerKey: Record<string, un
   const patch = parseUndoPatch(undo);
   if (!patch || patch.op !== "setAnswer") return false;
   return sameAnswerValue(answerKey?.[patch.slotId], patch.value);
+}
+
+/** 撤销入口该显示成什么。 */
+export type UndoState =
+  /** 已撤销：权威稿已回滚到修正前的值，不必再给按钮。 */
+  | "undone"
+  /** 可撤销：后端有回滚目标，给按钮。 */
+  | "available"
+  /** 不可撤销：后端没有可回滚的补丁，宁可让用户手动改回，也不给按了没用的按钮。 */
+  | "unavailable";
+
+/**
+ * 决定「撤销」入口怎么显示。
+ *
+ * 判据优先级（重要，别调换）：
+ *  1. `status === "undone"` —— **后端持久化的权威事实**。撤销是后端在一个编辑事务里
+ *     同时完成「回滚权威稿」与「写 `undone` 状态」的，所以状态一说已撤销就是已撤销，
+ *     重开、换机、重放都成立；
+ *  2. `auto_fixed` 项的权威稿值已等于撤销目标值 —— 兜住废弃编辑器补丁路径写下的历史数据
+ *     （只回滚了稿、状态还停在 `accepted`）。限定在 `auto_fixed` 内，避免把
+ *     「用户自己把某个待确认项改回去了」误报成「已撤销」；
+ *  3. 撤销补丁不可解析 → 不可撤销。
+ *
+ * 用户如果**在自动修正之后又自己改过这个槽位**，这里仍然给按钮 —— 这是刻意的：
+ * 强制保护在后端（`applied_answer_still_in_place == Some(false)` ⇒ `USER_EDITED_AFTER_APPLY`），
+ * 界面把后端那句话如实显示出来，比悄悄把按钮藏起来更能让用户明白「你的修改赢了」。
+ */
+export function undoState(
+  item: RecognitionDecisionItemV1,
+  answerKey: Record<string, unknown> | undefined
+): UndoState {
+  if (item.status === "undone") return "undone";
+  if (item.resolution === "auto_fixed" && isUndoAlreadyApplied(item.undo, answerKey)) return "undone";
+  if (!parseUndoPatch(item.undo)) return "unavailable";
+  return "available";
 }
 
 
@@ -127,7 +167,37 @@ export function canAccept(item: RecognitionDecisionItemV1): boolean {
 
 /** 已决策过的项不再重复操作（幂等展示）。 */
 export function isDecided(item: RecognitionDecisionItemV1): boolean {
-  return item.status === "accepted" || item.status === "rejected" || item.status === "failed";
+  return (
+    item.status === "accepted" ||
+    item.status === "rejected" ||
+    // `undone` 是**已解决**，不是失败：撤销成功后不能又把按钮放回来。
+    item.status === "undone" ||
+    item.status === "failed"
+  );
+}
+
+/**
+ * 已决策项的界面用词。
+ *
+ * 单独抽出来是因为这里曾经是一个嵌套三元：`undone` 掉进最后的 else 分支，
+ * 于是「已撤销」被显示成**「处理失败」**——用户明明成功撤销了，界面却报错。
+ */
+export function decisionStatusLabel(item: RecognitionDecisionItemV1): string {
+  switch (item.status) {
+    case "accepted":
+      return "已采用";
+    case "rejected":
+      return "已保持现状";
+    case "undone":
+      return "已撤销，已改回自动修正前的值";
+    case "superseded":
+      return "题稿已经改过，这条建议不再适用";
+    case "failed":
+      // 不带错误码：`APPLY_REJECTED` 这类词对用户没有意义，普通界面只说「失败、请重试」。
+      return "处理失败，请重试";
+    default:
+      return "";
+  }
 }
 
 export function decisionActionLabel(item: RecognitionDecisionItemV1): { accept: string; keep: string } {
@@ -155,6 +225,30 @@ export function hasAnyChainRun(view: RecognitionDecisionViewV1 | undefined): boo
   return view.localStatus !== "not_started" || view.cloudStatus !== "not_started" || view.items.length > 0;
 }
 
+/**
+ * 识别结果是不是**还在路上**。
+ *
+ * 为什么需要它（F-R14-1）：批次是**裁决之后**才落盘的，面板通常先于批次打开；
+ * 而且本地链会先出稿、云端继续排队。这两种状态下界面必须自己盯着，不能把
+ * 「还没有结果」定格成结论——那会让用户看到「识别还没有产出可核对的结果」，
+ * 而同一时刻 IPC 已经能读到几十条候选，界面在说假话。
+ *
+ * 判据（任一成立即「在途」）：
+ *   - 一次都还没读到过视图：识别可能还没落盘（读命令也会失败）；
+ *   - 没有批次：`get_recognition_decision` 在无批次时如实返回空视图，
+ *     「没有批次」只说明结论还没生成，不说明「没有问题」；
+ *   - 本地或云端链还在 `queued`/`running`：结论会随后到。
+ *
+ * 注意：`localStatus`/`cloudStatus` 是**归一化后**的取值（见 `normalizeDecisionView`），
+ * `not_run` 已经映射成 `not_started`，所以这里只需判排队与运行两种。
+ */
+export function recognitionInFlight(view: RecognitionDecisionViewV1 | undefined): boolean {
+  if (!view) return true;
+  if (!view.batchId) return true;
+  const inFlight = ["queued", "running"];
+  return inFlight.includes(view.localStatus) || inFlight.includes(view.cloudStatus);
+}
+
 /** 空列表时该说哪句话。 */
 export function emptyStateMessage(view: RecognitionDecisionViewV1 | undefined): string {
   const review = reviewItems(view);
@@ -164,10 +258,15 @@ export function emptyStateMessage(view: RecognitionDecisionViewV1 | undefined): 
     : "识别还没有产出可核对的结果，这里暂时没有建议可看。";
 }
 
-/** 过期批次：用户已经改过题稿，这批建议不能直接应用，必须显式提示并允许重新核验。 */
+/**
+ * 过期批次：用户已经改过题稿，这批建议不能直接应用，必须显式提示并允许重新核验。
+ *
+ * 刻意**不提版本号**（本轮任务书第一节）：用户不需要知道「基于 v3 生成、已经改到 v5」，
+ * 只需要知道「这批建议是针对你改之前的内容做的，跟你改的地方冲突的部分不会覆盖你」。
+ */
 export function describeStaleness(view: RecognitionDecisionViewV1 | undefined): string | undefined {
   if (!view?.stale) return undefined;
-  return `这批识别建议基于 v${view.baseEditVersion} 生成，题稿已经改到 v${view.currentEditVersion}。建议里与改动冲突的部分不会覆盖你的修改，需要重新核验后再处理。`;
+  return "这批建议是针对你修改之前的内容做的，与你的改动冲突的部分不会覆盖你，需要重新核对后再处理。";
 }
 
 /**

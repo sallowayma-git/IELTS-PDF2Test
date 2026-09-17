@@ -95,15 +95,25 @@ async function editAndPersist(driver, itemId, marker) {
 async function verifyIssueTarget(driver) {
   await driver.findElement(By.css('[data-testid="workspace-issues"]')).click();
   await driver.wait(until.elementLocated(By.css('[data-testid="workspace-issue-list"]')), 10000);
-  const buttons = await driver.findElements(By.css('[data-testid="workspace-issue-list"] button[data-issue-target-id]'));
+  // 问题列表现在渲染的是**任务卡**（每条任务带一个或多个真实动作按钮），不再是逐条原始问题行。
+  // 因此这里按动作找按钮：只挑「去填写」（`data-action-id="fill-answer"`）——
+  // 它的目标必然是题面上的答案控件，可定位；「查看原文」会顺带打开原文件抽屉，不适合当定位样本。
+  const buttons = await driver.findElements(By.css('[data-testid="workspace-issue-list"] button[data-action-id="fill-answer"]'));
   if (!buttons.length) throw new Error("当前 direct canonical 题稿没有可用于验证定位的问题项");
-  const targetId = await buttons[0].getAttribute("data-issue-target-id");
-  const targetExists = await driver.executeScript(`
-    const id = arguments[0];
-    return Array.from(document.querySelectorAll('[data-editor-id], [data-question-id], [data-response-group-id]'))
-      .some((node) => [node.dataset.editorId, node.dataset.questionId, node.dataset.responseGroupId].includes(id));
-  `, targetId);
-  if (!targetExists) throw new Error(`问题目标在题面中不存在：${targetId}`);
+  // 一条任务可能覆盖一个题号区间，取其中**目标确实在题面上**的那一个。
+  let button = null;
+  let targetId = null;
+  for (const candidate of buttons) {
+    const id = await candidate.getAttribute("data-action-target");
+    const exists = await driver.executeScript(`
+      const id = arguments[0];
+      return Array.from(document.querySelectorAll('[data-editor-id], [data-question-id], [data-response-group-id]'))
+        .some((node) => [node.dataset.editorId, node.dataset.questionId, node.dataset.responseGroupId].includes(id));
+    `, id);
+    if (exists) { button = candidate; targetId = id; break; }
+  }
+  if (!button) throw new Error("问题列表里没有可定位到题面的「去填写」动作");
+  const targetExists = true;
   await driver.executeScript(`
     window.__pdf2testIssueScrolled = null;
     const original = Element.prototype.scrollIntoView;
@@ -112,7 +122,7 @@ async function verifyIssueTarget(driver) {
       if (original) return original.apply(this, args);
     };
   `);
-  await buttons[0].click();
+  await button.click();
   await driver.wait(async () => (
     await driver.executeScript("return window.__pdf2testIssueScrolled;")
   ) === targetId, 10000);

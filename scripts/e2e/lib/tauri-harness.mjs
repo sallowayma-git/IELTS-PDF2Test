@@ -159,7 +159,8 @@ export function assertPrerequisites({ exePath, pdfPath }) {
   if (missing.length) throw new CannotRunError(missing.join("\n"));
 }
 
-export function buildFreshness(exePath) {
+export function buildFreshness(exePath, repoRootOverride = repoRoot) {
+  const repoRoot = repoRootOverride;
   const exeMtimeMs = fs.statSync(exePath).mtimeMs;
   // D0 复核（缺口 2）：exe 内嵌前端产物 + Rust 静态链接，仅看 src/ 会漏掉
   // src-tauri 源码、构建配置与锁文件的漂移。全部纳入后再判定。
@@ -204,10 +205,51 @@ export function buildFreshness(exePath) {
       newestSource = file;
     }
   }
-  const staleBuild = newestSourceMtimeMs > exeMtimeMs;
+  // 构建链是「前端输入 → dist → exe」+「后端输入 → exe」。exe 内嵌的是 `dist/**`，
+  // 而 `tauri build --no-bundle`（配 beforeBuildCommand:""）**不会**重建前端：
+  // 只比 src 与 exe 时，「旧 dist + 新 exe」会被漏判为 fresh。
+  const frontendInputDirs = ["src"];
+  const frontendInputFiles = ["index.html", "vite.config.ts", "vitest.config.ts", "tsconfig.json", "tsconfig.node.json", "package.json", "package-lock.json"];
+  let newestFrontendMtimeMs = 0;
+  let newestFrontend = "(none)";
+  for (const dir of frontendInputDirs) {
+    const mtime = newestMtimeMs(path.join(repoRoot, dir));
+    if (mtime > newestFrontendMtimeMs) {
+      newestFrontendMtimeMs = mtime;
+      newestFrontend = dir;
+    }
+  }
+  for (const file of frontendInputFiles) {
+    const full = path.join(repoRoot, file);
+    if (!fs.existsSync(full)) continue;
+    const mtime = fs.statSync(full).mtimeMs;
+    if (mtime > newestFrontendMtimeMs) {
+      newestFrontendMtimeMs = mtime;
+      newestFrontend = file;
+    }
+  }
+  const distDir = path.join(repoRoot, "dist");
+  const distNewestMtimeMs = newestMtimeMs(distDir);
+  const distMissing = distNewestMtimeMs === 0;
+
+  const reasons = [];
+  if (newestSourceMtimeMs > exeMtimeMs) {
+    reasons.push(`exe 早于源码/构建配置（newest=${new Date(newestSourceMtimeMs).toISOString()} @${newestSource}）`);
+  }
+  if (distMissing) {
+    reasons.push("dist 不存在或为空，exe 内嵌前端产物无法核对");
+  } else {
+    if (newestFrontendMtimeMs > distNewestMtimeMs) {
+      reasons.push(`dist 落后于前端源码（${newestFrontend} @ ${new Date(newestFrontendMtimeMs).toISOString()} > dist @ ${new Date(distNewestMtimeMs).toISOString()}）`);
+    }
+    if (distNewestMtimeMs > exeMtimeMs) {
+      reasons.push(`exe 早于 dist（dist @ ${new Date(distNewestMtimeMs).toISOString()} > exe @ ${new Date(exeMtimeMs).toISOString()}）`);
+    }
+  }
+  const staleBuild = reasons.length > 0;
   if (staleBuild) {
     console.warn(
-      `[e2e:tauri] WARNING 被测 exe 早于源码/构建配置最新改动（exe=${new Date(exeMtimeMs).toISOString()} newest=${new Date(newestSourceMtimeMs).toISOString()} @${newestSource}）——` +
+      `[e2e:tauri] WARNING 被测 exe 不是当前源码/前端的构建产物：${reasons.join("；")}——` +
       "本次结果不能证明当前源码，请先重新构建再作为验收证据。"
     );
   }
@@ -215,7 +257,11 @@ export function buildFreshness(exePath) {
     exeMtime: new Date(exeMtimeMs).toISOString(),
     newestSourceMtime: new Date(newestSourceMtimeMs).toISOString(),
     newestSource,
-    staleBuild
+    newestFrontendMtime: new Date(newestFrontendMtimeMs).toISOString(),
+    newestFrontend,
+    distNewestMtime: distMissing ? null : new Date(distNewestMtimeMs).toISOString(),
+    staleBuild,
+    staleReasons: reasons
   };
 }
 
@@ -223,9 +269,12 @@ export function buildFreshness(exePath) {
  * 各 E2E 在 buildFreshness 之后必须调用本函数，stale 即 CANNOT-RUN。 */
 export function assertFreshBuild(freshness) {
   if (freshness?.staleBuild) {
+    const detail = Array.isArray(freshness.staleReasons) && freshness.staleReasons.length
+      ? freshness.staleReasons.join("；")
+      : `exe=${freshness.exeMtime} < 最新源码/配置 ${freshness.newestSourceMtime} @${freshness.newestSource}`;
     throw new CannotRunError(
-      `被测 exe 是陈旧构建（exe=${freshness.exeMtime} < 最新源码/配置 ${freshness.newestSourceMtime} @${freshness.newestSource}）。` +
-      "拒绝以陈旧构建冒充当前源码验收；先运行 npx tauri build --debug --no-bundle 再跑本套件。"
+      `被测 exe 是陈旧构建（${detail}）。` +
+      "拒绝以陈旧构建冒充当前源码验收；先运行 npm run build 再 npx tauri build --debug --no-bundle 后重跑本套件。"
     );
   }
 }

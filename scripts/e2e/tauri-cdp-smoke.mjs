@@ -16,6 +16,7 @@ import {
   CDP_CHANNEL_NOTE,
   CannotRunError,
   assertBuildFresh,
+  buildFreshReport,
   createStepRecorder,
   gitHead,
   gitWorktreeClean,
@@ -60,12 +61,7 @@ let recorder = null;
 
 try {
   const fresh = assertBuildFresh({ exePath });
-  report.identity.buildFresh = {
-    ok: true,
-    exeMtime: new Date(fresh.exeMs).toISOString(),
-    srcNewest: new Date(fresh.srcNewestMs).toISOString(),
-    srcNewestPath: fresh.srcNewestPath,
-  };
+  report.identity.buildFresh = buildFreshReport(fresh);
   report.identity.exeSha256 = sha256File(exePath);
 
   session = await launchTauriAppCdp({ exePath, runDir, extraBrowserArgs: extraArgs });

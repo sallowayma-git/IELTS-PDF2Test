@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { describeCloudReason, describeCloudStatus, normalizeDecisionView } from "./recognitionClient";
+import { describeVerificationStatus, normalizeDecisionView } from "./recognitionClient";
 
 // `command` 必须被 mock 掉，否则单测会去碰真实 Tauri IPC。
 // 用 vi.hoisted 是因为 vi.mock 的工厂会被提升到 import 之前。
@@ -51,9 +51,14 @@ describe("normalizeDecisionView — 实现形状（chains / actionable / autoApp
     });
     expect(view.localStatus).toBe("succeeded");
     expect(view.cloudStatus).toBe("not_started");
+    // 四路链状态都必须被带上来：丢掉 source/adjudication 就只能把「没核验」说成「核验完成」。
+    expect(view.sourceStatus).toBe("not_started");
+    expect(view.adjudicationStatus).toBe("not_started");
     expect(view.items).toEqual([]);
     // 关键：绝不能是 undefined，否则界面会渲染「未知（undefined）」。
-    expect(describeCloudStatus(view.cloudStatus, view.cloudReasonCode)).not.toContain("undefined");
+    const text = describeVerificationStatus(view);
+    expect(text).not.toContain("undefined");
+    expect(text).not.toContain("校验完成");
   });
 
   it("actionable 与 autoApplied 合成 items，autoApplied 标成 auto_fixed", () => {
@@ -79,53 +84,115 @@ describe("normalizeDecisionView — 实现形状（chains / actionable / autoApp
   });
 });
 
-describe("describeCloudStatus / describeCloudReason — 用户可读且不误导", () => {
-  it("每个稳定状态都有明确文案", () => {
-    expect(describeCloudStatus("not_started")).toContain("还没有运行");
-    expect(describeCloudStatus("running")).toContain("进行中");
-    expect(describeCloudStatus("succeeded")).toBe("云端核验完成。");
-    expect(describeCloudStatus("failed")).toContain("失败");
-    expect(describeCloudStatus("skipped")).toContain("没有运行");
+// 核验状态行（`describeVerificationStatus`）——本轮最重要的契约同步点。
+//
+// 上一版只有一个 `describeCloudStatus(cloudStatus)`：只要云端跑完就说「云端核验完成。」。
+// A3/A4 落地后这句话是**假的**——`chains.source` 会 `partial`（模型通道失败 / 预算耗尽），
+// `chains.adjudication` 会 `not_run`（有分歧但没有模型可用）。而且「一条待处理项都没有」
+// 也**不等于**核验成功：没有卡片只说明没有要用户动手的东西。
+describe("describeVerificationStatus — 只用用户能懂的几句话", () => {
+  it("每个稳定状态都有明确文案，且不泄露内部词", () => {
+    expect(describeVerificationStatus({ localStatus: "running" })).toBe("正在本机识别…");
+    expect(describeVerificationStatus({ cloudStatus: "queued" })).toBe("云端正在校验…");
+    expect(describeVerificationStatus({ cloudStatus: "not_started" })).toBe("题稿已生成，可以开始编辑");
+    expect(describeVerificationStatus({ cloudStatus: "failed" })).toBe("云端校验暂时不可用，不影响继续编辑");
+    expect(describeVerificationStatus({ cloudStatus: "unavailable" })).toBe("云端校验暂时不可用，不影响继续编辑");
+    // 「完成」必须四路都跑完；只给 cloudStatus 时另外两路按 `not_started` 处理，
+    // 于是**不会**承诺「没有发现问题」——这正是「空列表不等于核验成功」的默认姿态。
+    expect(describeVerificationStatus({ cloudStatus: "succeeded" })).toBe("部分内容尚未完成校验");
+    expect(describeVerificationStatus({
+      cloudStatus: "succeeded",
+      sourceStatus: "succeeded",
+      adjudicationStatus: "succeeded"
+    })).toBe("云端校验完成，没有发现需要处理的问题");
   });
 
-  it("unavailable 优先给出稳定原因码文案", () => {
-    expect(describeCloudStatus("unavailable", "MODEL_TIMEOUT")).toContain("超时");
-    expect(describeCloudStatus("unavailable", "NO_PROFILE")).toContain("模型");
-    expect(describeCloudStatus("unavailable", "SOMETHING_NEW")).toContain("SOMETHING_NEW");
-  });
-
-  it("未知状态不渲染 undefined", () => {
-    expect(describeCloudStatus(undefined)).toBe("云端核验状态未知。");
-    expect(describeCloudStatus("weird_state")).toBe("云端核验状态：weird_state。");
-    expect(describeCloudReason(undefined)).toBeUndefined();
-  });
-});
-
-describe("describeCloudStatus — queued / partial / unusable 必须被正确区分", () => {
-  it("queued 说明「排队中」而不是「没跑」（本地先出稿时云端正是这个状态）", () => {
+  it("queued 说「正在校验」而不是「可以开始编辑」（本地先出稿时云端正是这个状态）", () => {
     const view = normalizeDecisionView({ itemId: "item-1", chains: { local: { state: "done" }, cloud: { state: "queued" } } });
     expect(view.cloudStatus).toBe("queued");
-    const text = describeCloudStatus(view.cloudStatus, view.cloudReasonCode);
-    expect(text).toContain("排队");
-    expect(text).not.toContain("还没有运行");
+    const text = describeVerificationStatus(view);
+    expect(text).toBe("云端正在校验…");
     expect(text).not.toContain("undefined");
   });
 
-  it("partial 说明「只核验了部分内容」", () => {
-    const view = normalizeDecisionView({ itemId: "item-1", chains: { cloud: { state: "partial" } } });
-    expect(view.cloudStatus).toBe("partial");
-    expect(describeCloudStatus(view.cloudStatus)).toContain("部分");
+  it("「部分完成」显示为「部分内容尚未完成校验，请检查标出的题目」", () => {
+    // source 链 partial（模型通道失败 / 预算耗尽）+ 有待处理项。
+    const view = normalizeDecisionView({
+      itemId: "item-1",
+      chains: { local: { state: "done" }, cloud: { state: "succeeded" }, source: { state: "partial" }, adjudication: { state: "not_run" } },
+      actionable: [{ decisionId: "d1", resolution: "needs_review" } as never]
+    });
+    expect(view.sourceStatus).toBe("partial");
+    expect(view.adjudicationStatus).toBe("not_started");
+    expect(describeVerificationStatus({ ...view, pendingCount: 1 })).toBe("部分内容尚未完成校验，请检查标出的题目");
   });
 
-  it("unusable 走 unavailable 的原因码文案，不显示英文原样", () => {
-    const view = normalizeDecisionView({ itemId: "item-1", chains: { cloud: { state: "unusable" } } });
-    expect(view.cloudStatus).toBe("unavailable");
-    expect(describeCloudStatus(view.cloudStatus, "MODEL_UNSUPPORTED_INPUT")).toContain("不支持");
+  it("**空列表不等于核验成功**：有链没跑完时绝不承诺「没有发现需要处理的问题」", () => {
+    // 没有任何待处理项，但 adjudication 是 not_run（有分歧却没有模型可用）。
+    const view = normalizeDecisionView({
+      itemId: "item-1",
+      chains: { local: { state: "done" }, cloud: { state: "succeeded" }, source: { state: "partial" }, adjudication: { state: "not_run" } },
+      actionable: []
+    });
+    expect(view.items).toEqual([]);
+    const text = describeVerificationStatus({ ...view, pendingCount: 0 });
+    expect(text).toBe("部分内容尚未完成校验");
+    expect(text).not.toContain("没有发现需要处理的问题");
+  });
+
+  it("只有相关检查确实完成、且没有待处理项时，才显示「校验完成，未发现需要处理的问题」", () => {
+    const view = normalizeDecisionView({
+      itemId: "item-1",
+      chains: { local: { state: "done" }, cloud: { state: "succeeded" }, source: { state: "succeeded" }, adjudication: { state: "succeeded" } },
+      actionable: []
+    });
+    expect(describeVerificationStatus({ ...view, pendingCount: 0 })).toBe("云端校验完成，没有发现需要处理的问题");
+  });
+
+  it("有待处理项且没有部分完成时，说「发现 N 处建议」", () => {
+    expect(describeVerificationStatus({
+      cloudStatus: "succeeded",
+      sourceStatus: "succeeded",
+      adjudicationStatus: "succeeded",
+      pendingCount: 2
+    })).toBe("云端发现 2 处建议");
+  });
+
+  it("adjudication 为 not_run 但 source 已完成、且没有待处理项时，不算「完成」", () => {
+    // A4 的 not_run 在「没有分歧」时是**正常**的（没有分歧就无需裁决），
+    // 但当前契约没有「有无分歧」这一位，所以只能保守地说「部分完成」，
+    // 不能升级成「没有发现问题」。这条钉住这个保守选择，避免以后被"优化"掉。
+    const text = describeVerificationStatus({
+      cloudStatus: "succeeded",
+      sourceStatus: "succeeded",
+      adjudicationStatus: "not_started",
+      pendingCount: 0
+    });
+    expect(text).not.toContain("没有发现需要处理的问题");
   });
 
   it("canceled 归入 not_started", () => {
     const view = normalizeDecisionView({ itemId: "item-1", chains: { cloud: { state: "canceled" } } });
     expect(view.cloudStatus).toBe("not_started");
+  });
+
+  it("reason code 只作内部分类，绝不进用户文案", () => {
+    const view = normalizeDecisionView({
+      itemId: "item-1",
+      chains: {
+        cloud: { state: "succeeded" },
+        source: { state: "partial", reasonCode: "SOURCE_VERIFY_BUDGET_EXHAUSTED" },
+        adjudication: { state: "partial", reasonCode: "ADJUDICATION_BUDGET_EXHAUSTED" }
+      },
+      actionable: []
+    });
+    // 原因码**确实**被带进视图（供内部分类与验收脚本比对）。
+    expect(view.sourceReasonCode).toBe("SOURCE_VERIFY_BUDGET_EXHAUSTED");
+    expect(view.adjudicationReasonCode).toBe("ADJUDICATION_BUDGET_EXHAUSTED");
+    const text = describeVerificationStatus({ ...view, pendingCount: 0 });
+    expect(text).not.toContain("SOURCE_VERIFY_BUDGET_EXHAUSTED");
+    expect(text).not.toContain("ADJUDICATION_BUDGET_EXHAUSTED");
+    expect(text).not.toContain("BUDGET");
   });
 });
 
@@ -170,11 +237,62 @@ describe("applyRecognitionDecisions — IPC 参数包装（真实 E2E 才发现�
       batchId: "b1",
       baseEditVersion: 3,
       accept: ["d1"],
-      reject: ["d2"]
+      reject: ["d2"],
+      // `undo` 即使为空也必须发：Rust 侧是 `#[serde(default)]`，三个数组齐发能让 journal
+      // 里的请求体完整反映用户意图，重放时不会因为缺字段而语义不同。
+      undo: []
     });
     expect(result.accepted).toEqual(["d1"]);
     expect(result.editVersion).toBe(4);
     expect(result.replayed).toBe(false);
+  });
+
+  it("action:'undo' 落到 wire 的 undo[] 上，且 undone 归一成独立列表（不是 accepted/stale/failed）", async () => {
+    commandMock.mockReset();
+    commandMock.mockResolvedValueOnce({
+      schemaVersion: "ApplyRecognitionDecisionsResultV1",
+      requestId: "r3",
+      batchId: "b3",
+      editVersionBefore: 6,
+      editVersionAfter: 7,
+      replayed: false,
+      outcomes: [
+        { decisionId: "d1", kind: "undone", message: "已撤销" },
+        // 重复撤销：后端返回 superseded + RECOGNITION_ALREADY_RESOLVED，不是失败。
+        { decisionId: "d2", kind: "superseded", reasonCode: "RECOGNITION_ALREADY_RESOLVED", message: "该建议已撤销" },
+        // 用户后来改过目标：后端拒绝回滚。
+        { decisionId: "d3", kind: "failed", reasonCode: "USER_EDITED_AFTER_APPLY", message: "该槽位在自动修正之后已被修改" }
+      ],
+      view: {
+        itemId: "i1",
+        batchId: "b3",
+        editVersion: 7,
+        chains: {},
+        actionable: [],
+        autoApplied: [{ decisionId: "d1", resolution: "auto_fixed", status: "undone" } as never]
+      }
+    });
+    const { applyRecognitionDecisions } = await import("./recognitionClient");
+    const result = await applyRecognitionDecisions({
+      itemId: "i1",
+      batchId: "b3",
+      baseEditVersion: 6,
+      requestId: "r3",
+      decisions: [{ decisionId: "d1", action: "undo" }]
+    });
+
+    const [, args] = commandMock.mock.calls[0] as [string, { input: Record<string, unknown> }];
+    expect(args.input.undo).toEqual(["d1"]);
+    expect(args.input.accept).toEqual([]);
+    expect(args.input.reject).toEqual([]);
+
+    expect(result.undone).toEqual(["d1"]);
+    expect(result.accepted).toEqual([]);
+    // 重复撤销走 stale，不报成失败 —— 否则用户点两次就会看到一条吓人的错误。
+    expect(result.stale).toEqual(["d2"]);
+    expect(result.failed.map((f) => f.code)).toEqual(["USER_EDITED_AFTER_APPLY"]);
+    expect(result.summary.undone).toBe(1);
+    expect(result.editVersion).toBe(7);
   });
 
   it("superseded 归入 stale 而不是 failed", async () => {

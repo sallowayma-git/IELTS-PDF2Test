@@ -8,11 +8,16 @@ import { go, libraryPath, type LibraryIntent } from "../../app/router";
 import { ExamCanvas } from "../../exam-canvas/ExamCanvas";
 import { compileStructureAction } from "../../exam-canvas/structureActions";
 import { SelectionInspector } from "./SelectionInspector";
-import type { JobDetail } from "../../types";
-import type { AuthoringPatchV2 } from "../../types";
-import { applyAuthoringV2Patches } from "../../services/authoringV2Patches";
+import type { IeltsAuthoringIRV2, JobDetail } from "../../types";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
 import { blockerCount, deriveActionableIssues, mergePublishGateIssues } from "./actionableIssues";
+import {
+  buildUserTasks,
+  rootCausesOf,
+  splitVisibleTasks,
+  type UserTaskActionV1,
+  type UserTaskV1
+} from "./userTasks";
 import { compilePreviewSource, describePreviewPublishLimitation } from "./studentPreview";
 import { RecognitionPanel } from "./RecognitionPanel";
 import { useCanonicalEditor } from "./useCanonicalEditor";
@@ -26,10 +31,12 @@ import { getPublishPreflight, type PublishCheckResultV1 } from "../../api/worksp
 
 const SAVE_LABEL = {
   idle: "",
-  saving: "正在保存",
+  saving: "正在保存…",
   saved: "已保存",
-  failed: "保存失败",
-  conflict: "保存冲突"
+  // 冲突与失败对用户是**同一件事**：这次没存上，再试一次。
+  // 「保存冲突」是内部机制的说法（本轮任务书第一节），不进普通界面。
+  failed: "保存失败，请重试",
+  conflict: "保存失败，请重试"
 } as const;
 
 /** 降级文案分层（计划 §9.10 / findings F-M0-3）：普通用户只看到人话，
@@ -68,6 +75,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   // 学生预览的作答状态重置令牌：草稿一变就重新挂载预览，避免把旧题面的作答带到新题面。
   const previewTokenRef = useRef(0);
   const [previewToken, setPreviewToken] = useState(0);
+  /** 本题每收到一次处理事件就 +1。识别建议面板靠它感知「识别阶段推进/结果落地」。 */
+  const [processingTick, setProcessingTick] = useState(0);
+  /** 学生预览里「答案类型不匹配」超过 8 处时是否展开（此前是硬截断「仅显示前 8 处」）。 */
+  const [previewIssuesExpanded, setPreviewIssuesExpanded] = useState(false);
 
   useEffect(() => {
     previewTokenRef.current += 1;
@@ -83,6 +94,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     let stop: (() => void) | undefined;
     subscribeProcessing((id) => {
       if (id !== itemId) return;
+      // 每次阶段推进/终态落地都记一票，作为识别建议面板的重拉信号（见下）。
+      setProcessingTick((value) => value + 1);
       getJob(itemId).then(setDetail).catch(() => {});
       if (!editor.pendingCount) editor.reload();
     }).then((unlisten) => { if (stopped) unlisten(); else stop = unlisten; }).catch(console.error);
@@ -92,6 +105,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const localIssues = useMemo(() => deriveActionableIssues(editor.draft), [editor.draft]);
   const issues = useMemo(() => mergePublishGateIssues(localIssues, preflight), [localIssues, preflight]);
   const blockers = blockerCount(issues);
+  // 普通界面只呈现**任务**，不呈现原始问题行（本轮任务书第二节）：
+  // 连续缺答并成区间、同一题组内部问题并成一条、泛化行在具体问题存在时隐藏。
+  const taskSummary = useMemo(() => buildUserTasks(editor.draft, issues), [editor.draft, issues]);
+  const [tasksExpanded, setTasksExpanded] = useState(false);
+  const visibleTasks = useMemo(
+    () => splitVisibleTasks(taskSummary.tasks, tasksExpanded),
+    [taskSummary.tasks, tasksExpanded]
+  );
 
   // 学生预览：先走产品真正使用的编译器校验当前草稿。编译失败就**不**渲染预览，
   // 而是给出可定位的问题，避免用户对着过期画面继续编辑。
@@ -99,17 +120,35 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const previewLimitation = useMemo(
     () => describePreviewPublishLimitation({
       pendingCount: editor.pendingCount,
-      savedVersion: editor.version,
       blockerCount: blockers,
       // 预览能渲染 ≠ 学生端能提交：答案键类型不匹配时题面照常画出，但真实学生端会在
       // 提交阶段拒绝整份提交。这个数字必须进限制说明，否则预览就是「假完成」。
       runtimeIssueCount: preview?.ok ? preview.summary.answerKeyIssues.length : 0
     }),
-    [editor.pendingCount, editor.version, blockers, preview]
+    [editor.pendingCount, blockers, preview]
   );
 
+  // 「可以导出」的**唯一**判据是当前题稿的后端发布检查（任务书第 5 条）：
+  //   - 任务列表为空（后端门禁的每个阻断都已被某条任务接住，或被判定为泛化重复）；
+  //   - 门禁**确实读到了**（`preflight !== undefined` 且 `preflightError` 为空）。
+  //     读不到时说「可以导出」就是拿一次失败的检查冒充通过；而门禁**还没回来**时
+  //     说「可以导出」更糟——那是在用「还没查」冒充「查过了没问题」（本轮实测就撞上了
+  //     这一条：面板挂载即显示「可以导出」，而同一时刻后端门禁报 34 条阻断）。
+  //   - 没有待保存修改（`pendingCount === 0`）——门禁评的是**已保存的权威稿**，
+  //     草稿还有没落盘的东西时，它评的不是用户眼前这份。
+  const canExport = taskSummary.tasks.length === 0 && Boolean(preflight) && !preflightError && editor.pendingCount === 0;
+  // 门禁的三种状态，供界面如实措辞，也给验收脚本一个可等待的锚点。
+  const preflightState: "loading" | "loaded" | "error" = preflightError ? "error" : preflight ? "loaded" : "loading";
+
   // 识别建议的重拉时机：保存完成、版本变化、识别阶段推进。
-  const recognitionRefreshKey = `${editor.version}:${editor.pendingCount}:${editor.saveState}:${detail?.job.currentStep ?? ""}`;
+  //
+  // **`processingTick` 是必需的，不是装饰**（F-R14-1）：识别建议（批次）是裁决之后才落盘的，
+  // 而落地那一刻 `version`/`pendingCount`/`saveState` 都不会变，`job.currentStep` 也不会变
+  // ——它在本地识别结束时就已是 `Authoring`，之后的云端识别、原文件核验、裁决都不再动它
+  // （实测 `job.json` 的终值就是 `Authoring`）。只用前四个分量时，面板会永远停在
+  // 「识别还没有产出可核对的结果」，而 IPC 早已能读到几十条候选：界面在说假话。
+  // 处理事件覆盖了「阶段推进」与「终态落地」，正是缺的那个分量。
+  const recognitionRefreshKey = `${editor.version}:${editor.pendingCount}:${editor.saveState}:${detail?.job.currentStep ?? ""}:${processingTick}`;
 
   /** 把问题/建议定位到题面上的对应节点（与问题列表同一套 data-* 约定）。 */
   /** 点击问题定位到题面上对应的位置。返回是否真的找到了可定位的元素。 */
@@ -121,7 +160,16 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     // 因此除了 slotId，还要按 `answerSlots[slotId].hostNodeId` 再找一次 ——
     // 否则「第 27 题还没有答案」这条阻断项点了没有任何反应（实测确实如此）。
     const hostNodeId = editor.draft?.answerSlots?.[targetId]?.hostNodeId;
-    const candidates = hostNodeId && hostNodeId !== targetId ? [targetId, hostNodeId] : [targetId];
+    // **第三跳：内容节点 id**。实测 `demanding-reading-passage-3.pdf` 上，
+    // `answerSlots["q27"].hostNodeId` 是 **stimulus 节点**（`group-1-stimulus-b032`），
+    // 而真正渲染答案输入框的那个节点是 `taskGroups[0].stimulus[1].children[3]`
+    // （id = `slot-node-q27`，`type = answer_slot`，带 `slotId`）。前两跳都落空，
+    // 于是「去填写」只给出「找不到」——按钮没坏，但它没能把用户送到该填的地方。
+    // 这里直接在草稿的题组里按 `slotId` 找回承载该答案位的内容节点 id。
+    const contentNodeIds = contentNodeIdsForSlot(editor.draft, targetId);
+    const candidates = [targetId, hostNodeId, ...contentNodeIds]
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .filter((value, index, all) => all.indexOf(value) === index);
     const target = Array.from(document.querySelectorAll<HTMLElement>(
       "[data-editor-id], [data-question-id], [data-response-group-id]"
     )).find((element) => [
@@ -135,6 +183,45 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
     // 现在如实说明这条问题不在题面上、需要别的手段处理。
     setLocateMiss(target ? undefined : targetId);
     return Boolean(target);
+  }
+
+  /**
+   * 执行一条用户任务上的动作。
+   *
+   * 任务书第 5 条：**每个按钮必须有真实作用**。三个动作都绑到工作区里真实存在的能力上，
+   * 没有一个按钮是「点了不改门禁」的装饰：
+   *   - `fill-answer`  → 把答案控件滚进视野并选中（用户接着在题面上填）；
+   *   - `view-source`  → 打开原文件抽屉，并把题面上的对应题组滚进视野；
+   *   - `retry-recognition` → 真的重新入队识别，并**重新读取后端结果**（问题列表与
+   *     识别建议都以后端为权威重算，而不是本地把卡片抹掉）。
+   *
+   * 操作后**不**在本地删卡片：门禁没变就还得显示。问题只有在后端结果确实变了之后才消失。
+   */
+  async function runTaskAction(task: UserTaskV1, action: UserTaskActionV1) {
+    if (action.id === "fill-answer") {
+      // 定位失败时 `locateTarget` 会给出「这条不在题面上」的如实说明，不会静默无反应。
+      locateTarget(action.targetId);
+      return;
+    }
+    if (action.id === "view-source") {
+      setSourceOpen(true);
+      locateTarget(action.targetId);
+      return;
+    }
+    await withBusy(`task:${task.taskId}`, async () => {
+      // 先把未落盘的编辑刷进权威稿，再重新识别——否则识别评的是旧稿，结果会立刻过期。
+      await editor.flush();
+      await retryProcessing(itemId);
+      // 重新入队后**立刻重读后端结果**：门禁与识别建议都可能已经变了，
+      // 界面必须跟着后端走，而不是等用户手动刷新。
+      editor.reload();
+      const result = await getPublishPreflight(itemId).catch(() => undefined);
+      if (result) {
+        setPreflight(result);
+        setPreflightError(undefined);
+      }
+      setNotice("已重新加入识别队列。识别完成后这里的问题会按新的结果重算。");
+    });
   }
 
   // 发布门禁是后端对「已保存的权威稿」的判断，也是点「发布」时真正会拦下的东西。
@@ -213,11 +300,21 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const processingNote = detail?.job.currentStep === "LlmReview" ? "本地已完成 · 云端识别中" : undefined;
 
   return (
-    <section className="workspace-page" data-testid="exam-workspace">
+    <section
+      className="workspace-page"
+      data-testid="exam-workspace"
+      // 当前已保存版本号只作为**机器可读**的并发/隔离判据存在，不进任何用户可见文本
+      // （本轮任务书第一节）。验收脚本用它断言「在学生预览里作答不会产生新的编辑修订」——
+      // 那条断言此前读的是可见文案里的 `v7`，去版本化之后必须换成这个属性，
+      // 否则它会退化成「两次读到同一段静态文字」，永远通过。
+      data-edit-version={editor.version}
+      data-pending-count={editor.pendingCount}
+    >
       <header className="workspace-header">
         <div className="workspace-header-left">
           <button
             className="workspace-back-button"
+            data-testid="workspace-back"
             onClick={() => withBusy("leave", async () => {
               await editor.flush();
               go(libraryPath());
@@ -255,9 +352,11 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               className={blockers ? "has-blockers" : ""}
               data-testid="workspace-issues"
               onClick={() => setIssuesOpen((open) => !open)}
-              aria-label={blockers ? `问题 ${issues.length} 项，其中阻断问题 ${blockers} 项` : `问题 ${issues.length} 项`}
+              aria-label={taskSummary.blockerCount
+                ? `还有 ${taskSummary.tasks.length} 处需要处理，其中阻断 ${taskSummary.blockerCount} 处`
+                : `还有 ${taskSummary.tasks.length} 处需要处理`}
             >
-              问题 {issues.length}{blockers ? ` · 阻断 ${blockers}` : ""}
+              问题 {taskSummary.tasks.length}{taskSummary.blockerCount ? ` · 阻断 ${taskSummary.blockerCount}` : ""}
             </button>
             <button
               data-testid="workspace-recognition-toggle"
@@ -354,38 +453,90 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       ) : null}
 
       {issuesOpen && mode === "edit" ? (
-        <aside className="workspace-issues" aria-label="需要确认的问题" data-testid="workspace-issue-list">
-          {issues.length ? (
-            <ul>
-              {issues.map((issue) => (
-                <li key={issue.issueId} className={issue.severity} data-severity={issue.severity}>
-                  {/* `data-issue-code` / `data-issue-source` / `data-issue-root-cause` / `data-issue-fact-id`
-                      是这一行的机器可读身份：校验脚本要靠它们把「门禁那半」和「本地那半」分开断言，
-                      并断言「门禁里每个根因都在界面上出现了」。
-                      光看 code 分不出来源、也分不出根因：本地与门禁都可能写 `ANSWER_MISSING`，
-                      而门禁把**所有**质量码都写成 `ISSUE_UNRESOLVED`。
-                      `data-issue-fact-id` 是后端给出的**稳定事实 id**，同一目标上的两条不同事实
-                      靠它区分（上一轮只能靠文案）。 */}
-                  <button
-                    data-issue-target-id={issue.targetId}
-                    data-issue-code={issue.code}
-                    data-issue-source={issue.source ?? "local"}
-                    data-issue-root-cause={issue.rootCause ?? issue.code}
-                    data-issue-fact-id={issue.factId ?? ""}
-                    onClick={() => locateTarget(issue.targetId)}
+        <aside
+          className="workspace-issues"
+          aria-label="需要处理的问题"
+          data-testid="workspace-issue-list"
+          data-task-count={taskSummary.tasks.length}
+          data-merged-rows={taskSummary.mergedRowCount}
+          data-can-export={canExport ? "true" : "false"}
+          data-preflight-state={preflightState}
+        >
+          {taskSummary.tasks.length ? (
+            <>
+              <p className="workspace-issues-headline" data-testid="workspace-tasks-headline">
+                {taskSummary.headline}
+              </p>
+              <ul>
+                {visibleTasks.visible.map((task) => (
+                  <li
+                    key={task.taskId}
+                    className={task.severity}
+                    data-severity={task.severity}
+                    data-task-id={task.taskId}
+                    data-task-kind={task.kind}
+                    // 合并后的每项任务都保留**底层问题关联**（任务书第 3 条）：原始问题行不再
+                    // 单独渲染，但「门禁报出的每个根因都被某条任务接住」必须仍然可查。
+                    // 验收脚本据此断言「合并发生了」而不是「渲染时把行吞掉了」。
+                    data-task-covers={rootCausesOf(issues, task).join(",")}
                   >
-                    {issue.severity === "blocker" ? <span className="severity-badge" aria-label="阻断问题">⚠</span> : null}
-                    {issue.userMessage}
-                  </button>
-                </li>
-              ))}
-            </ul>
+                    {task.severity === "blocker" ? <span className="severity-badge" aria-label="阻断问题">⚠</span> : null}
+                    <span className="workspace-task-title" data-testid={`workspace-task-title-${task.taskId}`}>
+                      {task.title}
+                    </span>
+                    {task.detail ? <small className="workspace-task-detail">{task.detail}</small> : null}
+                    <div className="button-row">
+                      {task.actions.map((action) => (
+                        <button
+                          key={action.id}
+                          className={action.id === "fill-answer" || action.id === "retry-recognition" ? "primary small" : "ghost small"}
+                          data-testid={`workspace-task-action-${task.taskId}-${action.id}`}
+                          data-action-id={action.id}
+                          data-action-target={action.targetId}
+                          disabled={Boolean(busyAction)}
+                          onClick={() => { void runTaskAction(task, action); }}
+                        >
+                          {busyAction === `task:${task.taskId}` ? "正在处理…" : action.label}
+                        </button>
+                      ))}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {/* 分组后仍然很多时才折叠，且明确告诉用户还剩几组（不再有「仅显示前 N 条」）。 */}
+              {visibleTasks.hiddenCount ? (
+                <button
+                  className="ghost small"
+                  data-testid="workspace-tasks-more"
+                  onClick={() => setTasksExpanded(true)}
+                >
+                  还有 {visibleTasks.hiddenCount} 组问题
+                </button>
+              ) : null}
+            </>
           ) : (
-            <p className="empty compact">没有需要确认的问题。</p>
+            // 「没有问题」不生成问题卡片，只保留这一句（任务书第四节）。
+            // 但**只有后端发布检查确实读到了**才敢说「可以导出」。
+            <p className="empty compact" data-testid="workspace-tasks-clear">
+              {canExport
+                ? "可以导出"
+                : preflightState === "loading"
+                  ? "正在检查是否还有需要处理的问题…"
+                  : editor.pendingCount > 0
+                    ? "正在保存修改，保存后会重新检查一遍。"
+                    : "暂时读不到发布检查结果，还无法确认是否可以导出。"}
+            </p>
           )}
           {locateMiss ? (
             <p className="empty compact" role="status" data-testid="workspace-locate-miss">
-              这条问题不在题面上（目标「{locateMiss}」是整份文档级别），页面上没有可以跳过去的位置。
+              {locateMiss === "document"
+                // 文档级目标在题面上本来就没有对应元素，这是正常的，如实说明即可。
+                ? "这条问题说的是整份题稿，页面上没有可以跳过去的位置。"
+                // **不是**文档级：说明题面上确实找不到这个位置（例如填空是内联渲染在题干里的，
+                // 宿主元素带的是内容节点 id 而不是答案位 id）。旧文案把这两种情况都说成
+                // 「是整份文档级别」，对着一道具体题目说这种话是**假信息**，会让用户以为
+                // 自己点错了地方。这里只陈述事实，不编造原因。
+                : `这条问题指向的位置在当前题面上没有对应的元素（目标「${locateMiss}」），需要直接在题面上找到它并修改。`}
             </p>
           ) : null}
         </aside>
@@ -398,22 +549,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           refreshKey={recognitionRefreshKey}
           onLocate={locateTarget}
           onApplied={() => editor.reload()}
-          // 「这一项撤销过了吗」由权威稿自己回答（值已等于撤销补丁的目标值），
-          // 不用会话内状态 —— 否则刷新/重开就会把「撤销」按钮放回来。
+          // 「这一项撤销过了吗」的权威答案是后端持久化的 `status === "undone"`；
+          // 权威稿的答案位只作为次要判据（兜住废弃编辑器补丁路径写下的历史数据）。
+          // 撤销本身走正式后端命令，面板自己发，不再经由编辑器补丁。
           answerKey={editor.draft?.answerKey as Record<string, unknown> | undefined}
-          onUndoAutoFix={async (patch: AuthoringPatchV2) => {
-            const draft = editor.draft;
-            if (!draft) throw new Error("题稿还没有加载完成，请稍后再试。");
-            // 先离线试算：补丁不适用（例如答案位已被删除）时立刻抛错，
-            // 而不是让编辑器静默记一条失败状态、面板却显示「已撤销」。
-            applyAuthoringV2Patches(draft, [patch]);
-            editor.applyPatch(patch);
-            // 走版本化事务：值改回旧值、版本递增，并进入编辑器的撤销栈（可 Ctrl+Z 反悔）。
-            await editor.flush();
-            // `persist()` 在「已有保存在飞」时复用同一个 promise，补丁可能刚好落在
-            // 保存循环退出之后；再 flush 一次，确保待发送队列真的清空才敢说「已撤销」。
-            await editor.flush();
-          }}
         />
       ) : null}
 
@@ -465,7 +604,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               role="status"
               data-testid="workspace-preview-revision"
             >
-              已保存版本 v{editor.version} · {previewLimitation.message}
+              {previewLimitation.message}
             </p>
             {preview && !preview.ok ? (
               // 编译失败：不显示任何题面，只给出可定位的问题。
@@ -512,7 +651,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                       以下答案位的答案类型与题目形式不匹配，学生提交时会被判为无效（共 {preview.summary.answerKeyIssues.length} 处）：
                     </p>
                     <ul>
-                      {preview.summary.answerKeyIssues.slice(0, 8).map((item) => (
+                      {(previewIssuesExpanded ? preview.summary.answerKeyIssues : preview.summary.answerKeyIssues.slice(0, 8)).map((item) => (
                         <li key={`${item.code}:${item.targetId}`} data-preview-runtime-code={item.code} data-preview-runtime-target={item.targetId}>
                           <button
                             type="button"
@@ -521,11 +660,18 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                           >
                             {item.targetId}
                           </button>
-                          <small>（{item.code}）</small>
                         </li>
                       ))}
                     </ul>
-                    {preview.summary.answerKeyIssues.length > 8 ? <small>仅显示前 8 处。</small> : null}
+                    {preview.summary.answerKeyIssues.length > 8 && !previewIssuesExpanded ? (
+                      <button
+                        className="ghost small"
+                        data-testid="workspace-preview-runtime-more"
+                        onClick={() => setPreviewIssuesExpanded(true)}
+                      >
+                        还有 {preview.summary.answerKeyIssues.length - 8} 处
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
                 {/* key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。 */}
@@ -575,6 +721,36 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       ) : null}
     </section>
   );
+}
+
+/**
+ * 草稿里承载某个答案位的**内容节点 id**。
+ *
+ * 内联填空（completion）的答案输入框渲染在 stimulus 内部，宿主元素带的是**内容节点 id**
+ * （`data-editor-id = "slot-node-q27"`），既不是 slotId（`q27`），也不是
+ * `answerSlots["q27"].hostNodeId`（那是 **stimulus 节点** id）。只按前两者找会全部落空，
+ * 「去填写」就只剩一句「找不到」。
+ *
+ * 只遍历 `taskGroups`：内联答案位一定在题组的 prompt / stimulus 里（passage 里不会有
+ * 可作答的答案位），这样既够用又不用深走整份草稿（草稿里的 sourceAnchors 很大）。
+ */
+function contentNodeIdsForSlot(draft: IeltsAuthoringIRV2 | undefined, slotId: string): string[] {
+  if (!draft || !slotId) return [];
+  const found: string[] = [];
+  const seen = new Set<unknown>();
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (record.slotId === slotId && typeof record.id === "string" && record.id) found.push(record.id);
+    for (const value of Object.values(record)) walk(value);
+  };
+  walk(draft.taskGroups);
+  return found;
 }
 
 /** 工作区标题原位编辑（计划 §9.10「标题（可编辑）」，M1 落地）。

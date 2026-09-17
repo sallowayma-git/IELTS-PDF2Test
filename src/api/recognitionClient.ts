@@ -11,7 +11,15 @@ import { command } from "./tauriCommands";
 //   - 过期（batch 基线早于用户修改）时整批进 `stale`，不覆盖用户修改。
 
 export type RecognitionResolutionV1 = "agreed" | "auto_fixed" | "needs_review" | "unverifiable";
-export type RecognitionDecisionStatusV1 = "open" | "accepted" | "rejected" | "superseded" | "failed";
+// `undone` 由后端 agent 随撤销协议一起加入（`DecisionStatusV1::Undone`）。
+// 此前前端类型里没有它，撤销后的项会被当成未知状态，面板无法如实显示「已撤销」。
+export type RecognitionDecisionStatusV1 =
+  | "open"
+  | "accepted"
+  | "rejected"
+  | "superseded"
+  | "undone"
+  | "failed";
 
 export interface RecognitionEvidenceV1 {
   chain: "local" | "cloud" | "source";
@@ -67,7 +75,28 @@ export interface RecognitionDecisionViewV1 {
   stale: boolean;
   localStatus: string;
   cloudStatus: string;
+  /**
+   * 原文件核验（A3）与分歧裁决（A4）的**阶段状态**。
+   *
+   * 这两路此前被前端丢掉，于是「云端跑完了」就等于「核验完成」——而 A3/A4 之后
+   * `chains.source` 会出现 `partial`（模型通道失败 / 预算耗尽），
+   * `chains.adjudication` 会出现 `not_run`（有分歧但没有模型可用）与 `partial`
+   * （部分分歧未获裁定）。丢掉它们就只能把「没核验」显示成「核验完成」。
+   * 取值：`queued` / `running` / `succeeded` / `partial` / `unusable` / `not_run` / `failed` / `canceled`。
+   */
+  sourceStatus: string;
+  adjudicationStatus: string;
+  /**
+   * 三路的原因码。**只作内部分类**（判断「未运行」是哪一种、日志与验收脚本比对），
+   * 绝不作为用户文案——本仓库既有约定：reason code 不充当用户可见文本。
+   *
+   * A3/A4 新增：`ADJUDICATION_BUDGET_EXHAUSTED`、`ADJUDICATION_DECLINED`、
+   * `ADJUDICATION_MODEL_UNAVAILABLE`、`ADJUDICATION_VALUE_NOT_CORROBORATED`、
+   * `SOURCE_VERIFY_BUDGET_EXHAUSTED`。
+   */
   cloudReasonCode?: string | null;
+  sourceReasonCode?: string | null;
+  adjudicationReasonCode?: string | null;
   summary: RecognitionDecisionSummaryV1;
   items: RecognitionDecisionItemV1[];
 }
@@ -94,11 +123,15 @@ export interface RecognitionDecisionRawV1 {
   stale?: boolean;
   localStatus?: string;
   cloudStatus?: string;
+  sourceStatus?: string;
+  adjudicationStatus?: string;
   cloudReasonCode?: string | null;
+  sourceReasonCode?: string | null;
+  adjudicationReasonCode?: string | null;
   summary?: Partial<RecognitionDecisionSummaryV1>;
   items?: RecognitionDecisionItemV1[];
-  /** 实现形状：四路链路状态。 */
-  chains?: Record<string, { state?: string } | undefined>;
+  /** 实现形状：四路链路状态（`StageStatusV1`：state + 可选 reasonCode/message/updatedAt）。 */
+  chains?: Record<string, { state?: string; reasonCode?: string | null } | undefined>;
   /** 实现形状：需要用户处理的项 / 已自动应用的项。 */
   actionable?: RecognitionDecisionItemV1[];
   autoApplied?: RecognitionDecisionItemV1[];
@@ -135,6 +168,12 @@ function chainStatus(chains: RecognitionDecisionRawV1["chains"], name: string): 
   return CHAIN_STATE_TO_STATUS[state] ?? state;
 }
 
+/** 某一路的稳定原因码（`StageStatusV1.reasonCode`）。只作内部分类，不做用户文案。 */
+function chainReasonCode(chains: RecognitionDecisionRawV1["chains"], name: string): string | null {
+  const code = chains?.[name]?.reasonCode;
+  return typeof code === "string" && code.trim() ? code : null;
+}
+
 /** 把后端原始 payload 归一成契约形状。缺字段一律降级成「没跑」，绝不猜成「完成」。 */
 export function normalizeDecisionView(raw: RecognitionDecisionRawV1): RecognitionDecisionViewV1 {
   const items = Array.isArray(raw.items)
@@ -152,7 +191,13 @@ export function normalizeDecisionView(raw: RecognitionDecisionRawV1): Recognitio
     stale: Boolean(raw.stale),
     localStatus: raw.localStatus ?? chainStatus(raw.chains, "local"),
     cloudStatus: raw.cloudStatus ?? chainStatus(raw.chains, "cloud"),
-    cloudReasonCode: raw.cloudReasonCode ?? null,
+    // 四路链状态都必须带上来：`source`/`adjudication` 决定「核验到底做完了没有」，
+    // 缺了它们就只能把「没核验」说成「核验完成」（见类型注释）。
+    sourceStatus: raw.sourceStatus ?? chainStatus(raw.chains, "source"),
+    adjudicationStatus: raw.adjudicationStatus ?? chainStatus(raw.chains, "adjudication"),
+    cloudReasonCode: raw.cloudReasonCode ?? chainReasonCode(raw.chains, "cloud"),
+    sourceReasonCode: raw.sourceReasonCode ?? chainReasonCode(raw.chains, "source"),
+    adjudicationReasonCode: raw.adjudicationReasonCode ?? chainReasonCode(raw.chains, "adjudication"),
     summary: {
       agreed: raw.summary?.agreed ?? 0,
       autoFixed: raw.summary?.autoFixed ?? (Array.isArray(raw.autoApplied) ? raw.autoApplied.length : 0),
@@ -175,6 +220,16 @@ export interface ApplyRecognitionDecisionsInputV1 {
   baseEditVersion: number;
   accept: string[];
   reject: string[];
+  /**
+   * 撤销已自动修正的项：后端会**回滚权威稿**到修正前的值，并把决策状态持久化为
+   * `undone`（`ApplyRecognitionDecisionsRequestV1::undo`，`#[serde(default)]`）。
+   *
+   * 与 `accept`/`reject` 互斥：同一项不能同时接受又撤销（后端整批拒绝）。
+   * 这是「撤销」的正式通道——此前面板只发编辑器 setAnswer 补丁，
+   * 权威稿虽被改回，**决策状态仍是 `accepted`/`auto_fixed`**，于是界面继续显示
+   * 「已自动修正」、重开后又冒出来。那条路是假完成，已废弃。
+   */
+  undo: string[];
 }
 
 /** 写入返回的 **wire 形状**（= 后端 `ApplyRecognitionDecisionsResultV1`）。 */
@@ -187,7 +242,7 @@ export interface ApplyRecognitionDecisionsResultV1 {
   replayed: boolean;
   outcomes: Array<{
     decisionId: string;
-    kind: "applied" | "rejected" | "superseded" | "failed";
+    kind: "applied" | "rejected" | "superseded" | "undone" | "failed";
     reasonCode?: string | null;
     message: string;
     appliedAt?: string | null;
@@ -196,16 +251,16 @@ export interface ApplyRecognitionDecisionsResultV1 {
   view: RecognitionDecisionRawV1 | { get?: RecognitionDecisionRawV1 };
 }
 
-/** 组件侧请求：按「一次用户意图」提交一组决策，不需要自己拆 accept/reject。 */
+/** 组件侧请求：按「一次用户意图」提交一组决策，不需要自己拆 accept/reject/undo。 */
 export interface DecisionBatchRequestV1 {
   itemId: string;
   batchId: string;
   baseEditVersion: number;
   requestId: string;
-  decisions: Array<{ decisionId: string; action: "accept" | "reject" }>;
+  decisions: Array<{ decisionId: string; action: "accept" | "reject" | "undo" }>;
 }
 
-/** 组件侧结果：把 wire 的 `outcomes[]` 归一成四类 id 列表。 */
+/** 组件侧结果：把 wire 的 `outcomes[]` 归一成五类 id 列表。 */
 export interface DecisionBatchOutcomeV1 {
   schemaVersion: string;
   itemId: string;
@@ -214,9 +269,11 @@ export interface DecisionBatchOutcomeV1 {
   replayed: boolean;
   accepted: string[];
   rejected: string[];
+  /** 已成功撤销并回滚权威稿的项（后端 `kind="undone"`）。 */
+  undone: string[];
   stale: string[];
   failed: Array<{ decisionId: string; code: string; message: string }>;
-  summary: { open: number; accepted: number; rejected: number; superseded: number };
+  summary: { open: number; accepted: number; rejected: number; superseded: number; undone: number };
   /** 归一化后的最新视图，调用方可直接用它刷新，省一次往返（契约 §5）。 */
   view: RecognitionDecisionViewV1;
 }
@@ -248,8 +305,11 @@ export async function getRecognitionDecision(itemId: string): Promise<Recognitio
 export async function applyRecognitionDecisions(
   input: DecisionBatchRequestV1
 ): Promise<DecisionBatchOutcomeV1> {
-  const accept = input.decisions.filter((decision) => decision.action === "accept").map((decision) => decision.decisionId);
-  const reject = input.decisions.filter((decision) => decision.action === "reject").map((decision) => decision.decisionId);
+  const idsFor = (action: "accept" | "reject" | "undo") =>
+    input.decisions.filter((decision) => decision.action === action).map((decision) => decision.decisionId);
+  const accept = idsFor("accept");
+  const reject = idsFor("reject");
+  const undo = idsFor("undo");
   const wire = await command<ApplyRecognitionDecisionsResultV1>("apply_recognition_decisions", {
     // 必须包一层 `input`：命令签名是 `fn apply_recognition_decisions(input: Value, ...)`。
     input: {
@@ -257,7 +317,11 @@ export async function applyRecognitionDecisions(
       batchId: input.batchId,
       baseEditVersion: input.baseEditVersion,
       accept,
-      reject
+      reject,
+      // 撤销走**同一个**命令：后端在同一个编辑事务里回滚权威稿并持久化 `undone` 状态。
+      // 三个数组都发（即使为空）与 Rust 侧 `#[serde(default)]` 兼容，且让 journal 里的
+      // 请求体完整反映用户意图，重放时不会因为缺字段而语义不同。
+      undo
     }
   });
   const outcomes = Array.isArray(wire.outcomes) ? wire.outcomes : [];
@@ -274,6 +338,7 @@ export async function applyRecognitionDecisions(
     replayed: Boolean(wire.replayed),
     accepted: idsOf("applied"),
     rejected: idsOf("rejected"),
+    undone: idsOf("undone"),
     // `superseded` 不是失败：它表示题稿已被用户改过、这条建议不再适用。
     stale: idsOf("superseded"),
     failed: failed.map((outcome) => ({
@@ -285,51 +350,71 @@ export async function applyRecognitionDecisions(
       open: view.items.filter((item) => item.status === "open").length,
       accepted: idsOf("applied").length,
       rejected: idsOf("rejected").length,
-      superseded: idsOf("superseded").length
+      superseded: idsOf("superseded").length,
+      undone: idsOf("undone").length
     },
     view
   };
 }
 
-/** 云端不可用原因码 → 用户能看懂的一句话（契约 §2.5 的稳定码表）。 */
-const CLOUD_REASON_TEXT: Record<string, string> = {
-  NO_PROFILE: "还没有配置可用的模型，云端核验没有运行。",
-  CLOUD_DISABLED: "云端核验没有开启。",
-  MODEL_UNSUPPORTED_INPUT: "当前模型不支持这份文件的输入形式，云端核验没有结果。",
-  MODEL_TIMEOUT: "云端核验超时了，本地结果不受影响。",
-  MODEL_INVALID_OUTPUT: "云端返回的内容不符合要求，已忽略，本地结果不受影响。",
-  SALVAGE_PARTIAL: "云端只核验了部分内容。",
-  ADJUDICATION_FAILED: "云端结果与本地结果的核对没有完成，本地结果不受影响。"
-};
-
-export function describeCloudReason(reasonCode?: string | null): string | undefined {
-  if (!reasonCode) return undefined;
-  return CLOUD_REASON_TEXT[reasonCode] ?? `云端核验未完成（${reasonCode}）。`;
+/**
+ * 核验状态行：**只有**用户需要知道的这几句（本轮任务书第四节 + A3/A4 契约同步）。
+ *
+ * 三件事在这里定下来：
+ *  1. **不显示内部状态表**。本地链/云端链/source 链/adjudication 链各自的 state、
+ *     批次号、模型调用次数都不进普通界面；reason code 只用于内部分类。
+ *  2. **「部分完成」有专门的说法**。`chains.source` / `chains.adjudication` 出现
+ *     `partial` 时（模型通道失败、预算耗尽、部分分歧未获裁定）说明「部分内容尚未完成校验」，
+ *     而不是笼统的「校验完成」。
+ *  3. **空列表 ≠ 核验成功**（这是本轮最容易写错的一条）。只要还有一路没真正跑完，
+ *     即使一条待处理项都没有，也**不**承诺「没有发现需要处理的问题」——
+ *     「没有卡片」只说明没有需要用户动手的东西，不说明内容被核对过了。
+ *
+ * 状态取值（`CHAIN_STATE_TO_STATUS` 归一化之后）：
+ * `queued` / `running` / `succeeded` / `partial` / `failed` / `unavailable` /
+ * `not_started` / `skipped`。
+ */
+export interface VerificationStatusInputV1 {
+  localStatus?: string;
+  cloudStatus?: string;
+  sourceStatus?: string;
+  adjudicationStatus?: string;
+  /** 待用户处理的条数（`needs_review` + `unverifiable` + `failed`）。 */
+  pendingCount?: number;
 }
 
-/**
- * 云端状态行：必须区分「没跑 / 在跑 / 完成 / 失败 / 不可用」，
- * 不允许把「没结果」显示成「没有问题」，也不允许把未知状态渲染成 `undefined`。
- */
-export function describeCloudStatus(cloudStatus: string | undefined, reasonCode?: string | null): string {
-  switch (cloudStatus) {
-    case "not_started":
-      return "云端核验还没有运行，下面显示的都是本机识别结果。";
-    case "queued":
-      return "云端识别排队中，本地结果已经可以编辑。";
-    case "running":
-      return "云端核验进行中，本地结果已经可以编辑。";
-    case "succeeded":
-      return reasonCode === "SALVAGE_PARTIAL" ? "云端核验完成（部分内容）。" : "云端核验完成。";
-    case "partial":
-      return "云端只核验了部分内容，其余需要人工确认。";
-    case "failed":
-      return "云端核验失败，本地结果不受影响。";
-    case "unavailable":
-      return describeCloudReason(reasonCode) ?? "云端核验不可用。";
-    case "skipped":
-      return "这次没有运行云端核验。";
-    default:
-      return cloudStatus ? `云端核验状态：${cloudStatus}。` : "云端核验状态未知。";
+/** 明确「只做了一部分」：模型通道失败、预算耗尽、部分分歧未获裁定。 */
+const PARTIAL_STATES = new Set(["partial"]);
+/** 云端没交出结果（失败 / 完全不可用）：如实说不可用，但**不**拖住编辑。 */
+const CLOUD_UNAVAILABLE_STATES = new Set(["failed", "unavailable"]);
+/** 这一路没有真正完成：不能据此承诺「未发现问题」。 */
+const UNFINISHED_STATES = new Set(["partial", "failed", "unavailable", "not_started", "skipped"]);
+
+export function describeVerificationStatus(input: VerificationStatusInputV1): string {
+  const {
+    localStatus,
+    cloudStatus,
+    sourceStatus,
+    adjudicationStatus,
+    pendingCount = 0
+  } = input;
+  // 本机还在读：唯一「什么都还不能做」的状态，也是用户最先看到的。
+  if (localStatus === "queued" || localStatus === "running") return "正在本机识别…";
+  if (cloudStatus === "queued" || cloudStatus === "running") return "云端正在校验…";
+  // 云端根本没跑（未配置模型 / 未启用）：这是「可以开始编辑」，不是「校验通过」。
+  if (!cloudStatus || cloudStatus === "not_started") return "题稿已生成，可以开始编辑";
+  if (CLOUD_UNAVAILABLE_STATES.has(cloudStatus)) return "云端校验暂时不可用，不影响继续编辑";
+
+  const verification = [cloudStatus, sourceStatus ?? "not_started", adjudicationStatus ?? "not_started"];
+  const partial = verification.some((state) => PARTIAL_STATES.has(state));
+  const unfinished = verification.some((state) => UNFINISHED_STATES.has(state));
+
+  if (pendingCount > 0) {
+    // 「部分完成」时先说清楚「有的内容还没校验完」，再让用户去看标出的题目。
+    if (partial) return "部分内容尚未完成校验，请检查标出的题目";
+    return `云端发现 ${pendingCount} 处建议`;
   }
+  // 一条待处理项都没有：**只有**三路都确实跑完，才敢说「没有发现问题」。
+  if (unfinished) return "部分内容尚未完成校验";
+  return "云端校验完成，没有发现需要处理的问题";
 }
