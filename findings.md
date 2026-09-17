@@ -2140,9 +2140,14 @@ reason=以下场景本次**无法执行**（前提不成立，例如没有真实
 
 顺手删掉了脚本里残留的 `session.cdp.send("Page.reload")`：它唯一的旧理由是「刚写进
 localStorage 的设置要重载才生效」，而那行设置上一轮已经删掉（`cloudEnabled` 根本不是
-`AppSettingsV1` 的字段），`Page.reload` 只剩「打断 CDP 会话」这一个副作用
-（`tauri-cdp-issue-list.mjs` 上一轮就是被它打断的）。删掉后复跑，结果与删除前**完全一致**——
-说明那次重载从来不是决定因素。
+`AppSettingsV1` 的字段），于是这次重载**没有任何作用**。删掉后复跑，结果与删除前**完全一致**。
+
+> **关于「reload 会不会打断 CDP 会话」——本节不主张因果。**
+> 上一轮的记录里写着 `tauri-cdp-issue-list.mjs` 是被 `Page.reload` 打断的，本轮实测**不支持**
+> 把它当成必然因果：`tauri-cdp-publish-unblock-probe.mjs`、`product-chain`、`local-chain`
+> 都还留着 `Page.reload`，却都能完整跑完（probe 本轮复跑三次均正常）。所以删掉它的理由是
+> **「它已经没有作用」**，不是「它一定会把会话弄断」。至于它与会话中断到底有没有关系、
+> 在什么条件下有关系，**本轮没有做受控实验，不结论**。
 
 ### 3. `tauri-cdp-publish-unblock-probe.mjs` —— 归因结论成立，但报告里有一处假阴性
 
@@ -2323,5 +2328,15 @@ taskId 稳定为 `missing-answer:q27+…+q40`，定位命中 `group-1-stimulus-b
 3. 有草稿且确实无问题 → 这时才可以说「可以导出」。
 
 `npx vitest run` → **244 passed / 14 files**；`npx tsc --noEmit` 干净。
+
+### 同类死代码的收尾（`recognition-write-path`）
+
+`tauri-cdp-recognition-write-path.mjs` 里也留着同样的两行（写 `cloudEnabled` + `Page.reload`）。
+既然 issue-list 与 recognition-buttons 都清了，这个也一并清掉，保持一致；
+删后复跑 **passed 9/9**，与删除前一致。
+
+仍在其他脚本里的 `Page.reload`（`publish-unblock-probe`、`product-chain`、`local-chain`、
+`import-batch-timeline`、`freeze-order-proof`）**本轮不动**：它们要么已验证通过、要么不在本轮范围，
+在没有新增证据的情况下改一个已经跑通的脚本，只会引入没有验证过的改动。
 
 

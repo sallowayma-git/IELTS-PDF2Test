@@ -106,9 +106,15 @@ try {
   // ---- 1. 题库页 ----
   await recorder.run("library-page-loads", async () => {
     await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-page" });
-    await session.evaluate(`(() => { window.localStorage.setItem("ielts-author-studio.app-settings.v1", JSON.stringify({ cloudEnabled: false })); location.hash = "#/library"; return true; })()`);
-    await session.cdp.send("Page.reload", {}, 30000).catch(() => {});
-    await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-after-reload" });
+    // 这里**不**写 `cloudEnabled`，也**不**重载页面。
+    // `AppSettingsV1` 根本没有 `cloudEnabled` 字段，写进去也读不到——那是一句会骗人的死代码；
+    // 而 `Page.reload` 唯一的旧理由就是「让刚写的那行设置生效」，设置删了它只剩副作用：
+    // 打断 CDP 会话（`tauri-cdp-issue-list.mjs` 上一轮就是被它打断的）。
+    // 本脚本的「无云」由**数据目录机制**保证：harness 每次用全新的
+    // `PDF2TEST_AUTOMATION_DATA_DIR`，里面没有 `config/llm-profiles.json`，
+    // `listLlmProfiles` 因此只回一个 `profile-local-placeholder`。
+    await session.evaluate(`(() => { location.hash = "#/library"; return true; })()`);
+    await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-after-hash" });
     return { url: await session.evaluate("location.href") };
   });
 
