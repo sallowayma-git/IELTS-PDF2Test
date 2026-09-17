@@ -220,8 +220,11 @@ async function main() {
   // `useImportFiles` 据此算出 `cloudEnabled = false`（见 `useImportFiles.ts` 第 26-28 行）。
   // 要跑**有云**的按钮流程请用 `tauri-cdp-controlled-service.mjs`，它会写真实 profile。
   await session.evaluate(`(() => { location.hash = "#/library"; return true; })()`);
-  await session.cdp.send("Page.reload", {}, 30000).catch(() => {});
-  await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-after-reload" });
+  // 这里**不**重载页面。`Page.reload` 会打断 CDP 会话（`tauri-cdp-issue-list.mjs` 上一轮
+  // 就是被它打断的），而它原先唯一的理由是「刚写进 localStorage 的设置要重载才生效」——
+  // 那行设置已经删掉了（`cloudEnabled` 根本不是 `AppSettingsV1` 的字段），于是重载只剩副作用。
+  // hash 变化本身就会触发路由，不需要重载。
+  await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-after-hash" });
 
   const before = await session.evaluate(`[...document.querySelectorAll('[data-testid="library-row"]')].map(r => r.getAttribute('data-item-id'))`);
   await session.clickSelector('[data-testid="library-import"]');

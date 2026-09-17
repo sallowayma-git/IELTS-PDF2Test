@@ -342,7 +342,7 @@ async function main() {
       report.changes.push({
         slotId, interaction, action: "type-text", value,
         selector, versionBefore: version, versionAfter: Number(next?.editVersion ?? 0),
-        answerAfter: applied, saved: JSON.stringify(applied?.values ?? null) === JSON.stringify([value]),
+        answerAfter: applied, saved: JSON.stringify(applied?.values ?? applied?.labels ?? null) === JSON.stringify([value]),
       });
       version = Number(next?.editVersion ?? version);
     } else {
@@ -371,7 +371,12 @@ async function main() {
       report.changes.push({
         slotId, interaction, action: "click-option", label,
         selector: radio, versionBefore: version, versionAfter: Number(next?.editVersion ?? 0),
-        answerAfter: applied, saved: JSON.stringify(applied?.labels ?? null) === JSON.stringify([label]),
+        // 判定要同时认两种答案形状：同一份题稿里「文本型答案位」存的是 `values`
+        // （`{kind:"text", normalization:"ielts_default", values:[...]}`），
+        // 「选项型答案位」存的才是 `labels`。旧版只读 `labels`，于是渲染成单选框、
+        // 但底层是文本形状的槽位（实测 q1/q2）一律被判成「没保存」——那是探针的假阴性，
+        // 读起来却像「用户填了没落盘」。这里按实际形状取值。
+        answerAfter: applied, saved: JSON.stringify(applied?.labels ?? applied?.values ?? null) === JSON.stringify([label]),
       });
       version = Number(next?.editVersion ?? version);
     }
@@ -560,6 +565,11 @@ async function main() {
     slotsWithoutUiEntry: noUiEntry,
     probeSkippedSlots: probeSkipped,
     notSavedSlots: notSaved,
+    // 口径说明，防止误读：`saved` 问的是「点击后期望值在不在草稿里」，
+    // **不是**「这次点击有没有让草稿发生变化」。探针的目标值是独立答案表里的正确答案，
+    // 而题稿里可能**本来就已经是**正确答案（实测 q1/q2：baseline 就是 TRUE/FALSE），
+    // 于是 editVersion 不动 —— 那是「无需修改」，不是「没保存」。
+    notSavedSlotsNote: "`saved=false` 表示点击后期望值没出现在草稿里；`versionBefore==versionAfter` 只说明这次点击没有改变草稿（期望值本就等于现值时就会如此），两者不是一回事。",
     ignoredClearedGate,
     resolutionBlind,
     verdict: probeSkipped.length > 0

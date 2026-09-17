@@ -323,6 +323,17 @@ async function main() {
     })()`,
     { timeoutMs: 40000, label: "issue-preflight-settled" }
   );
+  // 还要等**任务列表就绪**：`preflight` 与草稿是两条并行异步链，门禁先回来而草稿还没读进来时，
+  // 界面不再渲染任务（`data-tasks-ready=false`，见 F-R15-5）。抢在这个窗口里取快照，会拍到
+  // 一份 `missing-answer:unnumbered` 的任务，随后草稿就绪、任务被重算成 `…:q27+…`，
+  // 于是「按快照里的 testid 去点」必然超时 —— 那是验收脚本在跟产品竞速，不是产品结论。
+  await session.waitFor(
+    `(() => {
+      const el = document.querySelector('[data-testid="workspace-issue-list"]');
+      return !!el && el.getAttribute('data-tasks-ready') === 'true';
+    })()`,
+    { timeoutMs: 40000, label: "issue-tasks-ready" }
+  );
   let snapshot = await session.evaluate(READ_TASKS);
   // 折叠时看不到的卡，其 `data-task-covers` 也不可见 —— 先展开，否则「不隐藏」的断言会假失败。
   if (snapshot?.hasMore) {
@@ -460,15 +471,58 @@ async function main() {
       return true;
     })()`);
     const perButton = [];
+    // 定位失败时，报告必须能回答**为什么**：是草稿里根本没有这个答案位，还是草稿里有、
+    // 但题面没渲染出对应元素？这两种情况的缺陷归属完全不同，只看 `scrolled=[]` 分不出来。
+    // 本轮实测到一次间歇失败：同一份构建、同一份夹具，一次任务 id 是
+    // `missing-answer:q27+…+q40`（题号解析成功、定位命中 `group-1-stimulus-b032`），
+    // 另一次退化成 `missing-answer:unnumbered` 且定位不到 —— 没有这组诊断就只能靠猜。
+    const draftForDiagnosis = await call("get_workspace_item", { itemId })
+      .then((r) => (r?.ok ? r.value : null))
+      .catch(() => null);
     for (const { card, button } of fillButtons) {
       await session.evaluate(`(() => { window.__issueScrolled = []; return true; })()`);
-      await session.clickSelector(`[data-testid="${button.testid}"]`);
+      // 按「动作 + 目标」重新解析 testid，而不是直接用手快照里那份：任务在草稿就绪后会重算，
+      // taskId 会随之变化（`…:unnumbered` → `…:q27+…`），旧 testid 在 DOM 里已经不存在了。
+      const liveTestid = await session.evaluate(`(() => {
+        const el = document.querySelector('[data-testid="workspace-issue-list"] button[data-action-id="fill-answer"][data-action-target=${JSON.stringify(button.target)}]');
+        return el ? el.getAttribute('data-testid') : null;
+      })()`);
+      let clickError = null;
+      try {
+        await session.clickSelector(`[data-testid="${liveTestid ?? button.testid}"]`);
+      } catch (error) {
+        // 点击失败不终止：后面那组诊断（草稿里有没有这个槽位、题面上有没有对应元素）
+        // 才是判断缺陷归属的依据，不能因为按钮没找到就把证据一起丢掉。
+        clickError = String(error?.message ?? error);
+      }
       await sleep(600);
       const scrolled = await session.evaluate(`window.__issueScrolled`);
       const missNotice = await session.evaluate(
         `(() => { const el = document.querySelector('[data-testid="workspace-locate-miss"]'); return el ? el.innerText.replace(/\\s+/g,' ').trim() : null; })()`
       );
-      perButton.push({ taskId: card.taskId, target: button.target, scrolled: scrolled ?? [], missNotice });
+      const ds = draftForDiagnosis?.ds ?? null;
+      const slot = ds?.answerSlots?.[button.target] ?? null;
+      perButton.push({
+        taskId: card.taskId,
+        target: button.target,
+        clickedTestid: liveTestid ?? button.testid,
+        clickError,
+        scrolled: scrolled ?? [],
+        missNotice,
+        diagnosis: {
+          slotInDraft: Boolean(slot),
+          slotCount: Object.keys(ds?.answerSlots ?? {}).length,
+          questionNumber: slot?.questionNumber ?? null,
+          hostNodeId: slot?.hostNodeId ?? null,
+          // 题面 DOM 里到底有没有候选元素：把三跳 id 一起在 DOM 里找一遍。
+          domMatchCount: await session.evaluate(`(() => {
+            const candidates = ${JSON.stringify([button.target, slot?.hostNodeId ?? null])}.filter(Boolean);
+            const nodes = Array.from(document.querySelectorAll('[data-editor-id], [data-question-id], [data-response-group-id]'));
+            return nodes.filter((el) => [el.dataset.editorId, el.dataset.questionId, el.dataset.responseGroupId]
+              .some((v) => v !== undefined && candidates.includes(v))).length;
+          })()`),
+        },
+      });
     }
     report.fillAnswer = perButton;
     const silent = perButton.filter((entry) => !entry.scrolled.length && !entry.missNotice);

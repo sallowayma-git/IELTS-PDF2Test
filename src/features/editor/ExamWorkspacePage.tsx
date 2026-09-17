@@ -461,8 +461,19 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           data-merged-rows={taskSummary.mergedRowCount}
           data-can-export={canExport ? "true" : "false"}
           data-preflight-state={preflightState}
+          data-tasks-ready={editor.loading ? "false" : "true"}
         >
-          {taskSummary.tasks.length ? (
+          {/* 题稿还没读进来时**不渲染任务**。
+              `preflight`（后端门禁）与草稿是两条并行的异步链，门禁完全可能先返回；此时
+              `buildUserTasks` 拿不到 `answerSlots`，`slotIdsOfTarget` 一律返回空，带题号的
+              缺答问题会退化成 `missing-answer:unnumbered`。任务卡看起来正常，点「去填写」
+              却定位不到任何元素——因为题面上还没有那道题。实测这是**间歇**的：同一份构建、
+              同一份夹具，一次任务 id 是 `missing-answer:q27+…+q40`（题号解析成功、定位命中
+              `group-1-stimulus-b032`），另一次退化成 `unnumbered` 且定位失败（F-R15-5）。
+              等草稿就绪再渲染，任务才可能被定位到。 */}
+          {editor.loading ? (
+            <p className="empty compact" data-testid="workspace-tasks-loading">正在打开这道题…</p>
+          ) : taskSummary.tasks.length ? (
             <>
               <p className="workspace-issues-headline" data-testid="workspace-tasks-headline">
                 {taskSummary.headline}

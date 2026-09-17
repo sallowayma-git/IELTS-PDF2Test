@@ -2080,3 +2080,216 @@ preflightAfter  = {"passed": false, "editVersion": 1, 同上}
 | **真实云服务** | **未验证**：本轮没有真实供应商凭据，所有云端请求都指向 `127.0.0.1:11435` 的受控服务。 |
 | **学生端** | 本仓契约脚本 **22/22 PASS**（含 `scriptSha256` / `runtimeSha256` 两道完整性绑定）+ 学生端仓库自带真实 loader 验收 **PASS**。**Electron 真实加载与作答一致性未验证**（M6 范围，需桌面运行）。 |
 
+
+# R15：把「改了但没跑过」的 5 个 E2E 脚本真实跑一遍
+
+## 一、本轮要解决的问题
+
+上一轮（`88f966c`）有 **5 个 E2E 脚本被一起提交，却从未运行过**。按仓库护栏
+（「无证据必须标未完成」），它们不能算验证过。本轮逐个真实运行，如实记录结果，
+并修掉脚本自身会让结论失真（假绿/假红）的地方。
+
+**归属**：改动全部落在前端 `src/**` 与 `scripts/**`；后端独占区（`src-tauri/src/processing/**`、
+`reconcile/**`、`recognition/**`、`llm_gateway.rs` 等）**改动 0 个文件**。
+
+## 二、5 个脚本的真实运行结果
+
+| # | 脚本 | 首次运行 | 处理 | 复跑 |
+| --- | --- | --- | --- | --- |
+| 1 | `tauri-cdp-smoke.mjs` | **CANNOT-RUN**（无参运行） | 修默认参数（F-R15-1） | **passed 5/5**（无参） |
+| 2 | `tauri-cdp-recognition-buttons.mjs` | not-executable ×5（exit 5） | 删残留 `Page.reload`（F-R15-2） | not-executable ×5（**结果不变**） |
+| 3 | `tauri-cdp-publish-unblock-probe.mjs` | `attribution=data-fix-insufficient` | 修 `saved` 判定假阴性（F-R15-3） | 同一归因；`notSavedSlots` 由 `["q1","q2"]` → `[]` |
+| 4 | `tauri-cdp-recognition-write-path.mjs` | **passed 9/9** | 无需改动 | — |
+| 5 | `tauri-direct-canonical.mjs` | **CANNOT-RUN**（selenium 会话握手失败） | 无法在本机验证（F-R15-4） | — |
+
+### 1. `tauri-cdp-smoke.mjs` —— 无参必挂，是脚本自己没照注释做
+
+首次（无参）运行：
+
+```
+[smoke] CANNOT-RUN 页面在 90000ms 内未渲染出可见文本（求值持续失败（最后一次：CDP 连接已关闭，无法发送 Runtime.evaluate））
+```
+
+**这不是产品问题**。脚本第 33-35 行的注释写着「环境必需的诊断参数……不加这两个开关时会中途
+崩溃（`CDP 连接已关闭`）」，可默认值偏偏是空串（`const extraArgs = ... : ""`）。同类脚本
+（`recognition-write-path`）是**硬编码**这两个开关并标 `diagnosticRun=true`，所以它一跑就过。
+
+带参验证：`--extra-args "--no-sandbox --disable-gpu"` → **passed 5/5**。
+改默认值后无参复跑 → **passed 5/5**，报告里 `diagnosticRun=true`（结论仍标注为诊断参数运行）。
+
+### 2. `tauri-cdp-recognition-buttons.mjs` —— 5 个场景全部「前提不成立」
+
+```
+[recog-buttons] verdict=not-executable exit=5
+reason=以下场景本次**无法执行**（前提不成立，例如没有真实候选项）
+```
+
+报告里的实测数据（不是推测）：
+
+```json
+"candidates": {
+  "batchId": null,
+  "chainStates": {"adjudication":{"state":"not_run"},"cloud":{"state":"not_run"},
+                  "local":{"state":"not_run"},"source":{"state":"not_run"}},
+  "actionableCount": 0, "needsReviewCount": 0, "autoFixedCount": 0
+}
+```
+
+`batchId=null`、四路链全 `not_run` → 没有候选项，按钮流程无从执行。**这是如实的环境限制**
+（与 R14 的 F-R12-2 同一件事），不是脚本回归，也**不能记作通过**。
+
+顺手删掉了脚本里残留的 `session.cdp.send("Page.reload")`：它唯一的旧理由是「刚写进
+localStorage 的设置要重载才生效」，而那行设置上一轮已经删掉（`cloudEnabled` 根本不是
+`AppSettingsV1` 的字段），`Page.reload` 只剩「打断 CDP 会话」这一个副作用
+（`tauri-cdp-issue-list.mjs` 上一轮就是被它打断的）。删掉后复跑，结果与删除前**完全一致**——
+说明那次重载从来不是决定因素。
+
+### 3. `tauri-cdp-publish-unblock-probe.mjs` —— 归因结论成立，但报告里有一处假阴性
+
+该脚本不产 `passed/failed`，它输出**归因**结论。实测：
+
+```
+[probe] baseline quality.state = blocked
+[probe] baseline hardFailures = ["SLOT_HOST_MISSING","SIGNIFICANT_REGION_UNASSIGNED","RUNTIME_COMPILER_FAILED"]
+[probe] attribution = data-fix-insufficient
+[probe] ignoredClearedGate = false   resolutionBlind = true
+[probe] cleared = []   persisted = ["QUALITY_NOT_READY","QUALITY_HARD_FAILURE","ISSUE_UNRESOLVED"]
+```
+
+即：**用户把界面上能改的槽位都改了、并把所有 blocking 问题标成 ignored，门禁依然拦下，
+且一条码都没被清掉**（`resolutionBlind=true`）。归因指向后端门禁的 resolution 语义，属后端职责，
+本轮只记录、不改后端。
+
+但报告里 `notSavedSlots: ["q1","q2"]` 是**假阴性**。查 `baseline.answerKey` 可见：
+
+| 槽位 | baseline 已有值 | 探针点的值 | 版本变化 | 旧判定 |
+| --- | --- | --- | --- | --- |
+| q1 | `text/TRUE` | TRUE | 1→1 | `saved=false` ❌ |
+| q2 | `text/FALSE` | FALSE | 1→1 | `saved=false` ❌ |
+| q3 | `text/NOT GIVEN` | TRUE | 1→2 | `saved=true` ✅ |
+| q4 | `text/maps` | diaries | 2→3 | `saved=true` ✅ |
+| q5 | `text/diaries` | diaries | 3→3 | `saved=true` ✅ |
+
+根因有两条，都不是产品缺陷：
+
+1. **判定只认一种答案形状**。同一份题稿里，「文本型答案位」存 `values`
+   （`{kind:"text", normalization:"ielts_default", values:[...]}`），「选项型答案位」才存 `labels`。
+   q1/q2 渲染成单选框、底层却是文本形状，旧判定只读 `labels` → 一律判成「没保存」，
+   读起来像「用户填了没落盘」。
+2. **探针的目标值本来就等于现值**。探针取的是独立答案表里的**正确答案**，而题稿里 q1/q2
+   本来就是正确答案，于是点击不产生变更、`editVersion` 不动 —— 那是「无需修改」，
+   不是「没保存」。
+
+修法：判定同时接受 `labels ?? values`，并在归因里补一句口径说明
+（`notSavedSlotsNote`），把「值本来就对」与「没保存」明确分开。
+复跑：`notSavedSlots=[]`，逐槽位 `saved` 全为 `true`，而**归因结论不变**（仍
+`data-fix-insufficient`）——说明修的是报告准确性，结论本身是稳的。
+
+### 4. `tauri-cdp-recognition-write-path.mjs` —— 9/9 通过
+
+```
+[step] PASSED library-page-loads / import-fixture / read-recognition-decision
+[step] PASSED write-path-rejects-legacy-shape / -empty-decisions / -conflict
+[step] PASSED write-path-shape-accepted / -invalid-identity / undo-channel-writes-canonical
+[recog-write] verdict=passed
+```
+
+该脚本硬编码诊断参数并标 `report.diagnosticRun = true`，所以默认即可运行。注意它自己的定位：
+**这是接线验证（请求形状被真实后端接受、结构校验可达），不是用户流程验收** —— 当前夹具
+`get_recognition_decision` 仍返回 0 条可核对项，没有对象可决策。
+
+### 5. `tauri-direct-canonical.mjs` —— 本机跑不到，改动**未验证**
+
+```
+[e2e:tauri] starting tauri-driver on :57943
+SessionNotCreatedError: session not created
+from chrome not reachable
+```
+
+这是本机 selenium 通道的老问题（R14 已为 `tauri-publish-ready.mjs` 记录过一次，本次是第三次
+独立复现）。**直接后果**：该脚本里那处 `verifyIssueTarget` 的改动（从
+`button[data-issue-target-id]` 改为按 `button[data-action-id="fill-answer"]` +
+`data-action-target` 找）**根本没有被执行到**，因此**必须标为未验证**。
+
+它依赖的 DOM 契约本身**已由另一条通道证实**：`tauri-cdp-issue-list.mjs` 在 CDP 通道上断言了
+「每条任务至少一个真实动作按钮、动作种类合法」「每个『去填写』都有作用」「至少有一条真的定位到
+题面元素」——用的是同一套 `data-action-id` / `data-action-target` 属性。
+
+## 三、本轮新发现的缺陷
+
+### F-R15-1（验收工具，已修）：smoke 默认参数与自身注释矛盾 → 无参必 CANNOT-RUN
+见 §二.1。修后无参 `passed 5/5`。
+
+### F-R15-2（验收工具，已修）：recognition-buttons 残留会打断 CDP 会话的 `Page.reload`
+见 §二.2。删除后复跑结果不变。
+
+### F-R15-3（验收工具，已修）：probe 的 `saved` 判定只认 `labels`，对文本形状答案位假阴性
+见 §二.3。修后 `notSavedSlots` 由 `["q1","q2"]` 变为 `[]`，归因不变。
+
+### F-R15-4（环境阻塞，未验证）：`tauri-direct-canonical.mjs` 的改动无法在本机执行
+见 §二.5。**不记作通过，也不记作失败**——它是「未验证」。
+
+### F-R15-5（产品缺陷，已修）：草稿未就绪时问题列表渲染出**不可定位**的任务
+
+这是本轮唯一的产品缺陷，而且**间歇**、**用户可见**。
+
+**证据链**（同一份构建、同一份夹具、同一脚本，四次运行）：
+
+| 运行 | 任务 id | 点「去填写」的结果 |
+| --- | --- | --- |
+| 16:00 | `missing-answer:q27+q28+…+q40` | `scrolled=["group-1-stimulus-b032"]` → **PASS** |
+| 17:39 | `missing-answer:unnumbered` | `scrolled=[]` + 「目标 q27 在题面上没有对应的元素」 → **FAIL** |
+| 17:41 | `missing-answer:q27+…+q40` | 命中 → PASS |
+| 17:42 | 快照时 `unnumbered` | 点击时该按钮**已不存在**（`clickSelector` 超时）→ FAIL |
+
+最后一次运行给出了决定性线索：**快照里那个 `unnumbered` 按钮，在点击时已经不在 DOM 里了**
+—— 说明任务列表在运行中被**重算过**（`unnumbered` → `q27+…`）。
+
+**根因**：`preflight`（后端门禁）与草稿是两条**并行**的异步链，门禁完全可能先返回。
+此时 `buildUserTasks` 拿不到 `answerSlots`，`slotIdsOfTarget` 一律返回空，
+带题号的缺答问题就退化成 `missing-answer:unnumbered`；而题面此刻也还没渲染出那道题，
+于是「去填写」定位必然落空。草稿就绪后任务重算、taskId 变化，用户若在窗口期内点击，
+得到的就是「找不到」或者按钮被换掉。
+
+**修法（产品侧）**：`ExamWorkspacePage` 在 `editor.loading` 为真时**不渲染任务**，
+改显示「正在打开这道题…」，并暴露 `data-tasks-ready` 供验收等待。
+（题面画布早就有这道保护——`{editor.loading ? <p>正在打开这道题…</p> : null}`——漏的是问题列表面板。）
+
+**修法（验收侧）**：
+- 快照前等 `data-tasks-ready="true"`，不再跟产品竞速；
+- 点击前按「动作 + 目标」**重新解析** testid（任务重算后旧 testid 会消失）；
+- 点击失败不再终止采集，而是记进报告；
+- 新增诊断 `diagnosis`：`slotInDraft` / `slotCount` / `questionNumber` / `hostNodeId` /
+  `domMatchCount` —— 下次再出问题，报告能直接回答「草稿里没有这个槽位」还是「草稿有但题面没渲染」。
+
+**修复后验证**：重建 exe（`e38f9095…`，内容哈希清单归因）后**连跑三次，全部 `passed` 13/13**，
+taskId 稳定为 `missing-answer:q27+…+q40`，定位命中 `group-1-stimulus-b032`。
+诊断字段实测：`{"slotInDraft":true,"slotCount":14,"questionNumber":27,"hostNodeId":"group-1-stimulus-b032","domMatchCount":1}`。
+
+## 四、`workspace-publish` 是否应以 `canExport` 作为 disabled 条件
+
+**结论：不应当。** 现状（`disabled={Boolean(busyAction)}`）是正确设计，本轮不改。
+
+1. `canExport` 的口径是「**能不能说『可以导出』这句话**」：任务列表为空 + 门禁确实读到了
+   + 没有待保存修改。它是一个**文案判据**，不是发布动作的前置条件。
+2. 发布动作本身由**后端门禁兜底**（点发布会被逐条拦下并给出原因），前端不重复实现门禁规则
+   ——这是「产品现实优先」。
+3. **若拿它去 disabled 发布按钮，会把可发布的题锁死**：R14 实测 F-R14-7 —— 预检恒
+   `passed=false / quality_state=review_required`，而**发布成功、产物齐全**。用预检当门禁开关，
+   就是让一个已知不可靠的读数和发布能力绑定。
+4. 任务书第 5 条要求的是「『可以导出』**以当前题稿的后端发布检查为准**」——指的是那句状态文案
+   的判据（已满足：`data-can-export` + `data-preflight-state` 三重条件），不是按钮可用性。
+
+## 五、环境备注（本轮）
+
+1. **诊断参数在本机是必需的**：`--no-sandbox --disable-gpu`。不加则 WebView2 渲染器中途崩
+   （`CDP 连接已关闭`）。所有以此运行得到的结论都标注 `runProfile=cdp-diagnostic`，
+   **不代表默认启动路径已通过**。
+2. **selenium / tauri-driver 通道在本机不可用**：`SessionNotCreatedError: chrome not reachable`，
+   本轮第三次独立复现。
+3. **构建归因**：本轮重建一次（`build-app.mjs`），新 exe
+   `e38f9095b5c7a8118fcabc0f460cd379b6415b39a4f0ea222491b2b3fc65e946`，
+   报告里 `buildFresh.mode=manifest`（三段链内容哈希一致），不是靠 mtime 判断的。
+4. `npx tsc --noEmit` 干净；`npx vitest run` **241 passed / 14 files**。
+
+

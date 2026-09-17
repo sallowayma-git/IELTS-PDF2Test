@@ -33,7 +33,11 @@ const extraIdx = process.argv.indexOf("--extra-args");
 // 环境必需的诊断参数（见 CDP_CHANNEL_NOTE）：本沙箱环境下 WebView2 的 renderer
 // 在不加这两个开关时会中途崩溃（`CDP 连接已关闭`）。它们放宽了渲染进程沙箱与 GPU
 // 路径，因此所有以此运行得到的结论都必须标注「诊断参数运行」，不得写成默认产品路径通过。
-const extraArgs = extraIdx >= 0 ? (process.argv[extraIdx + 1] ?? "") : "";
+// 默认值就是这两个开关，**不是空串**：下面这段注释早就写着「环境必需」，而旧默认值却是空，
+// 于是本脚本的无参运行必然以 CANNOT-RUN 结束（实测：`CDP 连接已关闭`，页面 90s 内没渲染出
+// 文本）——那不是产品问题，是脚本没照自己写的做。仍然保留 `--extra-args` 覆盖，
+// `report.diagnosticRun` 会随之自动为 true，结论依旧标注为「诊断参数运行」。
+const extraArgs = extraIdx >= 0 ? (process.argv[extraIdx + 1] ?? "") : "--no-sandbox --disable-gpu";
 const runDir =
   runDirIdx >= 0
     ? path.resolve(process.argv[runDirIdx + 1])
