@@ -384,6 +384,31 @@ function pendingCountOf(decision) {
     .length;
 }
 
+/**
+ * 把 `chainSnapshot()` 的输出喂给 `expectedStatusText()`。
+ *
+ * **为什么必须走这一层**：`chainSnapshot()` 产出的键是 `local` / `cloud` / `source` /
+ * `adjudication`，而 `expectedStatusText()` 解构的是 `localStatus` / `cloudStatus` /
+ * `sourceStatus` / `adjudicationStatus`。直接把快照展开传进去（`{...snap}`）时这四个
+ * 形参全是 `undefined`，函数在第 3 条规则 `if (!cloudStatus …)` 就返回常量
+ * 「题稿已生成，可以开始编辑」——**准则退化成常量，断言变成永远成立**。
+ *
+ * 这个缺陷此前一直不可见：那时候批次根本产不出来（A3 panic），真实文案恰好也是那句常量，
+ * 于是「期望 == 实际」在一个两边都空的场景里成立。修复 A3 边界后批次真的产出来了，
+ * 文案变成「云端发现 N 处建议」，常量假设才暴露出来。
+ *
+ * 教训记在这里：**断言里的「独立实现」必须能被真实数据驱动**，否则它只是把常量比了一遍。
+ */
+function expectedStatusForSnapshot(snap, pendingCount) {
+  return expectedStatusText({
+    localStatus: snap.local,
+    cloudStatus: snap.cloud,
+    sourceStatus: snap.source,
+    adjudicationStatus: snap.adjudication,
+    pendingCount,
+  });
+}
+
 /** 触发一次重新识别，并等一个**新**批次落地。 */
 async function rerunRecognition(previousBatchId, timeoutMs = 300000) {
   const retry = await call("retry_processing", { itemId });
@@ -931,7 +956,15 @@ async function main() {
     const view = await readDecision();
     const snap = chainSnapshot(view);
     const pending = pendingCountOf(view);
-    const expected = expectedStatusText({ ...snap, pendingCount: pending });
+    const expected = expectedStatusForSnapshot(snap, pending);
+    // **读之前必须先确保面板展开。** 场景 1 会重跑识别（`retry_processing`），
+    // 工作区重挂后 `recognitionOpen` 回到默认关闭，`[data-testid="workspace-recognition-cloud"]`
+    // 随之从 DOM 里消失——直接读会拿到 `null`，把「面板没开」误报成「界面文案与链状态不一致」。
+    // 场景 7/8 一直有 `openPanel()` + 等待，场景 6 漏了，于是只有它在 R15 变红。
+    // （实测：打开工作区后未点面板时 `panelPresent=false`；点开后同一位置读到
+    //  「云端发现 29 处建议」，与四链全 `succeeded` + 29 条待处理完全相符。）
+    await openPanel();
+    await sleep(1200);
     const actual = await readStatusLine();
     if (actual !== expected) {
       throw new Error(`核验状态行与链状态不一致：期望 ${JSON.stringify(expected)}，实际 ${JSON.stringify(actual)}（chains=${JSON.stringify(snap)}，pending=${pending}）`);
@@ -1027,7 +1060,7 @@ async function main() {
     await openPanel();
     await sleep(1200);
     const actual = await readStatusLine();
-    const expected = expectedStatusText({ ...snap, pendingCount: pending });
+    const expected = expectedStatusForSnapshot(snap, pending);
     report.partialMode = { health, chains: snap, pendingCount: pending, statusLine: actual, expected };
     if (snap.source !== "partial") {
       throw new Error(`mode=partial 下 A3 只回答了第一项，chains.source 应当是 partial，实际 ${snap.source}（原因码 ${String(snap.sourceReasonCode)}）`);
@@ -1050,7 +1083,7 @@ async function main() {
     await openPanel();
     await sleep(1200);
     const actual = await readStatusLine();
-    const expected = expectedStatusText({ ...snap, pendingCount: pending });
+    const expected = expectedStatusForSnapshot(snap, pending);
     report.failureMode = { health, chains: snap, pendingCount: pending, statusLine: actual, expected };
     if (snap.source !== "partial") {
       throw new Error(`模型调用失败时 chains.source 应当是 partial（模型通道失败），实际 ${snap.source}`);

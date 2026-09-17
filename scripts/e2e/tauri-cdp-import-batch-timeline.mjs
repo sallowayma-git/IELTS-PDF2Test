@@ -10,6 +10,15 @@
  * 本脚本刻意**不调用** `get_workspace_item` / `get_publish_preflight`——它们会
  * `migrate_single_item` 播种权威稿，而播种正是被怀疑的竞态变量。只读决策视图。
  *
+ * 两种场景由 `--open-workspace` 选择，**必须分开跑**（不能在同一进程里连着做）：
+ *   A) 默认：导入后**不打开工作区**，只看批次自己会不会出现；
+ *   B) `--open-workspace`：导入后**立即**导航到 `#/items/<id>`，其余观测方式与 A 完全一致。
+ * 若把 B 塞进 A 的同一次运行，就分不清批次是因为开了工作区才出现、还是本来就会出现——
+ * 两次观测的差异必须是**唯一变量**（开不开工作区）造成的。
+ *
+ * 用法：
+ *   node scripts/e2e/tauri-cdp-import-batch-timeline.mjs [--open-workspace] [--window-ms N] [--fixture PATH] [--keep]
+ *
  * 退出码：0 = 观测完成（无论是否出现批次）；3 = CANNOT-RUN。
  */
 
@@ -35,6 +44,7 @@ const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-autho
 const keep = process.argv.includes("--keep");
 const windowIdx = process.argv.indexOf("--window-ms");
 const windowMs = windowIdx >= 0 ? Number(process.argv[windowIdx + 1]) : 300000;
+const openWorkspace = process.argv.includes("--open-workspace");
 const fixtureIdx = process.argv.indexOf("--fixture");
 const fixturePath = path.resolve(
   fixtureIdx >= 0
@@ -52,6 +62,7 @@ const runDir = path.join(
 const report = {
   task: "no-cloud-import-batch-timeline",
   scope: "观测：无云导入后批次是否/何时出现（不断言，不调用会播种权威稿的命令）",
+  scenario: openWorkspace ? "import-then-open-workspace" : "import-without-opening-workspace",
   channel: CDP_CHANNEL_LABEL,
   channelNote: CDP_CHANNEL_NOTE,
   startedAt: new Date().toISOString(),
@@ -141,6 +152,23 @@ try {
   if (!itemId) throw new CannotRunError("导入后未出现新的题库行");
   report.itemId = itemId;
   report.importedAt = new Date(importedAt).toISOString();
+
+  // 场景 B：导入后**立即打开工作区**。
+  //
+  // 走**真实导航**（把 hash 改到 `#/items/<id>`）触发产品自己的打开路径，
+  // 而不是脚本代劳去调 `get_workspace_item`——后者测的是脚本、不是产品，
+  // 也绕开了「打开工作区会播种权威稿」这个真正想观测的变量。
+  if (openWorkspace) {
+    report.workspaceNavigatedMs = Date.now() - importedAt;
+    await session.evaluate(
+      `(() => { window.location.hash = "#/items/" + ${JSON.stringify(itemId)}; return true; })()`
+    );
+    await session.waitFor(`!!document.querySelector('[data-testid="exam-workspace"]')`, {
+      timeoutMs: 40000,
+      label: "exam-workspace",
+    });
+    report.workspaceVisibleMs = Date.now() - importedAt;
+  }
 
   // 只读轮询：不调用任何会播种权威稿的命令。
   const deadline = Date.now() + windowMs;
