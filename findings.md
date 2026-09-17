@@ -2637,3 +2637,175 @@ retry(&conn, &job_id_owned)?;   // ← bool 被丢掉
 | `scripts/e2e/tauri-cdp-controlled-service.mjs` | 新增 `extractAppPanics` + `report.appPanics`，A3 失败文案指向它 | 把「没有根因的结论」变成可读根因（9.2） |
 
 
+
+## 十、编辑工作区渲染异常：根因、修复与验收（用户截图 + `demanding-reading-passage-3.pdf`）
+
+复现对象就是用户给的那张截图：1080×617 视口、`fixtures/parser/demanding-reading-passage-3.pdf`（q27–q40）。
+新增取证脚本 `scripts/e2e/tauri-cdp-workspace-layout.mjs`（真实 Tauri exe + WebView2 CDP，9 条几何断言）。
+
+### 10.1 先复现：三处缺陷都在真实窗口里量到了
+
+修复前构建 `6eaefd15…`，运行 `run-workspace-layout-2026-09-17T19-16-23-566Z`：
+
+| 快照 | `.workspace-body` 左边界 | 题稿宽 | 建议面板宽 | 题目栏右边界 |
+| --- | --- | --- | --- | --- |
+| 建议面板关闭 | 0.0 | 1080.0 | — | 1080.0 |
+| **建议面板打开** | **556.0** | **524.0** | **556.0** | **1138.0（越过 1080 视口 58px）** |
+| **问题列表打开** | **540.0** | **540.0** | **540.0** | **1122.0** |
+| 窄屏 900 | **401.7** | **498.3** | **401.7** | 900.0 |
+
+`consoleErrors: []`、`pageExceptions: []` —— **不是运行时异常，是布局错位**。
+建议面板高度 284px（内容只有一行状态 + 四个计数胶囊 + 一句说明），其余全是空白。
+
+### 10.2 根因：单列显式网格 + 两个 `grid-row: 3` 生出隐式第 2 列
+
+```css
+.workspace-page { display: grid; grid-template-rows: 56px auto minmax(0,1fr); }  /* 没有 grid-template-columns */
+.workspace-header      { grid-row: 1; }
+.workspace-sub-header  { grid-row: 2; }
+.workspace-body        { grid-row: 3; }                        /* 不带 grid-column */
+.workspace-recognition { grid-row: 3; grid-column: 1 / -1; }   /* 只有 1 条显式列时 -1 就是第 1 列 */
+```
+
+显式网格只有 1 列。按 CSS Grid 自动放置（§8.5）：先落**行列都确定**的项（建议面板 → 第 3 行第 1 列），
+再落**只确定行**的项。`.workspace-body` 要第 3 行，而第 3 行第 1 列已被占 → 它只能被推进
+**隐式第 2 列**。两列都是 `auto`，在 `width: 100%` 下平分 → 工作区被劈成 556/524 两半。
+第 3 行是 `minmax(0, 1fr)`，网格项默认 `align-self: stretch` → 内容仅 150px 高的建议面板被拉满整列
+≈ 视口高 − 90px，于是留下那一大片空白。
+
+题稿被推到右半后，body 内部的双栏网格 `minmax(280px,…) 2px minmax(300px,1fr)` 需要至少 582px，
+而它只有 524px → 两栏各自压到下限并**整体右溢 58px**（题目栏右边界 1138）。
+
+同一机制解释了「问题列表打开也劈成两半」（540/540）——`.workspace-issues` 没有任何 `grid-row/column`，
+是完全自动放置的项，照样触发。**凡是在 `.workspace-page` 下动态出现的兄弟节点都会踩这个坑**，
+所以修法不能只针对建议面板。
+
+### 10.3 题号逐字符竖排的根因：全局 `overflow-wrap: anywhere` + flex 的 `min-width: auto`
+
+截图里「27」被折成两行的「2」「7」。两个成因叠加：
+
+1. `src/styles/reset.css:24-27` 对 `:is(p, td, th, label, button, …)` 施加了 `overflow-wrap: anywhere`，
+   而该属性**可继承**。行内填空（summary/sentence/note/form completion）的题号是
+   `<label class="v2-answer-slot v2-answer-slot-text">` 里的 `<span class="v2-slot-label">`，
+   于是也拿到了「任意字符之间都能断」的许可。
+2. flex 子项默认 `min-width: auto`，解析结果是**最小内容宽度**；在允许任意断行时，
+   「27」的最小内容宽度就是 1 个字符。题目栏一窄，题号就被压到 1 字符宽。
+
+顺带发现：`.v2-slot-label` 在样式表里**完全没有定义**（`grep` 全仓无匹配），一直是裸 `span`。
+这也解释了为什么首版探针只查 `.v2-slot-number` 时一个竖排题号都没量到——行内填空根本不用那个类。
+
+### 10.4 题面重复：**源数据层已经重复**，不是前端重复渲染
+
+先说清楚**不是**什么（两条都是实测，不是推断）：
+
+- `duplicateText.echoedCount = 0`：题目栏按句切开 16 句，**没有一句**逐字出现在原文栏。
+- `irDuplication.duplicatedLayers = []`：`taskGroups[].instructions` / `[].stimulus` /
+  `responseGroups[].prompt` 里**没有任何一层**的文本出现在 `passage.content` 里。
+
+再说**是什么**。`passage.content` 自身（27 个文本节点、6159 字符）里有一个逐字重复的节点：
+
+```
+passage-title-text : "You should spend about 20 minutes on Que"
+passage-text-1     : "You should spend about 20 minutes on Que"   ← 同一字符串
+```
+
+而且这一段是**跨栏重排**的产物，相邻节点连起来是：
+
+```
+"You should spend about 20 minutes on Que" | "You should spend about 20 minutes on Que"
+| "on pages 10 and 11." | "10" | "stions 27-40, which are based on Reading Passage 3"
+```
+
+`Questions` 被切成 `Que` + `stions`，页码 `10` 插在句子中间，整句被拆成 5 个片段。
+真实原文应该是「You should spend about 20 minutes on **Questions 27–40**, which are based on
+Reading Passage 3 on pages 10 and 11.」——这句话**只应出现一次**。
+
+对照 `taskGroups[0].instructions`，那里是一句完整独立的
+「Questions 27 - 31 Complete the summary using the list of words and phrases, A-H, below. …」，
+说明被拆碎的这段是**页眉说明**，抽取器把它同时写进了标题节点和正文首个文本节点。
+
+**结论**：重复产生在**源数据（后端抽取）**层，前端按原样渲染。
+因此**没有**在前端做任何「按文本相似度删内容 / 隐藏某个字段」的处理——那会丢掉真实题干。
+本项作为后端复现材料记录，见 10.7。
+
+### 10.5 修复内容
+
+`src/styles/workspace.css` —— 页面骨架从 grid 改回**单列 flex**：
+
+```css
+.workspace-page { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+.workspace-header, .workspace-sub-header { flex: 0 0 auto; }        /* 去掉 grid-row: 1 / 2 */
+.workspace-notice, .workspace-save-recovery, .workspace-issues,
+.workspace-recognition, .workspace-pane-tabs { flex: 0 0 auto; }    /* 动态带统一：按内容取高，缺席归零 */
+.workspace-body { flex: 1 1 auto; min-height: 0; }                  /* 去掉 grid-row: 3 */
+.workspace-recognition { /* 去掉 grid-row / grid-column */ }
+.workspace-body > .empty, .workspace-body > .workspace-load-error { grid-column: 1 / -1; }
+```
+
+选 flex 列而不是「补上 `grid-template-columns` 再给每个动态带分配固定行」的理由：动态带的数量和顺序
+都会变（通知 / 保存失败提示 / 预检错误 / 保存恢复条 / 问题列表 / 建议面板 / 窄屏切换栏），
+固定行号是脆的；flex 列没有「列」可挤，谁出现都只是纵向多一条。
+旁证：`.workspace-selection` 一直写着 `flex: 0 0 auto`——这个页面**原本就是按 flex 列写的**。
+
+`src/styles/legacy.css` —— 题号：
+
+```css
+.exam-canvas-v2 .v2-slot-number,
+.exam-canvas-v2 .v2-slot-label { flex: 0 0 auto; white-space: nowrap; }
+.exam-canvas-v2 .v2-slot-label { font-weight: 700; color: var(--exam-accent); }   /* 此前无样式 */
+.exam-canvas-v2 .v2-answer-slot-text > input { flex: 0 1 auto; min-width: 4ch; max-width: 100%; }
+```
+
+`white-space: nowrap` 关掉元素内部的断行机会，`flex: 0 0 auto` 让它退出收缩计算（不再被同一行的
+答案输入框挤压）。二者缺一不可。
+
+`src/styles/exam-canvas.css` —— 答案控件：`.v2-text-answer` 补 `min-width: 0 / max-width: 100% / box-sizing`。
+
+### 10.6 修复后实测（构建 `1e37e626…`，`run-workspace-layout-2026-09-17T19-21-15-641Z`）
+
+9 条断言全部 PASS，且**每条都在 9 个快照下同时成立**（建议面板开 / 关 / 再关、问题列表开 / 关、
+窄屏 900、学生预览、回到编辑、保存后重开）：
+
+| 断言 | 修复前 | 修复后 |
+| --- | --- | --- |
+| L1 题稿不被推到一侧 | 556.0 / 540.0 / 401.7px | **0.0px（全部快照）** |
+| L2 题稿占满工作区 | 差 556 / 540 / 401.7px | **差 0.0px** |
+| L3 建议面板横跨工作区 | 556 / 1080 | **1080 / 1080** |
+| L4 与题稿上下排列（非左右并排） | 水平重叠 0.0px | **水平重叠 1080.0px** |
+| L5 建议面板不占大块空白 | 284.0px | **164.0px** |
+| L6 题号完整 | 只量到 9 个（漏查行内题号） | **14 个（含 5 个行内题号），换行 0 个** |
+| L7 两栏在视口内 | 题目栏右边界 1138 > 1080 | **原文栏 540 + 题目栏 538 = 1080** |
+| L8 双栏独立滚动 | auto / auto | auto / auto |
+| L9 编辑保存与重新打开 | 未覆盖 | **写入「qa-layout」→ 返回题库 → 重开 → 读回「qa-layout」** |
+
+窄屏 900 快照下，L7 明确区分「设计如此」与「被挤没了」：可见题目栏 900px，
+原文栏 `display: none`（由 `.workspace-pane-tabs` 接管），断言据此判定。
+
+### 10.7 断言设计：为什么存在性断言看不见这个缺陷
+
+旧护栏只查「元素存在」与「页面没有横向滚动条」，而这两条在缺陷状态下**全部为真**：
+建议面板确实存在，页面也真的没有横向滚动条（溢出发生在 `.workspace-body` 的 `overflow: hidden` 内部）。
+所以新脚本断言的是**几何与网格归属**：`getBoundingClientRect` 的实际边界、子项的
+`grid-row/column` computed 值、题号的 `white-space/flex-*` 与「高度是否超过 1.6 倍行高」。
+
+三个把「工具自己出错」挡在外面的设计：
+
+- 题号探针**同时**查 `.v2-slot-number` 与 `.v2-slot-label`（首版只查前者，漏掉全部行内题号）。
+- 窄屏快照按 `.workspace-pane-tabs` 是否可见来切换判据，不把「按设计隐藏一栏」当成错位。
+- 题面重复的判定**分两层**取证：页面内比「题目栏句子是否逐字出现在原文栏」，
+  Node 侧比「IR 各层文本是否出现在 `passage.content`」——只做前者会把源数据问题误判成前端问题。
+
+### 复现材料（交后端）
+
+- 夹具：`fixtures/parser/demanding-reading-passage-3.pdf`（sha256 见报告 `identity.fixtureSha256`）
+- 权威稿：运行目录 `appdata/data/authoring_hub.db` → `library_items_v2.canonical_ds_json`
+- 待查：`passage.content` 内 `passage-title-text` 与 `passage-text-1` 文本完全相同，
+  且该句被跨栏重排为 5 个片段（`Que` / `stions` 被切开、页码 `10` 插入句中）。
+  期望：页眉说明只出现一次且完整。
+- 可直接复跑：`node scripts/e2e/tauri-cdp-workspace-layout.mjs`（报告 `irDuplication` 字段给出各层字符数与重复清单）
+
+### 本轮脚本改动（E2E）
+
+| 文件 | 改动 | 原因 |
+| --- | --- | --- |
+| `scripts/e2e/tauri-cdp-workspace-layout.mjs` | **新增**：几何/网格归属断言 L1–L9 + 题面重复分层取证 | 存在性断言对本次缺陷全部为真，看不见错位（10.7） |

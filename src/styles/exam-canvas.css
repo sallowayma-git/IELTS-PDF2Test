@@ -66,4 +66,13 @@
 .exam-canvas-v2 .v2-choice-item { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
 .exam-canvas-v2 .v2-choice-item > span { flex: 1 1 auto; min-width: 0; }
 .exam-canvas-v2 .v2-shared-selection { min-width: 0; }
-.exam-canvas-v2 .v2-text-answer { width: min(100%, 320px); }
+/* 答案控件随题目栏宽度伸缩：窄栏里占满可用宽度，宽栏里不超过 320px。
+ * `min(100%, 320px)` 就是这个语义；这里补 `max-width` 与 `box-sizing`，
+ * 让它在题目栏被压窄时一定不会溢出，也不会因为 `overflow-wrap: anywhere`
+ * 把内部内容挤到几像素宽。 */
+.exam-canvas-v2 .v2-text-answer {
+  width: min(100%, 320px);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}

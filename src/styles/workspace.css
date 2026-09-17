@@ -26,9 +26,24 @@
   --workspace-spacing-base: 16px;
 }
 
+/* 页面骨架用**单列 flex**，不用 grid。
+ *
+ * 这里曾经是 `display: grid` + `grid-template-rows: 56px auto minmax(0,1fr)`，**没有**
+ * `grid-template-columns`。显式网格于是只有 1 列，而 `.workspace-header` / `.workspace-sub-header`
+ * 靠 `grid-row: 1|2` 落位、`.workspace-body` 与 `.workspace-recognition` 都写 `grid-row: 3`：
+ * 建议面板额外带 `grid-column: 1 / -1`（只有 1 条显式列时 `-1` 就是第 1 列），body 不带列 →
+ * 自动放置算法只能把 body 推进**隐式第 2 列**，工作区被劈成左右两半：建议面板占左半并拉满整列高度
+ * （一大片空白），题稿被挤到右半、题目栏右边界越过视口（实测 1080 视口下右边界到 1138）。
+ * 通知带、保存失败提示、问题列表、窄屏切换栏都是**动态**的兄弟节点，各自也会触发同一算法，
+ * 所以问题列表单独打开时同样劈成两半（实测 body 左边界 540px）。
+ *
+ * flex 列没有「列」可挤：动态带按 DOM 顺序纵向堆叠、缺席时高度归零，
+ * `.workspace-body` 用 `flex: 1 1 auto` 吃掉剩余空间。这比补齐 `grid-template-columns`
+ * 再给每个动态带分配固定行更稳——动态带的数量和顺序都会变。
+ * （旁证：`.workspace-selection` 一直写着 `flex: 0 0 auto`，这个页面原本就是按 flex 列写的。） */
 .workspace-page {
-  display: grid;
-  grid-template-rows: var(--workspace-header-height) auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   width: 100%;
   min-width: 0;
   height: 100dvh;
@@ -38,10 +53,21 @@
   color: var(--workspace-ink);
 }
 
+/* 动态带：通知、保存失败提示、问题列表、识别建议、窄屏切换栏。
+ * 一律按 DOM 顺序纵向堆叠、高度由内容决定（缺席时归零），谁出现都不会再挤出第二列，
+ * 也不会在无内容时留下大块空白。 */
+.workspace-notice,
+.workspace-save-recovery,
+.workspace-issues,
+.workspace-recognition,
+.workspace-pane-tabs {
+  flex: 0 0 auto;
+}
+
 /* ================ Header ================ */
 .workspace-header {
   z-index: 20;
-  grid-row: 1;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -246,7 +272,7 @@
 
 /* ================ Sub-header bar ================ */
 .workspace-sub-header {
-  grid-row: 2;
+  flex: 0 0 auto;
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -367,7 +393,9 @@
   --workspace-left-pane-width: clamp(320px, 50%, calc(100% - 320px));
   position: relative;
   z-index: 1;
-  grid-row: 3;
+  /* 吃掉页面上除固定带之外的全部剩余空间。`min-height: 0` 是必需的：
+   * 否则 flex 子项的自动最小高度会按内容撑开，双栏各自的滚动条就永远不出现。 */
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns:
     minmax(280px, var(--workspace-left-pane-width))
@@ -377,6 +405,13 @@
   min-height: 0;
   overflow: hidden;
   background: var(--workspace-panel);
+}
+
+/* 打开中 / 载入失败这类**非双栏**内容也必须横跨整个工作区，
+ * 否则会被自动放置塞进第 1 列（280px 宽），长错误文本被挤成一条。 */
+.workspace-body > .empty,
+.workspace-body > .workspace-load-error {
+  grid-column: 1 / -1;
 }
 
 .workspace-body > .exam-canvas-v2 {
@@ -732,9 +767,11 @@ body.workspace-resizing * {
 }
 
 /* ================ 识别建议面板 ================ */
+/* 折叠区域：横向占满工作区、纵向按内容取高（`max-height` 封顶后自身滚动），
+ * 与题稿**上下**排列而不是并排。`flex: 0 0 auto` 由上方动态带分组规则给出。
+ * 这里不再写 `grid-row` / `grid-column` —— 那个写法在单列显式网格里会把
+ * `.workspace-body` 挤进隐式第 2 列（见 `.workspace-page` 注释）。 */
 .workspace-recognition {
-  grid-row: 3;
-  grid-column: 1 / -1;
   z-index: 2;
   max-height: 46vh;
   overflow-y: auto;

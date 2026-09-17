@@ -200,11 +200,30 @@ textarea { min-height: 120px; resize: vertical; }
 .exam-canvas-v2 .v2-slot-list { display: grid; gap: 14px; }
 .exam-canvas-v2 .v2-slot-question { padding: 12px; border: 1px solid var(--exam-border); border-radius: 6px; background: var(--exam-surface); }
 .exam-canvas-v2 .v2-slot-question-label { display: flex; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+/* 题号必须整块显示，不允许被压成逐字符竖排（实测「27」被折成「2」「7」）。
+ *
+ * 两个成因叠在一起，缺一不可地都要挡住：
+ *   1. `reset.css` 对 `label` 施加了全局 `overflow-wrap: anywhere`，而该属性**可继承**。
+ *      行内填空的题号是 `<label class="v2-answer-slot v2-answer-slot-text">` 里的
+ *      `<span class="v2-slot-label">`，于是也拿到了「任意字符之间都能断」的许可。
+ *   2. flex 子项默认 `min-width: auto`，其解析结果是**最小内容宽度**；在允许任意断行时，
+ *      「27」的最小内容宽度就是 1 个字符。题目栏一旦变窄，题号就被压到 1 字符宽。
+ * `white-space: nowrap` 关掉元素内部的断行机会，`flex: 0 0 auto` 让它退出收缩计算
+ * （也就不会被同一行的答案输入框挤压）。 */
+.exam-canvas-v2 .v2-slot-number,
+.exam-canvas-v2 .v2-slot-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .exam-canvas-v2 .v2-slot-number { font-weight: 700; color: var(--exam-accent); }
+/* 行内填空的题号与卡片式题号用同一套视觉（此前 `.v2-slot-label` 完全没有样式）。 */
+.exam-canvas-v2 .v2-slot-label { font-weight: 700; color: var(--exam-accent); }
 .exam-canvas-v2 .v2-text-answer { width: min(100%, 260px); border: 0; border-bottom: 2px solid var(--exam-border-strong); background: transparent; padding: 4px 6px; font: inherit; }
 .exam-canvas-v2 .v2-slot-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .exam-canvas-v2 .v2-slot-chip { border: 1px solid var(--exam-border); border-radius: 999px; padding: 4px 8px; font-size: .9rem; }
 .exam-canvas-v2 .v2-answer-slot { display: inline-flex; gap: 8px; align-items: center; }
+/* 行内答案输入框：可以随题目栏收缩（`min-width: 4ch` 兜住下限），但不再把题号挤扁。 */
+.exam-canvas-v2 .v2-answer-slot-text > input { flex: 0 1 auto; min-width: 4ch; max-width: 100%; }
 .exam-canvas-v2 .v2-option-bank { margin: 14px 0; }
 .exam-canvas-v2 .v2-option-bank li { margin: 6px 0; }
 .exam-canvas-v2.is-author .v2-table-frame,
