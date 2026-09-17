@@ -19,8 +19,8 @@ use crate::{
     llm_suggestions::{
         apply_suggestion_to_authoring, deterministic_llm_output, llm_suggestion_auto_apply_issues,
         llm_suggestion_quote_mismatches, make_adjudication_input,
-        make_cloud_paper_generation_input, make_llm_input, make_vision_answer_extraction_input,
-        make_vision_transcription_input, save_llm_suggestion,
+        make_cloud_paper_generation_input, make_llm_input, make_source_verification_input,
+        make_vision_answer_extraction_input, make_vision_transcription_input, save_llm_suggestion,
     },
     main_source_file,
     parser::{
@@ -1494,6 +1494,59 @@ pub(crate) fn adjudicate_divergence_through_gateway(
         root,
         job_id,
         "adjudicate_divergence",
+        &input,
+        api_key.as_deref(),
+    )
+}
+
+/// A3：把一批**确定性抽取判不了的槽位**交给真实模型，回原文件查值。
+///
+/// 证据面规则与云端识别/裁决完全一致（同一条产品要求：模型看到的必须是**原文件**）：
+/// - PDF：附原文件本身，让模型自己翻页（扫描版答案页因此也能读）；
+/// - 非 PDF：附 `DocumentIRV2` 抽出的原文文本，且必须来自**独立抽取**
+///   （[`prepare_cloud_source_evidence`]），绝不读本地识别产物——并行起飞时它可能还没落盘。
+///
+/// 与云端识别的差别同裁决：**不把「没有证据面」降级成一条警告就继续**。
+/// 核验的意义就是读原文，拿不到证据面时如实失败，绝不让模型在空证据上「确认」。
+pub(crate) fn verify_source_answers_through_gateway(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+    slots: &[Value],
+    repair_note: Option<&str>,
+) -> CommandResult<Value> {
+    let job = load_job(root, job_id)?;
+    let selected = profile_id
+        .map(str::to_string)
+        .or_else(|| job.active_llm_profile_id.clone())
+        .ok_or_else(|| "NO_PROFILE".to_string())?;
+    let profile = find_profile(root, &selected)?;
+    let (source, upload_path) = main_source_for_cloud(root, &job)?;
+    let is_pdf = source.file_type == "pdf";
+    let mut input = make_source_verification_input(
+        &profile,
+        &job,
+        &selected,
+        &source,
+        &upload_path,
+        slots,
+        repair_note,
+    );
+    if !is_pdf {
+        // 同云端识别：`data_url_for_pdf` 会按 `data:application/pdf` 发 `pdfPath`，
+        // 对 DOCX 是错误声明，必须先摘掉。
+        if let Some(object) = input.as_object_mut() {
+            object.remove("pdfPath");
+        }
+        let source_text = prepare_cloud_source_evidence(root, &job)
+            .ok_or_else(|| format!("source_verification_source_text_unavailable:{job_id}"))?;
+        input["sourceText"] = json!(source_text);
+    }
+    let api_key = load_llm_api_key(root, &selected);
+    run_llm_gateway(
+        root,
+        job_id,
+        "verify_source_answers",
         &input,
         api_key.as_deref(),
     )

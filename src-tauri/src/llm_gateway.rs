@@ -49,6 +49,12 @@ pub(crate) fn run_llm_gateway(
         "adjudicate_divergence" => {
             run_openai_compatible_adjudication_llm(root, job_id, input, api_key)
         }
+        // A3：原文件核验。任务与裁决相反：不是「在三条已有结论里挑一条」，而是
+        // 「回原文件查这个值对不对」。输出必须回指本次提交的 slotId 集合，
+        // 且任何断言都要带原文引用（quote + pageIndex）。
+        "verify_source_answers" => {
+            run_openai_compatible_source_verification_llm(root, job_id, input, api_key)
+        }
         _ => Err(format!("unsupported_llm_gateway_command:{}", command_name)),
     };
     // Per-call observability record: every gateway invocation (success or
@@ -893,7 +899,9 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
 /// 刻意**不做**宽松转换（与 `to_answer_value` 的「裸字符串当成 text」相反）：
 /// 一个形状不对的裁决值如果被静默改写成别的答案，模型的意思就被我们改掉了，
 /// 而这种改动在结果里看不出来——正是最该 fail-closed 的地方。
-fn validate_ruling_answer_value(value: &Value) -> Result<(), String> {
+///
+/// A3 与 A4 共用：两个通道都要「模型返回的是一个合法 `AnswerValueV2`」这一条闸。
+fn validate_answer_value_shape(value: &Value) -> Result<(), String> {
     let Some(object) = value.as_object() else {
         return Err("not_object".to_string());
     };
@@ -919,6 +927,221 @@ fn validate_ruling_answer_value(value: &Value) -> Result<(), String> {
         Some("unresolved") => Ok(()),
         _ => Err("kind_invalid".to_string()),
     }
+}
+
+/// A3：原文件核验的 prompt。
+///
+/// 与裁决的关键差别写在正文里：**裁决是「三选一」，核验是「回原文查」**。
+/// 把这两个任务说混，模型就会去挑一条链交差，而不是真的读原文——
+/// 那样得到的「确认」没有任何证据含量。
+fn source_verification_prompt(input: &Value) -> String {
+    let items = serde_json::to_string(input.get("slots").unwrap_or(&Value::Null))
+        .unwrap_or_else(|_| "[]".to_string());
+    let repair = input
+        .get("repairNote")
+        .and_then(Value::as_str)
+        .filter(|note| !note.trim().is_empty())
+        .map(|note| {
+            format!(
+                "\n7. Your previous reply was REJECTED by our validator: {note}\n\
+Fix exactly that and return JSON only."
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "You are verifying answers for one reading exam against the ORIGINAL FILE attached below \
+(this is the file the exam was imported from; read it yourself, including any answer key printed \
+in it).\n\
+For EACH item in SLOTS below, the on-device draft already holds `localValue`. Decide whether the \
+ORIGINAL FILE supports that value.\n\
+Hard rules:\n\
+1. Answer only for the slotId values listed; never invent an id.\n\
+2. `verdict` must be exactly one of: confirmed, contradicted, not_verifiable.\n\
+3. Use \"confirmed\" only when the file explicitly supports `localValue`; use \"contradicted\" \
+only when the file explicitly gives a DIFFERENT value (then `observedValue` is required); \
+otherwise use \"not_verifiable\".\n\
+4. Both \"confirmed\" and \"contradicted\" are claims about the file and MUST carry a non-empty \
+`quote` copied from the file plus the 1-based `pageIndex` it appears on. Never guess.\n\
+5. Never invent a value that is not in the file. If you cannot read the file, say \
+\"not_verifiable\" — an honest gap is far better than a plausible guess.\n\
+6. Return JSON only.{repair}\n\
+--- SLOTS BEGIN ---\n{items}\n--- SLOTS END ---"
+    )
+}
+
+/// A3：原文件核验的网关实现。
+///
+/// 证据面与云端识别/裁决**完全一致**（PDF 附原文件；非 PDF 附独立抽取的原文文本），
+/// 同样**不把「没有证据面」降级成警告**：核验的意义就是读原文，空证据上「核验」出来
+/// 的结论是编造。
+fn run_openai_compatible_source_verification_llm(
+    root: &Path,
+    job_id: &str,
+    input: &Value,
+    api_key: Option<&str>,
+) -> CommandResult<Value> {
+    let profile = llm_profile(input);
+    let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
+    if input
+        .get("slots")
+        .and_then(Value::as_array)
+        .map(|items| items.is_empty())
+        .unwrap_or(true)
+    {
+        return Err("source_verification_no_slots".to_string());
+    }
+    let mut content = vec![json!({"type": "text", "text": source_verification_prompt(input)})];
+    if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
+        content.push(pdf_part);
+    } else if let Some(source_text) = input
+        .get("sourceText")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+    {
+        content.push(json!({
+            "type": "text",
+            "text": format!(
+                "The original file is not a PDF, so no page image is attached. \
+The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
+--- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
+            )
+        }));
+    } else {
+        return Err("source_verification_no_evidence_surface".to_string());
+    }
+    let mut body = json!({
+        "model": model,
+        "temperature": llm_temperature(profile),
+        "messages": [
+            {"role": "system", "content": "Return valid JSON only."},
+            {"role": "user", "content": content}
+        ]
+    });
+    if llm_force_json(profile) {
+        body["response_format"] = json!({"type": "json_object"});
+    }
+    let payload = openai_post(profile, api_key, body)?;
+    let content = openai_chat_content(&payload)?;
+    let mut parsed = parse_llm_json_content(&content)?;
+    validate_source_verification_output(&mut parsed, input)?;
+    Ok(parsed)
+}
+
+/// A3 核验输出的契约校验。
+///
+/// 四条规则，每条都封死一类「把没核验写成已核验」：
+/// 1. `slotId` 必须属于本次提交的集合，且不得重复——模型幻觉出的 id 会被下游按 id 匹配的
+///    循环静默跳过，「模型编了一条」在结果里完全看不出来，因此整份拒绝；
+/// 2. `questionNumber` 必须是整数（它是与本地槽位对齐的第二个键）；
+/// 3. `verdict` 必须落在三值枚举内（与 prompt 的规则 2 同一份枚举）；
+/// 4. `confirmed` / `contradicted` 必须同时具备**非空 `quote` 与 1-based `pageIndex`**，
+///    且 `contradicted` 必须带形状合法的 `observedValue`。
+///    没有出处的「确认」无法复核，等价于编造。
+fn validate_source_verification_output(output: &mut Value, input: &Value) -> CommandResult<()> {
+    let allowed: std::collections::BTreeSet<String> = input
+        .get("slots")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("slotId").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if allowed.is_empty() {
+        return Err("source_verification_request_missing_slot_ids".to_string());
+    }
+    let Some(object) = output.as_object_mut() else {
+        return Err("source_verification_not_object".to_string());
+    };
+    let Some(findings) = object.get("findings").and_then(Value::as_array).cloned() else {
+        return Err("source_verification_findings_missing_or_invalid".to_string());
+    };
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (index, finding) in findings.iter().enumerate() {
+        let Some(finding_object) = finding.as_object() else {
+            return Err(format!("source_verification_finding_not_object:{index}"));
+        };
+        let Some(slot_id) = finding_object.get("slotId").and_then(Value::as_str) else {
+            return Err(format!("source_verification_finding_slot_missing:{index}"));
+        };
+        if !allowed.contains(slot_id) {
+            return Err(format!(
+                "source_verification_finding_unknown_slot:{index}:{slot_id}"
+            ));
+        }
+        if !seen.insert(slot_id.to_string()) {
+            return Err(format!(
+                "source_verification_finding_duplicate_slot:{index}:{slot_id}"
+            ));
+        }
+        if !finding_object
+            .get("questionNumber")
+            .map(Value::is_u64)
+            .unwrap_or(false)
+        {
+            return Err(format!(
+                "source_verification_finding_question_number_invalid:{index}"
+            ));
+        }
+        let Some(verdict) = finding_object.get("verdict").and_then(Value::as_str) else {
+            return Err(format!("source_verification_finding_verdict_missing:{index}"));
+        };
+        if !matches!(verdict, "confirmed" | "contradicted" | "not_verifiable") {
+            return Err(format!(
+                "source_verification_finding_verdict_invalid:{index}:{verdict}"
+            ));
+        }
+        if let Some(confidence) = finding_object.get("confidence") {
+            let valid = confidence.is_null()
+                || (confidence.is_number()
+                    && confidence
+                        .as_f64()
+                        .map(|value| (0.0..=1.0).contains(&value))
+                        .unwrap_or(false));
+            if !valid {
+                return Err(format!(
+                    "source_verification_finding_confidence_invalid:{index}"
+                ));
+            }
+        }
+        if verdict == "not_verifiable" {
+            continue;
+        }
+        // 「确认」与「有分歧」都是对原文件的断言：没有出处一律拒绝。
+        let quote_present = finding_object
+            .get("quote")
+            .and_then(Value::as_str)
+            .map(|quote| !quote.trim().is_empty())
+            .unwrap_or(false);
+        if !quote_present {
+            return Err(format!(
+                "source_verification_finding_quote_missing:{index}"
+            ));
+        }
+        // 页码必须 ≥ 1：本仓库的约定里 0 表示「没有页码」。
+        let page_ok = finding_object
+            .get("pageIndex")
+            .and_then(Value::as_u64)
+            .map(|page| page >= 1)
+            .unwrap_or(false);
+        if !page_ok {
+            return Err(format!(
+                "source_verification_finding_page_index_invalid:{index}"
+            ));
+        }
+        if verdict == "contradicted" {
+            let Some(observed) = finding_object.get("observedValue") else {
+                return Err(format!(
+                    "source_verification_finding_observed_value_missing:{index}"
+                ));
+            };
+            validate_answer_value_shape(observed)
+                .map_err(|error| format!("source_verification_finding_observed_value_invalid:{index}:{error}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// A4 裁决输出的契约校验。三条规则都对应「不把模型说的话当成事实」：
@@ -1001,7 +1224,7 @@ fn validate_adjudication_output(output: &mut Value, input: &Value) -> CommandRes
         let Some(value) = ruling_object.get("value") else {
             return Err(format!("adjudication_ruling_value_missing:{index}"));
         };
-        validate_ruling_answer_value(value)
+        validate_answer_value_shape(value)
             .map_err(|error| format!("adjudication_ruling_value_invalid:{index}:{error}"))?;
     }
     Ok(())
@@ -1695,5 +1918,126 @@ mod tests {
         let error = validate_adjudication_output(&mut duplicated, &input)
             .expect_err("重复 id 必须被拒绝");
         assert!(error.contains("duplicate_decision_id"), "实际错误：{error}");
+    }
+
+    // ── A3：原文件核验输出校验 ──────────────────────────────────────────
+
+    fn source_request(slot_ids: &[&str]) -> Value {
+        json!({
+            "slots": slot_ids
+                .iter()
+                .map(|slot_id| json!({"slotId": slot_id}))
+                .collect::<Vec<_>>()
+        })
+    }
+
+    /// 幻觉 `slotId` 必须**整份**拒绝：按 id 匹配的合并循环会静默跳过未知 id，
+    /// 于是「模型编了一条」在结果里完全看不出来。
+    #[test]
+    fn source_verification_output_rejects_a_hallucinated_slot_id() {
+        let input = source_request(&["slot-14"]);
+        let mut output = json!({"findings":[{
+            "slotId": "slot-99",
+            "questionNumber": 99,
+            "verdict": "confirmed",
+            "quote": "somewhere",
+            "pageIndex": 1
+        }]});
+        let error = validate_source_verification_output(&mut output, &input)
+            .expect_err("必须拒绝幻觉 slotId");
+        assert!(error.contains("unknown_slot"), "实际错误：{error}");
+    }
+
+    /// 「确认」与「有分歧」都是对原文件的断言：没有 `quote` 或没有 1-based `pageIndex`
+    /// 一律拒绝——没有出处的断言无法复核，等价于编造。
+    #[test]
+    fn source_verification_output_requires_a_locator_for_every_claim() {
+        let input = source_request(&["slot-14"]);
+        let cases = [
+            json!({"slotId":"slot-14","questionNumber":14,"verdict":"confirmed","pageIndex":2}),
+            json!({"slotId":"slot-14","questionNumber":14,"verdict":"confirmed","quote":"   ","pageIndex":2}),
+            json!({"slotId":"slot-14","questionNumber":14,"verdict":"confirmed","quote":"text"}),
+            // 0 表示「没有页码」，不是「第 0 页」。
+            json!({"slotId":"slot-14","questionNumber":14,"verdict":"confirmed","quote":"text","pageIndex":0}),
+        ];
+        for case in cases {
+            let mut output = json!({"findings": [case.clone()]});
+            let error = validate_source_verification_output(&mut output, &input)
+                .expect_err(&format!("必须拒绝无出处的断言：{case}"));
+            assert!(
+                error.contains("quote_missing") || error.contains("page_index_invalid"),
+                "实际错误：{error}（case {case}）"
+            );
+        }
+    }
+
+    /// `contradicted` 必须带形状合法的 `observedValue`：模型说「原文是别的值」，
+    /// 却给不出那个值，或给的形状无法当答案用，都不能采纳。
+    #[test]
+    fn source_verification_output_requires_an_observed_value_when_contradicted() {
+        let input = source_request(&["slot-14"]);
+        let mut missing = json!({"findings":[{
+            "slotId": "slot-14",
+            "questionNumber": 14,
+            "verdict": "contradicted",
+            "quote": "stencilling",
+            "pageIndex": 1
+        }]});
+        let error = validate_source_verification_output(&mut missing, &input)
+            .expect_err("contradicted 必须有 observedValue");
+        assert!(error.contains("observed_value_missing"), "实际错误：{error}");
+
+        let mut malformed = json!({"findings":[{
+            "slotId": "slot-14",
+            "questionNumber": 14,
+            "verdict": "contradicted",
+            "quote": "stencilling",
+            "pageIndex": 1,
+            "observedValue": {"kind": "text", "values": []}
+        }]});
+        let error = validate_source_verification_output(&mut malformed, &input)
+            .expect_err("空 values 不是合法答案值");
+        assert!(error.contains("observed_value_invalid"), "实际错误：{error}");
+    }
+
+    /// 合法输出必须通过；`not_verifiable` 不要求出处（诚实说明读不出来是被允许的）。
+    #[test]
+    fn source_verification_output_accepts_well_formed_findings() {
+        let input = source_request(&["slot-14", "slot-15"]);
+        let mut output = json!({"findings":[
+            {
+                "slotId": "slot-14",
+                "questionNumber": 14,
+                "verdict": "confirmed",
+                "quote": "the artist was stencilling",
+                "pageIndex": 2,
+                "confidence": 0.9
+            },
+            {
+                "slotId": "slot-15",
+                "questionNumber": 15,
+                "verdict": "not_verifiable"
+            }
+        ]});
+        assert!(validate_source_verification_output(&mut output, &input).is_ok());
+
+        // questionNumber 必须是整数：它是与本地槽位对齐的第二个键。
+        let mut bad_number = json!({"findings":[{
+            "slotId": "slot-14",
+            "questionNumber": "14",
+            "verdict": "not_verifiable"
+        }]});
+        let error = validate_source_verification_output(&mut bad_number, &input)
+            .expect_err("questionNumber 必须是整数");
+        assert!(error.contains("question_number_invalid"), "实际错误：{error}");
+
+        // 重复 slotId 会让合并写两次同一项，必须拒绝。
+        let mut duplicated = json!({"findings":[
+            {"slotId":"slot-14","questionNumber":14,"verdict":"not_verifiable"},
+            {"slotId":"slot-14","questionNumber":14,"verdict":"not_verifiable"}
+        ]});
+        let error = validate_source_verification_output(&mut duplicated, &input)
+            .expect_err("重复 slotId 必须被拒绝");
+        assert!(error.contains("duplicate_slot"), "实际错误：{error}");
     }
 }

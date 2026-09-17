@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use super::candidate::align_answer_value;
-use super::engine::{classify_cloud_error, AdjudicationFailure, AdjudicationRunner};
+use super::engine::{classify_cloud_error, ModelCallFailure, AdjudicationRunner};
 use super::rules::{
     answer_compare_key, answer_is_empty, answer_patch, canonical_answer, compare, CompareInput,
 };
@@ -185,7 +185,11 @@ fn auto_apply_eligible(
         return false;
     }
     // 3) 建议值必须与原文件断言的值逐字节相同（可靠证据，而不是「大概率对」）。
-    let inferred = input.source.suggested(
+    //
+    // 只认**确定性抽取**得到的建议：模型读原文件得出的值不带确定性保证，让它充当本守卫的
+    // 输入等于让一次模型回复直接授权改题稿，与模块级约束（自动应用只依赖确定性条件）相悖。
+    // 用户仍然能看到模型给出的建议并一键接受——差别只在「谁来敲下这一下」。
+    let inferred = input.source.deterministic_suggested(
         DecisionTargetTypeV1::Slot,
         &item.target.target_id,
         DecisionFieldV1::Answer,
@@ -424,12 +428,12 @@ fn apply_adjudication(items: &mut [DecisionItemV1], input: &AdjudicateInput<'_>)
         Ok(response) => response,
         Err(failure) => {
             let (state, code, message) = match failure {
-                AdjudicationFailure::BudgetExhausted => (
+                ModelCallFailure::BudgetExhausted => (
                     StageStateV1::NotRun,
                     reason::ADJUDICATION_BUDGET_EXHAUSTED.to_string(),
                     "本次运行的裁决预算已耗尽，分歧项全部留给人工确认。".to_string(),
                 ),
-                AdjudicationFailure::Model(error) => {
+                ModelCallFailure::Model(error) => {
                     // 复用云端链的错误分类，不另造一套。
                     let classified = classify_cloud_error(&error);
                     (
@@ -862,6 +866,7 @@ mod tests {
                 ("slot-15".to_string(), 15, Some(json!({"kind":"text","values":["books"]})), true, String::new()),
             ],
             &[("task-1".to_string(), vec![14, 15])],
+            None,
         );
         let canonical = canonical_with(
             Some(json!({"kind":"text","values":["stencilling"]})),
@@ -904,6 +909,7 @@ mod tests {
             None,
             &[("slot-14".to_string(), 14, Some(json!({"kind":"text","values":["stencilling"]})), false, String::new())],
             &[],
+            None,
         );
         let canonical = canonical_with(Some(json!({"kind":"text","values":["stencilling"]})), None);
         let validate = no_validation();
@@ -944,6 +950,7 @@ mod tests {
             Some(&document(&["14 carving"])),
             &[("slot-14".to_string(), 14, Some(json!({"kind":"text","values":["stencilling"]})), true, String::new())],
             &[],
+            None,
         );
         let canonical = canonical_with(Some(json!({"kind":"text","values":["stencilling"]})), None);
         let validate = no_validation();
@@ -986,6 +993,7 @@ mod tests {
             Some(&document(&["14 stencilling"])),
             &[("slot-14".to_string(), 14, Some(json!({"kind":"unresolved"})), true, String::new())],
             &[],
+            None,
         );
         let canonical = canonical_with(Some(json!({"kind":"unresolved"})), None);
         let validate = no_validation();
@@ -1025,6 +1033,7 @@ mod tests {
             Some(&document(&["14 painting"])),
             &[("slot-14".to_string(), 14, Some(json!({"kind":"text","values":["stencilling"]})), true, String::new())],
             &[],
+            None,
         );
         let canonical = canonical_with(Some(json!({"kind":"text","values":["stencilling"]})), None);
         let validate = no_validation();
@@ -1061,6 +1070,7 @@ mod tests {
             Some(&document(&["14 stencilling"])),
             &[("slot-14".to_string(), 14, Some(json!({"kind":"unresolved"})), true, String::new())],
             &[],
+            None,
         );
         let canonical = canonical_with(Some(json!({"kind":"unresolved"})), None);
         let validate = |_patches: &[Value]| Err("AUTHORING_SCHEMA_INVALID".to_string());
@@ -1149,6 +1159,7 @@ mod tests {
                 String::new(),
             )],
             &[],
+            None,
         );
         let canonical = canonical_with(Some(json!({"kind":"text","values":["stencilling"]})), None);
         (local, cloud, source, canonical)
@@ -1171,7 +1182,7 @@ mod tests {
     fn adjudication_ruling_attaches_a_recommendation_without_unlocking_auto_apply() {
         let (local, cloud, source, canonical) = adjudication_fixture();
         let validate = no_validation();
-        let stub = |_payload: &[Value]| -> Result<Value, AdjudicationFailure> {
+        let stub = |_payload: &[Value]| -> Result<Value, ModelCallFailure> {
             Ok(json!({"rulings":[{
                 "decisionId": "d:slot:slot-14:answer",
                 "chosen": "cloud",
@@ -1230,8 +1241,8 @@ mod tests {
         let (local, cloud, source, canonical) = adjudication_fixture();
         let validate = no_validation();
         let stub =
-            |_payload: &[Value]| -> Result<Value, AdjudicationFailure> {
-                Err(AdjudicationFailure::BudgetExhausted)
+            |_payload: &[Value]| -> Result<Value, ModelCallFailure> {
+                Err(ModelCallFailure::BudgetExhausted)
             };
         let adjudicator: AdjudicationRunner<'_> = &stub;
         let outcome = adjudicate(AdjudicateInput {
@@ -1270,7 +1281,7 @@ mod tests {
     fn adjudication_declined_keeps_the_item_in_review() {
         let (local, cloud, source, canonical) = adjudication_fixture();
         let validate = no_validation();
-        let stub = |_payload: &[Value]| -> Result<Value, AdjudicationFailure> {
+        let stub = |_payload: &[Value]| -> Result<Value, ModelCallFailure> {
             Ok(json!({"rulings":[{
                 "decisionId": "d:slot:slot-14:answer",
                 "chosen": "unresolved",
@@ -1306,7 +1317,7 @@ mod tests {
     fn adjudication_rejects_a_value_that_no_chain_gives() {
         let (local, cloud, source, canonical) = adjudication_fixture();
         let validate = no_validation();
-        let stub = |_payload: &[Value]| -> Result<Value, AdjudicationFailure> {
+        let stub = |_payload: &[Value]| -> Result<Value, ModelCallFailure> {
             Ok(json!({"rulings":[{
                 "decisionId": "d:slot:slot-14:answer",
                 "chosen": "cloud",
@@ -1401,6 +1412,7 @@ mod tests {
                 String::new(),
             )],
             &[("task-1".to_string(), vec![14, 15])],
+            None,
         );
         let canonical = canonical_with(Some(json!({"kind":"text","values":["stencilling"]})), None);
         let validate = no_validation();

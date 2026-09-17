@@ -19,7 +19,12 @@ pub const RECOGNITION_DECISION_V1_SCHEMA_VERSION: &str = "RecognitionDecisionV1"
 pub const RECOGNITION_DECISION_VIEW_V1_SCHEMA_VERSION: &str = "RecognitionDecisionViewV1";
 pub const APPLY_RECOGNITION_DECISIONS_RESULT_V1_SCHEMA_VERSION: &str =
     "ApplyRecognitionDecisionsResultV1";
-/// 单次导入的裁决模型调用上限（含核验与一次受约束修复）。禁止无限递归校验。
+/// **每个模型通道**的调用上限（主调用 1 次 + 一次受约束修复），禁止无限递归校验。
+///
+/// 计在**通道**而不是整次导入：本周期有两个模型通道（原文件核验、分歧裁决），
+/// 且核验在裁决之前跑。若两者共用一份预算，核验的两调用会把额度吃光，
+/// 裁决通道在真实路径上永远拿不到预算——那不是「有界」，那是静默失效。
+/// 因此单次导入的真实上限是 `2 × 2 = 4` 次模型调用。
 pub const MAX_ADJUDICATION_MODEL_CALLS: u32 = 2;
 /// 受约束修复最多一次（与计划 §7.8 一致）。
 pub const MAX_CONSTRAINED_REPAIRS: u32 = 1;
@@ -110,6 +115,11 @@ pub mod reason {
     pub const ADJUDICATION_MODEL_UNAVAILABLE: &str = "ADJUDICATION_MODEL_UNAVAILABLE";
     /// 模型给了一个三条链上都不存在的答案值（**模型发明**）：只作建议，不构成证据。
     pub const ADJUDICATION_VALUE_NOT_CORROBORATED: &str = "ADJUDICATION_VALUE_NOT_CORROBORATED";
+    /// 原文件核验的模型通道预算耗尽：本批**没有**把待核验槽位交给模型。
+    ///
+    /// 与 [`ADJUDICATION_BUDGET_EXHAUSTED`] 分开：两个通道各自独立失败（核验跑通而裁决被拒
+    /// 是正常组合），合用一个码会让上游分不清是谁没有跑。
+    pub const SOURCE_VERIFY_BUDGET_EXHAUSTED: &str = "SOURCE_VERIFY_BUDGET_EXHAUSTED";
 }
 
 // ── 链路候选（统一 V2 语义视图）─────────────────────────────────────────
@@ -422,7 +432,12 @@ pub struct DecisionTargetV1 {
 #[serde(rename_all = "camelCase")]
 pub struct DecisionEvidenceV1 {
     pub chain: ChainKindV1,
-    /// `page_quote` / `bbox` / `answer_key` / `asset` / `none`。
+    /// 证据锚点的种类。已有取值：
+    /// `page_quote` / `bbox` / `answer_key` / `asset` / `slot_anchor` / `group_quote` /
+    /// `question_token` / `model_quote` / `model_quote_question_token_absent` / `none`。
+    ///
+    /// `model_*` 前缀表示这条证据来自**模型读原文件**，而非确定性抽取：两者都可作证据，
+    /// 但只有确定性的那条能被自动写入路径当作可靠证据（见 `SourceFindingV1::deterministic`）。
     pub anchor_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_index: Option<u32>,

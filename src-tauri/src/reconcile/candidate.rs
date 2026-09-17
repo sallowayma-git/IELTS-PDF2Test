@@ -434,7 +434,10 @@ pub(crate) fn align_answer_value(
 }
 
 /// 抽出答案里的字符串（兼容 `text`/`option` 两种形状，以及裸字符串）。
-fn answer_strings(answer: &Value) -> Vec<String> {
+///
+/// 供 source.rs 共用：模型核验给出的 `observedValue` 也要先化成字符串，
+/// 再统一按本地形状重编码，避免两处各写一套答案形状解析。
+pub(crate) fn answer_strings(answer: &Value) -> Vec<String> {
     match answer.get("kind").and_then(Value::as_str) {
         Some("text") => answer
             .get("values")

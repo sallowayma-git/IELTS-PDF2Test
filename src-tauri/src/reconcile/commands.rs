@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use super::engine::{
     classify_cloud_error, persist_outcome, reconcile_batch, resolve_local_snapshot,
     AdjudicationRunner, CloudFailure, ReconcileBatchInput, ReconcileBatchOutcome,
+    SourceVerifyRunner,
 };
 use super::rules::{answer_compare_key, answer_is_empty, canonical_answer, is_user_edited};
 use super::store;
@@ -419,13 +420,7 @@ pub(crate) fn run_recognition_cycle_core(
     )
 }
 
-/// 同上，但显式注入 A4 的**分歧裁决通道**。
-///
-/// 为什么裁决通道是**参数**而不是在这里就地构造：
-/// 1. 与 `cloud_runner` 同一约定——IO 在边界注入，判定层（`reconcile_batch` /
-///    `adjudicate`）因此保持可确定性测试；
-/// 2. 「谁来提供模型、预算多少」是运行时决策（profile 是否存在、是否启用云端），
-///    不该写死在核心里。调用方（调度器）给真实的、带预算的闭包；测试给桩或不给。
+/// 同上，但显式注入 A4 的**分歧裁决通道**。A3 的核验通道仍为 `None`。
 ///
 /// `adjudicator = None` 时**不碰任何决策项**：确定性规则的逐项结论完整保留，
 /// 只在裁决链状态上如实写「本次没有模型参与裁决」。
@@ -436,6 +431,38 @@ pub(crate) fn run_recognition_cycle_core_with_adjudicator(
     cloud_enabled: bool,
     base_edit_version: i64,
     cloud_runner: CloudOutlineRunner<'_>,
+    adjudicator: Option<AdjudicationRunner<'_>>,
+) -> CommandResult<Value> {
+    run_recognition_cycle_core_with_channels(
+        root,
+        job_id,
+        profile_id,
+        cloud_enabled,
+        base_edit_version,
+        cloud_runner,
+        None,
+        adjudicator,
+    )
+}
+
+/// 同上，但把**两个模型通道**都显式注入：A3 的原文件核验、A4 的分歧裁决。
+///
+/// 为什么两个通道都是参数而不是在这里就地构造：
+/// 1. 与 `cloud_runner` 同一约定——IO 在边界注入，判定层（`reconcile_batch` /
+///    `adjudicate` / `verify_against_source`）因此保持可确定性测试；
+/// 2. 「谁来提供模型、预算多少」是运行时决策（profile 是否存在、是否启用云端），
+///    不该写死在核心里。调用方（调度器）给真实的、带预算的闭包；测试给桩或不给。
+///
+/// 两个通道**各自持预算、各自可能失败**：核验先跑（它的结论会成为裁决的输入之一），
+/// 裁决后跑。任一为 `None` 时该通道完全缺席，其行为与未接入该能力时逐字一致。
+pub(crate) fn run_recognition_cycle_core_with_channels(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+    cloud_enabled: bool,
+    base_edit_version: i64,
+    cloud_runner: CloudOutlineRunner<'_>,
+    source_verifier: Option<SourceVerifyRunner<'_>>,
     adjudicator: Option<AdjudicationRunner<'_>>,
 ) -> CommandResult<Value> {
     let (canonical, current_version) = {
@@ -495,6 +522,7 @@ pub(crate) fn run_recognition_cycle_core_with_adjudicator(
         local_snapshot: Some(local_snapshot),
         cloud,
         validate_batch: &validate_batch,
+        source_verifier,
         adjudicator,
     });
 
@@ -2027,6 +2055,7 @@ mod tests {
                     14,
                 )),
                 validate_batch: &validate,
+                source_verifier: None,
                 adjudicator: None,
             })
         };

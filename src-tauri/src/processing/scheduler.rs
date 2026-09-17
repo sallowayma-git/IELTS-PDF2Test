@@ -701,57 +701,73 @@ fn run_recognition_cycle(
 ) -> Result<RecognitionCycleReport, String> {
     // 注入点直接返回调度器已拉取的云端 JSON；不再调用真实网关。
     //
-    // A4 的预算与调用都留在这一层：判定层（`reconcile_batch` / `adjudicate`）不持状态、
-    // 不发 HTTP，注入点只是一个 `Fn`。
-    //
-    // 预算口径 = `MAX_ADJUDICATION_MODEL_CALLS`（1 次主裁决 + 1 次受约束修复）。
-    // 第一次被拒时**把校验器的原话回给模型**再问一次，而不是空转重试：不带被拒原因的重试
-    // 只会拿到同一种错误——那不是修复，只是多烧一次配额。
-    let calls = std::cell::Cell::new(0u32);
-    let adjudicator =
-        |payload: &[serde_json::Value]| -> Result<
-            serde_json::Value,
-            crate::reconcile::engine::AdjudicationFailure,
-        > {
-            use crate::reconcile::engine::AdjudicationFailure;
-            let budget = crate::schema::recognition_v1::MAX_ADJUDICATION_MODEL_CALLS;
-            if calls.get() >= budget {
-                return Err(AdjudicationFailure::BudgetExhausted);
-            }
-            calls.set(calls.get() + 1);
-            let first = crate::auto_pipeline::adjudicate_divergence_through_gateway(
-                root, job_id, profile_id, payload, None,
-            );
-            match first {
-                Ok(value) => Ok(value),
-                Err(error) => {
-                    let repairs = crate::schema::recognition_v1::MAX_CONSTRAINED_REPAIRS;
-                    if repairs == 0 || calls.get() >= budget {
-                        return Err(AdjudicationFailure::Model(error));
-                    }
-                    calls.set(calls.get() + 1);
-                    crate::auto_pipeline::adjudicate_divergence_through_gateway(
-                        root,
-                        job_id,
-                        profile_id,
-                        payload,
-                        Some(&error),
-                    )
-                    .map_err(AdjudicationFailure::Model)
-                }
-            }
-        };
+    // A3/A4 的预算与调用都留在这一层：判定层（`reconcile_batch` / `adjudicate` /
+    // `verify_against_source`）不持状态、不发 HTTP，注入点只是两个 `Fn`。
+    let adjudication_calls = std::cell::Cell::new(0u32);
+    let adjudicator = |payload: &[serde_json::Value]| {
+        model_channel_call(&adjudication_calls, |repair_note| {
+            crate::auto_pipeline::adjudicate_divergence_through_gateway(
+                root, job_id, profile_id, payload, repair_note,
+            )
+        })
+    };
+    // 核验通道单独持一份预算：它在裁决之前跑，共用额度会让它吃光裁决的份额。
+    let source_verification_calls = std::cell::Cell::new(0u32);
+    let source_verifier = |payload: &[serde_json::Value]| {
+        model_channel_call(&source_verification_calls, |repair_note| {
+            crate::auto_pipeline::verify_source_answers_through_gateway(
+                root, job_id, profile_id, payload, repair_note,
+            )
+        })
+    };
     let adjudicator_ref: crate::reconcile::engine::AdjudicationRunner<'_> = &adjudicator;
-    let report = crate::reconcile::commands::run_recognition_cycle_core_with_adjudicator(
+    let source_verifier_ref: crate::reconcile::engine::SourceVerifyRunner<'_> = &source_verifier;
+    let report = crate::reconcile::commands::run_recognition_cycle_core_with_channels(
         root,
         job_id,
         profile_id,
         cloud_enabled,
         base_edit_version,
         &|_root, _job_id, _profile_id| cloud_fetched.clone(),
+        Some(source_verifier_ref),
         Some(adjudicator_ref),
     )?;
     Ok(summarize_cycle_report(report))
+}
+
+/// 模型通道的调用预算与「一次受约束修复」。
+///
+/// A3（原文件核验）与 A4（分歧裁决）共用这段策略，但**各持一份预算**：
+/// 核验在裁决之前跑，两者共用一份额度会让核验吃光裁决的份额——那不是「有界」，
+/// 那是裁决通道在真实生产路径上静默失效，而测试因为直接注入桩函数根本发现不了。
+/// 单次导入的真实上限因此是 `2 × MAX_ADJUDICATION_MODEL_CALLS`。
+///
+/// 第一次被拒时把**校验器的原话**回给模型再问一次，而不是空转重试：
+/// 不带被拒原因的重试只会拿到同一种错误——那不是修复，只是多烧一次配额。
+fn model_channel_call<F>(
+    calls: &std::cell::Cell<u32>,
+    invoke: F,
+) -> Result<serde_json::Value, crate::reconcile::engine::ModelCallFailure>
+where
+    F: Fn(Option<&str>) -> Result<serde_json::Value, String>,
+{
+    use crate::reconcile::engine::ModelCallFailure;
+    let budget = crate::schema::recognition_v1::MAX_ADJUDICATION_MODEL_CALLS;
+    if calls.get() >= budget {
+        return Err(ModelCallFailure::BudgetExhausted);
+    }
+    calls.set(calls.get() + 1);
+    match invoke(None) {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            let repairs = crate::schema::recognition_v1::MAX_CONSTRAINED_REPAIRS;
+            if repairs == 0 || calls.get() >= budget {
+                return Err(ModelCallFailure::Model(error));
+            }
+            calls.set(calls.get() + 1);
+            invoke(Some(&error)).map_err(ModelCallFailure::Model)
+        }
+    }
 }
 
 /// **无云路径**：云端链由核心如实标成 `not_run`（`CLOUD_DISABLED`），而本地候选、

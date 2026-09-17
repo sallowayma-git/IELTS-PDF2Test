@@ -97,17 +97,35 @@ pub(crate) fn classify_cloud_error(error: &str) -> CloudFailure {
 ///
 /// `None` = 没有可用模型：分歧项全部原样留在 `NeedsReview`，行为与未接入 A4 时逐字一致。
 pub(crate) type AdjudicationRunner<'a> =
-    &'a dyn Fn(&[Value]) -> Result<Value, AdjudicationFailure>;
+    &'a dyn Fn(&[Value]) -> Result<Value, ModelCallFailure>;
 
-/// 裁决调用失败的两类原因。
+/// A3：原文件核验的模型通道。
+///
+/// 参数是本批**原文件无法确定性判定的槽位**（`{slotId, questionNumber, localValue}`），
+/// 返回值是模型原始 JSON（`{"findings": [...]}`）。与另外两个注入点同一约定：
+/// **边界上是 JSON，解析与校验在网关侧完成**，判定逻辑只消费已验证的结构。
+///
+/// 刻意**不把 `document_ir` 传进来**：模型要看的必须是**原文件本身**（PDF 附件或
+/// 独立抽取的原文文本），而不是本地识别产物。若把 `document_ir` 递给 runner，
+/// 就等于给了它一条「用本地识别结果当作原文证据」的捷径，而那条捷径正是
+/// 「把没验证写成已验证」的入口。
+///
+/// `None` = 没有可用模型：只做确定性核验，结果与未接入 A3 时逐字一致。
+pub(crate) type SourceVerifyRunner<'a> =
+    &'a dyn Fn(&[Value]) -> Result<Value, ModelCallFailure>;
+
+/// 模型调用失败的两类原因。A3（原文件核验）与 A4（分歧裁决）**共用同一套语义**。
 ///
 /// 刻意用枚举而不是错误字符串：**「预算耗尽（没有尝试）」与「调用过但失败」是语义不同的
 /// 两件事**。混成一个字符串后，迟早会有人写 `error.contains("timeout")` 来区分，而
-/// `ADJUDICATION_BUDGET_EXHAUSTED` 里恰好没有 timeout，于是预算耗尽被归类成
-/// 「模型非法输出」——用户就会看到一条错的解释。
+/// `*_BUDGET_EXHAUSTED` 里恰好没有 timeout，于是预算耗尽被归类成「模型非法输出」
+/// ——用户就会看到一条错的解释。
+///
+/// 两个通道各持一份枚举，是因为两者都可能独立失败：核验跑通而裁决被拒是完全正常的组合，
+/// 合用一个枚举只会让上游分不清是谁失败的。
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum AdjudicationFailure {
-    /// 本次运行不再有裁决预算（超过单批软上限，或调用次数已达上限）。
+pub(crate) enum ModelCallFailure {
+    /// 本次运行不再有预算（超过单批软上限，或调用次数已达上限）。
     BudgetExhausted,
     /// 真的调用了模型，但没有拿到可用结果（超时 / 非法输出 / 不支持输入）。
     /// 里面的字符串交给 [`classify_cloud_error`] 归类，**不另造一套分类**。
@@ -135,6 +153,8 @@ pub(crate) struct ReconcileBatchInput<'a> {
     pub cloud: Result<Value, CloudFailure>,
     /// 结构校验闭包：把一批 patch 应用到权威稿副本并跑同一套校验。
     pub validate_batch: &'a dyn Fn(&[Value]) -> Result<(), String>,
+    /// A3：原文件核验的模型通道。`None` = 无可用模型，只做确定性核验。
+    pub source_verifier: Option<SourceVerifyRunner<'a>>,
     /// A4：分歧裁决的模型通道。`None` = 无可用模型，分歧全部留在 `NeedsReview`。
     pub adjudicator: Option<AdjudicationRunner<'a>>,
 }
@@ -250,7 +270,22 @@ fn cloud_stage_status(cloud: &RecognitionCandidateV1, failure: Option<&CloudFail
     }
 }
 
+/// 原文件核验链的状态。
+///
+/// 两种情形必须分开说：
+/// - **模型通道失败**（真的调用了但没拿到可用结论）→ 如实上报 `Partial` + 该失败的原因码。
+///   此时结论确实比预期弱，「确定性抽取的结论仍然可用」必须让用户看见。
+/// - **模型通道没跑**（没配模型 / 没文本 / 没有待核验项）→ 与未接入 A3 时逐字一致，
+///   **不因此改写原因码**：否则未配模型的用户会看到满屏「模型未参与核验」，
+///   而真正的原因（原文没有可核验的文本证据）反而消失了。
 fn source_stage_status(source: &SourceVerificationV1) -> StageStatusV1 {
+    if let Some(code) = source.unusable_reason() {
+        return StageStatusV1::with_reason(
+            StageStateV1::Partial,
+            code,
+            "原文件核验的模型通道未给出可用结论，本批结论仅来自确定性抽取。",
+        );
+    }
     let state = StageStateV1::from(source.status);
     match &source.reason_code {
         Some(code) => StageStatusV1::with_reason(
@@ -337,7 +372,12 @@ pub(crate) fn reconcile_batch(input: ReconcileBatchInput<'_>) -> ReconcileBatchO
         .iter()
         .map(|group| (group.task_id.clone(), super::source::group_question_numbers(&group.display_range)))
         .collect();
-    let source = verify_against_source(input.document_ir, &local_slots, &local_groups);
+    let source = verify_against_source(
+        input.document_ir,
+        &local_slots,
+        &local_groups,
+        input.source_verifier,
+    );
 
     // 4) 统一裁决：合并去重、依赖分组、自动应用资格、结构校验。
     let AdjudicationOutcome {

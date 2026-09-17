@@ -262,6 +262,64 @@ pub(crate) fn make_adjudication_input(
     })
 }
 
+/// A3 原文件核验的输入构造。
+///
+/// 与 [`make_adjudication_input`] 的差别是任务本身：裁决是「在三条已有结论里挑一条」，
+/// 核验是「回原文件查这个值对不对」。所以这里给的是**待核验槽位 + 本地已有值**，
+/// 并明确要求每条断言带原文引用。
+///
+/// **不给整份题稿**：核验的判定对象就是「原文支持不支持这个值」，
+/// 把题干、选项库、其他槽位一并塞进去只会让模型跑去做别的判断。
+pub(crate) fn make_source_verification_input(
+    profile: &Value,
+    job: &ImportJob,
+    profile_id: &str,
+    source: &crate::SourceFile,
+    pdf_path: &Path,
+    slots: &[Value],
+    repair_note: Option<&str>,
+) -> Value {
+    json!({
+        "mode": "verify_source_answers",
+        "job": {"jobId": job.job_id, "title": job.title},
+        "profile": profile_payload(profile, profile_id),
+        "sourceFile": {
+            "fileId": source.file_id,
+            "originalName": source.original_name,
+            "fileType": source.file_type,
+            "sha256": source.sha256,
+            "sizeBytes": source.size_bytes
+        },
+        "pdfPath": pdf_path.to_string_lossy(),
+        "slots": slots,
+        "repairNote": repair_note,
+        "outputContract": {
+            "schema": "SourceVerificationV1",
+            "jsonOnly": true,
+            "shape": {
+                "findings": [{
+                    "slotId": "echo back a slotId you were given",
+                    "questionNumber": 14,
+                    "verdict": "confirmed | contradicted | not_verifiable",
+                    "quote": "exact text copied from the original file that decides it (required unless not_verifiable)",
+                    "pageIndex": 3,
+                    "observedValue": {"kind": "text", "values": ["the value the file actually gives"], "normalization": "ielts_default"},
+                    "confidence": 0.9
+                }]
+            },
+            "rules": [
+                "Answer only for the slotId values listed in `slots`; never invent an id.",
+                "`verdict` must be exactly one of: confirmed, contradicted, not_verifiable.",
+                "Use \"confirmed\" only when the file explicitly supports `localValue`.",
+                "Use \"contradicted\" only when the file explicitly gives a different value, and then `observedValue` is required.",
+                "Both \"confirmed\" and \"contradicted\" must carry a non-empty `quote` and the 1-based `pageIndex` it appears on.",
+                "Never invent a value that is not in the file. If you cannot read it, return \"not_verifiable\".",
+                "Return JSON only."
+            ]
+        }
+    })
+}
+
 pub(crate) fn make_cloud_paper_generation_input(
     profile: &Value,
     job: &ImportJob,
