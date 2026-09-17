@@ -26,8 +26,8 @@ use super::rules::{answer_compare_key, answer_is_empty, canonical_answer, is_use
 use super::store;
 use crate::authoring_v2_commands::{apply_patch, refresh_quality_report, validate_authoring};
 use crate::library::repository::{
-    apply_editor_commands_tx, apply_editor_commands_tx_with, get_canonical_ds,
-    open_library_connection, ApplyEditorCommandsInput,
+    apply_editor_commands_tx_with, get_canonical_ds, open_library_connection,
+    ApplyEditorCommandsInput, EditOrigin,
 };
 use crate::schema::recognition_v1::{
     reason, ApplyRecognitionDecisionsRequestV1, ApplyRecognitionDecisionsResultV1, ChainStatusSummaryV1,
@@ -331,7 +331,10 @@ fn apply_patches_with_recheck(
         let Ok(mut conn) = open_library_connection(root) else {
             return (Vec::new(), eligible.into_iter().map(|id| (id, "recognition_db_open_failed".to_string())).collect());
         };
-        let result = apply_editor_commands_tx(
+        // 来源 = `CloudRepair` 且**不带** repair_run_id：规则自动填空不是人工修改，
+        // 不得写进人工保护目标（否则云端修复就再也改不动本地规则的错误结论）；
+        // 同时它又不属于任何一轮云端修复，因此不进入撤销 / 保护校验的范围。
+        let result = apply_editor_commands_tx_with(
             &mut conn,
             &ApplyEditorCommandsInput {
                 item_id: item_id.to_string(),
@@ -340,11 +343,14 @@ fn apply_patches_with_recheck(
                 commands,
                 title: None,
             },
+            EditOrigin::CloudRepair,
+            None,
             &apply_patch,
             &|ds| {
                 refresh_quality_report(root, item_id, ds)?;
                 validate_authoring(ds)
             },
+            &|_, _| Ok(()),
         );
         match result {
             Ok(_) => return (eligible, Vec::new()),
@@ -866,6 +872,10 @@ pub(crate) fn apply_recognition_decisions_core(
                     commands,
                     title: None,
                 },
+                // 用户逐项接受建议 = 人的决定，因此留下人工保护目标：下一轮云端修复
+                // 不得把用户刚接受的值再改回去。
+                EditOrigin::Human,
+                None,
                 &apply_patch,
                 &|ds| {
                     refresh_quality_report(root, &item_id, ds)?;
@@ -961,6 +971,9 @@ pub(crate) fn apply_recognition_decisions_core(
                 commands: undo_commands,
                 title: None,
             },
+            // 用户撤销一条已应用的自动建议：值回到用户这边，同样留下保护目标。
+            EditOrigin::Undo,
+            None,
             &apply_patch,
             &|ds| {
                 refresh_quality_report(root, &item_id, ds)?;

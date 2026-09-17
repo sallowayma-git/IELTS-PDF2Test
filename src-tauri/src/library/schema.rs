@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 4;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 6;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let transaction = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
@@ -57,6 +57,39 @@ fn migrations() -> Vec<(i64, &'static str)> {
         // v4：识别闭环（生成批次 / 统一裁决 / 决策幂等）。数据库是**读取权威**，
         // job 目录下的 JSON 只作证据留痕（可被清理策略回收而不影响前端读取）。
         (4, RECOGNITION_CLOSED_LOOP_SQL),
+        // v5：人工编辑保护目标（云端自动修复的授权边界）。
+        //
+        // 为什么需要独立一列，而不是继续靠稿件里的 `provenanceStatus == user_edited`：
+        //  1. 那个标记只覆盖「命令自己带的 nodeId」，`setAnswer` / `setResponseGroup`
+        //     这类命令真正保护的是**槽位、答案项与整组结构**，标记落在别处；
+        //  2. `editor_journal_v1` 只保留最近 200 条，靠它算保护范围会随时间静默失效；
+        //  3. 云端修复需要一个**能在同一事务里比对**的目标集合，而不是每次重新
+        //     遍历整份稿件。
+        // 历史数据首读时由稿件里的 `user_edited` 标记惰性导出（见
+        // `repository::human_protected_targets`），不改历史 DDL。
+        (
+            5,
+            "ALTER TABLE library_items_v2 ADD COLUMN protected_edits_json TEXT;",
+        ),
+        // v6：编辑日志补来源与批次归属。
+        //
+        // 旧列只有一个 `command_json`，无法回答「这次改动是人做的还是云端修复做的」，
+        // 于是撤销整轮自动修复时无法把云端写的东西与人写的东西区分开。新增四列：
+        //   edit_origin   human | cloud_repair | undo（由调用入口决定，绝不来自请求体）
+        //   repair_run_id 属于哪一次自动修复 run（人工编辑为空）
+        //   change_json   受影响目标的 before/after（撤销的依据）
+        //   result_json   实际提交结果（apply / reject 及原因）
+        // 历史行为 NULL，按「来源不明」处理：不参与自动撤销，但也不被当成 Human 保护。
+        (
+            6,
+            "ALTER TABLE editor_journal_v1 ADD COLUMN edit_origin TEXT;
+             ALTER TABLE editor_journal_v1 ADD COLUMN repair_run_id TEXT;
+             ALTER TABLE editor_journal_v1 ADD COLUMN change_json TEXT;
+             ALTER TABLE editor_journal_v1 ADD COLUMN result_json TEXT;
+             CREATE INDEX IF NOT EXISTS idx_editor_journal_v1_repair_run
+                 ON editor_journal_v1(repair_run_id)
+                 WHERE repair_run_id IS NOT NULL;",
+        ),
     ]
 }
 

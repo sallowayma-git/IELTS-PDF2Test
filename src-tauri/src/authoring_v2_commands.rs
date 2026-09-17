@@ -1124,6 +1124,7 @@ pub(crate) fn apply_patch(document: &mut Value, patch: &Value) -> CommandResult<
         "setAnswer" => set_answer(document, object),
         "bindSource" => bind_source(document, object),
         "resolveIssue" => resolve_issue(document, object),
+        "upsertTaskGroupBundle" => upsert_task_group_bundle(document, object),
         _ => Err(format!("AUTHORING_PATCH_UNSUPPORTED:{op}")),
     }
 }
@@ -1803,6 +1804,414 @@ fn resolve_issue(document: &mut Value, patch: &Map<String, Value>) -> CommandRes
         details.insert("note".to_string(), Value::String(note.to_string()));
     }
     Ok(())
+}
+
+/// 原子地创建（或替换）一个完整任务组及其答案槽与标准答案。
+///
+/// 这是唯一一个把「任务组 + 答案槽 + 答案键」作为一整个结构一次性落地的新增操作：
+/// `setResponseGroup` 只能替换已存在的组、`replaceContent` 又禁止丢失 `answer_slot` 节点，
+/// 否则模型只能发几十次零散调用并在其间穿过许多半成品（非法）中间态。本操作要求要么整束落地、
+/// 要么完全不变——任何校验失败都应在改动文档之前以 `Err` 返回（先对克隆做全部校验，再回写）。
+///
+/// 身份由后端拥有：模型可省略 `taskId`/`slotId`/`responseGroupId`，后台按确定性规则推导
+/// （基于题号、组内顺序计数），绝不引入随机或时间戳，使整次编辑可被安全重试。
+fn upsert_task_group_bundle(document: &mut Value, patch: &Map<String, Value>) -> CommandResult<()> {
+    // 模型不被允许注入任何来源/质量/审计类键——这些由保存事务统一处理。
+    for forbidden in [
+        "provenanceStatus",
+        "preserveProvenance",
+        "restoreProvenanceStatus",
+        "quality",
+        "audit",
+    ] {
+        if patch.contains_key(forbidden) {
+            return Err(format!("AUTHORING_PATCH_BUNDLE_FORBIDDEN_KEY:{forbidden}"));
+        }
+    }
+
+    let task_group = patch
+        .get("taskGroup")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_TASK_GROUP_REQUIRED".to_string())?;
+    let answer_slots_input = patch
+        .get("answerSlots")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_ANSWER_SLOTS_REQUIRED".to_string())?
+        .clone();
+    let answer_key_input = patch
+        .get("answerKey")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let insert_after = patch
+        .get("insertAfterTaskId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    let replaces_task_id = patch
+        .get("replacesTaskId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+
+    let provided_task_id = task_group
+        .get("taskId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty());
+    // `replacesTaskId` 是 `taskGroup.taskId` 的显式替代；两者都给且不一致即冲突。
+    if let (Some(provided), Some(replaces)) = (provided_task_id, replaces_task_id) {
+        if provided != replaces {
+            return Err("AUTHORING_PATCH_BUNDLE_TARGET_MISMATCH".to_string());
+        }
+    }
+
+    let task_type = task_group
+        .get("taskType")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_TASK_TYPE_REQUIRED".to_string())?;
+    if !is_supported_task_type(task_type) {
+        return Err(format!("AUTHORING_PATCH_BUNDLE_TASK_TYPE_INVALID:{task_type}"));
+    }
+    let instructions = task_group
+        .get("instructions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let raw_response_groups = task_group
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_RESPONSE_GROUPS_REQUIRED".to_string())?
+        .clone();
+
+    // 推导答案槽身份并补齐 `AnswerSlotV2` 必填字段（保留模型额外供给的字段）。
+    let mut seen_slot_ids: BTreeSet<String> = BTreeSet::new();
+    let mut bundle_slot_ids: Vec<String> = Vec::new();
+    let mut derived_answer_slots: Vec<Value> = Vec::new();
+    let mut question_numbers: Vec<u64> = Vec::new();
+    for slot in &answer_slots_input {
+        let slot_object = slot
+            .as_object()
+            .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_ANSWER_SLOT_INVALID".to_string())?;
+        let question_number = slot_object
+            .get("questionNumber")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_QUESTION_NUMBER_REQUIRED".to_string())?;
+        let slot_id = match slot_object.get("slotId").and_then(Value::as_str) {
+            Some(value) if !value.trim().is_empty() => value.to_string(),
+            // 缺失则确定性推导，绝不引入随机。
+            _ => format!("slot-{question_number}"),
+        };
+        if !seen_slot_ids.insert(slot_id.clone()) {
+            return Err(format!("AUTHORING_PATCH_BUNDLE_DUPLICATE_SLOT_ID:{slot_id}"));
+        }
+        let mut slot_out = slot_object.clone();
+        slot_out.insert("slotId".to_string(), json!(slot_id));
+        slot_out.insert("questionNumber".to_string(), json!(question_number));
+        slot_out
+            .entry("displayLabel".to_string())
+            .or_insert_with(|| json!(format!("{question_number}")));
+        slot_out
+            .entry("hostType".to_string())
+            .or_insert_with(|| json!("paragraph"));
+        slot_out
+            .entry("participation".to_string())
+            .or_insert_with(|| json!("scoring"));
+        slot_out
+            .entry("sourceAnchors".to_string())
+            .or_insert_with(|| json!([]));
+        slot_out
+            .entry("confidence".to_string())
+            .or_insert_with(|| json!(1.0));
+        bundle_slot_ids.push(slot_id);
+        question_numbers.push(question_number);
+        derived_answer_slots.push(Value::Object(slot_out));
+    }
+
+    // 推导任务组身份：优先显式 id，否则从首个题号确定性推导。
+    let lookup_id = provided_task_id.or(replaces_task_id);
+    let new_task_id = match lookup_id {
+        Some(value) => value.to_string(),
+        None => {
+            let question_number = question_numbers.first().copied();
+            match question_number {
+                Some(value) => format!("task-{value}"),
+                None => return Err("AUTHORING_PATCH_BUNDLE_TASK_ID_REQUIRED".to_string()),
+            }
+        }
+    };
+
+    // 推导响应组身份与所引用的槽 id 集合。
+    let mut seen_response_group_ids: BTreeSet<String> = BTreeSet::new();
+    let mut referenced: BTreeSet<String> = BTreeSet::new();
+    let mut derived_response_groups: Vec<Value> = Vec::new();
+    let mut response_group_counter = 0u32;
+    for response_group in &raw_response_groups {
+        let response_group_object = response_group
+            .as_object()
+            .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_RESPONSE_GROUP_INVALID".to_string())?;
+        response_group_counter += 1;
+        let response_group_id = match response_group_object
+            .get("responseGroupId")
+            .and_then(Value::as_str)
+        {
+            Some(value) if !value.trim().is_empty() => value.to_string(),
+            _ => format!("{new_task_id}-rg{response_group_counter}"),
+        };
+        if !seen_response_group_ids.insert(response_group_id.clone()) {
+            return Err(format!(
+                "AUTHORING_PATCH_BUNDLE_DUPLICATE_RESPONSE_GROUP_ID:{response_group_id}"
+            ));
+        }
+        let kind = response_group_object
+            .get("kind")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_RESPONSE_GROUP_KIND_REQUIRED".to_string())?;
+        let slot_ids = response_group_object
+            .get("slotIds")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_SLOT_IDS_REQUIRED".to_string())?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(|item| item.to_string())
+                    .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_SLOT_ID_INVALID".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for slot_id in &slot_ids {
+            referenced.insert(slot_id.clone());
+        }
+        let mut response_group_out = Map::new();
+        response_group_out.insert("responseGroupId".to_string(), json!(response_group_id));
+        response_group_out.insert("kind".to_string(), json!(kind));
+        response_group_out.insert("slotIds".to_string(), json!(slot_ids));
+        response_group_out.insert(
+            "cardinality".to_string(),
+            response_group_object
+                .get("cardinality")
+                .cloned()
+                .unwrap_or_else(|| json!({"min": 1, "max": 1, "exact": 1})),
+        );
+        response_group_out.insert(
+            "assignment".to_string(),
+            response_group_object
+                .get("assignment")
+                .cloned()
+                .unwrap_or_else(|| json!("per_slot")),
+        );
+        response_group_out.insert(
+            "scoringPolicy".to_string(),
+            response_group_object
+                .get("scoringPolicy")
+                .cloned()
+                .unwrap_or_else(|| json!("per_slot_binary")),
+        );
+        response_group_out.insert(
+            "duplicatePolicy".to_string(),
+            response_group_object
+                .get("duplicatePolicy")
+                .cloned()
+                .unwrap_or_else(|| json!("reject_submission")),
+        );
+        response_group_out.insert(
+            "allowOptionReuse".to_string(),
+            response_group_object
+                .get("allowOptionReuse")
+                .cloned()
+                .unwrap_or_else(|| json!(false)),
+        );
+        response_group_out.insert("sourceAnchors".to_string(), json!([]));
+        for optional in ["prompt", "options", "optionBankRef"] {
+            if let Some(value) = response_group_object.get(optional) {
+                response_group_out.insert(optional.to_string(), value.clone());
+            }
+        }
+        derived_response_groups.push(Value::Object(response_group_out));
+    }
+
+    // 组装完整 `TaskGroupV2`：模型只供给结构，后台补齐其余必填字段（确定性默认值）。
+    let display_range = if question_numbers.is_empty() {
+        json!({"kind": "set", "values": []})
+    } else {
+        json!({"kind": "set", "values": question_numbers})
+    };
+    let instruction_signature = json!({
+        "normalizedText": "",
+        "taskType": task_type,
+        "expectedQuestionNumbers": question_numbers,
+        "expectedSlotCount": referenced.len().max(question_numbers.len()) as u64,
+        "evidenceAnchors": [],
+        "confidence": 1.0,
+    });
+    let mut group = Map::new();
+    group.insert("taskId".to_string(), json!(new_task_id));
+    group.insert("taskType".to_string(), json!(task_type));
+    group.insert("instructions".to_string(), json!(instructions));
+    group.insert("responseGroups".to_string(), json!(derived_response_groups));
+    group.insert("displayRange".to_string(), display_range);
+    group.insert("instructionSignature".to_string(), instruction_signature);
+    group.insert("sourceAnchors".to_string(), json!([]));
+    group.insert(
+        "quality".to_string(),
+        json!({"score": 0.0, "sourceCoverage": 0.0, "hardFailures": []}),
+    );
+    group.insert("reviewState".to_string(), json!("unreviewed"));
+    group.insert("recognitionWarnings".to_string(), json!([]));
+
+    // 交叉引用校验（只读文档，校验失败绝不改动）。
+    let doc_task_groups = document
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_TASK_GROUPS_MISSING".to_string())?;
+    let doc_answer_slots = document
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let doc_answer_key = document
+        .get("answerKey")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    // 目标组（被替换）的索引与它所拥有的旧槽。
+    let target_index = lookup_id.and_then(|id| {
+        doc_task_groups
+            .iter()
+            .position(|item| item.get("taskId").and_then(Value::as_str) == Some(id))
+    });
+    let old_owned_slots: BTreeSet<String> = target_index
+        .and_then(|index| doc_task_groups.get(index))
+        .map(|old_group| collect_group_slot_ids(old_group))
+        .unwrap_or_default();
+
+    // 收集其它组（排除目标组）拥有的槽，用于「槽不可跨组共享」校验与 stale 清理保护。
+    let mut other_group_slots: BTreeSet<String> = BTreeSet::new();
+    for (index, other_group) in doc_task_groups.iter().enumerate() {
+        if Some(index) == target_index {
+            continue;
+        }
+        for slot_id in collect_group_slot_ids(other_group) {
+            other_group_slots.insert(slot_id);
+        }
+    }
+
+    let answer_slots_empty = answer_slots_input.is_empty();
+    for slot_id in &referenced {
+        let in_bundle = bundle_slot_ids.iter().any(|item| item == slot_id);
+        let in_document = doc_answer_slots.contains_key(slot_id);
+        if !in_bundle && !in_document {
+            // 组引用了槽却没有带来定义：整个 bundle 没有 answerSlots 时给更具体的码。
+            if answer_slots_empty {
+                return Err("AUTHORING_PATCH_BUNDLE_ANSWER_SLOTS_EMPTY".to_string());
+            }
+            return Err(format!("AUTHORING_PATCH_BUNDLE_SLOT_REFERENCE_MISSING:{slot_id}"));
+        }
+        if other_group_slots.contains(slot_id) {
+            return Err(format!("AUTHORING_PATCH_BUNDLE_SLOT_CLAIMED:{slot_id}"));
+        }
+        // 被引用的槽必须最终落到一条答案键上——缺失即报错，绝不臆造标准答案。
+        let key_in_bundle = answer_key_input.contains_key(slot_id);
+        let key_in_document = doc_answer_key.contains_key(slot_id);
+        if !key_in_bundle && !key_in_document {
+            return Err(format!("AUTHORING_PATCH_BUNDLE_ANSWER_KEY_MISSING:{slot_id}"));
+        }
+    }
+
+    // ── 全部校验通过：对克隆做落地，失败整体回退，保证原子性 ─────────────
+    let mut next = document.clone();
+    {
+        let next_task_groups = next
+            .get_mut("taskGroups")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_TASK_GROUPS_MISSING".to_string())?;
+        match target_index {
+            Some(index) => {
+                // 原地替换，保持数组位置。
+                next_task_groups[index] = Value::Object(group);
+            }
+            None => {
+                // 插入：优先 `insertAfterTaskId` 之后，否则追加到末尾。
+                let insert_at = insert_after
+                    .and_then(|after| {
+                        next_task_groups
+                            .iter()
+                            .position(|item| item.get("taskId").and_then(Value::as_str) == Some(after))
+                    })
+                    .map(|index| index + 1)
+                    .unwrap_or(next_task_groups.len());
+                next_task_groups.insert(insert_at, Value::Object(group));
+            }
+        }
+    }
+
+    // 落地答案槽（仅 upsert bundle 带来的定义；已有的复用定义予以保留）。
+    {
+        let next_answer_slots = next
+            .get_mut("answerSlots")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_ANSWER_SLOTS_MISSING".to_string())?;
+        for slot in &derived_answer_slots {
+            if let Some(slot_id) = slot.get("slotId").and_then(Value::as_str) {
+                next_answer_slots.insert(slot_id.to_string(), slot.clone());
+            }
+        }
+    }
+
+    // 落地答案键（仅 upsert 调用方提供的条目，绝不臆造）。
+    {
+        let next_answer_key = next
+            .get_mut("answerKey")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| "AUTHORING_PATCH_BUNDLE_ANSWER_KEY_MISSING".to_string())?;
+        for (slot_id, value) in &answer_key_input {
+            next_answer_key.insert(slot_id.clone(), value.clone());
+        }
+    }
+
+    // 替换时清理旧组拥有、但新束不再引用的 stale 槽（除非仍有其它组引用）。
+    if let Some(_) = target_index {
+        let stale: Vec<String> = old_owned_slots
+            .iter()
+            .filter(|slot_id| !referenced.contains(*slot_id))
+            .filter(|slot_id| !other_group_slots.contains(*slot_id))
+            .cloned()
+            .collect();
+        // 同时清掉这些 stale 槽对应的答案键。
+        if !stale.is_empty() {
+            if let Some(next_answer_slots) = next.get_mut("answerSlots").and_then(Value::as_object_mut)
+            {
+                for slot_id in &stale {
+                    next_answer_slots.remove(slot_id);
+                }
+            }
+            if let Some(next_answer_key) = next.get_mut("answerKey").and_then(Value::as_object_mut) {
+                for slot_id in &stale {
+                    next_answer_key.remove(slot_id);
+                }
+            }
+        }
+    }
+
+    *document = next;
+    Ok(())
+}
+
+/// 收集一个任务组通过其 `responseGroups[].slotIds` 引用的全部槽 id。
+fn collect_group_slot_ids(group: &Value) -> BTreeSet<String> {
+    let mut collected: BTreeSet<String> = BTreeSet::new();
+    if let Some(response_groups) = group.get("responseGroups").and_then(Value::as_array) {
+        for response_group in response_groups {
+            if let Some(slot_ids) = response_group.get("slotIds").and_then(Value::as_array) {
+                for slot_id in slot_ids {
+                    if let Some(value) = slot_id.as_str() {
+                        collected.insert(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+    collected
 }
 
 fn with_content_target_mut<F>(
@@ -2918,5 +3327,255 @@ mod tests {
         preserve_issue_resolutions(&mut quality, Some(&previous));
         assert_eq!(quality["issues"][0]["details"]["resolution"], "ignored");
         assert_eq!(quality["issues"][1]["details"]["resolution"], "resolved");
+    }
+
+    /// 一个用于 `upsertTaskGroupBundle` 测试的最小规范文档：已有一个 task-1，
+    /// 答案槽/答案键注册表均为空。与 `structured_document` 同风格，但补齐了
+    /// `answerSlots`/`answerKey` 两个注册表。
+    fn bundle_document() -> serde_json::Value {
+        json!({
+            "taskGroups": [{
+                "taskId": "task-1",
+                "taskType": "sentence_completion",
+                "instructions": [],
+                "responseGroups": [{
+                    "responseGroupId": "task-1-rg1",
+                    "kind": "text_entry",
+                    "slotIds": []
+                }]
+            }],
+            "answerSlots": {},
+            "answerKey": {},
+            "quality": {"issues": []}
+        })
+    }
+
+    #[test]
+    fn upsert_task_group_bundle_creates_new_group_with_derived_ids() {
+        let mut document = bundle_document();
+        apply_patch(
+            &mut document,
+            &json!({
+                "op": "upsertTaskGroupBundle",
+                "taskGroup": {
+                    "taskType": "sentence_completion",
+                    "instructions": [{"type": "paragraph", "id": "task-27-instructions", "children": []}],
+                    "responseGroups": [{
+                        "kind": "text_entry",
+                        "slotIds": ["slot-27"]
+                    }]
+                },
+                "answerSlots": [{"questionNumber": 27, "interaction": "text"}],
+                "answerKey": {"slot-27": {"kind": "text", "values": ["example"]}},
+                "insertAfterTaskId": "task-26"
+            }),
+        )
+        .unwrap();
+        // 没有 task-26，因此追加到末尾；组数为 2。
+        assert_eq!(document["taskGroups"].as_array().unwrap().len(), 2);
+        let group = &document["taskGroups"][1];
+        // 缺少 taskId → 由首个题号推导为 task-27。
+        assert_eq!(group["taskId"], "task-27");
+        // 缺少 responseGroupId → 推导为 {taskId}-rg1。
+        assert_eq!(group["responseGroups"][0]["responseGroupId"], "task-27-rg1");
+        assert_eq!(group["responseGroups"][0]["slotIds"], json!(["slot-27"]));
+        // 缺少 slotId → 推导为 slot-27；槽与答案键均已注册。
+        assert!(document["answerSlots"]["slot-27"].is_object());
+        assert_eq!(document["answerSlots"]["slot-27"]["questionNumber"], 27);
+        assert_eq!(
+            document["answerKey"]["slot-27"],
+            json!({"kind": "text", "values": ["example"]})
+        );
+    }
+
+    #[test]
+    fn upsert_task_group_bundle_replaces_existing_group_keeping_position_and_removing_stale_slot() {
+        let mut document = json!({
+            "taskGroups": [
+                {
+                    "taskId": "task-26",
+                    "taskType": "sentence_completion",
+                    "instructions": [],
+                    "responseGroups": [{"responseGroupId": "task-26-rg1", "kind": "text_entry", "slotIds": ["slot-26"]}]
+                },
+                {
+                    "taskId": "task-27",
+                    "taskType": "sentence_completion",
+                    "instructions": [],
+                    "responseGroups": [{"responseGroupId": "task-27-rg1", "kind": "text_entry", "slotIds": ["slot-27-old"]}]
+                }
+            ],
+            "answerSlots": {
+                "slot-26": {"slotId": "slot-26", "questionNumber": 26, "interaction": "text"},
+                "slot-27-old": {"slotId": "slot-27-old", "questionNumber": 27, "interaction": "text"}
+            },
+            "answerKey": {
+                "slot-26": {"kind": "unresolved"},
+                "slot-27-old": {"kind": "unresolved"}
+            },
+            "quality": {"issues": []}
+        });
+        apply_patch(
+            &mut document,
+            &json!({
+                "op": "upsertTaskGroupBundle",
+                "taskGroup": {
+                    "taskId": "task-27",
+                    "taskType": "sentence_completion",
+                    "instructions": [],
+                    "responseGroups": [{"responseGroupId": "task-27-rg1", "kind": "text_entry", "slotIds": ["slot-27-new"]}]
+                },
+                "answerSlots": [{"slotId": "slot-27-new", "questionNumber": 27, "interaction": "text"}],
+                "answerKey": {"slot-27-new": {"kind": "text", "values": ["fresh"]}}
+            }),
+        )
+        .unwrap();
+        // 原地替换，数组位置不变：task-26 在前、task-27 在后。
+        assert_eq!(document["taskGroups"][0]["taskId"], "task-26");
+        assert_eq!(document["taskGroups"][1]["taskId"], "task-27");
+        assert_eq!(document["taskGroups"][1]["responseGroups"][0]["slotIds"], json!(["slot-27-new"]));
+        // task-26 的槽不受影响。
+        assert!(document["answerSlots"].get("slot-26").is_some());
+        assert!(document["answerKey"].get("slot-26").is_some());
+        // 旧组拥有、新束不再引用的 slot-27-old 被清理。
+        assert!(document["answerSlots"].get("slot-27-old").is_none());
+        assert!(document["answerKey"].get("slot-27-old").is_none());
+        // 新槽已落地。
+        assert!(document["answerSlots"].get("slot-27-new").is_some());
+        assert_eq!(document["answerKey"]["slot-27-new"], json!({"kind": "text", "values": ["fresh"]}));
+    }
+
+    #[test]
+    fn upsert_task_group_bundle_rejects_slot_claimed_by_another_group() {
+        let mut document = json!({
+            "taskGroups": [{
+                "taskId": "task-26",
+                "taskType": "sentence_completion",
+                "instructions": [],
+                "responseGroups": [{"responseGroupId": "task-26-rg1", "kind": "text_entry", "slotIds": ["slot-26"]}]
+            }],
+            "answerSlots": {"slot-26": {"slotId": "slot-26", "questionNumber": 26, "interaction": "text"}},
+            "answerKey": {"slot-26": {"kind": "unresolved"}},
+            "quality": {"issues": []}
+        });
+        let error = apply_patch(
+            &mut document,
+            &json!({
+                "op": "upsertTaskGroupBundle",
+                "taskGroup": {
+                    "taskType": "sentence_completion",
+                    "instructions": [],
+                    "responseGroups": [{"kind": "text_entry", "slotIds": ["slot-26"]}]
+                },
+                "answerSlots": [{"questionNumber": 26, "interaction": "text"}],
+                "answerKey": {"slot-26": {"kind": "text", "values": ["x"]}}
+            }),
+        )
+        .expect_err("slot owned by another group must be rejected");
+        assert!(
+            error.contains("AUTHORING_PATCH_BUNDLE_SLOT_CLAIMED:slot-26"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn upsert_task_group_bundle_rejects_missing_answer_key() {
+        let mut document = bundle_document();
+        let error = apply_patch(
+            &mut document,
+            &json!({
+                "op": "upsertTaskGroupBundle",
+                "taskGroup": {
+                    "taskType": "sentence_completion",
+                    "instructions": [],
+                    "responseGroups": [{"kind": "text_entry", "slotIds": ["slot-27"]}]
+                },
+                "answerSlots": [{"questionNumber": 27, "interaction": "text"}],
+                "answerKey": {}
+            }),
+        )
+        .expect_err("referenced slot without an answer key must be rejected");
+        assert!(
+            error.contains("AUTHORING_PATCH_BUNDLE_ANSWER_KEY_MISSING:slot-27"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn upsert_task_group_bundle_preserves_supplied_ids_verbatim() {
+        let mut document = bundle_document();
+        apply_patch(
+            &mut document,
+            &json!({
+                "op": "upsertTaskGroupBundle",
+                "taskGroup": {
+                    "taskId": "task-custom",
+                    "taskType": "sentence_completion",
+                    "instructions": [],
+                    "responseGroups": [{"responseGroupId": "rg-custom", "kind": "text_entry", "slotIds": ["slot-custom"]}]
+                },
+                "answerSlots": [{"slotId": "slot-custom", "questionNumber": 99, "interaction": "text"}],
+                "answerKey": {"slot-custom": {"kind": "text", "values": ["verbatim"]}}
+            }),
+        )
+        .unwrap();
+        let group = &document["taskGroups"][1];
+        assert_eq!(group["taskId"], "task-custom");
+        assert_eq!(group["responseGroups"][0]["responseGroupId"], "rg-custom");
+        assert_eq!(group["responseGroups"][0]["slotIds"], json!(["slot-custom"]));
+        assert!(document["answerSlots"].get("slot-custom").is_some());
+        assert_eq!(document["answerSlots"]["slot-custom"]["questionNumber"], 99);
+    }
+
+    #[test]
+    fn upsert_task_group_bundle_is_deterministic_across_identical_documents() {
+        let build = || {
+            let mut document = bundle_document();
+            apply_patch(
+                &mut document,
+                &json!({
+                    "op": "upsertTaskGroupBundle",
+                    "taskGroup": {
+                        "taskType": "sentence_completion",
+                        "instructions": [],
+                        "responseGroups": [{"kind": "text_entry", "slotIds": ["slot-27"]}]
+                    },
+                    "answerSlots": [{"questionNumber": 27, "interaction": "text"}],
+                    "answerKey": {"slot-27": {"kind": "text", "values": ["example"]}}
+                }),
+            )
+            .unwrap();
+            document
+        };
+        let first = build();
+        let second = build();
+        assert_eq!(
+            serde_json::to_string(&first).unwrap(),
+            serde_json::to_string(&second).unwrap()
+        );
+    }
+
+    #[test]
+    fn upsert_task_group_bundle_rejects_forbidden_provenance_key() {
+        let mut document = bundle_document();
+        let error = apply_patch(
+            &mut document,
+            &json!({
+                "op": "upsertTaskGroupBundle",
+                "provenanceStatus": "source",
+                "taskGroup": {
+                    "taskType": "sentence_completion",
+                    "instructions": [],
+                    "responseGroups": [{"kind": "text_entry", "slotIds": ["slot-27"]}]
+                },
+                "answerSlots": [{"questionNumber": 27, "interaction": "text"}],
+                "answerKey": {"slot-27": {"kind": "text", "values": ["example"]}}
+            }),
+        )
+        .expect_err("provenance injection must be rejected");
+        assert!(
+            error.contains("AUTHORING_PATCH_BUNDLE_FORBIDDEN_KEY:provenanceStatus"),
+            "{error}"
+        );
     }
 }
