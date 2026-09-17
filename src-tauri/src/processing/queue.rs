@@ -198,6 +198,10 @@ pub(crate) fn advance_stage(
     // G1 对抗审计 P1-1（取消 TOCTOU）：内存取消检查与 advance 提交之间存在
     // 窗口；durable 标记与推进在同一条 UPDATE 内判定——带取消标记的行推进
     // 任何阶段时强制落 cancelled 并释放 lease，取消不可能被迟到结果穿透。
+    //
+    // `last_error_code` 必须与阶段**同一条语句内**保持一致：取消不是失败，被强制落
+    // cancelled 的行不得带上本次推进本来要写的失败码，否则 `display_message` 会按错误码
+    // 把用户自己取消的任务显示成「识别失败，可以重试」。
     let updated = conn
         .execute(
             "UPDATE processing_jobs_v2
@@ -206,7 +210,10 @@ pub(crate) fn advance_stage(
                  cloud_status = COALESCE(?5, cloud_status),
                  reconcile_status = COALESCE(?6, reconcile_status),
                  actionable_count = COALESCE(?7, actionable_count),
-                 last_error_code = COALESCE(?8, last_error_code),
+                 last_error_code = CASE
+                     WHEN cancel_requested_at IS NOT NULL THEN 'cancelled'
+                     ELSE COALESCE(?8, last_error_code)
+                 END,
                  lease_owner = CASE WHEN ?11 OR cancel_requested_at IS NOT NULL THEN NULL ELSE ?2 END,
                  lease_expires_at = CASE WHEN ?11 OR cancel_requested_at IS NOT NULL THEN NULL ELSE ?9 END,
                  event_seq = event_seq + 1,
@@ -619,6 +626,45 @@ mod tests {
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.stage, STAGE_CANCELLED, "迟到结果不得穿透取消");
         assert_eq!(row.lease_owner, None);
+    }
+
+    /// 取消与失败码必须在**同一条推进语句内**保持一致：被强制落 cancelled 的行不得
+    /// 保留本次推进本来要写的失败码。否则 `display_message` 先读错误码，会把用户自己
+    /// 取消的任务显示成「识别失败，可以重试」——把取消谎报成失败（G1/A4-F03 禁止）。
+    #[test]
+    fn coerced_cancel_does_not_keep_the_failure_code_written_by_the_same_advance() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
+        claim_next(&conn, "worker-a").unwrap();
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET cancel_requested_at = '2026-09-12T00:00:00Z' WHERE id = 'job-1'",
+            [],
+        )
+        .unwrap();
+
+        // worker 按原计划落失败终态（带机器码）。
+        let (_, effective) = advance_stage(
+            &conn,
+            "job-1",
+            "worker-a",
+            STAGE_FAILED,
+            Some("succeeded"),
+            Some("failed"),
+            Some("failed"),
+            Some(0),
+            Some("RECONCILE_FAILED"),
+        )
+        .unwrap()
+        .expect("lease 仍有效时推进必须成功（但落 cancelled）");
+        assert_eq!(effective, STAGE_CANCELLED);
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.stage, STAGE_CANCELLED);
+        assert_eq!(
+            row.last_error_code.as_deref(),
+            Some("cancelled"),
+            "取消不是失败：被强制落 cancelled 的行不得带上同时刻写入的失败码"
+        );
     }
 
     /// G1 边界（复核 B）：等待 cloud permit / 推进期间取消——advance 返回的

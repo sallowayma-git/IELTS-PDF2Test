@@ -32,6 +32,14 @@ pub(crate) const EVENT_ITEM_UPDATED: &str = "processing://item-updated";
 const MAX_AUTO_RECOVERY: i64 = 3;
 /// 云端只在 PDF 上跑（与旧 ImportDrawer 行为一致）。
 const SCHEDULER_TICK_MS: u64 = 800;
+/// 「核验 + 裁决」周期**跑完但返回 Err** 时的机器码。
+const CYCLE_FAILED: &str = "RECONCILE_FAILED";
+/// 「核验 + 裁决」周期**没能跑完**（阻塞任务 panic / 被取消）时的机器码。
+///
+/// 与 `CYCLE_FAILED` 分开是有意的：前者要回答「周期自己返回了 Err」，
+/// 后者要回答「进程里刚刚发生过一次 panic」。混成同一个码之后，
+/// 事故复盘时无法区分「模型调用失败」与「代码炸了」——那是两条完全不同的修法。
+const CYCLE_JOIN_FAILED: &str = "RECOGNITION_CYCLE_JOIN_FAILED";
 
 #[derive(Debug, Clone)]
 pub(crate) struct ProcessingSettings {
@@ -525,27 +533,27 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         // 计划 §12.3 只要求「本地即可检查、不被云端拖慢」，从未要求跳过裁决与留痕；
         // 跳过会让这三样全部缺失，前端拿不到任何可解释的证据链。云端由核心如实标为
         // `not_run`——而不是拿一个失败 profile 去顶替，把「没启用云端」谎报成云端故障。
-        let (cloud_status, reconcile_status, actionable, last_error) =
-            match run_local_only_recognition_cycle(&root, &job_id, base_edit_version) {
-                Ok(report) => (
-                    report.cloud_status,
-                    report.reconcile_status,
-                    report.actionable_count,
-                    // 走到这里 `freeze_error` 必为 `None`（上面已提前返回），故无告警码。
-                    None,
-                ),
-                Err(error) => {
-                    eprintln!(
-                        "[processing] local-only recognition cycle failed for {job_id}: {error}"
-                    );
-                    (
-                        "not_run".to_string(),
-                        "failed".to_string(),
-                        0,
-                        Some("RECONCILE_FAILED"),
-                    )
-                }
-            };
+        //
+        // 周期整段放进阻塞边界（`run_cycle_in_blocking_boundary`）：这条路径当前不构造
+        // blocking HTTP 客户端，但它是同一个同步周期，边界一致才能保证「将来接入的
+        // 模型通道」不会再把 panic 带进 async 上下文。
+        let cycle = run_cycle_in_blocking_boundary({
+            let root = root.clone();
+            let job_id = job_id.clone();
+            move || run_local_only_recognition_cycle(&root, &job_id, base_edit_version)
+        })
+        .await;
+        let (cloud_status, reconcile_status, actionable) = match cycle {
+            Ok(report) => (
+                report.cloud_status,
+                report.reconcile_status,
+                report.actionable_count,
+            ),
+            Err(failure) => {
+                settle_cycle_failure(&app, &state, &job_id, &failure).await;
+                return;
+            }
+        };
         if advance(
             &app,
             &state,
@@ -555,7 +563,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             Some(&cloud_status),
             Some(&reconcile_status),
             Some(actionable),
-            last_error,
+            None,
         )
         .await
         .is_some()
@@ -587,31 +595,47 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     };
     // 云端中止（取消 / lease 丢失）时返回 None——本地稿仍可检查，云端标记失败、跳过裁决。
-    let (cloud_status, reconcile_status, actionable) = match cloud_fetched {
+    //
+    // A3/A4 的模型通道（`verify_source_answers` / `adjudicate_divergence`）就在这条周期里，
+    // 它们会真的发 HTTP，因此整段必须落在阻塞边界上（见
+    // `run_cycle_in_blocking_boundary`）。修复前这里是在 async 上下文里直接同步调用的，
+    // 只要核验通道真的被触发就会 panic，任务随即悬挂在 `cloud_recognition`。
+    let cycle = match cloud_fetched {
         Some(prefetched) => {
-            // 云端 JSON 已在本地识别期间并发拉取并冻结于此；reconcile 直接复用，
-            // 不再发起第二次网络调用。整段 `Result` 传入，由 run_recognition_cycle
-            // 内部决定云端成功 / 失败如何并入裁决报告。
-            let cycle_result = run_recognition_cycle(
-                &root,
-                &job_id,
-                resolved_profile.as_deref(),
-                true,
-                prefetched,
-                base_edit_version,
-            );
-            match cycle_result {
-                Ok(report) => (
-                    report.cloud_status.clone(),
-                    report.reconcile_status.clone(),
-                    report.actionable_count,
-                ),
-                Err(error) => {
-                    eprintln!("[processing] recognition cycle failed for {job_id}: {error}");
-                    ("failed".to_string(), "failed".to_string(), 0)
+            let boundary = run_cycle_in_blocking_boundary({
+                let root = root.clone();
+                let job_id = job_id.clone();
+                let profile = resolved_profile.clone();
+                move || {
+                    run_recognition_cycle(
+                        &root,
+                        &job_id,
+                        profile.as_deref(),
+                        true,
+                        prefetched,
+                        base_edit_version,
+                    )
+                }
+            })
+            .await;
+            match boundary {
+                Ok(report) => Some(report),
+                Err(failure) => {
+                    settle_cycle_failure(&app, &state, &job_id, &failure).await;
+                    return;
                 }
             }
         }
+        None => None,
+    };
+    let (cloud_status, reconcile_status, actionable) = match &cycle {
+        // 云端 JSON 已在本地识别期间并发拉取并冻结于此；reconcile 直接复用，
+        // 不再发起第二次网络调用。
+        Some(report) => (
+            report.cloud_status.clone(),
+            report.reconcile_status.clone(),
+            report.actionable_count,
+        ),
         None => ("failed".to_string(), "skipped".to_string(), 0),
     };
 
@@ -660,6 +684,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
 
 
 /// 识别周期的精简结果（调度器只关心阶段状态与待确认数量）。
+#[derive(Debug, Clone)]
 struct RecognitionCycleReport {
     cloud_status: String,
     reconcile_status: String,
@@ -679,6 +704,80 @@ fn chain_status_to_job_status(raw: &str) -> String {
         _ => "failed",
     }
     .to_string()
+}
+
+/// 「核验 + 裁决」周期的失败来源。
+///
+/// 两者必须分开：
+/// - `Joined` = 阻塞任务 **panic 或被取消**，周期内到底做到哪一步无法断言；
+/// - `Failed` = 周期跑完并如实返回了 `Err`（读稿失败 / 落盘失败等）。
+///
+/// 两者都**不允许**被当成「周期成功」，也不允许被静默丢弃。修复前这个周期是
+/// **在 async 上下文里直接同步调用**的，于是它内部的一次 panic 会直接带走整个
+/// `run_job` 任务：任务行停在 `local_recognition` / `cloud_recognition`，
+/// 既没有终态也没有错误码，只能等下次启动 `recover_on_startup` 才脱困——
+/// 这就是「任务停留在处理中」的成因。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CycleFailure {
+    Joined(String),
+    Failed(String),
+}
+
+impl CycleFailure {
+    fn code(&self) -> &'static str {
+        match self {
+            CycleFailure::Joined(_) => CYCLE_JOIN_FAILED,
+            CycleFailure::Failed(_) => CYCLE_FAILED,
+        }
+    }
+
+    fn detail(&self) -> &str {
+        match self {
+            CycleFailure::Joined(error) | CycleFailure::Failed(error) => error,
+        }
+    }
+}
+
+/// 把同步的「核验 + 裁决」周期放到**正确的阻塞执行边界**上执行。
+///
+/// 为什么必须是阻塞边界（A3/A4 在真实调度器路径里 panic 的根因）：
+/// 这条周期会经 `auto_pipeline::verify_source_answers_through_gateway` /
+/// `adjudicate_divergence_through_gateway` 落到 `llm_gateway::openai_post_once`，
+/// 那里构造 `reqwest::blocking::Client`。该客户端在 `reqwest::blocking::wait::timeout`
+/// 里做三件**都不能发生在 async 运行时上下文里**的事：
+///
+/// 1. `wait::timeout` 开头调用 `enter()`（debug 构建），它会新建一个 shell runtime 并
+///    调用 `Runtime::enter()`；在已经进入了 runtime 的线程上 `enter` 直接 panic：
+///    「Cannot start a runtime from within a runtime.」
+///    （`tokio::runtime::context::runtime::enter`）；
+/// 2. 同一个 shell runtime 若在 async 上下文里析构，会 panic：
+///    「Cannot drop a runtime in a context where blocking is not allowed.」
+///    （`tokio::runtime::blocking::shutdown`）——所以**释放**也必须落在边界内；
+/// 3. 请求与响应体读取用 `thread::park()` 等待，会把 async worker 线程整个挂住。
+///
+/// 第 1、2 条只在 `debug_assertions` 打开时触发（`wait::timeout::enter` 是
+/// `#[cfg(debug_assertions)]` 的），产品侧实测到的正是第 2 条：
+/// `thread 'tokio-rt-worker' panicked at tokio-1.52.3/src/runtime/blocking/shutdown.rs:51`
+/// ——「A3 输入缓存已写、调用记录与输出都没有、受控服务零 POST」。**但 release 构建
+/// 同样有病**：前两条退化成静默的 worker 阻塞（第 3 条不变），所以这条边界不是
+/// 「只在 debug 下才需要」的补丁。
+///
+/// 因此**创建、请求、释放**必须在同一条阻塞线程上完成：一次 `spawn_blocking` 包住
+/// **整段**同步周期，而不是把客户端单独挪出去。把这段抽成独立函数（而不是在每个调用点
+/// 各写一遍 `spawn_blocking`）是为了让回归测试能对着**生产用的同一个边界**跑：
+/// 测试里复刻一份等价代码，就永远测不到这个边界本身。
+async fn run_cycle_in_blocking_boundary<F>(
+    cycle: F,
+) -> Result<RecognitionCycleReport, CycleFailure>
+where
+    F: FnOnce() -> Result<RecognitionCycleReport, String> + Send + 'static,
+{
+    match tauri::async_runtime::spawn_blocking(cycle).await {
+        Ok(Ok(report)) => Ok(report),
+        Ok(Err(error)) => Err(CycleFailure::Failed(error)),
+        // join 失败 = 周期 panic 或阻塞任务被取消。绝不折叠成成功，也绝不吞掉。
+        Err(error) => Err(CycleFailure::Joined(error.to_string())),
+    }
 }
 
 /// 云端全量识别 → 原文件核验 → 统一裁决 → 安全自动应用。
@@ -1005,6 +1104,72 @@ async fn fail_job(app: &AppHandle, state: &Arc<ProcessingState>, job_id: &str, e
             })
             .await;
         }
+    }
+}
+
+/// 周期失败后的收口：取消优先，其余一律落持久化失败终态。
+///
+/// **取消必须被判成取消**：用户在周期跑动期间取消时，落到 `failed` 会让界面显示
+/// 「识别失败，可以重试」——那是 G1 明确禁止的谎报（用户自己取消的，不是识别失败）。
+/// 内存取消标记与 durable 标记是同一条语义的两个视图，内存视图够用是因为
+/// `advance` 内部还会用 durable 标记做最后一次原子判定。
+async fn settle_cycle_failure(
+    app: &AppHandle,
+    state: &Arc<ProcessingState>,
+    job_id: &str,
+    failure: &CycleFailure,
+) {
+    if state.cancelled.read().await.contains(job_id) {
+        finish_cancelled(app, state, job_id).await;
+        return;
+    }
+    fail_recognition_cycle(app, state, job_id, failure).await;
+}
+
+/// 「本地稿已成、但核验 / 裁决周期没有完成」的终态收尾。
+///
+/// 刻意**不复用** `fail_job`：那条路径描述的是**本地识别本身**失败
+/// （`local_status` 写 `failed`，意味着一张可用的草稿都没有）。这里本地识别已经成功、
+/// 草稿也已发布可编辑，失败的只是它之后的核验 / 裁决 / 批次落盘，
+/// 所以 `local_status` 必须如实保持 `succeeded`。
+///
+/// 也刻意**不**改 library item 状态：草稿确实存在且可打开（「本地先出稿」是产品的核心
+/// 承诺），失败由任务行承载——`stage = failed` 让前端把它渲染成「识别失败，可以重试」
+/// 并给出重试入口。修复前这条路径停在 `ready_for_review` + `reconcile_status = failed`
+/// **且不写错误码**，界面于是按 `ready_for_review` 渲染成「可以打开检查了」，
+/// 又把「这批结果到底落盘了没有」这个问题整个抹掉——那正是「伪装成核验成功」。
+async fn fail_recognition_cycle(
+    app: &AppHandle,
+    state: &Arc<ProcessingState>,
+    job_id: &str,
+    failure: &CycleFailure,
+) {
+    eprintln!(
+        "[processing] recognition cycle failed for {job_id} ({}): {}",
+        failure.code(),
+        failure.detail()
+    );
+    let advanced = advance(
+        app,
+        state,
+        job_id,
+        STAGE_FAILED,
+        Some("succeeded"),
+        Some("failed"),
+        Some("failed"),
+        Some(0),
+        Some(failure.code()),
+    )
+    .await;
+    if advanced.is_none() {
+        // lease 丢失（休眠唤醒 / 心跳瞬断）：`advance` 拒绝提交。这里**不能**用
+        // `finalize_ready_without_lease` 兜底——它的前提恰好就是 `local_status = succeeded`，
+        // 在这条路径上必然成立，于是会把一次失败写成 `ready_for_review`，又是一次伪装成功。
+        // 如实留给 `recover_on_startup` 在下次启动把任务标成 interrupted 并重新入队。
+        eprintln!(
+            "[processing] recognition cycle failure could not be persisted for {job_id}: \
+             lease lost; startup recovery will requeue it"
+        );
     }
 }
 
@@ -1577,6 +1742,428 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── A3/A4 的真实异步调度边界（本轮修复的回归验证）─────────────────────
+
+    /// 写一份**真的能被抽到文本**的 DOCX。
+    ///
+    /// 不能放空壳：非 PDF 的证据面由 `auto_pipeline::prepare_cloud_source_evidence`
+    /// **直接读原文件**抽取，抽不出文本时核验会以
+    /// `source_verification_source_text_unavailable` 提前失败，HTTP 请求根本发不出去
+    /// ——那样用例测到的是「夹具没搭好」，而不是本次要验证的边界。
+    fn write_minimal_docx(path: &Path, text: &str) {
+        use std::io::Write;
+        let file = std::fs::File::create(path).expect("create docx");
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("word/document.xml", options)
+            .expect("start document part");
+        let xml = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+<w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"
+        );
+        zip.write_all(xml.as_bytes()).expect("write document part");
+        zip.finish().expect("finish docx");
+    }
+
+    /// 受控模型服务：**记录**每个请求体，并回一份合法的应答。
+    ///
+    /// 与 `reconcile::commands` 里的同名 helper 同一形态（先按 `Content-Length` 读完
+    /// 请求体再回写，否则客户端还在发 body 时就收到 RST，得到一个与受控服务无关的
+    /// 传输错误）。这里是**带请求留痕**的版本，因为本轮要断言的正是
+    /// 「A3 请求到底发出去了没有」。
+    ///
+    /// **调用方不要 join 服务线程**：正常路径只发有限的几次请求，而 accept 循环会一直
+    /// 等下一个连接，join 必然把用例挂死。
+    fn spawn_recording_verification_service(
+        response_body: String,
+    ) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind controlled service");
+        let addr = listener.local_addr().expect("local addr");
+        let seen: Arc<std::sync::Mutex<Vec<String>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_thread = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut request = Vec::<u8>::new();
+                let mut chunk = [0u8; 4096];
+                let mut header_end: Option<usize> = None;
+                let mut content_length = 0usize;
+                loop {
+                    if let Some(end) = header_end {
+                        if request.len() >= end + content_length {
+                            break;
+                        }
+                    }
+                    match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(read) => {
+                            request.extend_from_slice(&chunk[..read]);
+                            if header_end.is_none() {
+                                if let Some(position) = request
+                                    .windows(4)
+                                    .position(|window| window == b"\r\n\r\n")
+                                {
+                                    header_end = Some(position + 4);
+                                    let headers =
+                                        String::from_utf8_lossy(&request[..position]).to_lowercase();
+                                    content_length = headers
+                                        .lines()
+                                        .find_map(|line| line.strip_prefix("content-length:"))
+                                        .and_then(|value| value.trim().parse::<usize>().ok())
+                                        .unwrap_or(0);
+                                }
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if let Ok(mut guard) = seen_thread.lock() {
+                    guard.push(String::from_utf8_lossy(&request).to_string());
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    response_body.as_bytes().len(),
+                    response_body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (format!("http://127.0.0.1:{}/v1", addr.port()), seen)
+    }
+
+    /// 标准 chat-completions 信封；`content` 里才是 A3 核验契约的输出。
+    fn verification_response(slot_id: &str, question_number: u32, observed: &str) -> String {
+        let content = json!({
+            "findings": [{
+                "slotId": slot_id,
+                "questionNumber": question_number,
+                "verdict": "contradicted",
+                "quote": "the artist was stencilling the wall",
+                "pageIndex": 1,
+                "observedValue": {"kind": "text", "values": [observed], "normalization": "ielts_default"},
+                "confidence": 0.9
+            }]
+        });
+        json!({
+            "id": "controlled-verify-0001",
+            "object": "chat.completion",
+            "model": "controlled-verify-v1",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": content.to_string()}
+            }]
+        })
+        .to_string()
+    }
+
+    /// A3 回归夹具：一个**能真正触发**核验模型通道的作业。
+    ///
+    /// 四条前提缺一条模型就不会被调用，用例也就覆盖不到这条边界：
+    /// 1. 本地槽位**有值**（`answerKey`）——本地无值走的是「让模型发明答案」，A3 刻意不做；
+    /// 2. 槽位带 `sourceAnchors`——`has_source_evidence` 只认它，「有答案」不等于「有原文证据」；
+    /// 3. 页文本里出现该题号，但**没有**该题号的可读答案行——确定性核验因此判
+    ///    `NotVerifiable`，这正是交给模型的那一类；原文里若已有 `14 stencilling` 这种
+    ///    答案行，确定性结论先成立，模型**根本不会被调用**；
+    /// 4. 非 PDF 来源的原文件能抽出原文文本（见 `write_minimal_docx`）。
+    ///
+    /// 本地值取 `painting`、受控服务回 `stencilling`：这样模型结论是「与原文不符」，
+    /// 会落成一张带模型原文引用的建议卡，便于断言「核验结论确实来自模型通道」。
+    fn seed_a3_verification_job(base_url: &str) -> (std::path::PathBuf, String) {
+        use crate::job_store::{make_job, save_job};
+        use crate::library::repository::{
+            open_library_connection, seed_canonical_ds, upsert_item_shell, UpsertItemInput,
+        };
+        use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir, write_json};
+        use crate::{CreateJobInput, SourceFile, WorkflowStep};
+        use uuid::Uuid;
+
+        let root = std::env::temp_dir()
+            .join(format!("pdf2test-a3-boundary-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).expect("app dirs");
+
+        let mut job = make_job(CreateJobInput {
+            title: Some("a3-boundary".to_string()),
+            category: Some("P1".to_string()),
+            frequency: Some("medium".to_string()),
+            tags: Some(vec!["t".to_string()]),
+            llm_profile_id: Some("controlled-verify".to_string()),
+        });
+        job.current_step = WorkflowStep::Authoring;
+        job.source_files = vec![SourceFile {
+            file_id: "file-1".to_string(),
+            original_name: "source.docx".to_string(),
+            stored_name: "stored.docx".to_string(),
+            file_type: "docx".to_string(),
+            sha256: "0".repeat(64),
+            size_bytes: 1,
+            role: "MainQuestion".to_string(),
+            imported_at: chrono::Utc::now(),
+        }];
+        save_job(&root, &job).expect("save job");
+        let dir = job_dir(&root, &job.job_id);
+        ensure_job_dirs(&dir).expect("job dirs");
+
+        write_json(
+            &dir.join("authoring-ir.json"),
+            &json!({"schemaVersion":"IeltsAuthoringIRV2","exam":{"title":"t"},"taskGroups":[],"answerSlots":{},"answerKey":{},"quality":{"coverageStatus":{"unassignedSourceNodeIds":[]}}}),
+        )
+        .expect("authoring-ir");
+        write_json(
+            &dir.join("document-ir.json"),
+            &json!({"pages":[{"pageIndex":0,"lines":[{"text":"Question 14 asks about stencilling."}]}]}),
+        )
+        .expect("document-ir");
+        let uploads = dir.join("uploads");
+        std::fs::create_dir_all(&uploads).expect("uploads dir");
+        write_minimal_docx(&uploads.join("stored.docx"), "Question 14 asks about stencilling.");
+
+        let canonical = json!({
+            "schemaVersion": "IeltsAuthoringIRV2",
+            "exam": {"title": "t"},
+            "taskGroups": [{
+                "taskId": "task-1",
+                "taskType": "sentence_completion",
+                "displayRange": {"kind":"range","start":14,"end":14},
+                "responseGroups": [{"responseGroupId":"rg-1","kind":"text_entry","slotIds":["slot-14"]}]
+            }],
+            "answerSlots": {
+                "slot-14": {
+                    "slotId": "slot-14",
+                    "questionNumber": 14,
+                    "interaction": "text",
+                    "sourceAnchors": [{
+                        "sourceFileId": "file-1",
+                        "pageIndex": 0,
+                        "nodeIds": ["node-1"],
+                        "extractionMode": "native",
+                        "sourceHash": "0"
+                    }]
+                }
+            },
+            "answerKey": {"slot-14": {"kind":"text","values":["painting"]}},
+            "quality": {"coverageStatus": {"unassignedSourceNodeIds": []}}
+        });
+        {
+            let conn = open_library_connection(&root).expect("db");
+            upsert_item_shell(
+                &conn,
+                &UpsertItemInput {
+                    id: &job.job_id,
+                    modality: "reading",
+                    title: "t",
+                    status: "action_required",
+                    source_asset_id: None,
+                },
+            )
+            .expect("shell");
+            seed_canonical_ds(&conn, &job.job_id, &canonical.to_string(), "action_required")
+                .expect("seed canonical");
+        }
+
+        let profile = json!({
+            "profileId": "controlled-verify",
+            "name": "Controlled Verification Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": base_url,
+            "model": "controlled-verify-v1",
+            "temperature": 0,
+            "timeoutMs": 30000,
+            "forceJson": true,
+            "enabled": true
+        });
+        crate::llm_profiles::save_profiles(&root, &[profile])
+            .expect("profile 必须能落盘，否则网关取不到 baseUrl");
+
+        (root, job.job_id)
+    }
+
+    /// **本次修复的核心回归**：A3 核验通道穿过**真实异步调度边界**打到本地受控服务。
+    ///
+    /// 为什么必须这样测：核验通道的 HTTP 客户端是 `reqwest::blocking`，它**不能**在
+    /// async 运行时上下文里创建或释放（见 `run_cycle_in_blocking_boundary` 的说明）。
+    /// 在同步单测里直接调用网关永远覆盖不到这条路——那里没有 async 上下文，
+    /// 客户端用得完全正常，缺陷在测试里不可见。
+    ///
+    /// 断言四件事，缺一件都不算通过：
+    /// 1. 受控服务**真的收到了** A3 请求（不是本地自己算完了）；
+    /// 2. 周期在阻塞边界内跑完、没有 panic，也没有被 join 失败吞掉；
+    /// 3. 结果落库：批次已登记、决策文件可读；
+    /// 4. 核验结论确实来自**模型通道**——形态是 `ANSWER_SOURCE_CONFLICT` 项上的
+    ///    `sourceValue` 等于受控服务回的那个值（逐条 `model_quote` 证据不进决策项，
+    ///    详见下方 (3) 的说明）。
+    #[test]
+    fn a3_verification_crosses_the_real_async_boundary_and_reaches_the_controlled_service() {
+        use crate::reconcile::store::{read_current_batch, read_decision_file};
+
+        let (base_url, seen) =
+            spawn_recording_verification_service(verification_response("slot-14", 14, "stencilling"));
+        let (root, job_id) = seed_a3_verification_job(&base_url);
+
+        // 真实异步调度边界：与 `run_job_inner` 调用的是**同一个函数**。
+        let report = tauri::async_runtime::block_on(run_cycle_in_blocking_boundary({
+            let root = root.clone();
+            let job_id = job_id.clone();
+            move || {
+                run_recognition_cycle(
+                    &root,
+                    &job_id,
+                    Some("controlled-verify"),
+                    true,
+                    // 云端拉取不是本用例的重点（它会真的再打一次 HTTP）：显式注入失败，
+                    // 让云端链如实标成 failed，核验通道照常跑。
+                    Err("cloud_not_probed_in_this_regression".to_string()),
+                    0,
+                )
+            }
+        }))
+        .expect("周期必须在阻塞边界内跑完：既不得 panic，也不得被 join 失败吞掉");
+
+        // (1) 受控服务真的收到了 A3 请求。
+        //
+        // 注意断言的**不是**网关的命令名：命令名（`verify_source_answers`）只写在
+        // `llm-calls.jsonl` 审计日志里，从不进 HTTP 请求体。请求体是 A3 的 prompt
+        // 本体（messages[].content），所以这里断言 prompt 的特征语句 + 待核验槽位。
+        // 这条错误断言曾是本用例唯一的红点，与产品缺陷无关——记下来以免下次重蹈。
+        let requests = seen.lock().expect("requests lock").clone();
+        assert!(!requests.is_empty(), "A3 核验必须真的发出 HTTP 请求");
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.contains("against the ORIGINAL FILE")),
+            "请求体必须是 A3 核验 prompt（应含 ORIGINAL FILE 核验声明）：{requests:?}"
+        );
+        assert!(
+            requests.iter().any(|request| request.contains("slot-14")),
+            "请求体必须带上待核验的槽位：{requests:?}"
+        );
+
+        // (2) 结果落库：批次可读取。
+        let batch_id = read_current_batch(&root, &job_id).expect("批次必须已登记（结果落库）");
+        let decision = read_decision_file(&root, &job_id, &batch_id).expect("决策文件必须可读");
+        let dump = serde_json::to_string_pretty(&decision).unwrap_or_default();
+
+        // (3) 结论确实来自**模型通道**。这里断言的是它在决策文件里的**真实形态**，
+        // 不是我们「希望」有的形态——两者的差别踩过一次坑，写清楚免得再踩：
+        //
+        // 模型的 `model_quote` 证据（quote + pageIndex）由 `push_finding` 存进
+        // `SourceVerificationV1.findings`，但 `decision.json` 的 `items[].evidence`
+        // 只由本地/云端候选构成（`slot_anchor` / `group_quote`）；逐条模型证据**不会**
+        // 被搬进决策项（见 rules.rs `compare_slots`，它只消费 `suggested` /
+        // `is_confirmed` / `verdict`）。因此在这里找 `model_quote*` 永远找不到，
+        // 那是断言写错了对象，不是链路没通。
+        //
+        // 模型结论的可观测形态是「`ANSWER_SOURCE_CONFLICT` + `sourceValue`」。
+        // 用「只有模型才可能给出的值」来证明链路：本地值是 painting，受控服务回
+        // stencilling，而原文件文本里**没有**任何答案行——stencilling 只可能来自模型通道。
+        let from_model = decision
+            .items
+            .iter()
+            .find(|item| item.code == "ANSWER_SOURCE_CONFLICT")
+            .unwrap_or_else(|| {
+                panic!("模型判「与原文不符」必须落成实质分歧项，而不是静默丢弃：{dump}")
+            });
+        assert_eq!(
+            from_model
+                .source_value
+                .as_ref()
+                .and_then(|value| value.get("values")),
+            Some(&json!(["stencilling"])),
+            "sourceValue 必须是受控服务回的那个值（本地值 painting 与之不同，故只可能来自模型）：{dump}"
+        );
+        assert!(
+            from_model.proposed_patch.is_some(),
+            "实质分歧必须带可一键采用的建议 patch：{dump}"
+        );
+        assert!(
+            !from_model.auto_applied,
+            "模型结论不得被自动写入题稿（deterministic = false）：{dump}"
+        );
+        assert_eq!(report.reconcile_status, "succeeded", "周期本身应跑完");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 反向对照：**不加边界**的同一段调用在 async 上下文里必然 panic。
+    ///
+    /// 这条用例锁定的是「本次修复针对的到底是什么」。没有它，将来有人把
+    /// `spawn_blocking` 去掉、改成直接调用时，上面那条回归用例可能因为下游还有别的
+    /// `spawn_blocking` 而看起来仍然绿——缺陷就会以「测试没覆盖到」的方式复活。
+    ///
+    /// 断言两种运行时 panic **任一**出现，因为它们是同一个缺陷的两副面孔，
+    /// 具体撞上哪一副取决于 `reqwest` 在 `wait::timeout` 里走到哪一步：
+    /// - `Cannot start a runtime from within a runtime.`
+    ///   （`tokio::runtime::context::runtime::enter`：`wait::timeout` 在 debug 构建里
+    ///   新建 shell runtime 并 `enter()`）；
+    /// - `Cannot drop a runtime in a context where blocking is not allowed.`
+    ///   （`tokio::runtime::blocking::shutdown`：同一 shell runtime 在 async 上下文里析构）。
+    ///
+    /// 产品侧实测到的正是后者，日志原文：
+    /// `thread 'tokio-rt-worker' panicked at tokio-1.52.3/src/runtime/blocking/shutdown.rs:51`
+    /// —— 也就是「A3 输入缓存写了、调用记录与输出都没有、受控服务零 POST」那一刻的根因。
+    /// 因此这里刻意不断言具体是哪一条，只断言「在不该发生的上下文里发生了运行时 panic」。
+    #[test]
+    fn calling_the_cycle_inside_the_async_context_without_the_boundary_panics() {
+        let (base_url, _seen) =
+            spawn_recording_verification_service(verification_response("slot-14", 14, "stencilling"));
+        let (root, job_id) = seed_a3_verification_job(&base_url);
+
+        // 刻意**不**经过 `run_cycle_in_blocking_boundary`：这正是修复前的写法。
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = tauri::async_runtime::block_on(async {
+                run_recognition_cycle(
+                    &root,
+                    &job_id,
+                    Some("controlled-verify"),
+                    true,
+                    Err("cloud_not_probed_in_this_regression".to_string()),
+                    0,
+                )
+            });
+        }));
+        let payload = caught.expect_err(
+            "在 async 上下文里直接跑这条同步周期必须 panic（它内部构造 blocking HTTP 客户端）",
+        );
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|text| text.to_string()))
+            .unwrap_or_default();
+        assert!(
+            message.contains("Cannot start a runtime from within a runtime")
+                || message.contains("Cannot drop a runtime in a context where blocking is not allowed"),
+            "panic 必须是运行时上下文冲突那两类之一，实际为：{message}"
+        );
+    }
+
+    /// 周期失败必须被**如实分类**，而不是折叠成同一个东西：
+    /// panic 是 `Joined`（任务没跑完），返回 Err 是 `Failed`（跑完了但失败）。
+    ///
+    /// 两者的机器码不同，事故复盘才能回答「进程里到底 panic 过没有」。
+    #[test]
+    fn cycle_failure_distinguishes_a_join_failure_from_a_failed_cycle() {
+        let joined = tauri::async_runtime::block_on(run_cycle_in_blocking_boundary(
+            || -> Result<RecognitionCycleReport, String> {
+                panic!("cycle exploded on purpose");
+            },
+        ))
+        .expect_err("阻塞任务 panic 必须变成 join 失败，而不是被吞掉");
+        assert!(matches!(joined, CycleFailure::Joined(_)), "{joined:?}");
+        assert_eq!(joined.code(), CYCLE_JOIN_FAILED, "join 失败必须有独立的机器码");
+
+        let failed = tauri::async_runtime::block_on(run_cycle_in_blocking_boundary(|| {
+            Err("read_canonical_failed:boom".to_string())
+        }))
+        .expect_err("周期返回 Err 必须上抛");
+        assert!(matches!(failed, CycleFailure::Failed(_)), "{failed:?}");
+        assert_eq!(failed.code(), CYCLE_FAILED);
     }
 }
 
