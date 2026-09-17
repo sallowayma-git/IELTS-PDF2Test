@@ -18,6 +18,8 @@
  *   L6 question-number-intact     题号完整：没有被压缩到逐字符换行
  *   L7 panes-within-viewport      原文栏与题目栏都在视口内，且各有可用宽度
  *   L8 panes-independent-scroll   两栏可独立滚动
+ *   L9 edit-save-reopen           编辑保存 → 返回题库 → 重新打开，值读得回来
+ *   L10 header-spans-page         顶部工具栏与模式栏横跨工作区
  *
  * 另外记录（不作为硬断言，但必须出现在报告里）：
  *   - 控制台异常 / console.error（区分「运行时异常」与「布局错位」）
@@ -321,6 +323,15 @@ function evaluateLayout(snap) {
       `${tag}: 原文栏 overflow-y=${oy}，题目栏 overflow-y=${qy}`]);
   }
 
+  // L10：顶部工具栏与模式栏必须横跨工作区（任务书第 2 条）。
+  // 它们和题稿一样是页面骨架的直接子项，上一版只断言了题稿与建议面板，漏了这两条。
+  const header = snap.probes?.header?.present ? rectOf(snap, "header") : null;
+  const subHeader = snap.probes?.subHeader?.present ? rectOf(snap, "subHeader") : null;
+  if (header && subHeader) {
+    results.push(["L10 header-spans-page", header.w >= page.w - 4 && subHeader.w >= page.w - 4,
+      `${tag}: 顶部栏宽 ${header.w.toFixed(1)}、模式栏宽 ${subHeader.w.toFixed(1)} / 工作区宽 ${page.w.toFixed(1)}`]);
+  }
+
   return results;
 }
 
@@ -506,7 +517,7 @@ async function main() {
       await session.screenshot("10-reopened");
     }
 
-    // 10) 判定：每个快照都要满足 L1–L8。
+    // 10) 判定：每个快照都要满足 L1–L8 与 L10（L9 是单列断言，在下面单独追加）。
     const all = [];
     for (const snap of report.snapshots) all.push(...evaluateLayout(snap));
     // 同一断言在多个快照下都过才算过；把结果按 id 聚合，便于一眼看出是哪一步坏的。
