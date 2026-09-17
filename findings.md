@@ -2463,4 +2463,135 @@ taskId 稳定为 `missing-answer:q27+…+q40`，定位命中 `group-1-stimulus-b
 这与 R14 的 F-R14-4（A3 的网关调用只留下输入缓存，没有调用记录、没有输出、服务端零 POST）
 指向**同一条链**，交后端。
 
+## 九、把 A3 的「没有 trace」查到根因：一个可复现的 tokio panic
+
+### 9.1 先撤回一条我自己的推断（竞速假设不成立）
+
+上一节末尾我把「导入后点开得慢 → 识别会输掉竞速」写成了推断，并为此在
+`tauri-cdp-recognition-buttons.mjs` 加了 `--open-delay`。本轮**实测否证了它**。
+
+`--open-delay 30000`（比真人慢得多）后的批次与不延迟时**逐项一致**：
+
+| 观测项 | `--open-delay 30000` | 不延迟（对照） |
+| --- | --- | --- |
+| `batchId` | `rec-import-…-v1-f13bd65cb5f5` | 同 |
+| `local_state` | `succeeded` | `succeeded` |
+| `actionable_count` | 14 | 14 |
+| `retry_count` | 0 | 0 |
+| `last_error_code` | `null` | `null` |
+
+延迟 30 秒既没有让识别失败，也没有任何副作用（`candidateWait.waitedMs=3195`，
+说明打开工作区时批次**早已产出**）。所以「用户操作速度决定识别成败」是**没有证据支持的
+推断**，已撤回。脚本里那段断言该机制的注释也一并改掉——留着就是把假结论写进代码。
+参数本身保留为诊断旋钮，但不得再用它论证时序。
+
+> 教训（与 §七 F-R15-6 同源）：我连续两次把「机制上讲得通」当成了「已被证实」。
+> 讲得通只值得写进假设，不值得写进结论。
+
+### 9.2 A3 请求为什么到不了服务：应用侧在调用途中 panic
+
+`tauri-cdp-controlled-service.mjs` 的 `a3-a4-requests-reach-service` 在 16:52 那次
+（commit `937dda5`，含 A3+A4）报 FAILED，证据是：
+
+```
+A3（原文件核验）在应用侧已经发起（输入缓存 1 份），却从未到达受控服务：
+  服务收到的请求={"total":1,"outline":1,"a3":0,"a4":0}
+  网关痕迹={"verify_source_answers":{"input":1,"output":0}}
+  llm-calls.jsonl 存在=false
+```
+
+**输入缓存写了，但既没有调用记录、也没有输出、服务端零 POST。** 当时脚本只能说到
+「这次调用既没有结果也无法诊断」——那是一个**没有根因的结论**。根因就在应用日志里：
+
+```
+thread 'tokio-rt-worker' (13152) panicked at tokio-1.52.3/src/runtime/blocking/shutdown.rs:51:21:
+Cannot drop a runtime in a context where blocking is not allowed.
+This happens when a runtime is dropped from within an asynchronous context.
+```
+
+线程名是 `tokio-rt-worker`——**运行时的 worker 线程（异步上下文）**，不是 blocking 池线程。
+即：在异步上下文里 drop 了一个 `Runtime`。
+
+### 9.3 判别实验：这个 panic 不是退出残留
+
+「应用退出时打了条 panic」和「panic 就是调用失败的原因」是两件事，不能混。判别办法是找一个
+**退出方式相同、但模型路径没被走到**的运行做对照：
+
+| 运行 | 云端 | 批次 | 同一 panic |
+| --- | --- | --- | --- |
+| `recognition-buttons` 18:37 | **关闭** | **正常产出**（`local=succeeded`, `actionable=14`） | **无** |
+| `controlled-service` 16:12 | 开启 | **未产出**（四链 `not_run`） | **有**（线程 12684） |
+| `controlled-service` 16:52 | 开启 | **未产出**（四链 `not_run`） | **有**（线程 13152） |
+
+两次云端开启的运行各自复现（线程号不同 → 不是同一条日志被重复读），而云端关闭、批次正常
+产出的那次**完全没有**。两者退出方式相同，所以 panic 与模型调用路径绑定，不是退出残留。
+
+### F-R15-8（后端，未修，P0，阻塞任务书第 6 条）：模型调用路径在异步上下文里 drop 运行时
+
+- **最小复现**：`node scripts/e2e/tauri-cdp-controlled-service.mjs --diagnostic-args`。
+  该脚本写入一个启用的受控 profile，前端按产品正常判定自动 `cloudEnabled=true`
+  （`useImportFiles.ts:26-28`），于是云端/A3 路径被走到。
+- **预期**：A3（`verify_source_answers`）请求到达受控服务；批次产出。
+- **实际**：A3 输入缓存落盘后调用中断——`llm-calls.jsonl` 不存在、无 `-output-`、服务端
+  零 POST；**批次根本不产出**（`batchId=null`，四链 `not_run`），连「播种+重试」绕行也救不回；
+  应用日志同时出现 `Cannot drop a runtime in a context where blocking is not allowed`。
+- **当前构建复现**（exe `6eaefd15…`，后端输入哈希 `5adc278a…` 与 16:52 那次**完全相同**）：
+
+  | 观测 | 值 |
+  | --- | --- |
+  | `verdict` / `exitCode` | `failed` / `1` |
+  | `controlled-service-drives-candidates` | FAILED（无批次） |
+  | `a3-a4-requests-reach-service` | FAILED（`a3:0`，网关 `{input:1, output:0}`） |
+  | `verification-status-matches-chains` | **PASSED** |
+  | `usedSeedRetryWorkaround` 绕行结果 | `batchId=null cloud=not_run`（绕行无效） |
+  | panic | `tokio-rt-worker (27860)` 同一条 |
+
+  即：**换前端不改变结论，缺陷在后端。** `accept-manual-candidate` / `undo-manual-accept`
+  因此仍是 `not-executable`（没有可采纳的候选）。
+- **阻塞影响**：任务书第 6 条的 A3/A4 全部场景、以及「候选采用/撤销」按钮层**全部不可达**。
+  云端**关闭**时批次反而正常（`source=not_run/EVIDENCE_MISSING`），所以是「启用模型 → 整条
+  链崩」而不是「模型没接上」。
+- **归属**：调用链在 `processing/**`、`llm_gateway.rs`（后端独占区）。本轮**未改动**这些文件。
+- **附带交付**：为了让这条根因以后不用再翻日志，受控服务脚本新增 `report.appPanics`
+  （`extractAppPanics`），把 panic 提到报告顶层，并在 A3 失败文案里指向它。
+  **验证状态要说清**：函数已对**三份真实日志**验证（16:12、16:52、18:40 各提取到 1 条，
+  云端关闭那次 0 条），语法校验通过；但 `report.appPanics` 的**写入路径尚未在完整运行中执行过**
+  ——18:40 那次运行是在本次编辑**之前**启动的（Node 启动时载入脚本），所以报告里
+  `appPanics` 为 `undefined`。写入只是 `finally` 里的两行赋值，下次运行即生效；
+  本轮**不把它算作已验证**。
+
+### F-R15-9（后端，未修，P2）：`retry_processing` 丢弃「到底有没有入队」，前端因此只能无条件宣称已入队
+
+`queue.rs:392` 的 `retry()` 返回 `Ok(updated > 0)`，而 UPDATE 带条件
+`stage IN ('failed','ready_for_review','cancelled')`。任务处于 `queued`/`running`/
+`local_recognition` 等阶段时**更新 0 行、返回 `Ok(false)`**。但 `scheduler.rs:226` 写的是
+
+```rust
+retry(&conn, &job_id_owned)?;   // ← bool 被丢掉
+```
+
+于是 `retry_processing` 只要 SQL 不报错就**永远返回 Ok(())**。前端
+（`ExamWorkspacePage.tsx:223`、`:384`）据此无条件显示「已重新加入识别队列」／「已加入识别队列」。
+
+- **最小复现**：在识别进行中（`stage=running`）点「重新识别」——`retry_count` 不变、
+  无 `event_seq` 推进，界面却宣称已入队。
+- **预期**：命令能区分「真的重新入队」与「因为阶段不可重试而什么都没做」。
+- **实际**：两者都返回 `Ok(())`，前端无法区分。
+- **阻塞影响**：违反任务书第 5 条「每个按钮必须有真实作用」的可验证性。
+  注意仓库自己已有这条原则的先例——`libraryTypes.ts:138` 写着
+  「恢复上限路径**不得谎称**『已自动排队重试』」。同一原则没有覆盖到工作区的重试按钮。
+- **为什么本轮不改前端文案**：前端**拿不到**任何可区分信号（命令无返回值、事件只报
+  `stateVersion`），在不改后端的前提下改文案只能二选一：要么弱化通常正确的确认，要么
+  猜。两者都不比现状更诚实。**根因在后端契约**，故只记录、交后端，不做投机改动。
+- **可选的正确修法**（供后端参考）：`retry_job` 用 `retry()` 的返回值决定是否报错
+  （例如 `if !retry(...)? { return Err("processing_retry_not_applicable:<stage>") }`），
+  前端已有的 `withBusy` 错误路径就会把真实原因显示出来，无需新增 IPC。
+
+### 本轮脚本改动（E2E，已语法校验）
+
+| 文件 | 改动 | 原因 |
+| --- | --- | --- |
+| `scripts/e2e/tauri-cdp-recognition-buttons.mjs` | 改掉断言「播种先后决定识别成败」的两处注释；保留 `--open-delay` 为诊断旋钮 | 该机制已被 9.1 的实测否证，留着就是假结论 |
+| `scripts/e2e/tauri-cdp-controlled-service.mjs` | 新增 `extractAppPanics` + `report.appPanics`，A3 失败文案指向它 | 把「没有根因的结论」变成可读根因（9.2） |
+
 

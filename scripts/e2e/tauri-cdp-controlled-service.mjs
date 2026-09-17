@@ -459,6 +459,36 @@ function writeProfile() {
   fs.writeFileSync(path.join(configDir, "secrets", `${PROFILE_ID}.key`), "controlled-service-token");
   return profile;
 }
+
+/**
+ * 从应用完整输出里挑出 panic / 致命错误行，落进报告。
+ *
+ * 为什么必须做：A3 请求「输入缓存有、调用记录与输出都没有、服务端零 POST」这种情形，
+ * 光看网关痕迹只能说「既没有结果也无法诊断」—— 那是一个**没有根因的结论**。
+ * 而应用日志里往往**已经有**根因。实测到的就是一例：
+ *
+ *   thread 'tokio-rt-worker' panicked at tokio-1.52.3/src/runtime/blocking/shutdown.rs:51:21:
+ *   Cannot drop a runtime in a context where blocking is not allowed.
+ *
+ * 不把它提取出来，读者就得自己翻 `app-output.log`；上一轮把「没有 trace」当成结论，
+ * 正是因为少了这一步。提取出来之后，「A3 为什么没到服务」在报告里就是可读的。
+ */
+function extractAppPanics(appOutput) {
+  const lines = String(appOutput ?? "").split(/\r?\n/);
+  const hits = [];
+  let covered = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    // panic 的消息体常常跨 2–3 行（`panicked at …` / 原因 / `note:`），
+    // 只按起点匹配会产出互相重叠的重复条目。已并入上一条的行不再单独成条。
+    if (i <= covered) continue;
+    if (!/panicked at|Cannot drop a runtime|Cannot start a runtime/i.test(lines[i])) continue;
+    const end = Math.min(lines.length, i + 3);
+    hits.push(lines.slice(i, end).join(" ").replace(/\s+/g, " ").trim());
+    covered = end - 1;
+  }
+  return hits;
+}
+
 async function main() {
   const tolerateConcurrentEdits = process.argv.includes("--tolerate-concurrent-edits");
   const fresh = assertBuildFresh({ exePath, tolerateConcurrentEdits });
@@ -869,6 +899,8 @@ async function main() {
             + `作业目录 llm-calls.jsonl 存在=${gatewayTraces.callRecordExists}，`
             + `网关痕迹=${JSON.stringify(gatewayTraces.byCommand)}。`
             + "输入缓存有、调用记录与输出都没有、服务端零 POST，说明这次调用既没有结果也无法诊断。"
+            + "根因看 `report.appPanics`（应用日志里的 panic；本仓实测为 tokio 运行时"
+            + "「Cannot drop a runtime in a context where blocking is not allowed」）。"
         );
       }
       if (afterFirstBatch.a3 === 0) {
@@ -1041,6 +1073,9 @@ try {
     const closed = await session.close({ keep });
     // 完整应用日志落盘（不截断）：截断会把 freeze/cloud 失败行切掉。
     report.appOutput = closed.appOutput ?? null;
+    // panic 单独提到顶层：它是「A3 为什么没到达服务」的可读根因，
+    // 埋在 app-output.log 里等于没有（见 `extractAppPanics` 的注释）。
+    report.appPanics = extractAppPanics(closed.appOutput);
     report.appProcessExitCode = closed.exitCode;
     if (closed.appOutput) fs.writeFileSync(path.join(runDir, "app-output.log"), closed.appOutput);
   }

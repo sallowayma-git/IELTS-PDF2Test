@@ -55,6 +55,18 @@ const fixturePath = path.resolve(
 );
 const isPdf = /\.pdf$/i.test(fixturePath);
 const diagnosticArgsRequested = process.argv.includes("--diagnostic-args");
+// 「导入 → 打开工作区」之间人为延迟若干毫秒。
+//
+// **实测结论：这个延迟对识别结果没有任何影响，当初的竞速假设已被否证。**
+// 假设原本是：后台识别在导入时入队，其冻结快照需要权威稿已播种，而播种只发生在
+// `get_workspace_item`（打开工作区）里 —— 于是「用户点开得越慢，识别越可能失败」。
+// 实测 `--open-delay 30000`（比真人慢得多）后，批次照常产出且完全健康：
+// `batchId` 非空、`local_state=succeeded`、`actionable_count=14`、
+// `retry_count=0`、`last_error_code=null`，与不延迟的那次逐项一致。
+// 因此这个参数只保留为**诊断旋钮**（将来若再怀疑时序问题可复测），
+// 不得再用它论证「用户操作速度决定识别成败」—— 那是一条没有证据支持的推断。
+const openDelayIdx = process.argv.indexOf("--open-delay");
+const openDelayMs = openDelayIdx >= 0 ? Number(process.argv[openDelayIdx + 1] ?? 0) || 0 : 0;
 const extraArgs = diagnosticArgsRequested ? "--no-sandbox --disable-gpu" : "";
 const runDir = path.join(repoRoot, "artifacts", "e2e-cdp", `run-recog-buttons-${new Date().toISOString().replace(/[:.]/g, "-")}`);
 
@@ -242,6 +254,15 @@ async function main() {
   report.identity.itemId = itemId;
 
   // 等本地稿落盘（ds 非空）再进工作区。
+  //
+  // `readDraft()` 调的是 `get_workspace_item`，它会 `migrate_single_item` 播种权威稿。
+  // 但**播种与后台识别的先后并不决定识别成败**（见 `--open-delay` 的实测更正）。
+  // 本次实测里真正让 5 个场景无法执行的，是 `source` 链 `not_run` / `EVIDENCE_MISSING`：
+  // 14 条候选全部 `unverifiable`，没有可采纳/可拒绝的项。
+  if (openDelayMs > 0) {
+    report.openDelayMs = openDelayMs;
+    await sleep(openDelayMs);
+  }
   const draftDeadline = Date.now() + 120000;
   while (Date.now() < draftDeadline) {
     const w = await readDraft();
