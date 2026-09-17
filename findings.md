@@ -2921,3 +2921,226 @@ const extraArgs = diagnosticArgsRequested ? "--no-sandbox --disable-gpu" : "";
 | 文件 | 改动 | 原因 |
 | --- | --- | --- |
 | `scripts/e2e/tauri-cdp-controlled-service.mjs` | 稳定性参数默认打开，新增 `--no-diagnostic-args`；报告字段改准确（`runProfile` / `stabilityArgs` / `diagnosticRun`） | F-R15-10：默认关闭导致无参运行 10 秒即崩、一个场景都跑不到 |
+
+## 十二、第二轮：让用户有足够空间阅读和编辑题稿（构建 `a4a4badd…`）
+
+上一轮把「工作区被劈成两半」修好之后，用户给出的新验收重点是**题稿可用空间**：
+「问题列表、识别建议同时展开后，题稿被压缩到约 150px」。本轮先量到它，再改。
+
+### 12.1 修复前：两个面板各自带 vh 上限，同时展开吃掉约 80vh
+
+修复前（上一轮的产物，构建 `1e37e626…`，运行 `run-workspace-layout-2026-09-17T19-25-26-065Z`）：
+
+| 快照 | 题稿（`.workspace-body`）高 | 说明 |
+| --- | --- | --- |
+| 面板全关 | 527.3px | 正常 |
+| 识别建议展开 | 363.3px | 建议面板 164px |
+| **两个面板同时展开** | **153.4px** | ← 用户报的「约 150px」，实测 153.4 |
+| 窄屏 900 + 两个面板 | 可见栏 137px | 更糟 |
+
+原因很直白：`.workspace-issues { max-height: 34vh }` 与 `.workspace-recognition { max-height: 46vh }`
+各自独立封顶，同时展开合计约 80vh。视口 617px 时 56px 顶栏 + 34px 模式栏之外只剩约 527px，
+被两个面板拿走约 374px。
+
+**这条缺陷的结构性问题是「分别设上限」本身**：面板数量或内容再多一个，同样的加法又会重演。
+所以本轮不是把 34vh 调小，而是把上限收到**一处**。
+
+### 12.2 修复：互斥展开 + 共用一个有总高度上限的区域
+
+两层都要有，缺一不可：
+
+- **互斥**由顶栏两个按钮的 `onClick` 保证（打开一个就关掉另一个）——只设互斥的话，单个面板仍可能独占大半屏；
+- **共用上限**由新容器 `.workspace-aside` 保证——只设共用上限的话，两个面板仍会同时展开去抢同一个上限。
+
+```css
+.workspace-aside {
+  --workspace-aside-max-height: min(32vh, 300px);
+  display: flex; flex-direction: column;
+  min-height: 0; max-height: var(--workspace-aside-max-height);
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.workspace-aside > .workspace-issues,
+.workspace-aside > .workspace-recognition { flex: 0 0 auto; max-height: none; overflow: visible; }
+```
+
+上限同时给 px 与 vh 两个界（`min()` 取小者）：低高度窗口（520px）下 32vh 只有 166px，
+题稿仍能拿到 263.6px；高窗口下 px 界生效，避免辅助面板在高屏上无意义地长高。
+溢出交给容器自己滚动，所以面板不再各自带 `max-height` / `overflow`（否则会出现两层滚动条）。
+
+**为什么不用 grid**：见 §10.2——这个页面骨架已经是单列 flex，动态带的数量与顺序都会变，
+grid 的固定行号是脆的。
+
+### 12.3 修复后实测（构建 `a4a4badd…`，运行 `run-workspace-layout-2026-09-17T20-59-28-001Z`）
+
+14 条断言全部 PASS，每条在 **12 个快照**下同时成立（面板全关 / 识别建议开 / 问题列表开 /
+反向再验互斥 / 再关 / 低高度 520 开与关 / 窄屏 900 开与关 / 学生预览 / 回到编辑 / 保存后重开）。
+`consoleErrors: []`、`pageExceptions: []`。
+
+| 状态 | 修复前 题稿高 | 修复后 题稿高 |
+| --- | --- | --- |
+| 面板全关 | 527.3px | 527.3px |
+| 识别建议展开 | 363.3px | 452.7px（建议面板 74.7px） |
+| **问题列表展开** | **153.4px** | **329.8px** |
+| 低高度窗口 520 + 问题列表 | 未覆盖 | 263.6px |
+| 窄屏 900 + 问题列表 | 137px | 274.5px |
+
+新增/替换的 4 条断言（用户任务书第 1/3 条）：
+
+- **L11 `passage-usable-height`**：题稿可用高度 ≥ `max(200, 视口高×32%)`。用比例而不是固定 px，
+  因为缺陷的本质是「辅助带按比例把空间吃光」，固定 px 在高窗口下判不出来。实测最矮 263.6px（下限 200）。
+- **L12 `no-overlay-on-passage`**：题稿之前的**每一带**（顶栏、模式栏、通知、保存失败提示、
+  辅助容器、窄屏切换栏）都必须落在题稿上方。旧版只比「建议面板与题稿的水平重叠」，漏掉其余动态带。
+- **L13 `aside-shared-height-cap`**：三条一起才说明「上限被收到了容器上」——
+  容器有有限 `max-height`、容器内**同时只有一个**面板、**面板自身 `max-height: none`**。
+  实测 `容器 max-height=197.547px / 面板 max-height=none / 容器内面板数=1`。
+  另加一条与设计无关的信封 `min(视口高×40%, 320px)`：旧行为（34vh+46vh≈60%）会突破它，所以能拦住回归。
+- **L14 `aside-panels-exclusive`**：互斥要**两个方向**都验到（点问题 → 识别建议消失；点识别建议 → 问题消失）。
+
+### 12.4 L8 的判据被替换：从「读 `overflow-y`」改成「真的滚一下」
+
+旧版 L8 只读两栏的 computed `overflow-y` 是不是 `auto`。**这对缺陷恒为真**——
+「声明了 `overflow-y: auto`」与「真的能独立滚动」是两件事，用户明确要求不能据此判通过。
+
+现在在页面里真的设 `scrollTop`，再量另一栏的**矩形**与 **scrollTop**：
+
+```
+issues-open: 原文栏可滚 3128px / 题目栏可滚 4549px；
+  滚原文栏 scrollTop 0→140（题目栏矩形不变、scrollTop 0）；
+  滚题目栏 scrollTop 0→140（原文栏矩形不变、scrollTop 140）
+```
+
+判据里刻意加了「两栏都真的能滚」这一条：若某栏内容没有溢出，这条断言就**没被行使**，
+如实判 FAIL 并写清原因，免得把「没得滚」当成「滚过了，独立」。探针跑完会把滚动位置复原。
+
+### 12.5 没有建议时收敛成一行（任务书第 2 条）
+
+修复前识别面板 164px，内容是「状态行 + 四颗全零计数胶囊 + 一块虚线空面板」。
+四颗全零的胶囊不携带任何信息，却要从题稿身上拿走一块高度。
+
+新增纯函数 `isRecognitionQuiet(view)`（`recognitionDecisions.ts`，8 条单测）——
+判据刻意**保守**：只要有任何一条待确认 / 无法验证 / 已自动修正的条目，或任何一次过期提示，
+或四个计数里任何一个非零，就照常展开完整面板；拿不到视图（还没读到 / 读失败）也返回 `false`
+（那是「不知道」，不是「没什么可说」）。
+
+安静时整块面板收敛成一行：`题稿已生成，可以开始编辑 识别还没有产出可核对的结果，这里暂时没有建议可看。`
+——第二句只在**四路链路一次都没跑过**时追加：只留前一句会被读成「查过了，没问题」（沿用 §10 的判据）。
+实测面板 164px → **74.7px**，题稿 363.3px → 452.7px。
+
+### 12.6 内部题型名 → 用户文案（任务书第 2 条）
+
+`ExamCanvas` 的题组小标题此前直接渲染 `task.taskType`，用户看到的是 `summary_completion`。
+`utils/displayLabels.ts` 新增 `taskTypeLabels: Record<TaskTypeV2, string>`（**不是** `Partial`：
+契约以后新增题型时类型检查会立刻报缺项，不会再漏一个没翻译的名字）+ `taskTypeLabel()`。
+`authoringV2Patches.ts` 里原本还有一份只覆盖 7 个取值的私有表且**无人调用**，
+现在委托给同一份映射，避免两张表分叉。实测题面小标题已是「摘要填空」。
+单测断言「全部 18 个题型都有中文名，且没有一个等于自己的枚举名、没有一个含下划线」。
+
+### 12.7 顶部按钮文字挤连与问题卡片文字间距（任务书第 2 条）
+
+- **顶部按钮**：`.workspace-header-actions { gap: 0 }` + 按钮 `padding: 0` 对纯图标按钮没问题
+  （56px 方框本身就是间距），但顶栏里有两个**带文字**的按钮，零内边距 + 零间隙让它们连写成
+  「问题 3 · 阻断 3识别建议」。改为容器 `gap: 2px` + 按钮 `padding: 0 12px` + `white-space: nowrap`。
+  图标按钮有 `min-width: 56px` 兜底（16px 图标 + 2×12px = 40px < 56px），所以仍是 56px 方框，外观不变。
+- **问题卡片**：`severity-badge` / `workspace-task-title` / `workspace-task-detail`
+  **三个类名在样式表里完全无定义**，于是徽标「⚠」与标题零空隙、`<small>` 说明是行内元素
+  跟在标题后面随机换行、与下方按钮之间也没有间距。改为两列网格（徽标 | 标题）+ 说明与按钮各占一整行。
+- **顺带**：操作按钮原本被 `width: 100%` 撑成每行一个，三张卡片光按钮就占掉约 315px，
+  是辅助面板高度的主要来源——与「给题稿留出空间」直接冲突，改为按内容取宽、横向排布。
+
+### 12.8 右侧摘要重复：具体节点与来源（任务书第 4 条）
+
+用户明确指出上一轮给的「文章标题重复」**不是**这一项，要求重查右侧摘要。重查结论如下。
+
+**上一轮的探针轴不对。** `duplicateText` 比的是「题目栏 ↔ 原文栏」，实测 `echoedCount = 0`
+（题目栏 16 句没有一句逐字出现在原文栏）——看起来「没有重复」，而用户看到的重复一直都在。
+**重复发生在题目栏内部**，所以本轮新增 `QUESTION_DUPLICATION_FN`，按 `ExamCanvas` 的真实渲染结构
+逐块取文本（`instructions` / `stimulus` / `responsePrompt`）再两两比对。
+
+**具体节点**（实测 DOM 文本，题组 `group-1`，小标题「摘要填空」）：
+
+| 文本块 | 来源字段 | 原始字数 | 空位形态 | 答案位 |
+| --- | --- | --- | --- | --- |
+| `.v2-instruction` | `taskGroup.instructions` | 670 | 源文点线 `............`（1 处 12 点） | 0 |
+| `.v2-stimulus` | `taskGroup.stimulus` | 636 | 真答案位（输入框 + 作者态 `＋ ×` 工具） | 5 |
+| `.v2-response-prompt` | `responseGroup.prompt` | 无此块 | — | — |
+
+两块的最长公共子串 = **449 字**，占较短块 **70.7%**。重复的那一段就是整段摘要：
+
+```
+How is social history different from historical study? Since it became an academic discipline,
+historical study has been too concerned with a search for 27 [B] by researchers who want to
+develop their careers. Social history, however, is more closely related to the 28 [B] of the public. …
+```
+
+`instructions` = 「指令句 + 摘要前半段（空位是源文点线）」，`stimulus` = 「完整摘要（空位是真答案位）」
+——**两者互相都不完整包含对方**（`instructions` 多一个指令句前缀，`stimulus` 多 30/31 两题的后半段），
+所以「谁包含谁」的判据也会漏报。只有最长公共子串能量到真正重复的那 449 字。
+
+**来源判定：源数据层，不是前端重复渲染。** 对照权威稿（真实 IR）：
+
+```
+taskGroup group-1 instructions : 670 字（含整段摘要，空位是点线）
+taskGroup group-1 stimulus     : 601 字（同一段摘要，含 slot-node-q27…q31 五个真实 answer_slot）
+```
+
+两份内容在 IR 里就已经各自存在；前端只是把 `.v2-instruction` 与 `.v2-stimulus` **各渲染一次**。
+另外两组题型（`group-2` 判断题、`group-3` 单选题）最长公共子串只占较短块的 3% / 10%，无重复
+——说明这不是渲染逻辑的通病，是这一份抽取结果的问题。
+
+**本轮没有修，也没有按相似度删内容。** 上一轮已定过这条边界：源数据重复就交后端复现材料，
+前端按文本相似度删内容 / 隐藏字段会丢掉真实题干。因此它记为**诊断项**而不是硬断言
+（做成硬断言会让布局验收因为一个无关缺陷长期变红，反而盖住布局本身的回归信号）。
+
+**复现材料（交后端）**：
+- 夹具 `fixtures/parser/demanding-reading-passage-3.pdf`，题组 `group-1`
+- 期望：`taskGroup.instructions` 只保留指令句；摘要段落只作为 `stimulus` 存在一次
+- 可直接复跑 `node scripts/e2e/tauri-cdp-workspace-layout.mjs`，
+  报告字段 `questionPaneLayers`（逐块字数 / 点线数 / 答案位数 / 样本）与
+  `questionPaneDuplication`（重复对、重复字数、占比、样本）
+
+### 12.9 本轮改动的文件
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/features/editor/ExamWorkspacePage.tsx` | 新增 `.workspace-aside` 容器；两个面板按钮改为互斥展开（补 `aria-expanded`） |
+| `src/styles/workspace.css` | 辅助面板共用上限；问题卡片两列网格与文字间距；操作按钮按内容取宽；顶部按钮内边距与间隙 |
+| `src/features/editor/RecognitionPanel.tsx` | 安静态收敛成一行；`data-quiet` 供样式收紧内边距 |
+| `src/features/editor/recognitionDecisions.ts` | 新增 `isRecognitionQuiet`（+8 条单测） |
+| `src/utils/displayLabels.ts` | 新增 `taskTypeLabels` / `taskTypeLabel`（+3 条单测） |
+| `src/utils/displayLabels.test.ts` | 覆盖 18 个题型、兜底、映射表键集合与枚举一致 |
+| `src/services/authoringV2Patches.ts` | 删掉私有题型表，委托给 `displayLabels` |
+| `src/exam-canvas/ExamCanvas.tsx` | 题组小标题改用 `taskTypeLabel` |
+| `scripts/e2e/tauri-cdp-workspace-layout.mjs` | L8 换成真实滚动；新增 L11–L14；新增题目栏内部重复取证；新增低高度视口档 |
+
+### 12.10 本轮遗留问题
+
+1. **右侧摘要重复**（§12.8）：源数据层，待后端修；前端不按相似度删内容。
+2. **文章标题重复**（§10.4）：`passage.content` 内 `passage-title-text` 与 `passage-text-1` 文本相同，
+   且该句被跨栏重排成 5 个片段。仍是**另一项**问题，与 §12.8 不是同一件事。
+3. **下拉菜单的样式被顶栏规则覆盖**（既有，本轮未动）：`.workspace-menu` 在 `.workspace-header` 内部，
+   而 `.workspace-header button:not(.workspace-back-button)` 特异性 (0,2,1) **高于**
+   `.workspace-menu button` (0,1,1)。于是 `.workspace-menu button` 里写的 `height: auto` /
+   `padding: 9px 10px` / `border-radius: 8px` 全部被覆盖，菜单项实际是 56px 高、零圆角。
+   本轮只把按钮内边距从 `0` 改成 `0 12px`，没有扩大范围去修菜单（超出任务书范围，且需要自己的验收）。
+   修法：把顶栏规则收窄成 `.workspace-header-actions > button`。
+4. **辅助面板被上限截断时靠容器滚动，Windows 覆盖式滚动条不悬停时不可见**，
+   面板底部内容看起来像「被切掉」。可考虑加渐隐提示，或在面板底部留一条可见的「还有 N 条」。
+5. **题稿可用高度是设计取舍**：`min(32vh, 300px)` 让 617px 视口下最矮一档是 263.6px（低高度档）。
+   是否够用取决于用户，这个数值可调，改动点是 `--workspace-aside-max-height` 一处。
+6. **A3/A4 按钮验收仍等后端**（F-R12-2 有云不产批次、F-R15-8 A3 调用中途 panic），按用户指示不做。
+7. `#35`（批次前后成对的面板状态证据）仍缺。
+
+### 12.11 工具与协作备注（不是产品结论）
+
+- **构建归因在双 agent 仓库里会卡住**：清单路径的 `inputsDriftedDuringBuild` 是**一律 stale**
+  （刻意如此，`build-freshness.test.mjs` 有专门用例，即使开 `--tolerate-concurrent-edits` 也不豁免）。
+  而 `--tolerate-concurrent-edits` 只在 **mtime 路径**（无清单时）生效。
+  结果是：后端 agent 并发写 `src-tauri/src/processing/*.rs` 时，连续三次 `build-app.mjs`
+  都因为**只有** `backendInputs` 漂移而不可归因，尽管前端两段完全一致
+  （三次的 `frontendInputs=6d48be6471fb`、`dist=7f6b61cff7f1` 一字不差）。
+  第四次改为「等 45 秒无后端写入再构建」，得到干净构建 `a4a4badd…`。
+  这不是缺陷（两条语义都各自正确），但值得知道：**并发写入会让构建归因变成概率事件**。
+- **根目录 `tmp_*.txt` 又出现了一批**，时间戳落在本会话期间，是**并发后端 agent** 的输出
+  （`tmp_test_processing.txt` / `tmp_build.txt` / `tmp_ice.txt` …），不是我的残留。
+  它们在 `.gitignore` 之外但均为未跟踪文件，本轮按**路径精确提交**自己的文件，未去动它们
+  （动了可能打断对方的下一步命令）。§七记过的同类清理针对的是我自己那批。

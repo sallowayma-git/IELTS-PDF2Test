@@ -3,6 +3,7 @@ import { InlineTextEditor } from "./editors/InlineTextEditor";
 import { MatchingMatrix, matchingRowsFor } from "./renderers/MatchingMatrix";
 import { resolveAuthoringAssetPreview, type AuthoringAssetPreview } from "../api/tauriCommands";
 import { buildReadingInteractionModelV2, buildRuntimeViewModelV2 } from "../services/runtimeViewModelV2";
+import { taskTypeLabel } from "../utils/displayLabels";
 import type { AnswerValueV2, ContentNodeV2, IeltsAuthoringIRV2, OptionV2, ResponseGroupV2, TaskGroupV2 } from "../types";
 
 export type ExamCanvasStructureAction =
@@ -432,7 +433,7 @@ export function ExamCanvas(props: ExamCanvasProps) {
     <section id="right" className="reading-pane question-pane pane v2-question-pane" aria-label="Reading questions">
       <div id="question-groups" className="question-groups v2-question-groups">
         {runtime.taskGroups.map((task) => <article key={task.taskId} className={`question-group unified-group v2-task-group${props.selectedId === task.taskId ? " is-selected" : ""}`} data-group-id={task.taskId} data-editor-id={task.taskId} onClick={() => props.mode === "author" && props.onSelect?.(task.taskId)}>
-          <header className="v2-task-header"><h2>{task.taskType}</h2><div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
+          <header className="v2-task-header"><h2>{taskTypeLabel(task.taskType)}</h2><div className="v2-instruction"><ContentNodes nodes={task.instructions} canvas={props} /></div></header>
           {task.stimulus?.length ? <div className="v2-stimulus"><ContentNodes nodes={task.stimulus} canvas={props} /></div> : null}
           {(() => {
             // Matching 走矩阵版式：共享选项库 + 每行一个答案位（计划 §9.8）。

@@ -18,7 +18,9 @@ import {
   formatDecisionValue,
   formatEvidence,
   groupByDependency,
+  hasAnyChainRun,
   isDecided,
+  isRecognitionQuiet,
   pendingDecisionCount,
   recognitionInFlight,
   reviewItems,
@@ -114,6 +116,13 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
   const staleness = describeStaleness(view);
   const pending = pendingDecisionCount(view);
 
+  // 没什么可说的就收敛成一行短状态（本轮任务书第二节）：四颗全零的计数胶囊不携带信息，
+  // 却要把一整块面板高度从题稿身上拿走。只要有一条建议、一条自动修正或一次过期提示，
+  // `isRecognitionQuiet` 就会返回 false，面板照常展开。
+  const quiet = isRecognitionQuiet(view);
+  // 操作回执（「已采用 N 项」等）是用户刚做完动作的反馈，不能因为面板「安静」就吞掉。
+  const collapsed = quiet && !notice;
+
   async function submit(groupKey: string, items: RecognitionDecisionItemV1[], action: "accept" | "reject" | "undo") {
     if (!view || busyGroup) return;
     const key = `${view.batchId}:${groupKey}:${action}`;
@@ -172,7 +181,13 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
   }
 
   return (
-    <aside className="workspace-recognition" aria-label="识别建议" data-testid="workspace-recognition">
+    <aside
+      className="workspace-recognition"
+      aria-label="识别建议"
+      data-testid="workspace-recognition"
+      // 安静态（没什么可说的）供样式收紧面板自身的上下内边距：一句话不该还占一整块面板的高度。
+      data-quiet={collapsed ? "true" : "false"}
+    >
       <header className="workspace-recognition-head">
         <h2>识别建议</h2>
         <button className="ghost small" onClick={() => void load()} aria-label="刷新识别建议">刷新</button>
@@ -186,7 +201,13 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
 
       {view ? (
         <>
-          <p className="workspace-recognition-status" data-testid="workspace-recognition-cloud">
+          {/* 状态行始终保留（`data-testid` 是既有验收脚本的锚点），安静时它**就是**整块面板的内容。
+              四路链路一次都没跑过时，必须在这行里补上「还没有可核对的结果」——只留
+              「题稿已生成，可以开始编辑」会被读成「查过了，没问题」（见 `emptyStateMessage`）。 */}
+          <p
+            className={`workspace-recognition-status${collapsed ? " workspace-recognition-idle" : ""}`}
+            data-testid="workspace-recognition-cloud"
+          >
             {describeVerificationStatus({
               localStatus: view.localStatus,
               cloudStatus: view.cloudStatus,
@@ -198,13 +219,17 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
               // 后者漏掉「处理失败」的项，会让状态行说「没有需要处理的问题」而卡片还在。
               pendingCount: pending
             })}
+            {collapsed && !hasAnyChainRun(view) ? ` ${emptyStateMessage(view)}` : null}
           </p>
-          <ul className="workspace-recognition-summary" data-testid="workspace-recognition-summary">
-            <li data-count="agreed">一致 {view.summary.agreed}</li>
-            <li data-count="auto_fixed">已自动修正 {view.summary.autoFixed}</li>
-            <li data-count="needs_review">待确认 {view.summary.needsReview}</li>
-            <li data-count="unverifiable">无法验证 {view.summary.unverifiable}</li>
-          </ul>
+
+          {quiet ? null : (
+            <ul className="workspace-recognition-summary" data-testid="workspace-recognition-summary">
+              <li data-count="agreed">一致 {view.summary.agreed}</li>
+              <li data-count="auto_fixed">已自动修正 {view.summary.autoFixed}</li>
+              <li data-count="needs_review">待确认 {view.summary.needsReview}</li>
+              <li data-count="unverifiable">无法验证 {view.summary.unverifiable}</li>
+            </ul>
+          )}
 
           {staleness ? (
             <p className="workspace-notice warning" role="alert" data-testid="workspace-recognition-stale">
@@ -261,7 +286,8 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
             </section>
           ) : null}
 
-          {pending === 0 ? (
+          {/* 安静时这一句已经被并进上面的状态行，这里不再重复渲染（否则又成了一块空面板）。 */}
+          {!quiet && pending === 0 ? (
             <p className="empty compact" data-testid="workspace-recognition-empty">
               {emptyStateMessage(view)}
             </p>

@@ -17,9 +17,18 @@
  *   L5 recognition-not-tall-blank 建议面板高度受内容约束，不占大块空白
  *   L6 question-number-intact     题号完整：没有被压缩到逐字符换行
  *   L7 panes-within-viewport      原文栏与题目栏都在视口内，且各有可用宽度
- *   L8 panes-independent-scroll   两栏可独立滚动
+ *   L8 panes-independent-scroll   两栏可独立滚动——**实际滚动一栏，另一栏位置与 scrollTop 不变**
  *   L9 edit-save-reopen           编辑保存 → 返回题库 → 重新打开，值读得回来
  *   L10 header-spans-page         顶部工具栏与模式栏横跨工作区
+ *   L11 passage-usable-height     题稿可用高度 ≥ 下限（面板开/关都不例外）
+ *   L12 no-overlay-on-passage     没有任何辅助带压在题稿区域上
+ *   L13 aside-shared-height-cap   两个辅助面板共用一个有总高度上限的区域（上限本身也要被量到）
+ *   L14 aside-panels-exclusive    两个辅助面板互斥展开（两个方向都验）
+ *
+ * L8 的判据在第二轮被**替换**过：旧版只读 `overflow-y` 是不是 `auto`，那对缺陷恒为真
+ * ——「声明了 overflow-y: auto」与「真的能独立滚动」是两件事。现在在页面里真的设
+ * `scrollTop`，再量另一栏的矩形与 `scrollTop` 有没有被带动。
+ * L11–L14 是第二轮新增：验收重点从「布局结构对不对」改成「用户有没有足够空间读题稿」。
  *
  * 另外记录（不作为硬断言，但必须出现在报告里）：
  *   - 控制台异常 / console.error（区分「运行时异常」与「布局错位」）
@@ -28,7 +37,9 @@
  *
  * 用法：
  *   node scripts/e2e/tauri-cdp-workspace-layout.mjs [--pdf <path>] [--width N] [--height N]
- *        [--keep] [--no-diagnostic-args] [--tolerate-concurrent-edits]
+ *        [--low-height N] [--keep] [--no-diagnostic-args] [--tolerate-concurrent-edits]
+ *   `--width/--height` 是主视口（默认 1080×617，即用户截图的尺寸）；
+ *   `--low-height` 是「低高度窗口」那一档的高度（默认 520）；窄屏那一档固定 900 宽。
  * 退出码：0 通过 / 1 失败 / 3 环境不满足
  */
 
@@ -61,6 +72,10 @@ const widthIdx = process.argv.indexOf("--width");
 const heightIdx = process.argv.indexOf("--height");
 const viewportWidth = widthIdx >= 0 ? Number(process.argv[widthIdx + 1]) || 1080 : 1080;
 const viewportHeight = heightIdx >= 0 ? Number(process.argv[heightIdx + 1]) || 617 : 617;
+// 低高度窗口（本轮任务书第 5 条）。617 是用户截图的尺寸，520 用来验证「窗口变矮时
+// 辅助面板的上限会不会把题稿压没」——上限用的是 vh，这一档正是它该起作用的地方。
+const lowHeightIdx = process.argv.indexOf("--low-height");
+const lowHeight = lowHeightIdx >= 0 ? Number(process.argv[lowHeightIdx + 1]) || 520 : 520;
 // 本机必需：不加这两个参数 WebView2 的 renderer 会在中途崩（`CDP 连接已关闭`）。
 // 默认**打开**——旧脚本把默认值写成空串、注释却写「环境必需」，无参运行必 CANNOT-RUN。
 const extraArgs = process.argv.includes("--no-diagnostic-args") ? "" : "--no-sandbox --disable-gpu";
@@ -79,12 +94,20 @@ const report = {
   diagnosticRun: Boolean(extraArgs),
   runProfile: extraArgs ? "cdp-diagnostic" : "cdp-default",
   viewport: { width: viewportWidth, height: viewportHeight },
+  lowHeightViewport: { width: viewportWidth, height: lowHeight },
   probes: {},
   snapshots: [],
   assertions: [],
   consoleErrors: [],
   pageExceptions: [],
   duplicateText: null,
+  // 题目栏内部三个文本块的逐块取证（本轮任务书第 4 条：右侧摘要重复）。
+  questionPaneLayers: null,
+  // 上面那份取证汇总出来的重复对（诊断项，不是硬断言——成因在后端）。
+  questionPaneDuplication: [],
+  // 互斥展开与独立滚动的原始证据（L8 / L14 用）。
+  exclusivityChecks: [],
+  scrollProbes: [],
 };
 
 /** 被测元素：key → 选择器。选择器与组件里真实使用的类名一一对应。 */
@@ -92,6 +115,8 @@ const PROBES = [
   ["page", '[data-testid="exam-workspace"]'],
   ["header", ".workspace-header"],
   ["subHeader", ".workspace-sub-header"],
+  // 两个辅助面板的**共用容器**（互斥展开 + 统一高度上限都在它身上）。
+  ["aside", '[data-testid="workspace-aside"]'],
   ["recognition", ".workspace-recognition"],
   ["issues", ".workspace-issues"],
   ["paneTabs", ".workspace-pane-tabs"],
@@ -154,10 +179,85 @@ const COLLECT_FN = `(() => {
   // 否则会把「按设计隐藏原文栏」误判成布局错位。
   const tabs = document.querySelector('.workspace-pane-tabs');
   out.__narrowTabs = { present: Boolean(tabs), visible: Boolean(tabs) && getComputedStyle(tabs).display !== 'none' };
+  // 工作区页面的**直接子项**（按 DOM 顺序）。用于遮挡检查：题稿之前的每一带都必须落在
+  // 题稿上方，谁都不许压到题稿区域上。这一项是第二轮新增的——旧版只看建议面板与题稿的
+  // 水平重叠，漏掉了通知带 / 保存失败提示 / 问题列表等其它动态带。
+  const pageEl = document.querySelector('[data-testid="exam-workspace"]');
+  out.__pageChildren = pageEl ? [...pageEl.children].map((el, index) => {
+    const r = el.getBoundingClientRect();
+    return {
+      index,
+      cls: (typeof el.className === 'string' && el.className) || el.tagName,
+      isBody: el.classList.contains('workspace-body'),
+      isAside: el.classList.contains('workspace-aside'),
+      y: +r.y.toFixed(1), bottom: +r.bottom.toFixed(1),
+      w: +r.width.toFixed(1), h: +r.height.toFixed(1),
+    };
+  }) : [];
+  // 辅助面板容器的实际高度上限。**上限本身也要被量到**：只断言「面板没有变高」看不出
+  // 「上限被收到容器上了」，下次有人再给单个面板加一条 vh 上限，这条断言不会响。
+  const asideEl = document.querySelector('[data-testid="workspace-aside"]');
+  out.__aside = asideEl ? (() => {
+    const r = asideEl.getBoundingClientRect();
+    const cs = getComputedStyle(asideEl);
+    return {
+      h: +r.height.toFixed(1),
+      maxHeight: cs.maxHeight,
+      overflowY: cs.overflowY,
+      flex: cs.flex,
+      // 同一时刻容器里有几个面板——互斥展开的**直接证据**（应为 1）。
+      childCount: asideEl.children.length,
+      children: [...asideEl.children].map((c) => ({
+        cls: (typeof c.className === 'string' && c.className) || c.tagName,
+        h: +c.getBoundingClientRect().height.toFixed(1),
+        // 面板**自己**有没有 vh 上限。L13 要求这里是 none：上限必须只在容器上有一处。
+        maxHeight: getComputedStyle(c).maxHeight,
+        overflowY: getComputedStyle(c).overflowY,
+      })),
+      scrollHeight: asideEl.scrollHeight,
+      clientHeight: asideEl.clientHeight,
+    };
+  })() : null;
+  // 两个面板各自的**存在性**（互斥展开的反向证据：一个开时另一个必须不在 DOM 里）。
+  out.__panelsPresent = {
+    issues: Boolean(document.querySelector('[data-testid="workspace-issue-list"]')),
+    recognition: Boolean(document.querySelector('[data-testid="workspace-recognition"]')),
+  };
   out.__viewport = { innerWidth: window.innerWidth, innerHeight: window.innerHeight,
                      docScrollWidth: document.documentElement.scrollWidth,
                      docClientWidth: document.documentElement.clientWidth };
   return out;
+})()`;
+
+/**
+ * 独立滚动的**实测**（替换旧版「读 overflow-y 是不是 auto」的弱判据）。
+ *
+ * 做法：记下两栏矩形与 scrollTop → 真的把原文栏 `scrollTop` 设成 140 → 再量两栏矩形与
+ * scrollTop → 再滚题目栏、再量一次。判据是「滚一栏时另一栏的**矩形**与 **scrollTop**
+ * 都不动」，而不是「声明了 overflow-y」。
+ *
+ * 同时如实报告两栏各自**能滚多少**（`scrollHeight - clientHeight`）。若某栏内容没有溢出，
+ * 这条断言就没有真正被行使，报告里必须能看出来（`passageScrollable` / `questionScrollable`），
+ * 免得把「没得滚」当成「滚过了，独立」。
+ */
+const SCROLL_FN = `(() => {
+  const p = document.querySelector('.workspace-body .v2-passage-pane');
+  const q = document.querySelector('.workspace-body .v2-question-pane');
+  if (!p || !q) return null;
+  const rect = (el) => { const r = el.getBoundingClientRect();
+    return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) }; };
+  // 从零开始，避免上一次探针的残留影响判断。
+  p.scrollTop = 0; q.scrollTop = 0;
+  const before = { passage: rect(p), question: rect(q), pScrollTop: p.scrollTop, qScrollTop: q.scrollTop };
+  const passageScrollable = Math.max(0, p.scrollHeight - p.clientHeight);
+  const questionScrollable = Math.max(0, q.scrollHeight - q.clientHeight);
+  p.scrollTop = 140;
+  const afterPassageScroll = { passage: rect(p), question: rect(q), pScrollTop: p.scrollTop, qScrollTop: q.scrollTop };
+  q.scrollTop = 140;
+  const afterQuestionScroll = { passage: rect(p), question: rect(q), pScrollTop: p.scrollTop, qScrollTop: q.scrollTop };
+  // 复原，免得影响后面的截图与其它探针。
+  p.scrollTop = 0; q.scrollTop = 0;
+  return { before, passageScrollable, questionScrollable, afterPassageScroll, afterQuestionScroll };
 })()`;
 
 /**
@@ -184,6 +284,119 @@ const DUPLICATE_FN = `(() => {
     echoedCount: echoed.length,
     echoedSamples: echoed.slice(0, 3).map((s) => s.slice(0, 120)),
   };
+})()`;
+
+/**
+ * 「题目栏内部重复」的取证（本轮任务书第 4 条）。
+ *
+ * 用户报的是**右侧**摘要重复：同一段摘要在题目栏里出现了两遍。
+ * 旧探针（`DUPLICATE_FN`）比的是「题目栏 ↔ 原文栏」，轴不对——那个方向上实测
+ * `echoedCount = 0`，看起来「没有重复」，而用户看到的重复一直都在。
+ *
+ * 这里按题面真实的三个文本块逐块取文本（与 `ExamCanvas` 的渲染结构一一对应）：
+ *   - `.v2-instruction`     ← `taskGroup.instructions`
+ *   - `.v2-stimulus`        ← `taskGroup.stimulus`
+ *   - `.v2-response-prompt` ← `responseGroup.prompt`
+ * 然后两两做包含比对，并分别报告每块里有没有源文的空位点线（`............`）与答案位数量
+ * ——点线是「题干原文被搬进这一块」的指纹，真输入框才是答案位。
+ *
+ * 两个**必须**的细节，第一版都踩过：
+ *   1. 空位在块与块之间写法不同：`instructions` 里是源文残留的点线，`stimulus` 里是真答案位
+ *      （输入框 + 作者态的插入/删除工具字形 `＋ ×`）。直接逐字比对，同一段摘要会因为
+ *      「空位写法不同」被判成不重复 —— 实测第一版 `duplicatedPairs` 为空就是这么漏的。
+ *      所以比对前先做 `skeleton()` 归一化，把各种空位写法统一成一个记号。
+ *   2. 判据必须是**最长公共子串**，不是「谁包含谁」。实测 group-1 的 `instructions` 是
+ *      「指令句 + 摘要前半段」，`stimulus` 是「完整摘要」：两者互相都**不**完整包含对方，
+ *      包含测试照样漏报。只有取最长公共子串才能量到「真正重复的那 517 个字」。
+ *      （第三版把文本 `slice(0, 500)` 之后再比，670 字的指令被截到 500 字——同样漏报。
+ *      现在全文只用于比较，报告里只存样本。）
+ *
+ * 只取证、不判定：判定哪一层该负责要对照 IR（`readIrDuplication`）。
+ */
+const QUESTION_DUPLICATION_FN = `(() => {
+  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+  const skeleton = (s) => norm(s)
+    .replace(/(?:[.．]\\s*){4,}/g, ' [B] ')
+    .replace(/[＋+][\\s]*[×x]/g, ' [B] ')
+    .replace(/(?:[…]\\s*){2,}/g, ' [B] ')
+    .replace(/\\s+/g, ' ')
+    .trim();
+  // 最长公共子串（滚动数组 DP）。~700 字的块，几百次比较也就几十万次操作。
+  const lcs = (a, b) => {
+    const m = b.length;
+    let prev = new Array(m + 1).fill(0);
+    let cur = new Array(m + 1).fill(0);
+    let best = 0; let end = 0;
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= m; j++) {
+        if (a[i - 1] === b[j - 1]) {
+          cur[j] = prev[j - 1] + 1;
+          if (cur[j] > best) { best = cur[j]; end = i; }
+        } else { cur[j] = 0; }
+      }
+      const swap = prev; prev = cur; cur = swap;
+    }
+    return { chars: best, text: a.slice(end - best, end) };
+  };
+  const groups = [...document.querySelectorAll('.workspace-body .v2-task-group')];
+  return groups.map((g) => {
+    const els = [
+      ['instructions', g.querySelector('.v2-instruction')],
+      ['stimulus', g.querySelector('.v2-stimulus')],
+      ['responsePrompt', g.querySelector('.v2-response-prompt')],
+    ];
+    const full = els.map(([role, el]) => {
+      const raw = norm(el && el.innerText);
+      return { role, el, raw, skel: skeleton(el && el.innerText) };
+    });
+    const pairs = [];
+    for (let i = 0; i < full.length; i++) {
+      for (let j = i + 1; j < full.length; j++) {
+        const a = full[i]; const b = full[j];
+        if (a.skel.length < 60 || b.skel.length < 60) continue;
+        const shorter = a.skel.length <= b.skel.length ? a : b;
+        const longer = a.skel.length <= b.skel.length ? b : a;
+        // 整段包含是最强的情形（一条完全重复了另一条）；否则退到最长公共子串。
+        const contained = longer.skel.includes(shorter.skel);
+        const overlap = contained
+          ? { chars: shorter.skel.length, text: shorter.skel }
+          : lcs(a.skel, b.skel);
+        const ratio = shorter.skel.length ? overlap.chars / shorter.skel.length : 0;
+        // 阈值：重复段 ≥120 字**且**占较短那一块的 ≥40%。实测真重复是 517/635 = 81%，
+        // 另外两组题型的偶然重合只有 3% / 10%，区分度足够。
+        if (overlap.chars >= 120 && ratio >= 0.4) {
+          pairs.push({
+            a: a.role, b: b.role, contained,
+            overlapChars: overlap.chars,
+            shorterChars: shorter.skel.length,
+            ratio: +ratio.toFixed(3),
+            sample: overlap.text.slice(0, 240),
+          });
+        }
+      }
+    }
+    const heading = g.querySelector('.v2-task-header h2');
+    return {
+      taskId: g.getAttribute('data-group-id'),
+      heading: norm(heading && heading.innerText),
+      blocks: full.map((b) => {
+        const dotRuns = b.raw.match(/[.]{6,}/g) || [];
+        return {
+          role: b.role,
+          present: Boolean(b.el),
+          chars: b.raw.length,
+          skeletonChars: b.skel.length,
+          text: b.raw.slice(0, 400),
+          skeleton: b.skel.slice(0, 400),
+          slotCount: b.el ? b.el.querySelectorAll('.v2-answer-slot').length : 0,
+          // 源文的空位是点线；答案位是真输入框。点线出现在哪一块，就说明那一块里装的是题干原文。
+          dottedBlanks: dotRuns.length,
+          longestDottedRun: Math.max(0, ...dotRuns.map((m) => m.length)),
+        };
+      }),
+      duplicatedPairs: pairs,
+    };
+  });
 })()`;
 
 /** 从权威稿（真实 IR）里查同一段文字出现在哪些节点——用来判定重复产生在前端还是源数据。 */
@@ -294,7 +507,8 @@ function evaluateLayout(snap) {
     `${tag}: 题号 ${nums.length} 个，逐字符换行的 ${wrapped.length} 个` +
     (wrapped.length ? `（例：${wrapped.slice(0, 3).map((n) => `「${n.text}」${n.w}×${n.h} ${n.cls}`).join("、")}）` : "")]);
 
-  // L7 / L8：两栏都在视口内且可独立滚动。
+  // L7：两栏都在视口内。
+  // L8（独立滚动）**不在这里**——它需要真的滚一下再量，见 `evaluateScroll`。
   if (passage && question) {
     // 窄屏（≤980px）由 `.workspace-pane-tabs` 接管，**按设计只显示一栏**。
     // 断言要区分「设计如此」与「被挤没了」，否则会把前者误判成布局错位。
@@ -316,11 +530,6 @@ function evaluateLayout(snap) {
       results.push(["L7 panes-within-viewport", inView,
         `${tag}: 原文栏 ${passage.w.toFixed(1)}px（right ${passage.right.toFixed(1)}）、题目栏 ${question.w.toFixed(1)}px（right ${question.right.toFixed(1)}），工作区 right ${page.right.toFixed(1)}`]);
     }
-    const oy = snap.probes?.passagePane?.overflowY;
-    const qy = snap.probes?.questionPane?.overflowY;
-    const scrollable = ["auto", "scroll"].includes(oy) && ["auto", "scroll"].includes(qy);
-    results.push(["L8 panes-independent-scroll", scrollable,
-      `${tag}: 原文栏 overflow-y=${oy}，题目栏 overflow-y=${qy}`]);
   }
 
   // L10：顶部工具栏与模式栏必须横跨工作区（任务书第 2 条）。
@@ -332,7 +541,87 @@ function evaluateLayout(snap) {
       `${tag}: 顶部栏宽 ${header.w.toFixed(1)}、模式栏宽 ${subHeader.w.toFixed(1)} / 工作区宽 ${page.w.toFixed(1)}`]);
   }
 
+  // ── 第二轮新增：验收重点改成「用户有没有足够空间阅读和编辑题稿」 ──────────────
+
+  // L11：题稿可用高度下限。
+  // 这是本轮的核心指标。上一轮「同时展开两个辅助面板」时实测题稿只剩 153.4px（视口 617），
+  // 用户报的就是这个。下限取 `max(200, 视口高 × 32%)`：用比例而不是固定 px，是因为
+  // 缺陷的本质是「辅助带按比例把空间吃光」，固定 px 在高窗口下判不出来。
+  const floor = Math.max(200, page.h * 0.32);
+  const visiblePanes = [
+    ["原文栏", passage, snap.probes?.passagePane?.display],
+    ["题目栏", question, snap.probes?.questionPane?.display],
+  ].filter(([, r, display]) => r && r.w > 0 && display !== "none");
+  if (body && visiblePanes.length) {
+    const minPaneH = Math.min(...visiblePanes.map(([, r]) => r.h));
+    results.push(["L11 passage-usable-height", minPaneH >= floor,
+      `${tag}: 题稿高 ${body.h.toFixed(1)}px，可见栏最小高 ${minPaneH.toFixed(1)}px（下限 ${floor.toFixed(1)}px = max(200, 视口高 ${page.h.toFixed(1)}×0.32)）`]);
+  }
+
+  // L12：遮挡检查。题稿之前的**每一带**（顶栏、模式栏、通知、保存失败提示、辅助面板容器、
+  // 窄屏切换栏…）都必须落在题稿上方，谁都不许压到题稿区域上。
+  // 旧版只比了「建议面板与题稿的水平重叠」，漏掉其余动态带。
+  const children = snap.probes?.__pageChildren ?? [];
+  const bodyIdx = children.findIndex((c) => c.isBody);
+  if (body && bodyIdx >= 0) {
+    const offenders = children.filter((c) => c.index < bodyIdx && c.h > 0.5 && c.bottom > body.y + 1);
+    results.push(["L12 no-overlay-on-passage", offenders.length === 0,
+      `${tag}: 题稿之前有 ${bodyIdx} 带，压到题稿区域（bottom > ${body.y.toFixed(1)}）的有 ${offenders.length} 个` +
+      (offenders.length ? `（${offenders.map((c) => `${c.cls} bottom=${c.bottom}`).join("、")}）` : "")]);
+  }
+
+  // L13：两个辅助面板**共用一个有总高度上限的区域**。
+  // 三条一起才说明「上限被收到了容器上」：
+  //   a) 容器本身有有限 `max-height`（不是 `none`）；
+  //   b) 容器里**同时只有一个**面板（互斥展开在 DOM 层面的结果）；
+  //   c) 面板自己**没有** vh 上限（`max-height: none`）——否则就是把旧写法换个地方重来。
+  // 另加一条与设计无关的信封：容器高度不得超过 `min(视口高×40%, 320px)`。
+  // 旧行为（34vh + 46vh = 60% 视口）会突破这个信封，所以它能拦住回归。
+  const aside = snap.probes?.__aside;
+  if (aside) {
+    const envelope = Math.min(page.h * 0.4, 320) + 4;
+    const childCap = aside.children?.[0]?.maxHeight ?? null;
+    const finiteCap = aside.maxHeight && aside.maxHeight !== "none";
+    const ok = Boolean(finiteCap) && aside.h <= envelope && childCap === "none" && aside.childCount === 1;
+    results.push(["L13 aside-shared-height-cap", ok,
+      `${tag}: 容器 max-height=${aside.maxHeight}、实际高 ${aside.h.toFixed(1)}px（信封 ${envelope.toFixed(1)}px）、` +
+      `容器内面板数 ${aside.childCount}、面板自身 max-height=${childCap}（要求 none）` +
+      `（面板：${(aside.children ?? []).map((c) => `${c.cls} ${c.h}px`).join("、") || "无"}）`]);
+  }
+
   return results;
+}
+
+/**
+ * L8：独立滚动的**实测**。
+ * 判据（全部成立才算过）：
+ *   1. 两栏**都真的能滚**（`scrollHeight - clientHeight > 0`）——否则这条断言没被行使，
+ *      不能算通过（用户明确要求「不能只根据 overflow-y:auto 就认定通过」）；
+ *   2. 把原文栏滚 140px 后，它自己的 `scrollTop` 确实变了（证明它是真的滚动容器）；
+ *   3. 此时题目栏的**矩形**与 **scrollTop** 都没动；
+ *   4. 反向再滚题目栏，原文栏的矩形与 scrollTop 也没动。
+ */
+function evaluateScroll(scroll, tag) {
+  if (!scroll) {
+    return [["L8 panes-independent-scroll", false, `${tag}: 滚动探针没有拿到两栏，这条断言没有执行`]];
+  }
+  const { before, passageScrollable, questionScrollable, afterPassageScroll, afterQuestionScroll } = scroll;
+  const sameRect = (a, b) =>
+    Math.abs(a.x - b.x) <= 0.5 && Math.abs(a.y - b.y) <= 0.5
+    && Math.abs(a.w - b.w) <= 0.5 && Math.abs(a.h - b.h) <= 0.5;
+  const bothScrollable = passageScrollable > 0 && questionScrollable > 0;
+  const passageScrolled = afterPassageScroll.pScrollTop > before.pScrollTop;
+  const questionStayed = sameRect(before.question, afterPassageScroll.question)
+    && afterPassageScroll.qScrollTop === before.qScrollTop;
+  const passageStayed = sameRect(before.passage, afterQuestionScroll.passage)
+    && afterQuestionScroll.pScrollTop === afterPassageScroll.pScrollTop;
+  const ok = bothScrollable && passageScrolled && questionStayed && passageStayed;
+  return [["L8 panes-independent-scroll", ok,
+    `${tag}: 原文栏可滚 ${passageScrollable}px / 题目栏可滚 ${questionScrollable}px；` +
+    `滚原文栏 scrollTop ${before.pScrollTop}→${afterPassageScroll.pScrollTop}` +
+    `（题目栏矩形${questionStayed ? "不变" : "被带动"}、scrollTop ${afterPassageScroll.qScrollTop}）；` +
+    `滚题目栏 scrollTop ${afterPassageScroll.qScrollTop}→${afterQuestionScroll.qScrollTop}` +
+    `（原文栏矩形${passageStayed ? "不变" : "被带动"}、scrollTop ${afterQuestionScroll.pScrollTop}）`]];
 }
 
 async function main() {
@@ -425,10 +714,40 @@ async function main() {
       })),
     }));
 
-    // 3) 快照 A：建议面板**关闭**（默认）——题稿应当占满整个工作区。
-    const snapClosed = { label: "recognition-closed", probes: await session.evaluate(COLLECT_FN) };
-    report.snapshots.push(snapClosed);
-    await session.screenshot("01-recognition-closed");
+    // 3) 快照 A：两个辅助面板都**关闭**（默认）——题稿应当占满整个工作区。
+    const snapshot = async (label, shotName) => {
+      const probes = await session.evaluate(COLLECT_FN);
+      report.snapshots.push({ label, probes });
+      if (shotName) await session.screenshot(shotName);
+      return probes;
+    };
+    // 互斥展开的证据：点开某一个之后，**另一个必须不在 DOM 里**。两个方向都要验。
+    const recordExclusivity = (label, expected) => {
+      const present = report.snapshots[report.snapshots.length - 1]?.probes?.__panelsPresent;
+      if (!present) return;
+      const other = expected === "issues" ? "recognition" : "issues";
+      report.exclusivityChecks.push({
+        label, expected,
+        issues: present.issues, recognition: present.recognition,
+        ok: present[expected] === true && present[other] === false,
+      });
+    };
+    // 独立滚动实测（在几个有代表性的状态下各做一次；滚动完自己复原）。
+    const measureScroll = async (label) => {
+      const value = await session.evaluate(SCROLL_FN);
+      report.scrollProbes.push({ label, value });
+      return value;
+    };
+
+    await snapshot("panels-closed", "01-panels-closed");
+    // 题目栏内部重复的逐块取证（题目栏 ↔ 原文栏那一路单独记在 `duplicateText`）。
+    report.questionPaneLayers = await session.evaluate(QUESTION_DUPLICATION_FN);
+    // 汇总成一句可读的结论。**记为诊断项而不是硬断言**：重复的成因在源数据层
+    // （`instructions` 里装了整段摘要，而同一段摘要又作为 `stimulus` 独立存在，见 findings），
+    // 修法在后端。把它做成硬断言会让「布局验收」因为一个无关缺陷长期变红，
+    // 反而盖住布局本身的回归信号。
+    report.questionPaneDuplication = (report.questionPaneLayers ?? []).flatMap((g) =>
+      (g.duplicatedPairs ?? []).map((p) => ({ taskId: g.taskId, heading: g.heading, ...p })));
     report.consoleErrors = session.cdp.events
       .filter((e) => e.method === "Runtime.consoleAPICalled" && ["error", "assert"].includes(e.params?.type))
       .map((e) => (e.params.args ?? []).map((a) => a.value ?? a.description ?? "").join(" ").slice(0, 300));
@@ -436,57 +755,75 @@ async function main() {
       .filter((e) => e.method === "Runtime.exceptionThrown")
       .map((e) => (e.params?.exceptionDetails?.exception?.description ?? e.params?.exceptionDetails?.text ?? "").slice(0, 400));
 
-    // 4) 快照 B：**打开**建议面板——缺陷就在这一步暴露（面板挤进同一行、题稿被推到右半）。
+    // 4) 快照 B：**打开**识别建议面板。
     await session.clickSelector('[data-testid="workspace-recognition-toggle"]');
     await session.waitFor(`!!document.querySelector('[data-testid="workspace-recognition"]')`, { timeoutMs: 20000, label: "recognition-panel" });
     await sleep(500);
-    const snapOpen = { label: "recognition-open", probes: await session.evaluate(COLLECT_FN) };
-    report.snapshots.push(snapOpen);
-    await session.screenshot("02-recognition-open");
+    await snapshot("recognition-open", "02-recognition-open");
+    recordExclusivity("open-recognition", "recognition");
     report.duplicateText = await session.evaluate(DUPLICATE_FN);
 
-    // 5) 快照 C：**问题列表**打开（另一个动态带，不得再次破坏网格）。
+    // 5) 快照 C：再打开**问题列表** —— 两个辅助面板**互斥**，识别建议必须自动收起。
+    //    互斥 + 共用上限一起保证「题稿不会被两个面板同时挤扁」（本轮任务书第 1 条）。
+    await session.clickSelector('[data-testid="workspace-issues"]');
+    await session.waitFor(`!!document.querySelector('[data-testid="workspace-issue-list"]')`, { timeoutMs: 20000, label: "issue-list" });
+    await sleep(500);
+    await snapshot("issues-open", "03-issues-open");
+    recordExclusivity("open-issues", "issues");
+    await measureScroll("issues-open");
+
+    // 5b) 反向再验一次互斥：点识别建议 → 问题列表必须自动收起。
+    await session.clickSelector('[data-testid="workspace-recognition-toggle"]');
+    await sleep(500);
+    await snapshot("recognition-open-again", "04-recognition-open-again");
+    recordExclusivity("open-recognition-again", "recognition");
+
+    // 5c) 关掉识别建议 → 两个面板都关闭（打开时占空间、关掉后必须一点都不留）。
+    await session.clickSelector('[data-testid="workspace-recognition-toggle"]');
+    await sleep(400);
+    await snapshot("panels-closed-again", "05-panels-closed-again");
+    await measureScroll("panels-closed");
+
+    // 6) 低高度窗口（本轮任务书第 5 条）：题稿仍要有可用高度，面板上限也要跟着收缩。
+    await session.cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: viewportWidth, height: lowHeight, deviceScaleFactor: 1, mobile: false,
+    });
+    await sleep(600);
+    await session.clickSelector('[data-testid="workspace-issues"]');
+    await sleep(500);
+    await snapshot("low-height-issues-open", "06-low-height-issues-open");
+    await measureScroll("low-height-issues-open");
     await session.clickSelector('[data-testid="workspace-issues"]');
     await sleep(400);
-    const snapIssues = { label: "issues-open", probes: await session.evaluate(COLLECT_FN) };
-    report.snapshots.push(snapIssues);
-    await session.screenshot("03-issues-open");
+    await snapshot("low-height-panels-closed", "07-low-height-panels-closed");
 
-    // 6) 快照 D：窄屏（980px 断点附近）——不得靠固定宽度或隐藏溢出来掩盖错位。
+    // 7) 窄屏（980px 断点附近）+ 面板打开：不得靠固定宽度或隐藏溢出来掩盖错位。
     await session.cdp.send("Emulation.setDeviceMetricsOverride", {
       width: 900, height: viewportHeight, deviceScaleFactor: 1, mobile: false,
     });
     await sleep(600);
-    const snapNarrow = { label: "narrow-900", probes: await session.evaluate(COLLECT_FN) };
-    report.snapshots.push(snapNarrow);
-    await session.screenshot("04-narrow-900");
+    await session.clickSelector('[data-testid="workspace-issues"]');
+    await sleep(500);
+    await snapshot("narrow-900-issues-open", "08-narrow-900-issues-open");
+    await session.clickSelector('[data-testid="workspace-issues"]');
+    await sleep(400);
+    await snapshot("narrow-900-panels-closed", "09-narrow-900-panels-closed");
 
-    // 7) 回到原视口，把两个面板**关掉**：题稿必须回到占满整个工作区。
-    //    「打开时错位、关掉后仍留一列空白」也是一种缺陷，只看打开态会漏掉。
+    // 7b) 回到原视口，继续验编辑/预览与保存链。
     await session.cdp.send("Emulation.setDeviceMetricsOverride", {
       width: viewportWidth, height: viewportHeight, deviceScaleFactor: 1, mobile: false,
     });
     await sleep(500);
-    await session.clickSelector('[data-testid="workspace-recognition-toggle"]');
-    await sleep(400);
-    report.snapshots.push({ label: "recognition-closed-again", probes: await session.evaluate(COLLECT_FN) });
-    await session.screenshot("05-recognition-closed-again");
-    await session.clickSelector('[data-testid="workspace-issues"]');
-    await sleep(400);
-    report.snapshots.push({ label: "issues-closed", probes: await session.evaluate(COLLECT_FN) });
-    await session.screenshot("06-issues-closed");
 
     // 8) 编辑 / 学生预览 切换：两条路径都要占满工作区，双栏都要在视口内。
     await session.clickSelector('[data-testid="workspace-mode-student"]');
     await session.waitFor(`!!document.querySelector('[data-testid="workspace-student-preview"]')`, { timeoutMs: 20000, label: "student-preview" });
     await sleep(500);
-    report.snapshots.push({ label: "student-preview", probes: await session.evaluate(COLLECT_FN) });
-    await session.screenshot("07-student-preview");
+    await snapshot("student-preview", "10-student-preview");
     await session.clickSelector('[data-testid="workspace-mode-edit"]');
     await session.waitFor(`!!document.querySelector('[data-testid="exam-workspace"] .exam-canvas-v2')`, { timeoutMs: 20000, label: "back-to-edit" });
     await sleep(400);
-    report.snapshots.push({ label: "edit-again", probes: await session.evaluate(COLLECT_FN) });
-    await session.screenshot("08-edit-again");
+    await snapshot("edit-again", "11-edit-again");
 
     // 9) 编辑保存与重新打开：改一个答案 → 等保存态落定 → 回题库 → 重新打开 → 值还在。
     //    这条同时验证「保存链没被本轮 CSS 改动碰坏」——改了页面骨架却把编辑器弄丢，
@@ -504,7 +841,7 @@ async function main() {
       );
       report.saveCycle.before = before;
       report.saveCycle.typed = marker;
-      await session.screenshot("09-answer-edited");
+      await session.screenshot("12-answer-edited");
       await session.clickSelector('[data-testid="workspace-back"]');
       await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 30000, label: "library-after-back" });
       await session.clickSelector(`[data-item-id="${itemId}"] .library-row-main`);
@@ -513,11 +850,10 @@ async function main() {
       const reopened = await session.evaluate(`document.querySelector(${JSON.stringify(answerSel)})?.value ?? null`);
       report.saveCycle.reopened = reopened;
       report.saveCycle.roundTripped = reopened === marker;
-      report.snapshots.push({ label: "reopened", probes: await session.evaluate(COLLECT_FN) });
-      await session.screenshot("10-reopened");
+      await snapshot("reopened", "13-reopened");
     }
 
-    // 10) 判定：每个快照都要满足 L1–L8 与 L10（L9 是单列断言，在下面单独追加）。
+    // 10) 判定：每个快照都要满足 L1–L7、L10–L13（L8 / L9 / L14 需要真的动一下，单独追加）。
     const all = [];
     for (const snap of report.snapshots) all.push(...evaluateLayout(snap));
     // 同一断言在多个快照下都过才算过；把结果按 id 聚合，便于一眼看出是哪一步坏的。
@@ -532,6 +868,35 @@ async function main() {
     for (const v of report.assertionSummary) {
       recordAssertion(v.id, v.ok, v.details.join(" | "));
     }
+
+    // L8：独立滚动实测（在几个代表性状态各做一次；全部通过才算过）。
+    // 这里**不**接受「没得滚所以跳过」：内容没溢出就说明这条断言没被行使，
+    // 如实判 FAIL 并写清原因，免得把「没跑」当成「跑过了」。
+    const scrollResults = report.scrollProbes.flatMap(({ label, value }) => evaluateScroll(value, label));
+    if (!scrollResults.length) {
+      scrollResults.push(["L8 panes-independent-scroll", false, "滚动探针一次都没有执行"]);
+    }
+    const l8ok = scrollResults.every(([, ok]) => ok);
+    report.assertionSummary.push({
+      id: "L8 panes-independent-scroll",
+      ok: l8ok,
+      details: scrollResults.map(([, , detail]) => detail),
+    });
+    recordAssertion("L8 panes-independent-scroll", l8ok, scrollResults.map(([, , d]) => d).join(" | "));
+
+    // L14：两个辅助面板互斥展开（两个方向都要验到）。
+    const checks = report.exclusivityChecks ?? [];
+    const hasBothDirections =
+      checks.some((c) => c.expected === "issues" && c.ok)
+      && checks.some((c) => c.expected === "recognition" && c.ok);
+    const l14ok = checks.length > 0 && checks.every((c) => c.ok) && hasBothDirections;
+    report.assertionSummary.push({
+      id: "L14 aside-panels-exclusive",
+      ok: l14ok,
+      details: checks.map((c) => `${c.label}: 问题=${c.issues} 识别建议=${c.recognition}（期望 ${c.expected}）`),
+    });
+    recordAssertion("L14 aside-panels-exclusive", l14ok,
+      `两个方向都验到=${hasBothDirections}；` + checks.map((c) => `${c.label}:问题=${c.issues}/识别=${c.recognition}`).join("、"));
 
     // L9：编辑保存与重新打开（单列，不属于任何快照）。
     // 「有输入框」是这条断言的前提——没有输入框时它**没跑过**，不能算通过。

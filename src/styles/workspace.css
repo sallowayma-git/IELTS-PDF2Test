@@ -53,15 +53,45 @@
   color: var(--workspace-ink);
 }
 
-/* 动态带：通知、保存失败提示、问题列表、识别建议、窄屏切换栏。
+/* 动态带：通知、保存失败提示、辅助面板容器、窄屏切换栏。
  * 一律按 DOM 顺序纵向堆叠、高度由内容决定（缺席时归零），谁出现都不会再挤出第二列，
  * 也不会在无内容时留下大块空白。 */
 .workspace-notice,
 .workspace-save-recovery,
-.workspace-issues,
-.workspace-recognition,
+.workspace-aside,
 .workspace-pane-tabs {
   flex: 0 0 auto;
+}
+
+/* ================ 辅助面板容器（问题 / 识别建议） ================ */
+/* 两个面板**互斥展开**（由顶栏两个按钮的 onClick 保证），并共用**这一个**有总高度上限的区域。
+ *
+ * 为什么必须共用上限、而不是各给一个 vh：此前 `.workspace-issues` 写 `max-height: 34vh`、
+ * `.workspace-recognition` 写 `max-height: 46vh`，两个同时展开时合计吃掉约 80vh。实测 1080×900
+ * 视口下，56px 顶栏 + 34px 模式栏之外只剩约 810px，被两个面板拿走 ~650px 后题稿只剩约 150px——
+ * 用户报的「题稿被压缩到约 150px」就是这个。分别设上限永远堵不住：面板数量或内容再多一个，
+ * 同样的加法又会重演。上限收到**容器**上之后，「辅助面板最多占多少」变成一个数字，与面板个数无关。
+ *
+ * 上限同时给 px 与 vh 两个界：`min()` 取小者。低高度窗口（如 600px）下 32vh 只有 192px，
+ * 题稿仍能拿到约 300px；高窗口（如 1400px）下 px 界生效，避免辅助面板在高屏上无意义地长高。
+ * 溢出交给容器自己滚动，因此内部面板不再各自带 `max-height` / `overflow`（否则会出现两层滚动条）。 */
+.workspace-aside {
+  --workspace-aside-max-height: min(32vh, 300px);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  max-height: var(--workspace-aside-max-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 面板在容器内按内容取高；容器封顶后由容器统一滚动。 */
+.workspace-aside > .workspace-issues,
+.workspace-aside > .workspace-recognition {
+  flex: 0 0 auto;
+  max-height: none;
+  overflow: visible;
 }
 
 /* ================ Header ================ */
@@ -196,11 +226,16 @@
 }
 
 /* Header actions */
+/* `gap: 0` + 按钮 `padding: 0` 的组合对纯图标按钮没问题（56px 的方框本身就是间距），
+ * 但顶栏里有两个**带文字**的按钮：「问题 3 · 阻断 3」与「识别建议」。零内边距 + 零间隙
+ * 让它们的文字直接连写成「问题 3 · 阻断 3识别建议」——用户报的「顶部按钮文字挤连」。
+ * 这里给按钮补上左右内边距、给容器补上间隙；图标按钮有 `min-width: 56px` 兜底，
+ * 16px 图标 + 2×12px 内边距 = 40px < 56px，所以仍是 56px 的方框，外观不变。 */
 .workspace-header-actions {
   display: flex;
   align-items: center;
   align-self: stretch;
-  gap: 0;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -211,7 +246,7 @@
   height: var(--workspace-header-height);
   align-items: center;
   justify-content: center;
-  padding: 0;
+  padding: 0 12px;
   min-width: 56px;
   color: var(--workspace-muted-ink);
   background: transparent;
@@ -219,6 +254,8 @@
   border-radius: 0;
   cursor: pointer;
   gap: 6px;
+  /* 顶栏是 `flex-wrap: nowrap`，文字按钮一旦折行会把顶栏撑高。 */
+  white-space: nowrap;
 }
 
 .workspace-header button:not(.workspace-back-button):hover {
@@ -345,30 +382,79 @@
 }
 
 /* ================ Issues panel ================ */
+/* 高度上限不在这里写：容器 `.workspace-aside` 统一封顶（见该规则注释）。 */
 .workspace-issues {
-  max-height: 34vh;
   min-width: 0;
   padding: 10px var(--workspace-spacing-base);
   border-bottom: 1px solid var(--workspace-line);
   background: rgba(255, 255, 255, 0.6);
-  overflow: auto;
 }
 
 .workspace-issues ul {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* 问题卡片：第一行是「⚠ 徽标 + 标题」，下面依次是说明与操作按钮。
+ *
+ * 此前 `severity-badge` / `workspace-task-title` / `workspace-task-detail` **三个类名全无样式**，
+ * 于是徽标、标题、说明挤在 `li` 的默认行内流里：徽标「⚠」与标题「第 27–40 题…」之间零空隙，
+ * 说明 `<small>` 是行内元素、跟在标题后面随宽度随机换行，与下方按钮之间也没有间距——
+ * 读起来像一坨连写的字。这里用两列网格把「徽标 | 标题」定死，说明与按钮各占一整行。 */
 .workspace-issues li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px 8px;
   min-width: 0;
 }
 
+/* 没有阻断徽标时标题独占整行，避免第 2 列留下一条空的缩进。 */
+.workspace-issues .workspace-task-title {
+  grid-column: 1 / -1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* 带阻断徽标的卡片：标题让到第 2 列。用 `li.blocker`（模板里已经有这个类）而不是
+ * `:has()`，免得依赖较新的选择器支持。 */
+.workspace-issues li.blocker > .workspace-task-title {
+  grid-column: 2;
+}
+.workspace-issues .severity-badge {
+  grid-column: 1;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--workspace-danger);
+}
+
+/* 说明与按钮横跨两列（它们不属于「徽标 + 标题」这一行）。 */
+.workspace-issues .workspace-task-detail,
+.workspace-issues li > .button-row {
+  grid-column: 1 / -1;
+}
+
+.workspace-issues .workspace-task-detail {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--workspace-muted-ink);
+}
+
+.workspace-issues .button-row {
+  margin-top: 2px;
+}
+
+/* 操作按钮按内容取宽、横向排布。此前被 `width: 100%` 撑成每行一个，
+ * 三张卡片光按钮就占掉约 315px，是辅助面板高度的主要来源——与「给题稿留出空间」直接冲突。 */
 .workspace-issues li button {
-  width: 100%;
-  padding: 7px 10px;
+  width: auto;
+  padding: 6px 12px;
   border: 1px solid var(--workspace-line);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.7);
@@ -377,6 +463,7 @@
   overflow-wrap: anywhere;
   cursor: pointer;
   font: inherit;
+  font-size: 13px;
   min-height: 0;
 }
 
@@ -767,14 +854,15 @@ body.workspace-resizing * {
 }
 
 /* ================ 识别建议面板 ================ */
-/* 折叠区域：横向占满工作区、纵向按内容取高（`max-height` 封顶后自身滚动），
- * 与题稿**上下**排列而不是并排。`flex: 0 0 auto` 由上方动态带分组规则给出。
- * 这里不再写 `grid-row` / `grid-column` —— 那个写法在单列显式网格里会把
+/* 折叠区域：横向占满工作区、纵向按内容取高。**高度上限不在这里写**——两个辅助面板互斥展开、
+ * 共用 `.workspace-aside` 这一个总上限（见该规则注释），面板自己再设 vh 上限只会让
+ * 「同时展开吃掉大半屏」在下次多加一个面板时重演。这里也不再写 `overflow`，
+ * 溢出统一由容器滚动，避免容器与面板各出一条滚动条。
+ * 同样不再写 `grid-row` / `grid-column` —— 那个写法在单列显式网格里会把
  * `.workspace-body` 挤进隐式第 2 列（见 `.workspace-page` 注释）。 */
 .workspace-recognition {
   z-index: 2;
-  max-height: 46vh;
-  overflow-y: auto;
+  min-width: 0;
   padding: 12px var(--workspace-spacing-base);
   border-bottom: 1px solid var(--workspace-soft-line);
   background: var(--workspace-panel);
@@ -797,6 +885,18 @@ body.workspace-resizing * {
   margin: 6px 0 0;
   font-size: 13px;
   color: var(--workspace-muted-ink);
+}
+
+/* 安静态：面板里没有任何需要用户看的条目（`isRecognitionQuiet`），整块收敛成一行短状态。
+ * 这里同时收紧面板自身的上下内边距——否则「一句话」还顶着 12px+12px 的留白占一块高度，
+ * 而这块高度是从题稿身上拿走的。 */
+.workspace-recognition[data-quiet="true"] {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.workspace-recognition-idle {
+  margin: 2px 0 0;
 }
 
 .workspace-recognition-summary {

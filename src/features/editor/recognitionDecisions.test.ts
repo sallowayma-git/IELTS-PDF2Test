@@ -11,6 +11,7 @@ import {
   groupByDependency,
   hasAnyChainRun,
   isDecided,
+  isRecognitionQuiet,
   isUndoAlreadyApplied,
   parseUndoPatch,
   pendingDecisionCount,
@@ -196,6 +197,49 @@ describe("hasAnyChainRun / emptyStateMessage — 空列表不能冒充「没有�
   it("undefined view 走「还没有可核对的结果」", () => {
     expect(hasAnyChainRun(undefined)).toBe(false);
     expect(emptyStateMessage(undefined)).toContain("还没有产出");
+  });
+});
+
+// 空面板收敛（本轮任务书第二节）：四颗全零的计数胶囊不携带信息，
+// 却要从题稿身上拿走一整块面板高度。收敛的判据必须**保守**——
+// 漏收敛只是多占一点空间，误收敛会把该给用户看的东西藏起来。
+describe("isRecognitionQuiet — 只有真的没什么可说时才收敛成一行", () => {
+  it("没有任何条目、四个计数全零 → 收敛", () => {
+    expect(isRecognitionQuiet(view([]))).toBe(true);
+  });
+
+  it("有待确认的条目 → 不收敛", () => {
+    expect(isRecognitionQuiet(view([item({ decisionId: "r1", resolution: "needs_review" })]))).toBe(false);
+  });
+
+  it("无法验证的条目 → 不收敛", () => {
+    expect(isRecognitionQuiet(view([item({ decisionId: "u1", resolution: "unverifiable" })]))).toBe(false);
+  });
+
+  it("已自动修正的条目 → 不收敛（撤销入口必须还在）", () => {
+    const v = view([item({ decisionId: "a1", resolution: "auto_fixed" })], {
+      summary: { agreed: 0, autoFixed: 1, needsReview: 0, unverifiable: 0 }
+    });
+    expect(isRecognitionQuiet(v)).toBe(false);
+  });
+
+  it("条目都已决策（rejected）也仍然要显示处理结果 → 不收敛", () => {
+    const v = view([item({ decisionId: "r1", resolution: "needs_review", status: "rejected" })]);
+    expect(isRecognitionQuiet(v)).toBe(false);
+  });
+
+  it("条目为空但计数非零 → 不收敛（计数本身就是要给用户看的信息）", () => {
+    const v = view([], { summary: { agreed: 12, autoFixed: 0, needsReview: 0, unverifiable: 0 } });
+    expect(isRecognitionQuiet(v)).toBe(false);
+  });
+
+  it("批次过期 → 不收敛（过期提示必须被看到）", () => {
+    const v = view([], { stale: true });
+    expect(isRecognitionQuiet(v)).toBe(false);
+  });
+
+  it("拿不到视图 → 不收敛（那是「不知道」，不是「没什么可说」）", () => {
+    expect(isRecognitionQuiet(undefined)).toBe(false);
   });
 });
 

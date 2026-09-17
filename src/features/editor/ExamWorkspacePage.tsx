@@ -351,7 +351,14 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             <button
               className={blockers ? "has-blockers" : ""}
               data-testid="workspace-issues"
-              onClick={() => setIssuesOpen((open) => !open)}
+              aria-expanded={issuesOpen}
+              // 两个辅助面板**互斥**：打开一个就关掉另一个。它们共用 `.workspace-aside`
+              // 这一个有总高度上限的区域，同时展开会把题稿挤到只剩一百多像素。
+              onClick={() => setIssuesOpen((open) => {
+                const next = !open;
+                if (next) setRecognitionOpen(false);
+                return next;
+              })}
               aria-label={!taskSummary.ready
                 ? "正在检查需要处理的问题"
                 : taskSummary.blockerCount
@@ -366,7 +373,12 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             <button
               data-testid="workspace-recognition-toggle"
               aria-expanded={recognitionOpen}
-              onClick={() => setRecognitionOpen((open) => !open)}
+              // 与「问题」按钮对称的互斥逻辑（见上）。
+              onClick={() => setRecognitionOpen((open) => {
+                const next = !open;
+                if (next) setIssuesOpen(false);
+                return next;
+              })}
             >识别建议</button>
             <button title="撤销" aria-label="撤销" disabled={!editor.canUndo} onClick={editor.undo}><Undo2 size={16} /></button>
             <button title="重做" aria-label="重做" disabled={!editor.canRedo} onClick={editor.redo}><Redo2 size={16} /></button>
@@ -457,7 +469,15 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </div>
       ) : null}
 
-      {issuesOpen && mode === "edit" ? (
+      {/* 两个辅助面板**互斥展开**，并共用**一个**有总高度上限的区域。
+          此前它们各自带 `max-height: 34vh` / `46vh`，同时展开会吃掉约 80vh
+          （56px 顶栏 + 34px 模式栏之外几乎不剩），题稿被压到约 150px。
+          互斥由上面两个按钮的 onClick 保证，共用上限由 `.workspace-aside` 保证——
+          两层都要有：只设互斥的话，单个面板仍可能独占大半屏；只设共用上限的话，
+          两个面板仍会同时展开去抢同一个上限。 */}
+      {(issuesOpen || recognitionOpen) && mode === "edit" ? (
+      <div className="workspace-aside" data-testid="workspace-aside">
+      {issuesOpen ? (
         <aside
           className="workspace-issues"
           aria-label="需要处理的问题"
@@ -558,7 +578,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </aside>
       ) : null}
 
-      {recognitionOpen && mode === "edit" ? (
+      {recognitionOpen ? (
         <RecognitionPanel
           itemId={itemId}
           editVersion={editor.version}
@@ -570,6 +590,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           // 撤销本身走正式后端命令，面板自己发，不再经由编辑器补丁。
           answerKey={editor.draft?.answerKey as Record<string, unknown> | undefined}
         />
+      ) : null}
+      </div>
       ) : null}
 
       <div className="workspace-pane-tabs" role="tablist" aria-label="切换原文与题目">

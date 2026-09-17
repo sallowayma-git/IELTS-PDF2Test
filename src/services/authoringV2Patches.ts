@@ -10,6 +10,7 @@ import type {
   TaskTypeV2
 } from "../types";
 import type { ContentNodeV2, DiagramHotspotV2 } from "../types/content-doc-v2";
+import { taskTypeLabel as displayTaskTypeLabel } from "../utils/displayLabels";
 
 type JsonObject = Record<string, unknown>;
 
@@ -576,15 +577,13 @@ export function answerValueForText(value: string): AnswerValueV2 {
   return { kind: "text", values: [value], normalization: "ielts_default" };
 }
 
+/**
+ * 题型 → 用户文案。
+ *
+ * 这里**不再自己维护一份表**：同一份映射曾经同时存在于本文件与 `utils/displayLabels`，
+ * 而题面渲染用的是后者。两张表一旦分叉，「题型名翻译」就会在不同界面里给出不同答案。
+ * 现在统一委托给 `displayLabels.taskTypeLabel`。
+ */
 export function taskTypeLabel(taskType: TaskTypeV2): string {
-  const labels: Partial<Record<TaskTypeV2, string>> = {
-    multiple_choice: "多选",
-    single_choice: "单选",
-    matching_headings: "标题匹配",
-    summary_completion: "摘要填空",
-    note_completion: "笔记填空",
-    table_completion: "表格填空",
-    diagram_label_completion: "图表填空"
-  };
-  return labels[taskType] ?? taskType;
+  return displayTaskTypeLabel(taskType);
 }

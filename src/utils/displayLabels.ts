@@ -1,4 +1,4 @@
-import type { JobStatus, LibraryStatus, RawLibraryStatus, ValidationIssue, ValidationLayer, WorkflowStep } from "../types";
+import type { JobStatus, LibraryStatus, RawLibraryStatus, TaskTypeV2, ValidationIssue, ValidationLayer, WorkflowStep } from "../types";
 
 export const jobStatusLabels: Record<JobStatus, string> = {
   Working: "处理中",
@@ -47,6 +47,45 @@ export const validationLayerLabels: Record<ValidationLayer, string> = {
   DomProtocol: "答题控件",
   RuntimePreview: "预览检查"
 };
+
+/**
+ * 题型的中文名（**用户文案**，不是内部枚举名）。
+ *
+ * 题面里每个题组的小标题此前直接渲染 `task.taskType`，于是用户看到的是
+ * `summary_completion` 这种内部标识符。这里给出全部 `TaskTypeV2` 的对照；
+ * 用 `Record<TaskTypeV2, string>` 而不是 `Partial<...>` 是刻意的——
+ * 契约以后新增题型时类型检查会立刻报缺项，不会再漏一个没翻译的名字。
+ */
+export const taskTypeLabels: Record<TaskTypeV2, string> = {
+  single_choice: "单选题",
+  multiple_choice: "多选题",
+  true_false_not_given: "判断题（TRUE / FALSE / NOT GIVEN）",
+  yes_no_not_given: "判断题（YES / NO / NOT GIVEN）",
+  matching_information: "段落信息匹配",
+  matching_headings: "段落标题匹配",
+  matching_features: "特征匹配",
+  matching_sentence_endings: "句子结尾匹配",
+  classification: "分类匹配",
+  sentence_completion: "句子填空",
+  summary_completion: "摘要填空",
+  note_completion: "笔记填空",
+  table_completion: "表格填空",
+  form_completion: "表单填空",
+  flowchart_completion: "流程图填空",
+  diagram_label_completion: "图表标注",
+  plan_map_label_completion: "平面图标注",
+  short_answer: "简答题"
+};
+
+/**
+ * 题型 → 用户文案。
+ * 认不出的取值**原样返回**而不是套一层「未知题型」：题型来自后端契约，
+ * 前端多一层兜底文案只会把「后端多了一个题型」这件事藏起来。
+ */
+export function taskTypeLabel(taskType: TaskTypeV2 | string | undefined): string {
+  if (!taskType) return "题型未标注";
+  return taskTypeLabels[taskType as TaskTypeV2] ?? String(taskType);
+}
 
 export function jobStatusLabel(status: JobStatus | string | undefined): string {
   if (!status) return "未知状态";

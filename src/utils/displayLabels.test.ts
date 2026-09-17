@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { ValidationIssue } from "../types";
+import type { TaskTypeV2, ValidationIssue } from "../types";
 import {
   jobStatusLabel,
   libraryStatusLabel,
   normalizeLibraryStatus,
   runtimeModeLabel,
+  taskTypeLabel,
+  taskTypeLabels,
   validationIssueDisplay,
   validationLayerLabel,
   workflowStepLabel
@@ -66,6 +68,40 @@ describe("状态文案", () => {
     expect(runtimeModeLabel("static-rust")).toBe("基础检查已通过");
     expect(runtimeModeLabel("fallback")).toBe("开发预览检查");
     expect(runtimeModeLabel("weird")).toBe("weird");
+  });
+});
+
+// 题型标题的用户文案（本轮任务书第二节）：题面里每个题组的小标题曾经直接渲染
+// `task.taskType`，用户看到的是 `summary_completion` 这种内部标识符。
+describe("taskTypeLabel — 题面不出现内部枚举名", () => {
+  it("内部标识符翻成中文", () => {
+    expect(taskTypeLabel("summary_completion")).toBe("摘要填空");
+    expect(taskTypeLabel("note_completion")).toBe("笔记填空");
+    expect(taskTypeLabel("matching_headings")).toBe("段落标题匹配");
+    expect(taskTypeLabel("short_answer")).toBe("简答题");
+  });
+
+  it("全部 TaskTypeV2 都有中文名，且没有一个等于自己的枚举名", () => {
+    const all: TaskTypeV2[] = [
+      "single_choice", "multiple_choice", "true_false_not_given", "yes_no_not_given",
+      "matching_information", "matching_headings", "matching_features", "matching_sentence_endings",
+      "classification", "sentence_completion", "summary_completion", "note_completion",
+      "table_completion", "form_completion", "flowchart_completion", "diagram_label_completion",
+      "plan_map_label_completion", "short_answer"
+    ];
+    for (const type of all) {
+      const label = taskTypeLabel(type);
+      expect(label, type).toBeTruthy();
+      expect(label, `${type} 没有被翻译`).not.toBe(type);
+      expect(label, `${type} 的文案里不该出现下划线`).not.toContain("_");
+    }
+    // 映射表的键集合必须与枚举集合完全一致（多一个或少一个都说明契约变了）。
+    expect(Object.keys(taskTypeLabels).sort()).toEqual([...all].sort());
+  });
+
+  it("认不出的取值原样返回，空值给中性兜底", () => {
+    expect(taskTypeLabel("brand_new_type")).toBe("brand_new_type");
+    expect(taskTypeLabel(undefined)).toBe("题型未标注");
   });
 });
 

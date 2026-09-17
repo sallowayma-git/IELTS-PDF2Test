@@ -259,6 +259,34 @@ export function emptyStateMessage(view: RecognitionDecisionViewV1 | undefined): 
 }
 
 /**
+ * 面板是不是「没什么可说的」——用于把空面板收敛成一行短状态（本轮任务书第二节）。
+ *
+ * 此前只要拿到视图就无条件渲染四颗计数胶囊 + 一句空态文案：一份「识别还没跑」的题
+ * 也会占掉一整块面板高度，而这块高度是从题稿身上拿走的。四颗全零的胶囊不携带任何信息，
+ * 空态文案一句就够。
+ *
+ * 判据刻意保守：**只要有任何一条需要用户看的东西就照常展开完整面板**——
+ *   - 待确认 / 无法验证的条目（含已处理过的，它们要显示处理结果）；
+ *   - 已自动修正的条目（要提供撤销）；
+ *   - 过期提示（提示必须被看到）；
+ *   - 四个计数里任何一个非零。
+ * 拿不到视图（还没读到 / 读失败）时返回 `false`：那是「不知道」，不是「没什么可说的」，
+ * 空面板 + 错误提示必须照常出现。
+ */
+export function isRecognitionQuiet(view: RecognitionDecisionViewV1 | undefined): boolean {
+  if (!view) return false;
+  if (reviewItems(view).length) return false;
+  if (autoFixedItems(view).length) return false;
+  if (describeStaleness(view)) return false;
+  const summary = view.summary;
+  if (!summary) return true;
+  return summary.agreed === 0
+    && summary.autoFixed === 0
+    && summary.needsReview === 0
+    && summary.unverifiable === 0;
+}
+
+/**
  * 过期批次：用户已经改过题稿，这批建议不能直接应用，必须显式提示并允许重新核验。
  *
  * 刻意**不提版本号**（本轮任务书第一节）：用户不需要知道「基于 v3 生成、已经改到 v5」，
