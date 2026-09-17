@@ -2339,4 +2339,74 @@ taskId 稳定为 `missing-answer:q27+…+q40`，定位命中 `group-1-stimulus-b
 `import-batch-timeline`、`freeze-order-proof`）**本轮不动**：它们要么已验证通过、要么不在本轮范围，
 在没有新增证据的情况下改一个已经跑通的脚本，只会引入没有验证过的改动。
 
+## 七、未跟踪文件的审查，与「无批次」根因的新证据
+
+上一轮留下 5 个**未跟踪**文件（既没提交、也没说明）。收尾时逐一审查：
+
+| 文件 | 判断 | 处置 |
+| --- | --- | --- |
+| `tauri-cdp-freeze-order-proof.mjs` | **证据类**：F-R12-2 根因的因果实验（A 无批次 → B 播种 → C 重试） | 提交（并修正其过度结论，见 F-R15-6） |
+| `tauri-cdp-import-batch-timeline.mjs` | **证据类**：观测批次是否出现，并抓应用日志里的冻结失败行 | 提交 |
+| `inspect-run-db.mjs` | **通用诊断**：只读宿主 SQLite，看批次/决策/链状态有没有落盘 | 提交 |
+| `.patch-issue-list.mjs` | 一次性补丁脚本（自称「用完即删」），补丁**已应用**（issue-list 里有 3 处 `ROOT_CAUSE_ALIASES`） | 移到 `tmp/superseded-scripts/` |
+| `lib/fake-llm-gateway.mjs` | **坏文件**：`import "./cloud-outline-samples.mjs"` 而该模块**不存在**；且已被 `scripts/controlled-llm-service.mjs` 取代；全仓无任何引用 | 移到 `tmp/superseded-scripts/` |
+
+两个坏/一次性文件是**移走**而不是删除（可逆），没有提交。
+
+### F-R15-6（验收工具，已修）：因果实验把「实验没跑成」读成了「假设被否证」
+
+`tauri-cdp-freeze-order-proof.mjs` 原版在 C 阶段只要「重试后仍无批次」就直接断言
+**「H1 不成立：冻结失败并非唯一原因，另有缺陷阻断 reconcile」**。
+
+实测跑一次后，用 `inspect-run-db.mjs` 打开该 run 的数据库，看到的是：
+
+```json
+{"stage":"failed","local_status":"failed","cloud_status":"skipped","reconcile_status":"skipped",
+ "last_error_code":"editable_draft_exists; pass allowOverwrite=true before regenerating draft",
+ "retry_count":"1"}
+```
+
+**C 阶段的重试压根没跑起来** —— 它被产品自己的草稿保护（`editable_draft_exists`）挡下了。
+「重试没执行」与「重试执行了但仍无批次」是两件完全不同的事，只看识别视图分不出来，
+于是脚本把一个**条件不成立的实验**当成了**对假设的否证**。
+
+修法（三处）：
+
+1. C 阶段失败时先只读宿主 SQLite 取 `last_error_code`；命中 `editable_draft_exists` →
+   报 **`inconclusive`**（新增退出码 4），不再写「H1 不成立」。
+2. 结论从**两态改为三态**：`established` / `refuted` / `inconclusive`
+   ——「没证实」和「被否证」不是一回事。
+3. 结论的计算**移到日志提取之后**（原来在 `try` 里算，而应用日志要等 `finally` 关掉应用才拿得到；
+   算早了就会得出「日志里没有证据」这种自己造出来的结论）。
+   同时新增 `freezeFailures` / `freezeFailureObserved`：单独提取冻结失败行。
+
+复跑确认（`causality=inconclusive`）：
+
+```
+[freeze-order] causality=inconclusive
+[freeze-order] freezeFailureObserved=true
+[freeze-order] lines=["[processing] freeze local candidate snapshot failed for import-…: canonical_not_seeded:import-…"]
+[freeze-order] conclusion=本实验**不确定**：C 阶段的重试被产品自身的草稿保护挡下
+  （last_error_code=editable_draft_exists; …），条件不成立，H1 既未被证实也未被否证。
+  不过 H1 的**机制前提有日志证据**：首次导入时冻结确实因权威稿未播种而失败（…canonical_not_seeded…）。
+```
+
+### 关于 F-R12-2（「无云导入无批次」）——本轮把根因推进了一步，交给后端
+
+这一条**本轮不改后端**，只把证据整理清楚：
+
+| 观测 | 证据 | 结论 |
+| --- | --- | --- |
+| 导入后**没有**批次 | `freeze-order` A 阶段：`batchId=null`、四链全 `not_run`；`timeline` 观测 300 秒始终无批次 | 现象稳定复现 |
+| 打开工作区**确实播种**了权威稿 | `freeze-order` B 阶段：`hasCanonicalDs=true` | 播种本身没问题 |
+| 冻结**确实失败**，原因是权威稿未播种 | 应用日志：`freeze local candidate snapshot failed … canonical_not_seeded:…` | **H1 的机制前提成立** |
+| 「播种之后重试就能恢复」**无法验证** | C 阶段被 `editable_draft_exists` 挡下 | **H1 的后半段仍是未知** |
+
+**所以 H1 目前的状态是「机制前提有日志支持、恢复路径未被验证」，不是「被否证」。**
+下一步要推进它，需要让 C 阶段的重试真正执行（允许覆盖已有草稿后重跑）——这属于后端侧能力
+（`retry_processing` 与草稿保护的交互），本轮只提交证据与工具，不动后端代码。
+
+`tauri-cdp-recognition-buttons.mjs` 的 5 个场景之所以全部 `not-executable`，正是卡在这一环：
+没有批次 → 没有候选项 → 按钮流程没有对象可执行。**这是同一个根因的下游表现。**
+
 
