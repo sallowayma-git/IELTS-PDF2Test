@@ -2287,9 +2287,41 @@ taskId 稳定为 `missing-answer:q27+…+q40`，定位命中 `group-1-stimulus-b
    **不代表默认启动路径已通过**。
 2. **selenium / tauri-driver 通道在本机不可用**：`SessionNotCreatedError: chrome not reachable`，
    本轮第三次独立复现。
-3. **构建归因**：本轮重建一次（`build-app.mjs`），新 exe
-   `e38f9095b5c7a8118fcabc0f460cd379b6415b39a4f0ea222491b2b3fc65e946`，
-   报告里 `buildFresh.mode=manifest`（三段链内容哈希一致），不是靠 mtime 判断的。
+3. **构建归因**：本轮重建两次（`build-app.mjs`），报告里都是 `buildFresh.mode=manifest`
+   （三段链内容哈希一致），不是靠 mtime 判断的：
+   - `e38f9095b5c7a8118fcabc0f460cd379b6415b39a4f0ea222491b2b3fc65e946`（第一版修复）
+   - `6eaefd155be9003c2996830cff1e9204204ce5674d729326a26c9bdb8931c47a`（领域规则下沉后，含 §六 的复跑）
 4. `npx tsc --noEmit` 干净；`npx vitest run` **241 passed / 14 files**。
+
+## 六、修复后的复跑确认（新构建 `6eaefd15…`）
+
+产品行为变了（草稿未就绪不再渲染任务），凡与问题列表 / 草稿 / 题面控件交互的脚本都必须复跑，
+否则「修好了 A」可能只是把 B 弄坏了而没人知道。
+
+| 脚本 | 复跑结果 |
+| --- | --- |
+| `tauri-cdp-issue-list` | **passed 13/13 ×5**（修复后连跑 5 次：3 次在 `e38f9095`，2 次在 `6eaefd15`） |
+| `tauri-cdp-publish-unblock-probe` | 归因不变（仍 `data-fix-insufficient`）；`notSavedSlots=[]`；UI 控件仍可读（q1–q5） |
+| `tauri-cdp-recognition-write-path` | **passed 9/9** |
+| `tauri-cdp-publish-ready` | **passed 4/4** —— 发布成功路径没有被草稿就绪保护破坏 |
+
+### 领域规则下沉（让 F-R15-5 可单测，而不只靠 E2E 兜着）
+
+第一版修复把判据放在组件里（`editor.loading`），E2E 能过，但**规则本身没有单测**——
+而它恰恰是「宁可晚一点显示，也不要显示点不动的按钮」这类容易被后人改回去的约束。
+
+现在把它下沉进 `buildUserTasks`：返回类型加 `ready`，草稿没读进来时返回
+`{ ready: false, tasks: [], headline: "正在打开这道题…" }`，**不退化成「没问题」**
+——后者会让界面在题稿打开之前就宣称「可以导出」，正是任务书第 2 条要禁的那类假信息。
+`ExamWorkspacePage` 的列表分支、顶部入口（`问题 N · 阻断 M`，此前会显示「问题 0」）
+与 `data-tasks-ready` 全部改用这一个判据。
+
+新增 3 条单测（`userTasks.test.ts`）：
+
+1. `ds = undefined` → `ready=false`、无任务、`headline !== "可以导出"`；
+2. 同一批问题在草稿就绪后落到题号上（`missing-answer:q11+q12`，动作目标 `q11`），而不是退化成 `unnumbered`；
+3. 有草稿且确实无问题 → 这时才可以说「可以导出」。
+
+`npx vitest run` → **244 passed / 14 files**；`npx tsc --noEmit` 干净。
 
 

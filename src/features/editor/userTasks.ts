@@ -62,6 +62,16 @@ export interface UserTaskV1 {
 }
 
 export interface UserTaskSummaryV1 {
+  /**
+   * 题稿是否已经读进来。
+   *
+   * 为 `false` 时 `tasks` 必然为空，而且这个「空」**不代表没有问题**：`slotIdsOfTarget` 要靠
+   * `answerSlots` 才能把一条问题落到具体题位上，草稿没读进来时它一律返回空，带题号的缺答问题
+   * 会退化成 `missing-answer:unnumbered`——任务卡看着正常，点「去填写」却定位不到任何元素
+   * （题面此刻也还没渲染出那道题）。所以这里如实返回「还没准备好」，由界面显示加载中，
+   * 而不是先给用户一批点不动的按钮（F-R15-5）。
+   */
+  ready: boolean;
   tasks: UserTaskV1[];
   /** 顶部那一行：还有 N 处需要处理 / 可以导出。 */
   headline: string;
@@ -274,6 +284,12 @@ export function buildUserTasks(
   ds: IeltsAuthoringIRV2 | undefined,
   issues: readonly ActionableIssueV1[]
 ): UserTaskSummaryV1 {
+  // 草稿还没读进来：如实说「还没准备好」，不生成任务。
+  // 这里**不能**退化成「没问题」——那会让界面在题稿打开之前就宣称「可以导出」，
+  // 也会让「去填写」指向题面上还不存在的元素（F-R15-5）。
+  if (!ds) {
+    return { ready: false, tasks: [], headline: "正在打开这道题…", blockerCount: 0, mergedRowCount: 0 };
+  }
   const buckets = new Map<Classification, Bucket>();
   for (const issue of issues) {
     const kind = classify(issue);
@@ -482,6 +498,7 @@ export function buildUserTasks(
   const coveredRows = tasks.reduce((sum, task) => sum + task.covers.length, 0);
   const mergedRowCount = Math.max(0, issues.length - coveredRows) + hiddenGenerics;
   return {
+    ready: true,
     tasks,
     // 「没有问题」不生成卡片，只保留这一句（任务书第四节最后一条 + 第六节第 6 条）。
     headline: tasks.length === 0 ? "可以导出" : `还有 ${tasks.length} 处需要处理`,

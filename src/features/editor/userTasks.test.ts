@@ -293,3 +293,44 @@ describe("headline 与折叠", () => {
     expect(expanded.hiddenCount).toBe(0);
   });
 });
+
+// ── 草稿就绪（F-R15-5）────────────────────────────────────────────────
+//
+// 这条规则是从一次**间歇的真实失败**里长出来的：`preflight`（后端门禁）与草稿是两条并行的
+// 异步链，门禁先回来而草稿还没读进来时，`slotIdsOfTarget` 因为拿不到 `answerSlots` 一律返回空，
+// 带题号的缺答问题就退化成 `missing-answer:unnumbered`。任务卡看着正常，点「去填写」却定位不到
+// 任何元素——因为题面此刻也还没渲染出那道题（实测同一份构建/夹具，一次题号解析成功、一次退化）。
+//
+// 所以「没有草稿」必须返回 `ready:false`，而**不是**「没问题」：后者会让界面在题稿打开之前
+// 就宣称「可以导出」，正是任务书第 2 条要禁的那类假信息。
+describe("草稿就绪：没有题稿时不生成任务，也不宣称「可以导出」（F-R15-5）", () => {
+  it("ds 为 undefined 时 ready=false、没有任何任务，且 headline 不是「可以导出」", () => {
+    const summary = buildUserTasks(undefined, [issue("i1", "ANSWER_MISSING", "q11")]);
+    expect(summary.ready).toBe(false);
+    expect(summary.tasks).toHaveLength(0);
+    expect(summary.blockerCount).toBe(0);
+    // 关键：这里的「空」不能读成「没问题」。
+    expect(summary.headline).not.toBe("可以导出");
+  });
+
+  it("同一批问题在草稿就绪后落到题号上，而不是退化成 unnumbered", () => {
+    const issues = [issue("i1", "ANSWER_MISSING", "q11"), issue("i2", "ANSWER_MISSING", "q12")];
+    // 草稿没来：一条任务都不生成（而不是生成一张点不动的 `unnumbered` 卡）。
+    const before = buildUserTasks(undefined, issues);
+    expect(before.ready).toBe(false);
+    expect(before.tasks).toHaveLength(0);
+    // 草稿来了：同样的问题落到具体题号上，动作目标也是真实存在的题位。
+    const after = buildUserTasks(DS, issues);
+    expect(after.ready).toBe(true);
+    expect(after.tasks).toHaveLength(1);
+    expect(after.tasks[0].taskId).toBe("missing-answer:q11+q12");
+    expect(after.tasks[0].actions[0].targetId).toBe("q11");
+  });
+
+  it("有草稿且确实没有问题 → ready=true，这时才可以说「可以导出」", () => {
+    const summary = buildUserTasks(DS, []);
+    expect(summary.ready).toBe(true);
+    expect(summary.tasks).toHaveLength(0);
+    expect(summary.headline).toBe("可以导出");
+  });
+});

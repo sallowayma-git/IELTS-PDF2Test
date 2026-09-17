@@ -352,11 +352,16 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               className={blockers ? "has-blockers" : ""}
               data-testid="workspace-issues"
               onClick={() => setIssuesOpen((open) => !open)}
-              aria-label={taskSummary.blockerCount
-                ? `还有 ${taskSummary.tasks.length} 处需要处理，其中阻断 ${taskSummary.blockerCount} 处`
-                : `还有 ${taskSummary.tasks.length} 处需要处理`}
+              aria-label={!taskSummary.ready
+                ? "正在检查需要处理的问题"
+                : taskSummary.blockerCount
+                  ? `还有 ${taskSummary.tasks.length} 处需要处理，其中阻断 ${taskSummary.blockerCount} 处`
+                  : `还有 ${taskSummary.tasks.length} 处需要处理`}
             >
-              问题 {taskSummary.tasks.length}{taskSummary.blockerCount ? ` · 阻断 ${taskSummary.blockerCount}` : ""}
+              {/* 题稿还没打开时不报「问题 0」——那会把「还没查」说成「查过了，没有问题」。 */}
+              {taskSummary.ready
+                ? `问题 ${taskSummary.tasks.length}${taskSummary.blockerCount ? ` · 阻断 ${taskSummary.blockerCount}` : ""}`
+                : "问题 …"}
             </button>
             <button
               data-testid="workspace-recognition-toggle"
@@ -461,7 +466,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           data-merged-rows={taskSummary.mergedRowCount}
           data-can-export={canExport ? "true" : "false"}
           data-preflight-state={preflightState}
-          data-tasks-ready={editor.loading ? "false" : "true"}
+          data-tasks-ready={taskSummary.ready ? "true" : "false"}
         >
           {/* 题稿还没读进来时**不渲染任务**。
               `preflight`（后端门禁）与草稿是两条并行的异步链，门禁完全可能先返回；此时
@@ -470,9 +475,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
               却定位不到任何元素——因为题面上还没有那道题。实测这是**间歇**的：同一份构建、
               同一份夹具，一次任务 id 是 `missing-answer:q27+…+q40`（题号解析成功、定位命中
               `group-1-stimulus-b032`），另一次退化成 `unnumbered` 且定位失败（F-R15-5）。
-              等草稿就绪再渲染，任务才可能被定位到。 */}
-          {editor.loading ? (
-            <p className="empty compact" data-testid="workspace-tasks-loading">正在打开这道题…</p>
+              判据用 `taskSummary.ready`（领域规则，可单测），不用 `editor.loading`。 */}
+          {!taskSummary.ready ? (
+            <p className="empty compact" data-testid="workspace-tasks-loading">{taskSummary.headline}</p>
           ) : taskSummary.tasks.length ? (
             <>
               <p className="workspace-issues-headline" data-testid="workspace-tasks-headline">
