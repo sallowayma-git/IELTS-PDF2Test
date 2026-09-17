@@ -2809,3 +2809,115 @@ Reading Passage 3 on pages 10 and 11.」——这句话**只应出现一次**。
 | 文件 | 改动 | 原因 |
 | --- | --- | --- |
 | `scripts/e2e/tauri-cdp-workspace-layout.mjs` | **新增**：几何/网格归属断言 L1–L9 + 题面重复分层取证 | 存在性断言对本次缺陷全部为真，看不见错位（10.7） |
+
+## 十一、受控服务验收本轮实跑（构建 `1e37e626…`）：首次执行 `appPanics`，并确认卡点在更早一层
+
+### 11.1 `appPanics` 首次在完整运行中被执行
+
+上一轮交付 `extractAppPanics` + `report.appPanics` 时，我如实标注过一句：
+「函数本身已对三份真实日志验证，但**写入路径未在完整运行中执行过**」。本轮补上了。
+
+运行 `run-controlled-service-2026-09-17T19-44-39-577Z`（27m53s，`exit=1`），`report.appPanics` 非空：
+
+```
+thread 'tokio-rt-worker' (30528) panicked at
+  tokio-1.52.3/src/runtime/blocking/shutdown.rs:51:21:
+  Cannot drop a runtime in a context where blocking is not allowed.
+  This happens when a runtime is dropped from within an asynchronous context.
+```
+
+线程号 30528 与此前三次（12684 / 13152 / 27860）不同，panic 位置逐字相同——
+F-R15-8 在**新构建**上稳定复现，不是残留、不是偶发。
+
+### 11.2 受控（有云）路径这次卡在**更早**一层：根本没有产出批次
+
+`chains` 四条链**全部** `not_run`：
+
+```
+{"adjudication":{"state":"not_run"},"cloud":{"state":"not_run"},
+ "local":{"state":"not_run"},"source":{"state":"not_run"}}
+```
+
+脚本自陈「默认导入未产出批次（后端冻结顺序缺陷 F-R12-2）」，它内置的两条绕行——
+「播种 + 重试」与「派生受控样本（应答目标 → q27）重跑」——结果都是 `batchId=null cloud=not_run`。
+
+对照**无云**路径（`run-recog-buttons-2026-09-17T18-37-06-084Z`）：批次正常产出
+（`batchId=rec-import-20260917183711-…-v1-f13bd65cb5f5`、`local: succeeded`、`actionableCount: 14`），
+但 `source` 链是 `not_run / EVIDENCE_MISSING`（「原文件没有可核验的文本证据」），
+14 条候选全部不可判定 → 5 个按钮场景**没有按钮可点**。
+
+**结论：按钮层验收被上游堵住，不是脚本的问题。** 两条上游各自独立：
+
+| 路径 | 批次 | 卡点 |
+| --- | --- | --- |
+| 有云（受控服务） | **不产出**（F-R12-2） | 更早，连候选都没有 |
+| 无云 | 产出（14 条） | `source` 链 `EVIDENCE_MISSING` → 候选全不可判定 |
+
+### 11.3 A3「到网关但到不了服务」的现场数据
+
+- 受控服务收到：`{"total":1,"outline":1,"a3":0,"a4":0}`
+- 网关痕迹：`{"verify_source_answers":{"input":1,"output":0}}`
+- 作业目录 `llm-calls.jsonl`：**不存在**
+
+输入缓存有、调用记录与输出都没有、服务端零 POST —— 与 11.1 的 panic 完全一致：
+调用在途中崩掉，既没有结果也无法诊断。这就是为什么 F-R15-8 被定为 P0。
+
+### 11.4 场景 8/9 失败的归因（不要误读成独立缺陷）
+
+`a3-partial-not-reported-as-complete` 与 `a3-model-failure-not-reported-as-complete`
+报的是「`chains.source` 应当是 `partial`，实际 `not_started`」。
+这是**上游的后果**而不是这两条断言本身的问题：A3 从未真正返回，`chains.source` 自然只能是 `not_started`。
+要等 F-R15-8 修好、A3 真的跑出「部分返回 / 调用失败」之后才能判这两条。
+
+唯一通过的是 `verification-status-matches-chains`（界面那句话与后端四路链状态逐字一致）。
+
+### F-R15-10（验收工具，已修，P1）：`controlled-service` 的稳定性参数默认关闭 → 无参运行必崩
+
+`tauri-cdp-controlled-service.mjs` 原文：
+
+```js
+const diagnosticArgsRequested = process.argv.includes("--diagnostic-args");
+const extraArgs = diagnosticArgsRequested ? "--no-sandbox --disable-gpu" : "";
+```
+
+紧挨着的注释写着「某些环境下 WebView2 的渲染进程会崩，关掉 GPU/沙箱能让它稳定起来」，
+默认却是**关**的。实测：
+
+- 无参运行：**10 秒**即 `CDP 连接已关闭（renderer 或应用退出）`，
+  `verdict=incomplete exit=2 reason=没有任何场景被执行`，一个场景都没跑到
+- 加 `--diagnostic-args`：正常跑到场景层，27m53s
+
+这与 F-R15-1（`tauri-cdp-smoke`「无参必挂，是脚本自己没照注释做」）是**同一类缺陷**。
+
+**修法**：默认打开，新增 `--no-diagnostic-args` 显式关掉；旧的 `--diagnostic-args` 仍被接受（向后兼容）。
+报告字段同步改准确：`runProfile` 由 `cdp-diagnostic`/`cdp-default` 改为
+`cdp-with-stability-args`/`cdp-plain`，新增 `stabilityArgs`，`diagnosticRun` 改为只表示
+「显式传了 `--diagnostic-args`」——原来的命名会把默认运行误标成「诊断运行」。
+
+**验证**：修复后无参运行越过启动阶段（存活 10 分钟、受控服务已拉起、`derived-outline.json` 已写出），
+而修复前无参运行 10 秒即崩。因果链由「无参崩 / 带参不崩」两次运行直接给出。
+
+### 11.5 同类缺陷的分布（仅记录，未一并修改）
+
+`grep "const extraArgs" scripts/e2e/*.mjs` 显示两类并存：
+
+| 默认 | 脚本 |
+| --- | --- |
+| **开** | `freeze-order-proof`、`local-chain`、`recognition-write-path`、`tauri-cdp-smoke`（F-R15-1 已修）、`workspace-layout`（本轮新增） |
+| **关**（需 `--diagnostic-args`） | `controlled-service`（本轮已修）、`issue-list`、`publish-unblock-probe`、`recognition-buttons` |
+
+未一并改动是为了避免与在途改动冲突（这些文件常有其他 agent 的改动）。
+建议单独一轮统一，并顺带把 `product-chain` / `publish-ready` 的 `--extra-args` 写法一起对齐。
+
+### 11.6 本轮被主动中断的一次运行
+
+`run-controlled-service-2026-09-17T20-12-53-140Z` 在确认「无参默认已生效」后主动停止：
+同构建、同上游缺陷，结论必然与 11.2 相同，再等约 18 分钟不会改变任何东西。
+该目录内**没有** `report.json`，已写入 `INTERRUPTED.md` 说明它不能当证据引用。
+可引用的完整运行是 `run-controlled-service-2026-09-17T19-44-39-577Z`。
+
+### 本轮脚本改动（E2E）
+
+| 文件 | 改动 | 原因 |
+| --- | --- | --- |
+| `scripts/e2e/tauri-cdp-controlled-service.mjs` | 稳定性参数默认打开，新增 `--no-diagnostic-args`；报告字段改准确（`runProfile` / `stabilityArgs` / `diagnosticRun`） | F-R15-10：默认关闭导致无参运行 10 秒即崩、一个场景都跑不到 |

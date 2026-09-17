@@ -31,7 +31,10 @@
  * 「旧样本通过」不能当作「A3/A4 已联通」。
  *
  * 用法：
- *   node scripts/e2e/tauri-cdp-controlled-service.mjs [--pdf <path>] [--port N] [--service-mode normal|decline|partial|fail|garbage] [--service-fixture FILE] [--keep] [--tolerate-concurrent-edits]
+ *   node scripts/e2e/tauri-cdp-controlled-service.mjs [--pdf <path>] [--port N] [--service-mode normal|decline|partial|fail|garbage] [--service-fixture FILE] [--keep] [--tolerate-concurrent-edits] [--no-diagnostic-args]
+ *
+ * 默认带 `--no-sandbox --disable-gpu`（本机必需，否则 renderer 秒崩、一个场景都跑不到）；
+ * `--no-diagnostic-args` 可关掉。旧的 `--diagnostic-args` 仍被接受但已无效果。
  * 退出码：0 通过 / 1 失败 / 2 部分无法执行 / 3 环境不满足（不可执行）/ 5 全部无法执行。
  */
 
@@ -68,10 +71,17 @@ const servicePort = portIdx >= 0 ? Number(process.argv[portIdx + 1]) : 11435;
 const modeIdx = process.argv.indexOf("--service-mode");
 const initialServiceMode = modeIdx >= 0 ? String(process.argv[modeIdx + 1]) : "normal";
 const isPdf = /\.pdf$/i.test(fixturePath);
-// 与 `tauri-cdp-recognition-buttons.mjs` 同一开关：某些环境下 WebView2 的渲染进程会崩，
-// 关掉 GPU/沙箱能让它稳定起来。诊断运行**不能**当作验收通过，报告里会标明。
+// 本机（Windows + WebView2）实测：**不带**这两个参数时 renderer 在启动后数秒内就崩，
+// 脚本一个场景都跑不到（`CDP 连接已关闭（renderer 或应用退出）`，实测 10s 退出）。
+// 所以默认**打开**，`--no-diagnostic-args` 用来显式关掉（确认崩溃与参数的因果关系）。
+//
+// 这与 `tauri-cdp-smoke.mjs` 的 F-R15-1 是同一个缺陷：注释写「需要它才稳」，默认却是关的，
+// 于是无参运行必挂——「脚本自己没照注释做」。`--diagnostic-args` 仍被接受（向后兼容）。
+//
+// 这两个参数只影响渲染进程的沙箱/GPU 路径，不改变产品行为，也不改变布局计算结果，
+// 所以带上它们的结果仍然可以当作验收证据（`report.stabilityArgs` 如实记录）。
 const diagnosticArgsRequested = process.argv.includes("--diagnostic-args");
-const extraArgs = diagnosticArgsRequested ? "--no-sandbox --disable-gpu" : "";
+const extraArgs = process.argv.includes("--no-diagnostic-args") ? "" : "--no-sandbox --disable-gpu";
 
 const serviceScript = path.join(repoRoot, "scripts", "controlled-llm-service.mjs");
 const expectedPath = path.join(repoRoot, "fixtures", "controlled-llm", "expected-decisions.json");
@@ -85,7 +95,8 @@ const report = {
   scope: "受控服务经真实网关产出候选，并在真实界面上验收接受/撤销按钮（不是 IPC 探针）",
   channel: CDP_CHANNEL_LABEL,
   channelNote: CDP_CHANNEL_NOTE,
-  runProfile: "cdp-default",
+  runProfile: "cdp-with-stability-args",
+  stabilityArgs: ["--no-sandbox", "--disable-gpu"],
   startedAt: new Date().toISOString(),
   runDir,
   identity: {
@@ -548,9 +559,12 @@ async function main() {
     },
   });
   report.identity.browserArgs = session.browserArgs;
-  report.diagnosticRun = Boolean(extraArgs);
-  report.runProfile = extraArgs ? "cdp-diagnostic" : "cdp-default";
-  report.securityArgs = extraArgs ? extraArgs.split(/\s+/).filter(Boolean) : [];
+  // `diagnosticRun` 现在只表示「显式传了 `--diagnostic-args`」这件事本身，不再表示
+  // 「本次带了稳定性参数」——后者已是默认，如实记在 `stabilityArgs` / `runProfile` 里。
+  report.diagnosticRun = diagnosticArgsRequested;
+  report.runProfile = extraArgs ? "cdp-with-stability-args" : "cdp-plain";
+  report.stabilityArgs = extraArgs ? extraArgs.split(/\s+/).filter(Boolean) : [];
+  report.securityArgs = report.stabilityArgs;
 
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 40000, label: "library-page" });
 
