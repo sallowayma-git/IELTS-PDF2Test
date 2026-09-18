@@ -4,7 +4,7 @@
 //! - 云端链：normalize → schema validate → 分组 salvage。**禁止**用默认值补齐
 //!   业务字段：不合法的题组被丢弃并记入 salvage 报告，缺字段的答案保持 `None`。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
@@ -1202,6 +1202,265 @@ pub(crate) fn candidate_semantic_view(candidate: &RecognitionCandidateV1) -> Val
     })
 }
 
+/// 机械重写：把稿件里所有「承载身份/引用」的字段，按 `id_map`（临时 id → 稳定 id）
+/// 替换掉，并如实报告**映射不上**的引用与**目标键冲突**。
+///
+/// # 身份不靠字符串前缀猜
+///
+/// 「哪些 id 属于临时空间」由调用方用 `temp_ids` **显式给出**，而不是看 id 长什么样。
+/// 于是三类引用被彻底分开：
+///
+/// | 类别 | 判据 | 处理 |
+/// |---|---|---|
+/// | 临时引用（模型自造，形如 `cloud-q14`） | 在 `temp_ids` 里 | 在 `id_map` 里就改写；不在就**原样保留并上报** |
+/// | 既有稳定引用（后端已分配） | 不在 `temp_ids` 里 | 原样保留，**不上报**（它不是缺口） |
+/// | 源文档引用 | `nodeIds` / `sourceTableId` 字段 | 永不重写、永不上报 |
+///
+/// 第三行的实现**不靠字段值猜**：直接按字段名跳过，所以正文里出现同形字符串也不会被改。
+///
+/// # 冲突即整篇放弃（原子性保证）
+/// 只要任意一处 slot-keyed map（`answerSlots` / `answerKey`）出现目标键冲突，本次改写**整篇作废**：
+/// 文档保持调用前的原样，`ReferenceRewriteOutcome::applied` 为 `false` 且 `conflicts` 非空。
+/// 调用方**收到的是「全有或全无」**——绝不会留下「键没改、值却改了」的半截、内部不一致的文档。
+///
+/// # 实际覆盖的字段清单
+/// 下列字段的值（或数组元素）按 map 替换；属于临时空间但无映射的原样保留并计入
+/// `unmapped`（资源引用除外，见下）：
+///
+/// - `taskGroups[].taskId`
+/// - `taskGroups[].optionBank.optionBankId`
+/// - `taskGroups[].optionBank.options[].optionId`
+/// - `taskGroups[].responseGroups[].responseGroupId`
+/// - `taskGroups[].responseGroups[].slotIds[]`（逐元素）
+/// - `taskGroups[].responseGroups[].optionBankRef`
+/// - `taskGroups[].responseGroups[].options[].optionId`
+/// - `answerSlots` 的**键**（以 slotId 为键），以及每个值的 `slotId`、`hostNodeId`
+/// - `answerKey` 的**键**（以 slotId 为键）
+/// - 内容节点（`ContentNodeV2`）的 `id`，递归覆盖所有出现位置
+///   （passage.content、instructions、stimulus、option content、figure/image 等）
+/// - `answer_slot` 内容节点的 `slotId`
+/// - `listening.parts[].taskIds[]`（引用 `taskGroups[].taskId`，属草稿 id 空间；
+///   证据：`schema/listening_runtime_v1.rs` 正是拿它去由 `task_groups[].taskId`
+///   建的表里查）
+/// - `assets[].assetId`、`content[].visualFallbackAssetId`：**仅当 map 中存在映射时才换**。
+///   资源 id 由后端登记、本就稳定；模型引用了**不存在的**资源属「资源校验失败」，
+///   不是「临时 id 映射失败」，故**不**计入 `unmapped`——混进来会让真正的映射缺口
+///   被资源噪声淹没
+///
+/// # 明确不重写
+/// - `sourceAnchors[].nodeIds[]`（源文档节点，重写会破坏溯源）
+/// - `sourceTableId`（`schema/content_doc_v2.rs` 指向**源文档**里的表，同理）
+/// - `paragraphMap`：键值语义在代码里**没有定义**（全仓只有 `reading_source_v2.rs`
+///   一次 `clone()`，从未用于查表），键到底是「标签→节点 id」还是「节点 id→标签」
+///   无从判断，猜着重写会改坏内容。**若日后定义了语义，需回来补。**
+/// - 任何非上述名单的字段（特别是正文 `text` 节点）
+///
+/// - 纯函数：无 IO、无随机、无时间戳；同一输入必得同一输出。
+///
+/// # 参数
+/// - `document`：已标准化的稿件（`IeltsAuthoringIRV2` 形态）的 `Value`，原地改写。
+/// - `id_map`：`临时 id → 稳定 id` 的映射表（推导映射不属于本函数职责）。
+/// - `temp_ids`：**模型临时 id 的全集**（含尚未解析的那些）。用它区分「临时引用」与
+///   「既有稳定引用」；不传它就只能靠猜，那正是要避免的。
+pub(crate) fn rewrite_authoring_references(
+    document: &mut Value,
+    id_map: &BTreeMap<String, String>,
+    temp_ids: &BTreeSet<String>,
+) -> ReferenceRewriteOutcome {
+    // 在克隆上改写，冲突则整篇放弃——保证「全有或全无」，绝不留下半截文档。
+    let mut accumulator = RewriteAccumulator::default();
+    let mut working = document.clone();
+    rewrite_value(&mut working, id_map, temp_ids, &mut accumulator);
+    if !accumulator.conflicts.is_empty() {
+        // 原子性边界：任何冲突都意味着文档保持调用前原样，一个字节都不动。
+        return ReferenceRewriteOutcome {
+            unmapped: accumulator.unmapped.into_iter().collect(),
+            conflicts: accumulator.conflicts.into_iter().collect(),
+            applied: false,
+        };
+    }
+    *document = working;
+    ReferenceRewriteOutcome {
+        unmapped: accumulator.unmapped.into_iter().collect(),
+        conflicts: vec![],
+        // 只有确实发生过至少一次实际改写才算 true；见 `RewriteAccumulator::applied`。
+        applied: accumulator.applied,
+    }
+}
+
+/// 引用重写的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReferenceRewriteOutcome {
+    /// 属于临时空间、但没有映射可用的引用（已原样保留在稿件里）。排序去重。
+    pub unmapped: Vec<String>,
+    /// 目标键冲突：多个源键映射到同一目标，或与未被映射的保留键相撞。
+    /// 命中冲突时整个改写**整篇作废**（`applied == false`），文档保持原样。
+    pub conflicts: Vec<String>,
+    /// 本次调用是否**至少完成了一次实际改写**。
+    ///
+    /// `false` 表示没有任何引用被替换（映射为空，或映射与本文档中的引用完全不相交）。
+    /// **空映射绝不能当作「引用全部解析成功」**——那正是这个字段要区分的东西。
+    pub applied: bool,
+}
+
+/// 内部累加器：`BTreeSet` 顺带保证排序去重，不依赖调用方事后整理。
+#[derive(Default)]
+struct RewriteAccumulator {
+    unmapped: BTreeSet<String>,
+    conflicts: BTreeSet<String>,
+    /// 至少发生过一次实际替换 / 键重命名。空映射或映射与本文档引用完全不相交时为 `false`。
+    applied: bool,
+}
+
+/// 递归改写：对象按具名字段处理，数组递归，标量不动。
+fn rewrite_value(
+    value: &mut Value,
+    id_map: &BTreeMap<String, String>,
+    temp_ids: &BTreeSet<String>,
+    outcome: &mut RewriteAccumulator,
+) {
+    match value {
+        Value::Object(map) => rewrite_object(map, id_map, temp_ids, outcome),
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                rewrite_value(item, id_map, temp_ids, outcome);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_object(
+    map: &mut Map<String, Value>,
+    id_map: &BTreeMap<String, String>,
+    temp_ids: &BTreeSet<String>,
+    outcome: &mut RewriteAccumulator,
+) {
+    // 1) 以 slotId 为键的 map：重命名键。
+    rename_slot_keyed_map(map, "answerSlots", id_map, temp_ids, outcome);
+    rename_slot_keyed_map(map, "answerKey", id_map, temp_ids, outcome);
+
+    // 2) 遍历具名字段。
+    let keys: Vec<String> = map.keys().cloned().collect();
+    for key in keys {
+        let Some(value) = map.get_mut(&key) else { continue };
+        match key.as_str() {
+            // 源文档引用：**按字段名**跳过，不靠值猜。`nodeIds` 指向源文档的节点、
+            // `sourceTableId` 指向源文档里的表——重写它们会破坏溯源。
+            "nodeIds" | "sourceTableId" => {}
+            // 资源引用：仅当 map 中有映射才换；绝不臆造，且**不**计入未映射列表
+            // （资源 id 由后端登记、本就稳定；未知资源属资源校验失败，不是映射缺口）。
+            "assetId" | "visualFallbackAssetId" => rewrite_asset_id(value, id_map, outcome),
+            "taskId" | "optionBankId" | "responseGroupId" | "optionBankRef"
+            | "slotId" | "hostNodeId" | "optionId" | "id" => {
+                rewrite_scalar_ref(value, id_map, temp_ids, outcome);
+            }
+            // 引用 id 的数组：`slotIds`（答案槽）与 listening 的 `taskIds`（题组）。
+            "slotIds" | "taskIds" => {
+                if let Value::Array(items) = value {
+                    for item in items.iter_mut() {
+                        rewrite_scalar_ref(item, id_map, temp_ids, outcome);
+                    }
+                }
+            }
+            _ => rewrite_value(value, id_map, temp_ids, outcome),
+        }
+    }
+}
+
+/// 重命名以 slotId 为键的 map（`answerSlots` / `answerKey`）的键。
+///
+/// **在独立对象里构建结果，冲突就整块放弃**——绝不在原 map 上边删边插：那种写法在
+/// 「目标键已被另一个源键占用」或「映射互换（`A→B`、`B→A`）」时会静默覆盖内容，
+/// 而答案恰恰是最不能丢的东西。
+///
+/// 冲突判据（任一命中即**整块保持原样**并如实上报，不做半截重写）：
+/// - 两个源键映射到**同一目标**（`A→C` 与 `B→C`）；
+/// - 某源键的目标与**另一个未映射的保留键**相撞（`A→B`，而 `B` 自身保留为 `B`）。
+///
+/// 此处的提前返回只是**防卫性**兜底：真正的原子性保证在 `rewrite_authoring_references`
+/// 外层——冲突一旦进入 `accumulator.conflicts`，整篇改写会被丢弃、`document` 原样不动。
+fn rename_slot_keyed_map(
+    map: &mut Map<String, Value>,
+    name: &str,
+    id_map: &BTreeMap<String, String>,
+    temp_ids: &BTreeSet<String>,
+    outcome: &mut RewriteAccumulator,
+) {
+    let Some(Value::Object(inner)) = map.get_mut(name) else { return };
+
+    // 先在独立对象里算好；任何冲突都不回写。
+    let mut planned: Map<String, Value> = Map::new();
+    // 目标键 → 源键，用于检测「两个源键挤向同一目标」。
+    let mut origin: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflicts: BTreeSet<String> = BTreeSet::new();
+    let mut changed = false;
+
+    for (old, value) in inner.iter() {
+        let new = match id_map.get(old) {
+            Some(stable) => {
+                changed = true;
+                stable.clone()
+            }
+            None => {
+                if temp_ids.contains(old) {
+                    outcome.unmapped.insert(old.clone());
+                }
+                old.clone()
+            }
+        };
+        if let Some(previous) = origin.get(&new) {
+            conflicts.insert(format!("{name}: {previous} 与 {old} 同时指向 {new}"));
+            continue;
+        }
+        origin.insert(new.clone(), old.clone());
+        planned.insert(new, value.clone());
+    }
+
+    // 冲突优先判定：整块保持原样（防卫性兜底；权威保证见外层整篇放弃）。
+    if !conflicts.is_empty() {
+        outcome.conflicts.extend(conflicts);
+        return;
+    }
+    // 一个键都没改名 ⇒ 零改动。空映射必须走这条路径返回，保证文档字节级不变。
+    if !changed {
+        return;
+    }
+    // 至少重命名了一次键，记一笔实际改写。
+    outcome.applied = true;
+    *inner = planned;
+}
+
+/// 改写单个字符串引用：在 map 中则替换；属于临时空间但无映射则原样保留并计入
+/// `unmapped`；其余（**既有稳定引用**）原样保留且**不上报**——它不是缺口。
+/// 非字符串（如 `null`）不动、不计（不改 null、不臆造）。
+fn rewrite_scalar_ref(
+    value: &mut Value,
+    id_map: &BTreeMap<String, String>,
+    temp_ids: &BTreeSet<String>,
+    outcome: &mut RewriteAccumulator,
+) {
+    if let Value::String(current) = value {
+        if let Some(stable) = id_map.get(current) {
+            *current = stable.clone();
+            outcome.applied = true;
+        } else if temp_ids.contains(current) {
+            outcome.unmapped.insert(current.clone());
+        }
+    }
+}
+
+/// 资源引用（`assetId` / `visualFallbackAssetId`）：仅当 map 中存在映射才换；
+/// 绝不臆造，且**不**计入未映射列表。
+fn rewrite_asset_id(value: &mut Value, id_map: &BTreeMap<String, String>, outcome: &mut RewriteAccumulator) {
+    if let Value::String(current) = value {
+        if let Some(stable) = id_map.get(current) {
+            *current = stable.clone();
+            outcome.applied = true;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1782,4 +2041,376 @@ mod tests {
         // 缺少 `kind` 的值不参与对齐（返回 None，由调用方原样保留）。
         assert_eq!(align_answer_value(&json!({"values": ["x"]}), &option_shape, Some(&bank)), None);
     }
+
+// ── rewrite_authoring_references 机械重写 ──────────────────────────────
+
+fn rewrite_fixture() -> Value {
+    json!({
+        "schemaVersion": "IeltsAuthoringIRV2",
+        "jobId": "job-1",
+        "sourceDocumentId": "doc-1",
+        "taskGroups": [{
+            "taskId": "cloud-task-1",
+            "displayRange": {"kind": "range", "start": 14, "end": 15},
+            "taskType": "sentence_completion",
+            "instructions": [{"type": "text", "id": "cloud-node-instr", "text": "Complete."}],
+            "optionBank": {
+                "optionBankId": "cloud-ob-1",
+                "scope": "task_group",
+                "options": [{"optionId": "cloud-opt-1", "label": "A", "content": [{"type": "text", "id": "cloud-node-opt", "text": "alpha"}]}],
+                "allowReuse": false,
+                "sourceAnchors": []
+            },
+            "responseGroups": [{
+                "responseGroupId": "cloud-rg-1",
+                "kind": "text_entry",
+                "slotIds": ["cloud-q14", "cloud-q15"],
+                "optionBankRef": "cloud-ob-1",
+                "options": [{"optionId": "cloud-opt-2", "label": "B", "content": []}],
+                "cardinality": {"min": 1, "max": 1},
+                "assignment": "per_slot",
+                "scoringPolicy": "per_slot_binary",
+                "duplicatePolicy": "ignore_duplicates",
+                "allowOptionReuse": false,
+                "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}]
+            }],
+            "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}],
+            "quality": {"score": 1.0, "sourceCoverage": 1.0, "hardFailures": []},
+            "reviewState": "unreviewed"
+        }],
+        "answerSlots": {
+            "cloud-q14": {"slotId": "cloud-q14", "questionNumber": 14, "displayLabel": "14", "hostType": "prompt", "interaction": "text", "participation": "scoring", "hostNodeId": "cloud-node-host", "sourceAnchors": [], "confidence": 0.9},
+            "cloud-q15": {"slotId": "cloud-q15", "questionNumber": 15, "displayLabel": "15", "hostType": "prompt", "interaction": "text", "participation": "scoring", "hostNodeId": null, "sourceAnchors": [], "confidence": 0.9}
+        },
+        "answerKey": {
+            "cloud-q14": {"kind": "text", "values": ["books"]},
+            "cloud-q15": {"kind": "text", "values": ["pen"]}
+        },
+        "assets": [{"assetId": "cloud-asset-1", "kind": "raster_image", "mime": "image/png", "relativePath": "a.png", "sha256": "b", "byteLength": 1, "extractionMode": "embedded"}],
+        "passage": {
+            "title": "P",
+            "content": [
+                {"type": "paragraph", "id": "cloud-node-para", "sourceAnchors": [], "provenanceStatus": "source", "children": [
+                    {"type": "answer_slot", "id": "cloud-node-ans", "slotId": "cloud-q14", "displayLabel": "14", "inline": true}
+                ]}
+            ],
+            "sourceAnchors": []
+        },
+        "quality": {"score": 1.0},
+        "audit": {"revision": 1, "source": "auto_extract", "humanVerified": false, "llmUsed": true, "updatedAt": "x", "notes": []}
+    })
+}
+
+fn rewrite_map() -> BTreeMap<String, String> {
+    [
+        ("cloud-task-1", "task-1"),
+        ("cloud-ob-1", "ob-1"),
+        ("cloud-opt-1", "opt-1"),
+        ("cloud-opt-2", "opt-2"),
+        ("cloud-rg-1", "rg-1"),
+        ("cloud-q14", "slot-14"),
+        ("cloud-q15", "slot-15"),
+        ("cloud-node-1", "node-1"),
+        ("cloud-node-host", "node-host"),
+        ("cloud-node-instr", "node-instr"),
+        ("cloud-node-opt", "node-opt"),
+        ("cloud-node-para", "node-para"),
+        ("cloud-node-ans", "node-ans"),
+        ("cloud-asset-1", "asset-1"),
+    ]
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
+}
+
+/// `rewrite_map` 中所有临时 id 的全集，作为 `temp_ids` 参数传给被测函数。
+fn rewrite_temp_ids() -> BTreeSet<String> {
+    rewrite_map().keys().cloned().collect()
+}
+
+/// 测试 1：全字段重写。逐个 pointer 断言，确保每一处都被换掉。
+#[test]
+fn rewrite_covers_every_reference_field() {
+    let mut doc = rewrite_fixture();
+    let outcome = rewrite_authoring_references(&mut doc, &rewrite_map(), &rewrite_temp_ids());
+    assert!(outcome.unmapped.is_empty(), "所有引用都应被映射，实际未映射: {0:?}", outcome.unmapped);
+    assert!(outcome.applied, "映射命中了文档里的引用，应当发生实际改写");
+    assert!(outcome.conflicts.is_empty(), "无冲突");
+
+    assert_eq!(doc.pointer("/taskGroups/0/taskId").and_then(Value::as_str), Some("task-1"));
+    assert_eq!(doc.pointer("/taskGroups/0/optionBank/optionBankId").and_then(Value::as_str), Some("ob-1"));
+    assert_eq!(doc.pointer("/taskGroups/0/optionBank/options/0/optionId").and_then(Value::as_str), Some("opt-1"));
+    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/responseGroupId").and_then(Value::as_str), Some("rg-1"));
+    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/slotIds/0").and_then(Value::as_str), Some("slot-14"));
+    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/slotIds/1").and_then(Value::as_str), Some("slot-15"));
+    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/optionBankRef").and_then(Value::as_str), Some("ob-1"));
+    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/options/0/optionId").and_then(Value::as_str), Some("opt-2"));
+    assert_eq!(doc.pointer("/taskGroups/0/instructions/0/id").and_then(Value::as_str), Some("node-instr"));
+    assert_eq!(doc.pointer("/taskGroups/0/optionBank/options/0/content/0/id").and_then(Value::as_str), Some("node-opt"));
+
+    // answerSlots / answerKey 的键被重命名，原键消失。
+    assert!(doc.pointer("/answerSlots/cloud-q14").is_none());
+    assert!(doc.pointer("/answerSlots/slot-14").is_some());
+    assert!(doc.pointer("/answerKey/cloud-q14").is_none());
+    assert!(doc.pointer("/answerKey/slot-14").is_some());
+    assert_eq!(doc.pointer("/answerSlots/slot-14/slotId").and_then(Value::as_str), Some("slot-14"));
+    assert_eq!(doc.pointer("/answerSlots/slot-14/hostNodeId").and_then(Value::as_str), Some("node-host"));
+    assert_eq!(doc.pointer("/answerSlots/slot-15/hostNodeId"), Some(&Value::Null), "null 不得被改写");
+    assert_eq!(doc.pointer("/answerSlots/slot-15/slotId").and_then(Value::as_str), Some("slot-15"));
+
+    // 内容节点 id 与 answer_slot 节点的 slotId。
+    assert_eq!(doc.pointer("/passage/content/0/id").and_then(Value::as_str), Some("node-para"));
+    assert_eq!(doc.pointer("/passage/content/0/children/0/id").and_then(Value::as_str), Some("node-ans"));
+    assert_eq!(doc.pointer("/passage/content/0/children/0/slotId").and_then(Value::as_str), Some("slot-14"));
+    assert_eq!(doc.pointer("/assets/0/assetId").and_then(Value::as_str), Some("asset-1"));
+
+    // 规则 3：sourceAnchors[].nodeIds 即使等于 map 的某个 key（`cloud-node-1`）也不得被改写。
+    assert_eq!(doc.pointer("/taskGroups/0/sourceAnchors/0/nodeIds/0").and_then(Value::as_str), Some("cloud-node-1"));
+    assert_eq!(doc.pointer("/taskGroups/0/responseGroups/0/sourceAnchors/0/nodeIds/0").and_then(Value::as_str), Some("cloud-node-1"));
+}
+
+/// 测试 2：answerSlots 与 answerKey 的键被重命名（最容易漏的一处）。
+#[test]
+fn rewrite_renames_answer_slots_and_answer_key_keys() {
+    let mut doc = json!({
+        "answerSlots": {
+            "cloud-q14": {"slotId": "cloud-q14"},
+            "cloud-q15": {"slotId": "cloud-q15"}
+        },
+        "answerKey": {
+            "cloud-q14": {"kind": "text", "values": ["x"]},
+            "cloud-q15": {"kind": "text", "values": ["y"]}
+        }
+    });
+    let map: BTreeMap<String, String> =
+        [("cloud-q14", "slot-14"), ("cloud-q15", "slot-15")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-q14", "cloud-q15"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert!(outcome.unmapped.is_empty());
+    assert!(outcome.applied, "answerSlots / answerKey 键被重命名，应当发生实际改写");
+
+    assert!(doc.pointer("/answerSlots/cloud-q14").is_none());
+    assert!(doc.pointer("/answerSlots/slot-14").is_some());
+    assert!(doc.pointer("/answerSlots/cloud-q15").is_none());
+    assert!(doc.pointer("/answerSlots/slot-15").is_some());
+    assert!(doc.pointer("/answerKey/cloud-q14").is_none());
+    assert!(doc.pointer("/answerKey/slot-14").is_some());
+    assert!(doc.pointer("/answerKey/cloud-q15").is_none());
+    assert!(doc.pointer("/answerKey/slot-15").is_some());
+}
+
+/// 测试 3：source anchors 不被重写（构造一个源节点 id 恰好等于 map 的某个 key 的用例）。
+#[test]
+fn rewrite_never_touches_source_anchor_node_ids() {
+    // 把所有其它引用字段都放进 map，使它们被正常改写、不进入未映射列表；
+    // 本测试唯一要验证的是 `sourceAnchors[].nodeIds[]` 即便等于某个 map key 也绝不改写。
+    let mut doc = json!({
+        "taskGroups": [{
+            "taskId": "cloud-node-1",
+            "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}]
+        }],
+        "answerSlots": {
+            "cloud-node-1": {"slotId": "cloud-node-1", "sourceAnchors": [{"sourceFileId": "file-1", "pageIndex": 0, "nodeIds": ["cloud-node-1"], "extractionMode": "pdf_native", "sourceHash": "a"}]}
+        }
+    });
+    // map 里放 `cloud-node-1 -> node-1`，用来证明：即便源节点 id 等于某个 map key，也不改写。
+    let map: BTreeMap<String, String> =
+        [("cloud-node-1", "node-1")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-node-1"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert!(outcome.unmapped.is_empty());
+    assert_eq!(doc.pointer("/taskGroups/0/sourceAnchors/0/nodeIds/0").and_then(Value::as_str), Some("cloud-node-1"));
+    // 钥匙被重命名后，仍能在新键下验证源节点 id 未被改写。
+    assert_eq!(doc.pointer("/answerSlots/node-1/sourceAnchors/0/nodeIds/0").and_then(Value::as_str), Some("cloud-node-1"));
+}
+
+/// 测试 4：未映射引用原样保留，且出现在返回列表里；列表有序去重
+/// （两个未映射引用 cloud-q88 / cloud-q99，其中 cloud-q99 重复出现）。
+#[test]
+fn rewrite_preserves_unmapped_refs_and_reports_them_sorted_dedup() {
+    let mut doc = json!({
+        "answerSlots": {
+            "cloud-q99": {"slotId": "cloud-q99"},
+            "cloud-q88": {"slotId": "cloud-q88"}
+        },
+        "answerKey": {
+            "cloud-q99": {"kind": "text", "values": ["x"]}
+        }
+    });
+    // 非空 map，但只含一个与本稿无关的映射，确保 cloud-q88 / cloud-q99 都映射不上。
+    let map: BTreeMap<String, String> =
+        [("cloud-q14", "slot-14")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-q88", "cloud-q99"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+
+    // 原样保留。
+    assert_eq!(doc.pointer("/answerSlots/cloud-q99/slotId").and_then(Value::as_str), Some("cloud-q99"));
+    assert_eq!(doc.pointer("/answerSlots/cloud-q88/slotId").and_then(Value::as_str), Some("cloud-q88"));
+    assert!(doc.pointer("/answerKey/cloud-q99").is_some());
+
+    // 返回列表有序去重：cloud-q99 在 answerSlots 键、值 slotId、answerKey 键各出现一次 → 去重为一个。
+    assert_eq!(outcome.unmapped, vec!["cloud-q88".to_string(), "cloud-q99".to_string()]);
+    assert!(!outcome.applied, "映射与本文档引用完全不相交，没有任何改写发生");
+}
+
+/// 测试 5：空 map ⇒ 前后完全相等 + 返回空。
+#[test]
+fn rewrite_with_empty_map_is_a_noop() {
+    let mut doc = rewrite_fixture();
+    let before = doc.clone();
+    let map: BTreeMap<String, String> = BTreeMap::new();
+    // 空 temp_ids：空 map 下不应有任何 key 被误报为 unmapped。
+    let temp_ids: BTreeSet<String> = BTreeSet::new();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert_eq!(doc, before, "空 map 时文档必须字节级不变");
+    assert!(outcome.unmapped.is_empty());
+    assert!(!outcome.applied, "空映射不得表示引用已全部解析成功");
+}
+
+/// 钉死：两个源键映射到同一目标时整篇放弃——文档原样不动，连内容都不得改写。
+#[test]
+fn rewrite_reports_conflict_when_two_sources_share_one_target() {
+    let mut doc = json!({
+        "answerSlots": {
+            "cloud-a": {"slotId": "cloud-a", "questionNumber": 1},
+            "cloud-b": {"slotId": "cloud-b", "questionNumber": 2}
+        }
+    });
+    let before = doc.clone();
+    let map: BTreeMap<String, String> =
+        [("cloud-a", "slot-x"), ("cloud-b", "slot-x")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-a", "cloud-b"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert!(!outcome.conflicts.is_empty(), "两源键挤向同一目标必须报冲突");
+    assert!(
+        outcome.conflicts.iter().any(|c| c.contains("answerSlots")),
+        "冲突信息应点名 answerSlots: {0:?}", outcome.conflicts
+    );
+    assert!(!outcome.applied, "冲突时不应发生任何改写");
+    assert_eq!(doc, before, "冲突必须整篇放弃，文档原样不动");
+}
+
+/// 钉死：键互换（A→B、B→A）时内容跟着键走且零丢失——绝不能静默覆盖。
+#[test]
+fn rewrite_swaps_slot_keys_without_losing_content() {
+    let mut doc = json!({
+        "answerSlots": {
+            "cloud-a": {"slotId": "cloud-a", "questionNumber": 1},
+            "cloud-b": {"slotId": "cloud-b", "questionNumber": 2}
+        },
+        "answerKey": {
+            "cloud-a": {"kind": "text", "values": ["A1"]},
+            "cloud-b": {"kind": "text", "values": ["B1"]}
+        }
+    });
+    let map: BTreeMap<String, String> =
+        [("cloud-a", "cloud-b"), ("cloud-b", "cloud-a")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-a", "cloud-b"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert!(outcome.conflicts.is_empty(), "互换不冲突");
+    assert!(outcome.applied, "至少发生了键重命名");
+    // 两个键都还在。
+    assert!(doc.pointer("/answerSlots/cloud-a").is_some(), "cloud-a 键应仍在");
+    assert!(doc.pointer("/answerSlots/cloud-b").is_some(), "cloud-b 键应仍在");
+    // 内容跟着键走：原 cloud-b 的 questionNumber=2 现在在 cloud-a 键下。
+    assert_eq!(
+        doc.pointer("/answerSlots/cloud-a/questionNumber").and_then(Value::as_i64),
+        Some(2)
+    );
+    // slotId 自身也被换到对应稳定 id。
+    assert_eq!(
+        doc.pointer("/answerSlots/cloud-a/slotId").and_then(Value::as_str),
+        Some("cloud-a")
+    );
+    // answerKey 的内容同样跟着键走，cloud-a 键下应是原 cloud-b 的 ["B1"]。
+    assert_eq!(doc.pointer("/answerKey/cloud-a/values"), Some(&json!(["B1"])));
+}
+
+/// 钉死：目标键撞上一个未被映射、须保留的键时，整篇放弃、文档原样不动。
+#[test]
+fn rewrite_reports_conflict_when_target_key_is_a_preserved_key() {
+    let mut doc = json!({
+        "answerSlots": {
+            "cloud-a": {"slotId": "cloud-a"},
+            "cloud-b": {"slotId": "cloud-b"}
+        }
+    });
+    let before = doc.clone();
+    // 仅映射 cloud-a → cloud-b；cloud-b 在 temp_ids 中但未被映射，须保留为 cloud-b，
+    // 于是与 cloud-a 的目标相撞。
+    let map: BTreeMap<String, String> =
+        [("cloud-a", "cloud-b")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-a", "cloud-b"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert!(!outcome.conflicts.is_empty(), "目标键撞上保留键必须报冲突");
+    assert_eq!(doc, before, "冲突必须整篇放弃，文档原样不动");
+    assert!(!outcome.applied, "冲突时不应发生任何改写");
+}
+
+/// 钉死：listening.parts[].taskIds[] 逐元素改写，未映射的引用保持原位并如实上报。
+#[test]
+fn rewrite_rewrites_listening_part_task_ids() {
+    let mut doc = json!({
+        "listening": {"parts": [{"partId": "p1", "taskIds": ["cloud-task-1", "cloud-task-2"]}]}
+    });
+    let map: BTreeMap<String, String> =
+        [("cloud-task-1", "task-1")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-task-1", "cloud-task-2"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert_eq!(doc.pointer("/listening/parts/0/taskIds/0").and_then(Value::as_str), Some("task-1"));
+    assert_eq!(doc.pointer("/listening/parts/0/taskIds/1").and_then(Value::as_str), Some("cloud-task-2"));
+    assert_eq!(outcome.unmapped, vec!["cloud-task-2".to_string()]);
+    assert!(outcome.applied, "cloud-task-1 被改写，应当 applied");
+}
+
+/// 钉死：源文档引用（sourceTableId / sourceAnchors[].nodeIds）永不被重写、永不上报未映射。
+#[test]
+fn rewrite_never_rewrites_source_table_id() {
+    let mut doc = json!({
+        "reading": {"tables": [{"sourceTableId": "cloud-table-1"}]},
+        "taskGroups": [{"sourceAnchors": [{"sourceFileId": "f1", "pageIndex": 1, "nodeIds": ["cloud-table-1"]}]}]
+    });
+    let map: BTreeMap<String, String> =
+        [("cloud-table-1", "table-1")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-table-1"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert_eq!(doc.pointer("/reading/tables/0/sourceTableId").and_then(Value::as_str), Some("cloud-table-1"));
+    assert_eq!(
+        doc.pointer("/taskGroups/0/sourceAnchors/0/nodeIds/0").and_then(Value::as_str),
+        Some("cloud-table-1")
+    );
+    assert!(outcome.unmapped.is_empty(), "源文档引用不是草稿空间缺口，绝不报未映射");
+}
+
+/// 钉死：已有稳定引用（非 temp_ids）即便与某个映射目标同形也不算缺口、不触发 applied。
+#[test]
+fn rewrite_does_not_report_existing_stable_refs_as_unmapped() {
+    let mut doc = json!({
+        "taskGroups": [{
+            "taskId": "task-1",
+            "responseGroups": [{"responseGroupId": "rg-1", "slotIds": ["slot-14"]}]
+        }]
+    });
+    let map: BTreeMap<String, String> =
+        [("cloud-q14", "slot-14")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-q14"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert!(outcome.unmapped.is_empty(), "稳定引用不是缺口，依赖 temp_ids 而非字符串前缀区分");
+    assert!(outcome.conflicts.is_empty());
+    assert!(!outcome.applied, "映射未命中本文档任何引用，applied 应为 false");
+}
+
+/// 钉死：未知的（后端未登记的）资源 id 属资源校验失败，绝不报为未映射缺口。
+#[test]
+fn rewrite_does_not_report_unknown_asset_ids_as_unmapped() {
+    let mut doc = json!({
+        "assets": [{"assetId": "asset-unknown"}]
+    });
+    let map: BTreeMap<String, String> =
+        [("cloud-asset-1", "asset-1")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    let temp_ids: BTreeSet<String> = ["cloud-asset-1"].iter().map(|s| s.to_string()).collect();
+    let outcome = rewrite_authoring_references(&mut doc, &map, &temp_ids);
+    assert_eq!(doc.pointer("/assets/0/assetId").and_then(Value::as_str), Some("asset-unknown"));
+    assert!(outcome.unmapped.is_empty(), "未知资源不是 id 映射缺口");
+}
 }
