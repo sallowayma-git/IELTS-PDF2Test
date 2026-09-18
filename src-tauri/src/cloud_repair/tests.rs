@@ -185,6 +185,42 @@ fn set_answer(slot: &str, label: &str) -> Value {
     })
 }
 
+/// 构造一次 `record_ruling` 工具调用。
+///
+/// 裁定**不是**编辑：它只记录结论，不改内容。所以这个 helper 里没有 commands。
+fn ruling_call(
+    call_id: &str,
+    target_type: &str,
+    target_id: &str,
+    field: &str,
+    ruling: &str,
+    reason: &str,
+) -> Value {
+    json!({
+        "callId": call_id,
+        "tool": "record_ruling",
+        "arguments": {"rulings": [{
+            "targetType": target_type,
+            "targetId": target_id,
+            "field": field,
+            "ruling": ruling,
+            "reason": reason,
+            "evidence": [{
+                "sourceFileId": "early-approaches-pdf",
+                "pageIndex": 1,
+                "quote": "14 B"
+            }],
+        }]},
+    })
+}
+
+/// 剩余任务里是否存在某个 `userTaskId`。
+fn has_task(tasks: &[Value], user_task_id: &str) -> bool {
+    tasks
+        .iter()
+        .any(|task| task["userTaskId"].as_str() == Some(user_task_id))
+}
+
 fn request<'a>(root: &'a Path, cancelled: &'a dyn Fn() -> bool, max_rounds: u32) -> RepairRunRequest<'a> {
     RepairRunRequest {
         root,
@@ -425,6 +461,265 @@ fn read_source_evidence_fails_instead_of_fabricating() {
     ensure_app_dirs(&root).expect("ensure_app_dirs");
     let result = read_source_evidence(&root, "no-such-job", &json!({"pageIndex": 1}));
     assert!(result.is_err(), "没有原文件时必须失败，而不是返回空证据");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ── 裁定：云端可以了结争议，不必把每条差异都变成用户任务 ──────────────────────
+//
+// 首遍云端候选**也只是输入**。它同样会错，而校核回合看过原文件之后是有资格推翻它的。
+// 这一组用例守的就是这件事：模型说「候选错、当前稿对」之后，那条差异不能再回来找用户；
+// 模型说「两边都不对」并写入第三种内容之后，用户也不该被要求回到候选；模型留下的疑问
+// 即使没有表现为结构错误、也没有表现为差异，也必须留在清单里。
+//
+// 反过来也要守住边界：裁定**不是**编辑（内容一字不动），也**不能**消除程序发现的
+// 结构错误，而且一旦内容再变，旧裁定作废重评。
+
+/// 场景 1：候选错误，云端依据原文保留当前稿 → 该差异不再产生用户任务。
+#[test]
+fn a_ruling_that_the_candidate_is_wrong_retires_the_difference_for_good() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+
+    // 对照组：**没有**裁定时这条差异必须出现在清单里。否则下面的断言可能是「本来就
+    // 没有差异」导致的空过——那种绿灯比红灯更危险。
+    let without_ruling =
+        remaining_tasks(&root, ITEM_ID, ITEM_ID, BATCH_ID, &[], &[]).expect("重算剩余任务");
+    assert!(
+        has_task(&without_ruling, "cloud-diff:slot:q14:answer"),
+        "夹具必须先真的制造出 q14 的答案差异：{without_ruling:?}"
+    );
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let mut calls = 0u32;
+    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(match calls {
+            1 => ruling_call(
+                "r1",
+                "slot",
+                "q14",
+                "answer",
+                crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+                "原文件第 1 页答案为 B，当前稿正确；候选 A 是识别错误",
+            ),
+            _ => json!({"callId": "r2", "tool": "finish",
+                        "arguments": {"note": "候选错误，保留当前稿"}}),
+        })
+    })
+    .expect("修复循环必须返回结果");
+
+    assert_eq!(report.adjudicated_count, 1, "必须留下一条可核对的裁定");
+    assert!(
+        !has_task(&report.remaining_tasks, "cloud-diff:slot:q14:answer"),
+        "已裁定「当前稿对、候选错」的差异不得再问用户：{:?}",
+        report.remaining_tasks
+    );
+    // 裁定不是编辑：内容必须一字未动。
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
+
+    // 裁定必须落盘：重开一次不该让用户第二次回答同一个问题。
+    let stored = store::read_repair_rulings(&root, ITEM_ID, BATCH_ID)
+        .expect("读裁定")
+        .expect("裁定是产品状态，必须落盘");
+    assert_eq!(stored["rulings"].as_array().expect("rulings").len(), 1);
+
+    // 再跑一轮（模型这次什么都不做）：差异仍然不回来。
+    let mut second_calls = 0u32;
+    let second = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+        second_calls += 1;
+        Ok(json!({"callId": "s1", "tool": "finish", "arguments": {"note": "再核一遍"}}))
+    })
+    .expect("第二次修复循环必须返回结果");
+    assert!(
+        !has_task(&second.remaining_tasks, "cloud-diff:slot:q14:answer"),
+        "重新运行不得让已了结的差异复活：{:?}",
+        second.remaining_tasks
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 场景 2：本地与候选均错误，云端写入第三种内容 → 不要求用户回到候选。
+#[test]
+fn when_both_sides_are_wrong_the_third_content_is_written_and_the_candidate_is_not_forced_back() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let mut calls = 0u32;
+    let report = run_repair_loop(&request, |context: &Value, _observations: &[Value]| {
+        calls += 1;
+        let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
+        Ok(match calls {
+            1 => json!({"callId": "c1", "tool": "read_draft",
+                        "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}}),
+            // 当前稿 B、候选 A 都错，原文件是 C：直接写成第三种内容。
+            2 => json!({"callId": "c2", "tool": "apply_edits",
+                        "arguments": {"baseVersion": version, "commands": [set_answer("q14", "C")]}}),
+            // 写完之后再裁定：本地与候选都不对，差异已了结，**不必**回到候选 A。
+            3 => ruling_call(
+                "c3",
+                "slot",
+                "q14",
+                "answer",
+                crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+                "当前稿 B 与候选 A 均与原文不符；已按原文改为 C",
+            ),
+            _ => json!({"callId": "c4", "tool": "finish",
+                        "arguments": {"note": "已写入第三种内容 C"}}),
+        })
+    })
+    .expect("修复循环必须返回结果");
+
+    assert_eq!(report.applied_count, 1, "第三种内容必须真的落库");
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["C"]),
+        "落库的必须是原文的第三种内容，而不是候选的 A"
+    );
+    assert_eq!(report.adjudicated_count, 1);
+    assert!(
+        !has_task(&report.remaining_tasks, "cloud-diff:slot:q14:answer"),
+        "两边都错、已按原文改正之后，不能再要求用户回到候选：{:?}",
+        report.remaining_tasks
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 场景 3：模型报告疑问，但没有结构错误、也没有候选差异 → 疑问必须保留。
+#[test]
+fn a_reported_doubt_survives_even_when_nothing_else_is_wrong() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    // 候选与当前稿完全一致：既没有内容差异，也没有 blocking 质量问题。
+    store_candidate(&root, "B");
+
+    let context = build_repair_context(&root, ITEM_ID, ITEM_ID, BATCH_ID).expect("构建上下文");
+    assert!(
+        context["differences"].as_array().expect("差异列表").is_empty(),
+        "这条用例的前提是「没有候选差异」：{:?}",
+        context["differences"]
+    );
+    assert!(
+        context["qualityIssues"]
+            .as_array()
+            .expect("质量问题")
+            .iter()
+            .all(|issue| issue["severity"] != "blocking"),
+        "这条用例的前提是「没有结构错误」：{:?}",
+        context["qualityIssues"]
+    );
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 2);
+    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+        Ok(json!({"callId": "q1", "tool": "finish", "arguments": {
+            "note": "整卷核完",
+            "unresolved": [{
+                "targetId": "q14",
+                "message": "第 1 页第 14 题的答案栏字形模糊，B 与 8 无法区分",
+                "evidence": [{"sourceFileId": "early-approaches-pdf", "pageIndex": 1, "quote": "14 B"}]
+            }]
+        }}))
+    })
+    .expect("修复循环必须返回结果");
+
+    let question = report
+        .remaining_tasks
+        .iter()
+        .find(|task| {
+            task["userTaskId"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("cloud-question:")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "程序校验通过不能消掉模型的未解疑问，实际清单：{:?}",
+                report.remaining_tasks
+            )
+        });
+    assert!(
+        question["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("字形模糊"),
+        "疑问必须带着模型的原话给用户：{question:?}"
+    );
+    assert_eq!(
+        question["action"], "review_difference",
+        "有具体目标时剩余任务必须能定位过去，而不是一句空话"
+    );
+    assert_eq!(report.status, REPAIR_STATUS_NEEDS_ATTENTION, "有未解疑问就不能说「可以导出」");
+    assert!(
+        report
+            .remaining_tasks
+            .iter()
+            .all(|task| task["blocking"] != json!(true)),
+        "疑问不是结构错误，不该标成阻断：{:?}",
+        report.remaining_tasks
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 裁定绑定的是**当时看到的那一对内容**：内容再变，旧裁定作废重评。
+#[test]
+fn a_ruling_is_re_evaluated_once_the_content_changes_again() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    // 第一轮：裁定「当前稿 B 是对的」，差异了结。
+    let mut calls = 0u32;
+    let first = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(match calls {
+            1 => ruling_call(
+                "r1",
+                "slot",
+                "q14",
+                "answer",
+                crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+                "原文是 B",
+            ),
+            _ => json!({"callId": "r2", "tool": "finish", "arguments": {}}),
+        })
+    })
+    .expect("第一轮必须跑完");
+    assert!(
+        !has_task(&first.remaining_tasks, "cloud-diff:slot:q14:answer"),
+        "第一轮裁定之后差异就该了结：{:?}",
+        first.remaining_tasks
+    );
+
+    // 内容又变了（这里走真实写入路径改 q14 → C）：旧裁定当时的前提不存在了。
+    let mut second_calls = 0u32;
+    let second = run_repair_loop(&request, |context: &Value, _observations: &[Value]| {
+        second_calls += 1;
+        let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
+        Ok(match second_calls {
+            1 => json!({"callId": "c1", "tool": "apply_edits",
+                        "arguments": {"baseVersion": version, "commands": [set_answer("q14", "C")]}}),
+            _ => json!({"callId": "c2", "tool": "finish", "arguments": {}}),
+        })
+    })
+    .expect("第二轮必须跑完");
+
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["C"]), "第二轮必须真的改了稿");
+    assert!(
+        has_task(&second.remaining_tasks, "cloud-diff:slot:q14:answer"),
+        "内容变了之后，基于旧内容的裁定必须作废、差异重新回到用户面前：{:?}",
+        second.remaining_tasks
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

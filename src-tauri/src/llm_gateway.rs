@@ -1123,7 +1123,17 @@ Work like an editor: read what you need, then submit ONE batch of domain command
 - Never invent an answer the file does not give.\n\
 - If a batch is rejected because a target is protected by a human edit, narrow the batch — do not retry the same commands.\n\
 - The context lists the whole document. Do not claim the paper is verified because you handled the listed differences.\n\
-- Call finish when you are done.\n\
+\n\
+DIFFERENCES ARE NOT AUTOMATICALLY THE USER'S PROBLEM.\n\
+The first-pass cloud candidate is only an input and it can be wrong. For every difference listed in the context, the user should NOT have to decide it unless you genuinely cannot:\n\
+- If the ORIGINAL FILE shows the current draft is right and the candidate is wrong: call record_ruling with ruling \"current_is_correct\" and the evidence you used. Do NOT edit anything.\n\
+- If the original file does not settle it (unreadable, ambiguous, missing): call record_ruling with ruling \"cannot_resolve\" and say why.\n\
+- If neither side is right: apply_edits to the correct content, then record_ruling \"current_is_correct\" for that difference (the candidate stays wrong).\n\
+- A recorded ruling removes that difference from the user's list. Only rule on differences you actually checked against the file.\n\
+- record_ruling cannot remove structural problems found by the backend validator. Fix those with apply_edits or leave them.\n\
+\n\
+When you are done, call finish. Put every question you could NOT settle in \"unresolved\": \
+those become user-visible items, so leaving them out hides real uncertainty.\n\
 Input JSON: {}",
         serde_json::to_string(input).unwrap_or_default()
     )

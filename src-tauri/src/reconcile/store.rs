@@ -27,6 +27,12 @@ pub(crate) const CLOUD_CANDIDATE_FILE: &str = "cloud-candidate.json";
 pub(crate) const CLOUD_AUTHORING_CANDIDATE_FILE: &str = "cloud-authoring-candidate.json";
 /// 修复运行的摘要（诊断副本）。**完成判据始终是当前 canonical**，不是这份摘要。
 pub(crate) const REPAIR_SUMMARY_FILE: &str = "repair.json";
+/// 差异裁定记录（**产品状态**，不是诊断副本）。
+///
+/// 与 `repair.json` 的性质不同：摘要只是给前端看的诊断副本，丢了可以按当前稿重算；
+/// 裁定记录的是「模型看过原文之后对某一对内容作出的结论」，重算不出来。丢掉它，
+/// 用户就要第二次回答同一个问题——正是本轮要消除的东西。
+pub(crate) const REPAIR_RULINGS_FILE: &str = "repair-rulings.json";
 pub(crate) const SOURCE_VERIFICATION_FILE: &str = "source-verification.json";
 pub(crate) const DECISION_FILE: &str = "decision.json";
 pub(crate) const CURRENT_BATCH_FILE: &str = "current.json";
@@ -79,6 +85,33 @@ pub(crate) fn write_repair_summary(
     let path = artifact_path(root, job_id, batch_id, REPAIR_SUMMARY_FILE)?;
     write_json(&path, summary)?;
     Ok(path)
+}
+
+/// 落盘本批次的差异裁定记录。
+pub(crate) fn write_repair_rulings(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+    rulings: &Value,
+) -> CommandResult<PathBuf> {
+    let path = artifact_path(root, job_id, batch_id, REPAIR_RULINGS_FILE)?;
+    write_json(&path, rulings)?;
+    Ok(path)
+}
+
+/// 读取本批次的差异裁定记录。**未写入过返回 `Ok(None)`**，不是错误：
+/// 首次运行时本来就没有裁定。
+///
+/// 读不到**不**降级成空数组：`None`（没裁定过）与 `Some([])`（裁定过、但没有条目）
+/// 对调用方是同一件事，所以这里不做区分；但**损坏**必须报错——把一份读不懂的裁定
+/// 当成「没有裁定」，会让已经了结的差异重新变成用户任务，而且没有任何迹象。
+pub(crate) fn read_repair_rulings(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+) -> CommandResult<Option<Value>> {
+    let path = artifact_path(root, job_id, batch_id, REPAIR_RULINGS_FILE)?;
+    read_json_opt(&path)
 }
 
 pub(crate) fn write_source_verification(

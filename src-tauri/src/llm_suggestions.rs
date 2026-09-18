@@ -548,9 +548,30 @@ pub(crate) fn make_repair_authoring_step_input(
                     "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "27 example"}]
                 }
             },
+            "record_ruling": {
+                "purpose": "Adjudicate a difference that is listed in the context, WITHOUT editing anything. \
+Use it when you have checked the original file and the difference does not need the user.",
+                "arguments": {
+                    "rulings": [{
+                        "targetType": "slot | task_group | response_group",
+                        "targetId": "the targetId exactly as listed in differences",
+                        "field": "the field exactly as listed in differences",
+                        "ruling": "current_is_correct | cannot_resolve",
+                        "reason": "why, in one sentence",
+                        "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "the exact text you relied on"}]
+                    }]
+                }
+            },
             "finish": {
                 "purpose": "Declare that you have done what you can. The backend still recomputes what is left.",
-                "arguments": {"note": "short explanation", "unresolved": ["what you could not fix"]}
+                "arguments": {
+                    "note": "short explanation",
+                    "unresolved": [{
+                        "targetId": "optional stable id when the doubt is about one target",
+                        "message": "what you could not settle, in the user's language",
+                        "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "what you saw"}]
+                    }]
+                }
             }
         },
         "allowedOps": [
@@ -560,7 +581,7 @@ pub(crate) fn make_repair_authoring_step_input(
         ],
         "rules": [
             "Return JSON only: exactly one object {\"callId\":\"...\",\"tool\":\"...\",\"arguments\":{...}}.",
-            "tool MUST be one of read_draft, read_source, apply_edits, finish. There is no other tool.",
+            "tool MUST be one of read_draft, read_source, apply_edits, record_ruling, finish. There is no other tool.",
             "You may only use the ops listed in allowedOps. resolveIssue and any quality/audit/provenance flag are NOT available.",
             "apply_edits REQUIRES baseVersion. Call read_draft first and pass back the editVersion you actually saw.",
             "Target ids MUST be the stable ids you got from read_draft or the context. Never invent an id.",
@@ -569,6 +590,10 @@ pub(crate) fn make_repair_authoring_step_input(
             "Some targets are protected because a human edited them. If a batch is rejected for that reason, narrow the batch instead of retrying the same commands.",
             "The context lists the WHOLE document. Do not claim the paper is verified just because you handled the listed differences.",
             "When a batch is rejected you get the specific error in the next observation. Fix exactly that and try again.",
+            "A difference is NOT automatically the user's problem. The first-pass candidate can be wrong. If the file shows the current draft is right, record_ruling \"current_is_correct\" instead of leaving the difference for the user.",
+            "record_ruling only accepts differences that are actually listed in the context, and only for a pair of contents you have checked. It cannot remove structural problems found by the backend validator.",
+            "If neither side is right, apply_edits to the correct content and then rule the difference \"current_is_correct\" (the candidate stays wrong).",
+            "Put every doubt you could NOT settle into finish.unresolved. Those become user-visible items, so omitting them hides real uncertainty.",
             "Call finish when you are done; the backend recomputes the remaining work from the current draft."
         ]
     })

@@ -38,9 +38,63 @@ pub const CLOUD_REPAIR_TOOL_RESULT_V1_SCHEMA_VERSION: &str = "CloudRepairToolRes
 /// 修复循环允许模型调用的工具名（**唯一真源**）。
 ///
 /// 提示词构造与分发器都必须引用这里，避免「提示词里写了一个、分发器不认」这类漂移。
-/// 工具本身就构成越权边界：模型能做的只有「读稿 / 读原文 / 提交一批领域命令 / 声明结束」，
-/// 不能执行代码、不能改源码、不能直接写导出 JS、不能标记问题已解决。
-pub const CLOUD_REPAIR_TOOLS: [&str; 4] = ["read_draft", "read_source", "apply_edits", "finish"];
+/// 工具本身就构成越权边界：模型能做的只有「读稿 / 读原文 / 提交一批领域命令 /
+/// 对已发现的差异作出裁定 / 声明结束」，不能执行代码、不能改源码、不能直接写导出 JS、
+/// 不能标记问题已解决。
+///
+/// `record_ruling` 为什么必须存在：首遍云端候选**也只是输入**，它同样会错。没有这个
+/// 工具，模型只有两种表达方式——改稿（`apply_edits`）或闭嘴（`finish`）。于是「候选
+/// 错了、当前稿是对的」这种判断无处安放，差异会被逐条变成人工任务回来问用户，哪怕
+/// 模型已经看过原文并确定候选是错的。裁定记录的是**结论**，不是编辑。
+pub const CLOUD_REPAIR_TOOLS: [&str; 5] = [
+    "read_draft",
+    "read_source",
+    "apply_edits",
+    "record_ruling",
+    "finish",
+];
+
+/// 裁定的两种结论。**只有这两种**：模型不能通过裁定声称「已修好」。
+///
+/// 刻意不提供「已修复」这类取值：修好没有修好，看的是当前稿本身与程序校验，
+/// 不是模型的一句话。
+pub const CLOUD_RULING_CURRENT_IS_CORRECT: &str = "current_is_correct";
+pub const CLOUD_RULING_CANNOT_RESOLVE: &str = "cannot_resolve";
+
+/// 一条差异裁定：模型对**某个具体差异**给出的结论。
+///
+/// 关键在最后两个字段：裁定绑定它当时看到的那一对内容（当前稿一侧 / 候选一侧）。
+/// 任一侧后来变了，这份裁定的前提就不存在了，必须重新评估——否则一次基于旧内容的
+/// 「我确认当前稿是对的」会永久掩盖后来才出现的问题。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudRepairRulingV1 {
+    pub target_type: String,
+    pub target_id: String,
+    pub field: String,
+    /// [`CLOUD_RULING_CURRENT_IS_CORRECT`] 或 [`CLOUD_RULING_CANNOT_RESOLVE`]。
+    pub ruling: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// 原文依据（pageIndex 为 **1-based**）。裁定「当前稿对」必须能指出出处。
+    #[serde(default)]
+    pub evidence: Vec<Value>,
+    /// 裁定当时「当前稿」一侧的内容指纹。
+    pub canonical_digest: String,
+    /// 裁定当时「云端候选」一侧的内容指纹。
+    pub candidate_digest: String,
+    /// 第几个回合作出的（诊断用）。
+    pub recorded_at_round: u32,
+}
+
+impl CloudRepairRulingV1 {
+    pub fn is_known_kind(&self) -> bool {
+        matches!(
+            self.ruling.as_str(),
+            CLOUD_RULING_CURRENT_IS_CORRECT | CLOUD_RULING_CANNOT_RESOLVE
+        )
+    }
+}
 
 // ── 完整候选 ───────────────────────────────────────────────────────────
 
