@@ -626,12 +626,8 @@ fn execute_tool(
     request: &RepairRunRequest<'_>,
     call: &CloudRepairToolCallV1,
     round: u32,
-    context: &Value,
+    _context: &Value,
 ) -> (CloudRepairToolResultV1, Option<usize>) {
-    let edit_version = context
-        .get("editVersion")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
     match call.tool.as_str() {
         "read_draft" => {
             let canonical = match current_canonical(request) {

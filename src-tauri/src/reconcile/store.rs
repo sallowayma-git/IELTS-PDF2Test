@@ -25,6 +25,8 @@ use crate::CommandResult;
 pub(crate) const LOCAL_CANDIDATE_FILE: &str = "local-candidate.json";
 pub(crate) const CLOUD_CANDIDATE_FILE: &str = "cloud-candidate.json";
 pub(crate) const CLOUD_AUTHORING_CANDIDATE_FILE: &str = "cloud-authoring-candidate.json";
+/// 修复运行的摘要（诊断副本）。**完成判据始终是当前 canonical**，不是这份摘要。
+pub(crate) const REPAIR_SUMMARY_FILE: &str = "repair.json";
 pub(crate) const SOURCE_VERIFICATION_FILE: &str = "source-verification.json";
 pub(crate) const DECISION_FILE: &str = "decision.json";
 pub(crate) const CURRENT_BATCH_FILE: &str = "current.json";
@@ -61,6 +63,21 @@ pub(crate) fn write_cloud_authoring_candidate(
 ) -> CommandResult<PathBuf> {
     let path = artifact_path(root, &candidate.job_id, batch_id, CLOUD_AUTHORING_CANDIDATE_FILE)?;
     write_json(&path, candidate)?;
+    Ok(path)
+}
+
+/// 落盘一次修复运行的摘要（诊断副本）。
+///
+/// 与候选一样走独立 artifact，**不碰权威稿**。摘要丢失时前端应回落到「按当前稿重算」，
+/// 而不是把丢失当成「修复没发生」。
+pub(crate) fn write_repair_summary(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+    summary: &Value,
+) -> CommandResult<PathBuf> {
+    let path = artifact_path(root, job_id, batch_id, REPAIR_SUMMARY_FILE)?;
+    write_json(&path, summary)?;
     Ok(path)
 }
 

@@ -21,7 +21,7 @@ use super::queue::{
     get_job, renew_lease, request_cancel, retry, set_cloud_status, STAGE_CLOUD_RECOGNITION,
     STAGE_FAILED, STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
 };
-use crate::auto_pipeline::{generate_cloud_reading_outline, run_auto_pipeline_core};
+use crate::auto_pipeline::run_auto_pipeline_core;
 use crate::library::repository::open_library_connection;
 use crate::reconcile::{candidate, commands, store};
 use crate::{app_root, AutoPipelineInput};
@@ -410,9 +410,15 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             }
             // 模型调用移入阻塞线程池，不占 async runtime；permit 随闭包结束释放，
             // 仅覆盖模型调用（reconcile 不再持有，约束：云端 permit 只在模型调用期间持有）。
+            //
+            // 这里拉的是**完整候选的原始输出**（而不是比对用大纲）：新主链需要可直接渲染的
+            // 完整内容。接身份与落盘放在冻结之后（那时 batch_id 才成立），见下方。
             let result = tauri::async_runtime::spawn_blocking(move || {
-                let result =
-                    generate_cloud_reading_outline(&root_cloud, &job_id_cloud, resolved.as_deref());
+                let result = crate::auto_pipeline::generate_cloud_authoring_candidate_raw(
+                    &root_cloud,
+                    &job_id_cloud,
+                    resolved.as_deref(),
+                );
                 drop(_cloud_permit);
                 result
             })
@@ -607,62 +613,167 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     // 直到此刻才 await 云端句柄：本地稿早已发布、base_edit_version 已冻结
     // （Defect 2 修复——「可打开编辑」的承诺不被云端模型调用拖慢）。云端在本地
     // 识别期间就已经并发起飞，这里只是收口它的结果。
-    let cloud_fetched = if freeze_error.is_some() {
-        // 冻结失败：护栏前提不成立（见上文）。宁可没有云端建议，也不允许迟到结果
-        // 覆盖用户修改——直接丢弃云端结果、走「跳过 reconcile」分支。
+    let cloud_fetched: Option<Result<serde_json::Value, String>> = if freeze_error.is_some() {
+        // 冻结失败：护栏前提不成立（见上文）。宁可没有云端结果，也不允许迟到结果
+        // 覆盖用户修改——直接丢弃云端结果、走「跳过修复」分支。
         None
     } else {
         match cloud_handle {
             Some(handle) => handle
                 .await
-                .unwrap_or(None), // join 失败（任务异常）按「云端中止」处理：跳过 reconcile。
+                .unwrap_or(None), // join 失败（任务异常）按「云端中止」处理：跳过修复。
             None => None,
         }
     };
-    // 云端中止（取消 / lease 丢失）时返回 None——本地稿仍可检查，云端标记失败、跳过裁决。
+
+    // ── 新主链：完整候选接身份 → 云端修复循环（**唯一的云端写入者**）────────
     //
-    // A3/A4 的模型通道（`verify_source_answers` / `adjudicate_divergence`）就在这条周期里，
-    // 它们会真的发 HTTP，因此整段必须落在阻塞边界上（见
-    // `run_cycle_in_blocking_boundary`）。修复前这里是在 async 上下文里直接同步调用的，
-    // 只要核验通道真的被触发就会 panic，任务随即悬挂在 `cloud_recognition`。
-    let cycle = match cloud_fetched {
-        Some(prefetched) => {
-            let boundary = run_cycle_in_blocking_boundary({
-                let root = root.clone();
-                let job_id = job_id.clone();
-                let profile = resolved_profile.clone();
-                move || {
-                    run_recognition_cycle(
-                        &root,
-                        &job_id,
-                        profile.as_deref(),
-                        true,
-                        prefetched,
-                        base_edit_version,
-                    )
+    // 旧 A3/A4 的模型通道（`verify_source_answers` / `adjudicate_divergence`）**不再**在
+    // 这条路径上叠加：新主链只有一个修复循环、一个写入出口。下面仍会跑一次本地周期，
+    // 把批次与决策证据落盘给前端（`cloud_enabled = false`，因此它既不调模型、
+    // 也不按云端结果自动写入）。
+    let batch_id = {
+        let source_sha256 = crate::reconcile::commands::source_sha256_for_job(&root, &job_id);
+        crate::reconcile::commands::recognition_batch_id(&job_id, &source_sha256, base_edit_version)
+    };
+    let mut repair_status: Option<String> = None;
+    let mut repair_applied: i64 = 0;
+    let mut repair_remaining: i64 = 0;
+    let mut repair_error: Option<String> = None;
+
+    if let Some(Ok(raw)) = cloud_fetched.as_ref() {
+        // 第一步：接身份 + 重算质量 + 独立落盘（候选**不写**权威稿）。
+        let raw = raw.clone();
+        let finalized = run_blocking({
+            let root = root.clone();
+            let job_id = job_id.clone();
+            let batch_id = batch_id.clone();
+            move || {
+                crate::auto_pipeline::finalize_cloud_authoring_candidate(
+                    &root,
+                    &job_id,
+                    &batch_id,
+                    base_edit_version,
+                    &raw,
+                )?;
+                Ok(())
+            }
+        })
+        .await;
+        match finalized {
+            Ok(()) => {
+                // 云端 permit 覆盖整段修复循环的模型调用（每个回合一次请求）。
+                let cloud_permit = state.cloud_permits.clone().acquire_owned().await;
+                let repair = run_blocking({
+                    let root = root.clone();
+                    let job_id = job_id.clone();
+                    let batch_id = batch_id.clone();
+                    let profile = resolved_profile.clone();
+                    let state = state.clone();
+                    move || {
+                        let probe_job_id = job_id.clone();
+                        let cancelled_probe = move || -> bool {
+                            state
+                                .cancelled
+                                .try_read()
+                                .map(|guard| guard.contains(&probe_job_id))
+                                .unwrap_or(false)
+                        };
+                        let repair_run_id = format!("cloud-repair:{batch_id}");
+                        let request = crate::cloud_repair::RepairRunRequest {
+                            root: &root,
+                            item_id: &job_id,
+                            job_id: &job_id,
+                            batch_id: &batch_id,
+                            repair_run_id: &repair_run_id,
+                            max_rounds: crate::cloud_repair::DEFAULT_MAX_REPAIR_ROUNDS,
+                            deadline: std::time::Instant::now()
+                                + std::time::Duration::from_millis(
+                                    crate::cloud_repair::DEFAULT_REPAIR_TIMEOUT_MS,
+                                ),
+                            cancelled: &cancelled_probe,
+                        };
+                        let report = crate::cloud_repair::run_repair_loop(
+                            &request,
+                            |context, observations| {
+                                crate::auto_pipeline::repair_authoring_step_through_gateway(
+                                    &root,
+                                    &job_id,
+                                    profile.as_deref(),
+                                    context,
+                                    observations,
+                                )
+                            },
+                        )?;
+                        // 修复摘要落盘（诊断副本）。**完成判据始终是当前 canonical**，
+                        // 这份摘要不参与「是否完成」的判定。
+                        crate::reconcile::store::write_repair_summary(
+                            &root,
+                            &job_id,
+                            &batch_id,
+                            &report.to_json(report.applied_count > 0),
+                        )?;
+                        Ok(report)
+                    }
+                })
+                .await;
+                match repair {
+                    Ok(report) => {
+                        repair_status = Some(report.status.to_string());
+                        repair_applied = report.applied_count as i64;
+                        repair_remaining = report.remaining_tasks.len() as i64;
+                        repair_error = report.last_error.clone();
+                    }
+                    Err(error) => {
+                        // 修复循环本身失败：已提交的有效修改保留，状态如实记录。
+                        repair_status =
+                            Some(crate::cloud_repair::REPAIR_STATUS_UNAVAILABLE.to_string());
+                        repair_error = Some(error);
+                    }
                 }
-            })
-            .await;
-            match boundary {
-                Ok(report) => Some(report),
-                Err(failure) => {
-                    settle_cycle_failure(&app, &state, &job_id, &failure).await;
-                    return;
-                }
+                drop(cloud_permit);
+            }
+            Err(error) => {
+                repair_status = Some(crate::cloud_repair::REPAIR_STATUS_UNAVAILABLE.to_string());
+                repair_error = Some(error);
             }
         }
-        None => None,
-    };
-    let (cloud_status, reconcile_status, actionable) = match &cycle {
-        // 云端 JSON 已在本地识别期间并发拉取并冻结于此；reconcile 直接复用，
-        // 不再发起第二次网络调用。
-        Some(report) => (
-            report.cloud_status.clone(),
-            report.reconcile_status.clone(),
+    }
+
+    // 本地周期：把本地候选 / 原文核验 / 批次汇总落盘。云端如实标 `not_run`
+    // （本地周期看不见云端），下面的 advance 会用真实修复状态覆盖它。
+    let cycle = run_cycle_in_blocking_boundary({
+        let root = root.clone();
+        let job_id = job_id.clone();
+        move || run_local_only_recognition_cycle(&root, &job_id, base_edit_version)
+    })
+    .await;
+
+    let (mut cloud_status, reconcile_status, actionable) = match cycle {
+        Ok(report) => (
+            report.cloud_status,
+            report.reconcile_status,
             report.actionable_count,
         ),
-        None => ("failed".to_string(), "skipped".to_string(), 0),
+        Err(failure) => {
+            settle_cycle_failure(&app, &state, &job_id, &failure).await;
+            return;
+        }
     };
+    // 云端**真的跑过**就以修复状态为准：本地周期看不见云端，会把 cloud_status 标成
+    // `not_run`（= 本次没有云端参与），拿它描述一次真实的云端修复是谎报。
+    if let Some(status) = repair_status.as_deref() {
+        cloud_status = match status {
+            crate::cloud_repair::REPAIR_STATUS_COMPLETED => "succeeded",
+            crate::cloud_repair::REPAIR_STATUS_NEEDS_ATTENTION
+            | crate::cloud_repair::REPAIR_STATUS_BUDGET_EXHAUSTED => "partial",
+            crate::cloud_repair::REPAIR_STATUS_CANCELLED => "not_run",
+            _ => "failed",
+        }
+        .to_string();
+    }
+    let actionable_final = actionable.max(repair_remaining);
+    let _ = repair_applied;
 
     let advance_result = advance(
         &app,
@@ -672,13 +783,13 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         Some("succeeded"),
         Some(&cloud_status),
         Some(&reconcile_status),
-        Some(actionable),
+        Some(actionable_final),
         // 冻结失败是一次真实降级：留机器码供 UI / 诊断区分「云端自己失败」与
         // 「本地快照没能冻结、因此主动放弃裁决」，避免这种失败只活在 stderr 里。
         if freeze_error.is_some() {
             Some("FREEZE_SNAPSHOT_FAILED")
         } else {
-            None
+            repair_error.as_deref()
         },
     )
     .await;
@@ -704,6 +815,23 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     }
     set_item_status_ready(&app, &job_id).await;
+}
+
+/// 把一段同步工作放到阻塞边界上执行（HTTP / 数据库 / 文件 IO 都不该占 async worker）。
+///
+/// 与 [`run_cycle_in_blocking_boundary`] 的区别：那个是识别周期的专用包装（带
+/// `RecognitionCycleReport` 语义），这里是通用的、带真实错误上抛的版本。
+async fn run_blocking<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    match tauri::async_runtime::spawn_blocking(work).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(error),
+        // join 失败 = panic 或阻塞任务被取消。绝不折叠成成功，也绝不吞掉。
+        Err(error) => Err(format!("processing_join:{error}")),
+    }
 }
 
 
