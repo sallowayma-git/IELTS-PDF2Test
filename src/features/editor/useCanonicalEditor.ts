@@ -2,6 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { applyEditorCommands, getWorkspaceItem } from "../../api/workspaceClient";
 import { applyAuthoringV2Patches as applyLocalPatches, inverseAuthoringPatch } from "../../services/authoringV2Patches";
 import { conflictRecoveryNotice, rebasePendingPatches } from "./conflictRecovery";
+import {
+  decideRemoteVersionAction,
+  shouldApplyDeferredRemoteRefresh,
+  type DeferredRemoteRefresh
+} from "./remoteVersion";
 import { EditorCommandConflictError, compileEditorCommand, type EditorCommandV1 } from "../../exam-canvas/editorCommands";
 import { toUserFacingError } from "../../utils/userFacingError";
 import type { AuthoringPatchV2, IeltsAuthoringIRV2 } from "../../types";
@@ -66,6 +71,19 @@ export interface CanonicalEditor {
    */
   saveNotice?: string;
   dismissSaveNotice: () => void;
+  /**
+   * 因本地有未保存修改而推迟读取的远端刷新；`undefined` = 没有推迟中的刷新。
+   *
+   * 界面据此如实告诉用户「云端已更新，保存后会加载最新版本」，而不是让他在保存时
+   * 突然撞上冲突、以为是自己操作出错。
+   */
+  deferredRemoteRefresh?: DeferredRemoteRefresh;
+  /**
+   * 收到「权威稿版本推进」通知。`incoming` 是事件携带的远端版本号（后端读不到时为
+   * `null`）。由工作区在 `processing://item-updated` 到达时调用——**不要**自己判断
+   * 「有没有未保存修改再决定是否重拉」，那正是这个 hook 要收口的地方。
+   */
+  noteRemoteVersion: (incoming: number | null | undefined) => void;
   flush: () => Promise<void>;
 }
 
@@ -81,6 +99,14 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
   const [title, setTitleState] = useState<string>();
   const [conflictRecovering, setConflictRecovering] = useState(false);
   const [saveNotice, setSaveNotice] = useState<string>();
+  /**
+   * 因本地有未保存修改而**推迟**的远端刷新（见 `remoteVersion.ts`）。
+   *
+   * 必须暴露给界面：用户看到「云端已更新到版本 N」才知道自己这份稿是旧的，
+   * 否则保存时突然撞上冲突会显得毫无来由。`undefined` = 没有推迟中的刷新。
+   */
+  const [deferredRemoteRefresh, setDeferredRemoteRefresh] = useState<DeferredRemoteRefresh>();
+  const deferredRemoteRef = useRef<DeferredRemoteRefresh | undefined>(undefined);
   const draftRef = useRef<IeltsAuthoringIRV2 | undefined>(undefined);
   const titleRef = useRef<string | undefined>(undefined);
   const versionRef = useRef(0);
@@ -97,9 +123,22 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
   const inFlight = useRef<Promise<void> | undefined>(undefined);
   const recoveryKey = `${RECOVERY_KEY_PREFIX}${itemId}`;
 
+  /**
+   * 尚未被服务端接受的改动数量（待发送队列 + 已提交但失败的批次）。
+   *
+   * 与 `checkpoint` 共用同一份计数：判断「现在能不能安全重拉」必须和界面上
+   * `pendingCount` 说的是同一件事，否则会出现「界面显示还有 2 项没保存，但刷新逻辑
+   * 认为可以覆盖」这种自相矛盾的状态。
+   */
+  const countUnsaved = useCallback(() => {
+    const batched = batchRef.current
+      ? batchRef.current.commands.length + (batchRef.current.title === undefined ? 0 : 1)
+      : 0;
+    return batched + pendingRef.current.length + (pendingTitleRef.current === undefined ? 0 : 1);
+  }, []);
+
   const checkpoint = useCallback(() => {
-    const count = pendingRef.current.length + (pendingTitleRef.current === undefined ? 0 : 1)
-      + (batchRef.current ? batchRef.current.commands.length + (batchRef.current.title === undefined ? 0 : 1) : 0);
+    const count = countUnsaved();
     setPendingCount(count);
     try {
       if (count && draftRef.current) {
@@ -112,7 +151,36 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
         localStorage.removeItem(recoveryKey);
       }
     } catch { /* A storage failure must not turn a committed save into a failed save. */ }
-  }, [recoveryKey]);
+  }, [recoveryKey, countUnsaved]);
+
+  /** 作废推迟记录（本次读取已经会拿到最新版本，或本地修改被放弃）。 */
+  const clearDeferredRemoteRefresh = useCallback(() => {
+    deferredRemoteRef.current = undefined;
+    setDeferredRemoteRefresh(undefined);
+  }, []);
+
+  /**
+   * 主动重拉：作废推迟记录并触发一次加载。
+   *
+   * 顺序不能反——先作废再触发，否则加载完成后那条推迟记录还在，下一次保存又会
+   * 触发一次多余的重拉。
+   */
+  const requestReload = useCallback(() => {
+    clearDeferredRemoteRefresh();
+    setReloadTick((value) => value + 1);
+  }, [clearDeferredRemoteRefresh]);
+
+  /**
+   * 保存循环排空后的收尾：若有一次远端变更因为「本地有未保存修改」被推迟，现在补读。
+   *
+   * 这是「推迟」策略的另一半。只推迟不补读，等于把一次真实的云端修改永久忘掉：
+   * 界面会一直停在改动前的结论，直到用户下次手动刷新。
+   */
+  const applyDeferredRemoteRefreshAfterSave = useCallback(() => {
+    if (shouldApplyDeferredRemoteRefresh(deferredRemoteRef.current, versionRef.current)) {
+      requestReload();
+    }
+  }, [requestReload]);
 
   const persist = useCallback((): Promise<void> => {
     if (timer.current !== undefined) window.clearTimeout(timer.current);
@@ -154,6 +222,40 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     return inFlight.current;
   }, [itemId, checkpoint]);
 
+  /**
+   * 收到「权威稿版本推进」通知时的处置。
+   *
+   * 判定规则本身在 `remoteVersion.ts`（纯函数、有单测）。这里只负责执行：
+   *   - `ignore` → 自己保存引起的回声，什么都不做（重拉会覆盖正在编辑的内容，
+   *     并让撤销栈的基线错位）；
+   *   - `defer`  → 记录，**不**覆盖用户正在编辑的稿；等保存排空后补读；
+   *   - `reload` → 本地干净，直接读最新版本。
+   *
+   * `incoming` 允许为 `undefined`：后端读不到版本号时会发 `null`，那种情况下
+   * 按「可能有变更」保守处理，绝不能因为拿不到版本号就把通知丢掉。
+   */
+  const noteRemoteVersion = useCallback((incoming: number | null | undefined) => {
+    const action = decideRemoteVersionAction({
+      incoming,
+      current: versionRef.current,
+      unsavedCount: countUnsaved()
+    });
+    if (action === "ignore") return;
+    if (action === "reload") {
+      requestReload();
+      return;
+    }
+    const version = typeof incoming === "number" && Number.isFinite(incoming) ? incoming : undefined;
+    const previous = deferredRemoteRef.current;
+    // 连续推迟时保留**最大**版本号：后处理的一条通知版本可能更小，不能让它把
+    // 「更靠后的那次变更」这件事冲掉。
+    const merged: DeferredRemoteRefresh = {
+      version: version === undefined ? previous?.version : Math.max(version, previous?.version ?? version)
+    };
+    deferredRemoteRef.current = merged;
+    setDeferredRemoteRefresh(merged);
+  }, [countUnsaved, requestReload]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -193,8 +295,13 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     checkpoint();
     setSaveState("saving");
     if (timer.current !== undefined) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => { void persist().catch(() => {}); }, SAVE_DEBOUNCE_MS);
-  }, [persist, checkpoint]);
+    timer.current = window.setTimeout(() => {
+      // 保存排空后补读被推迟的远端变更（见 `noteRemoteVersion`）。放在这里而不是
+      // `persist` 内部：`persist` 也被「刷新」「冲突恢复」调用，那些路径自己会读最新
+      // 版本，再补一次就是多余往返。
+      void persist().then(applyDeferredRemoteRefreshAfterSave).catch(() => {});
+    }, SAVE_DEBOUNCE_MS);
+  }, [persist, checkpoint, applyDeferredRemoteRefreshAfterSave]);
 
   const setTitle = useCallback((next: string) => {
     const trimmed = next.trim();
@@ -268,7 +375,9 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     // 而冲突恢复保存成功后恰好使 `pendingCount` 归零——若在这里清提示，
     // 「有改动未能应用」就会被一条后台事件抹掉，又回到静默丢失。
     // 提示只在用户主动放弃本地修改或手动关闭时失效。
-    void persist().then(() => setReloadTick((value) => value + 1)).catch((error) => {
+    // 用户主动刷新：本次读取必然拿到最新版本，推迟记录一并作废（`requestReload`
+    // 会清），否则下一次保存后还会再补读一次。
+    void persist().then(requestReload).catch((error) => {
       // 保存失败/冲突时不能静默什么都不做：用户点了「刷新」必须看到原因与出路，
       // 否则编辑器会停在一个既存不上、也刷不掉的死路上。
       const message = error instanceof Error ? error.message : String(error);
@@ -276,7 +385,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
         setSaveMessage(toUserFacingError(error, "刷新前保存失败，请重试。").userMessage);
       }
     });
-  }, [persist]);
+  }, [persist, requestReload]);
 
   /** 仍未被服务端接受的命令，保持原始顺序（先已提交失败的批次，再待发送队列）。 */
   const outstandingCommands = useCallback((): AuthoringPatchV2[] => {
@@ -298,8 +407,10 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     setSaveState("idle");
     setSaveMessage(undefined);
     setSaveNotice(undefined);
+    // 本地修改被放弃，这次加载本身就是「读最新版本」：推迟记录一并作废。
+    clearDeferredRemoteRefresh();
     setReloadTick((value) => value + 1);
-  }, [recoveryKey]);
+  }, [recoveryKey, clearDeferredRemoteRefresh]);
 
   const dismissSaveNotice = useCallback(() => { setSaveNotice(undefined); }, []);
 
@@ -319,6 +430,8 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
       draftRef.current = rebased;
       setDraft(rebased);
       setVersion(workspace.editVersion);
+      // 上面这次读取已经拿到最新版本，推迟记录不再有意义。
+      clearDeferredRemoteRefresh();
       batchRef.current = undefined;
       pendingRef.current = applied;
       pendingTitleRef.current = localTitle && localTitle !== workspace.item.title ? localTitle : undefined;
@@ -344,7 +457,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     } finally {
       setConflictRecovering(false);
     }
-  }, [checkpoint, conflictRecovering, itemId, outstandingCommands, persist]);
+  }, [checkpoint, clearDeferredRemoteRefresh, conflictRecovering, itemId, outstandingCommands, persist]);
 
   return {
     loading, loadError, draft, saveState, saveMessage, pendingCount, title, setTitle,
@@ -353,6 +466,7 @@ export function useCanonicalEditor(itemId: string): CanonicalEditor {
     applyCommand, applyPatch: (patch) => enqueue(patch, true), undo, redo,
     reload, recoverFromConflict, discardLocalChanges, conflictRecovering,
     saveNotice, dismissSaveNotice,
+    deferredRemoteRefresh, noteRemoteVersion,
     flush: persist
   };
 }

@@ -21,6 +21,7 @@ import {
 import { compilePreviewSource, describePreviewPublishLimitation } from "./studentPreview";
 import { RecognitionPanel } from "./RecognitionPanel";
 import { useCanonicalEditor } from "./useCanonicalEditor";
+import { describeDeferredRemoteRefresh } from "./remoteVersion";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { getPublishPreflight, type PublishCheckResultV1 } from "../../api/workspaceClient";
 
@@ -92,15 +93,23 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   useEffect(() => {
     let stopped = false;
     let stop: (() => void) | undefined;
-    subscribeProcessing((id) => {
-      if (id !== itemId) return;
+    subscribeProcessing((update) => {
+      if (update.itemId !== itemId) return;
       // 每次阶段推进/终态落地都记一票，作为识别建议面板的重拉信号（见下）。
       setProcessingTick((value) => value + 1);
       getJob(itemId).then(setDetail).catch(() => {});
-      if (!editor.pendingCount) editor.reload();
+      // 是否重拉由编辑器判定，这里**不**用 `pendingCount` 提前短路。
+      //
+      // 以前这里写的是 `if (!editor.pendingCount) editor.reload()`：有未保存修改时
+      // 整条事件被丢掉，且丢得没有痕迹——云端在后台自主修复了内容，编辑器永远不会
+      // 知道，用户继续在过期题面上改，直到某次保存撞上版本冲突才发现。
+      // 现在把事件携带的 `editVersion` 交给编辑器：它据此区分「自己保存的回声」
+      // （忽略）、「本地脏时的远端变更」（先记下，保存排空后补读）与「本地干净时的
+      // 远端变更」（立即重读）。规则见 `remoteVersion.ts`。
+      editor.noteRemoteVersion(update.editVersion);
     }).then((unlisten) => { if (stopped) unlisten(); else stop = unlisten; }).catch(console.error);
     return () => { stopped = true; stop?.(); };
-  }, [itemId, editor.pendingCount, editor.reload]);
+  }, [itemId, editor.noteRemoteVersion]);
 
   const localIssues = useMemo(() => deriveActionableIssues(editor.draft), [editor.draft]);
   const issues = useMemo(() => mergePublishGateIssues(localIssues, preflight), [localIssues, preflight]);
@@ -437,6 +446,11 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         </p>
       ) : null}
       {editor.saveMessage ? <p className="workspace-notice warning" role="alert">{editor.saveMessage}</p> : null}
+      {editor.deferredRemoteRefresh ? (
+        <p className="workspace-notice" role="status" data-testid="workspace-remote-pending">
+          {describeDeferredRemoteRefresh(editor.deferredRemoteRefresh)}
+        </p>
+      ) : null}
       {editor.saveNotice ? (
         <p className="workspace-notice warning" role="alert" data-testid="workspace-save-notice">
           {editor.saveNotice}
