@@ -187,6 +187,16 @@ async function openPanel() {
   });
 }
 
+async function closePanel() {
+  const open = await session.evaluate(`!!document.querySelector('[data-testid="workspace-recognition"]')`);
+  if (!open) return;
+  await session.clickSelector('[data-testid="workspace-recognition-toggle"]');
+  await session.waitFor(`!document.querySelector('[data-testid="workspace-recognition"]')`, {
+    timeoutMs: 20000,
+    label: "recognition-panel-closed",
+  });
+}
+
 async function reopenWorkspace() {
   await session.clickSelector('[data-testid="workspace-back"]');
   await session.waitFor(`!!document.querySelector('[data-testid="library-page"]')`, { timeoutMs: 30000, label: "library-after-back" });
@@ -753,7 +763,11 @@ async function main() {
   }
 
   // ---- 13. 断言：画布跟着刷新 ----
-  await openPanel();
+  //
+  // 截图前先把识别面板收起来：面板展开时会盖住画布，上一版两张 PNG 逐字节相同
+  // （`canvas-after-cloud-repair.png` 与 `recognition-remaining-tasks.png` 同哈希），
+  // 于是「画布更新」根本没有**看得见**的证据。DOM 断言本身是过的，但截图得说真话。
+  await closePanel();
   const canvasText = await session.evaluate(
     `(() => { const el = document.querySelector('[data-testid="exam-canvas-v2-author"]'); return el ? el.innerText.replace(/\\s+/g,' ').trim() : null; })()`,
   );
@@ -768,6 +782,22 @@ async function main() {
   await session.screenshot("canvas-after-cloud-repair");
 
   // ---- 14. 剩余任务：界面与后端一致，且每条都有真实动作 ----
+  // 第 13 步为了拍到画布把面板收起来了，这里重新展开再读界面。
+  await openPanel();
+  // 面板重新展开后，修复摘要与剩余任务是**异步**取回来的：挂上元素就立刻读会读到空壳
+  // （实测只读到「识别建议 刷新」，于是把「后端有 17 条、界面 0 条」误报成界面缺陷）。
+  // 等它真的渲染出结论再读；等不到也照读，让断言如实失败。
+  await session
+    .waitFor(
+      `(() => {
+         const root = document.querySelector('[data-testid="workspace-recognition"]');
+         if (!root) return false;
+         return Boolean(root.querySelector('[data-testid="workspace-recognition-repair-headline"]'))
+           || root.querySelectorAll('[data-testid="workspace-recognition-repair-task"]').length > 0;
+       })()`,
+      { timeoutMs: 25000, intervalMs: 500, label: "recognition-repair-rendered" },
+    )
+    .catch(() => null);
   const panel = await session.evaluate(
     `(() => {
       const root = document.querySelector('[data-testid="workspace-recognition"]');
