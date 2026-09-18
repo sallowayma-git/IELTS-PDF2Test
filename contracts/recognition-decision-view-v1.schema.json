@@ -31,7 +31,11 @@
     "chains": { "$ref": "#/$defs/chains" },
     "summary": { "$ref": "#/$defs/summary" },
     "actionable": { "type": "array", "items": { "$ref": "#/$defs/decisionItem" } },
-    "autoApplied": { "type": "array", "items": { "$ref": "#/$defs/decisionItem" } }
+    "autoApplied": { "type": "array", "items": { "$ref": "#/$defs/decisionItem" } },
+    "repair": {
+      "description": "云端自主修复摘要（批次级）。**缺失 = 没有修复记录**（旧批次 / 本次无云导入），不是「已修复」。语义真源是 cloud_repair::RepairRunReport::to_json。",
+      "$ref": "#/$defs/repair"
+    }
   },
   "$defs": {
     "stageState": {
@@ -68,6 +72,55 @@
         "autoFixed": { "type": "integer", "minimum": 0 },
         "needsReview": { "type": "integer", "minimum": 0 },
         "unverifiable": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "repair": {
+      "type": "object",
+      "required": ["status"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "running",
+            "completed",
+            "needs_attention",
+            "cancelled",
+            "budget_exhausted",
+            "unavailable"
+          ]
+        },
+        "editVersion": { "type": "integer", "minimum": 0 },
+        "appliedCount": { "type": "integer", "minimum": 0 },
+        "rounds": { "type": "integer", "minimum": 0 },
+        "remainingTasks": { "type": "array", "items": { "$ref": "#/$defs/repairTask" } },
+        "finishNote": { "type": ["string", "null"] },
+        "lastError": { "type": ["string", "null"] },
+        "undoAvailable": {
+          "type": "boolean",
+          "description": "是否存在可撤销的本轮自动修改（appliedCount > 0）"
+        },
+        "repairRunId": {
+          "type": ["string", "null"],
+          "description": "undo_cloud_repair 的原样入参；前端不得自己拼字符串"
+        },
+        "reasonCode": {
+          "type": ["string", "null"],
+          "description": "摘要损坏时的降级标记（repair_json_corrupt）"
+        }
+      }
+    },
+    "repairTask": {
+      "description": "修复后仍需要用户处理的单项（由后端按当前 canonical 重算，不是模型自报清单）",
+      "type": "object",
+      "required": ["userTaskId"],
+      "additionalProperties": false,
+      "properties": {
+        "userTaskId": { "type": "string" },
+        "targetIds": { "type": "array", "items": { "type": "string" } },
+        "questionNumbers": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "message": { "type": ["string", "null"] },
+        "action": { "type": "string" },
+        "blocking": { "type": "boolean" }
       }
     },
     "reasonCode": {
