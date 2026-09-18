@@ -943,13 +943,37 @@ async fn get_workspace_item(item_id: String, app: AppHandle) -> CommandResult<Va
 #[tauri::command]
 async fn apply_editor_commands(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let input: library::repository::ApplyEditorCommandsInput = serde_json::from_value(input)
-            .map_err(|error| format!("library_v2_invalid_input:{error}"))?;
-        library::commands::apply_editor_commands_core(&root, input)
+    let result = tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        move || {
+            let input: library::repository::ApplyEditorCommandsInput = serde_json::from_value(input)
+                .map_err(|error| format!("library_v2_invalid_input:{error}"))?;
+            library::commands::apply_editor_commands_core(&root, input)
+        }
     })
     .await
-    .map_err(|error| format!("library_v2_join:{error}"))?
+    .map_err(|error| format!("library_v2_join:{error}"))??;
+
+    // 内容改动就是权威稿版本推进：必须让工作区里**其它**面板（识别建议 / 门禁 /
+    // 用户任务）知道。以前只有阶段推进会发事件，于是「用户改了内容」这件事对面板
+    // 是不可见的——它们会一直显示改动前的结论。
+    //
+    // 通知失败**不**推翻一次已经落盘的成功保存：保存真的成功了，把通知问题报成
+    // 「保存失败」会让用户以为改动丢了，进而重复编辑。所以这里只 `let _ =`。
+    let item_id = result
+        .get("itemId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if !item_id.is_empty() {
+        let notify_app = app.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let conn = library::repository::open_library_connection(&root)?;
+            processing::scheduler::notify_item_content_changed(&conn, &notify_app, &item_id)
+        })
+        .await;
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -981,11 +1005,24 @@ async fn undo_cloud_repair(
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        cloud_repair::tools::undo_repair(&root, &item_id, &repair_run_id, base_version)
+    let result = tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        let item_id = item_id.clone();
+        move || cloud_repair::tools::undo_repair(&root, &item_id, &repair_run_id, base_version)
     })
     .await
-    .map_err(|error| format!("cloud_repair_undo_join:{error}"))?
+    .map_err(|error| format!("cloud_repair_undo_join:{error}"))??;
+
+    // 撤销同样改写了权威稿，与内容提交一样要通知工作区：否则「识别建议 / 门禁」面板
+    // 会继续显示撤销前的结论。与 `apply_editor_commands` 用同一个事件、同一套去重，
+    // 通知失败不推翻一次已经成功落盘的回滚（`let _ =`）。
+    let notify_app = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let conn = library::repository::open_library_connection(&root)?;
+        processing::scheduler::notify_item_content_changed(&conn, &notify_app, &item_id)
+    })
+    .await;
+    Ok(result)
 }
 
 /// 读取条目最新批次的识别建议（各阶段状态 + 待处理项 + 已自动修正记录）。
@@ -1003,14 +1040,40 @@ async fn get_recognition_decision(item_id: String, app: AppHandle) -> CommandRes
 #[tauri::command]
 async fn apply_recognition_decisions(input: Value, app: AppHandle) -> CommandResult<Value> {
     let root = app_root(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let request: schema::recognition_v1::ApplyRecognitionDecisionsRequestV1 =
-            serde_json::from_value(input)
-                .map_err(|error| format!("recognition_invalid_input:{error}"))?;
-        reconcile::commands::apply_recognition_decisions_core(&root, request)
+    let result = tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        move || {
+            let request: schema::recognition_v1::ApplyRecognitionDecisionsRequestV1 =
+                serde_json::from_value(input)
+                    .map_err(|error| format!("recognition_invalid_input:{error}"))?;
+            reconcile::commands::apply_recognition_decisions_core(&root, request)
+        }
     })
     .await
-    .map_err(|error| format!("recognition_join:{error}"))?
+    .map_err(|error| format!("recognition_join:{error}"))??;
+
+    // 接受建议会走正式 V2 patch 路径改写权威稿——与内容提交同类，因此同样要通知
+    // 工作区。这里**不**去判断「本次到底有没有写权威稿」：纯 reject 的批次不改稿，
+    // 于是事件里的 `editVersion` 与本地已知版本相同，前端会按「自己的回声」忽略掉
+    // （见 `remoteVersion.ts`）。判断「有没有真的变」是消费方的事，在这里重复一遍
+    // 只会多一处可能与真相不一致的判据。
+    if let Some(batch_id) = result.get("batchId").and_then(Value::as_str) {
+        let notify_app = app.clone();
+        let batch_id = batch_id.to_string();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let conn = library::repository::open_library_connection(&root)?;
+            let Some(batch) = reconcile::store::load_batch_by_id(&conn, &batch_id)? else {
+                return Ok(false);
+            };
+            processing::scheduler::notify_item_content_changed(
+                &conn,
+                &notify_app,
+                &batch.library_item_id,
+            )
+        })
+        .await;
+    }
+    Ok(result)
 }
 
 // ── M2：后端接管调度（processing/commands.rs 的薄壳，计划 §5.3 命令收敛）──

@@ -156,6 +156,27 @@ pub(crate) fn get_canonical_ds(
     }
 }
 
+/// 只读权威稿版本号，**不解析** `canonical_ds_json`。
+///
+/// 为什么不复用 [`get_canonical_ds`]：事件发射路径每次阶段推进都要读一次版本号，
+/// 为了一个整数去反序列化整份稿件是纯浪费；而且这个值要如实反映「权威稿现在是什么
+/// 版本」，读不到就是读不到（`None`），不能拿一个解析失败当 0。
+///
+/// 权威稿尚未落库（`canonical_ds_json IS NULL`）时同样返回 `Some(version)`——
+/// 版本号本身是有效的，只是还没有稿；调用方（事件载荷）只关心版本。
+pub(crate) fn current_edit_version(
+    conn: &Connection,
+    item_id: &str,
+) -> CommandResult<Option<i64>> {
+    conn.query_row(
+        "SELECT current_edit_version FROM library_items_v2 WHERE id = ?1",
+        [item_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|error| format!("library_v2_get_edit_version:{error}"))
+}
+
 pub(crate) fn rename_item(conn: &Connection, item_id: &str, title: &str) -> CommandResult<bool> {
     let now = Utc::now().to_rfc3339();
     let updated = conn

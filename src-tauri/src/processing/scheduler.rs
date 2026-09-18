@@ -140,8 +140,15 @@ fn display_message_for(job: &queue::ProcessingJobRow) -> String {
     display_message(&job.stage, None)
 }
 
-fn emit_item_updated(app: &AppHandle, job: &queue::ProcessingJobRow) {
-    let payload = json!({
+/// `processing://item-updated` 的载荷。
+///
+/// 抽成纯函数是为了让「事件里到底带了什么」可以被直接断言：`editVersion` 与
+/// `stateVersion` 这两个字段各有一条**不可观察**的失效方式——`editVersion` 写错成
+/// 提交前的值，前端会把它当成自己的回声而忽略（云端自主修复永远传不到编辑器）；
+/// `stateVersion` 没推高，前端会按序号去重把整条通知丢掉。两者都只在界面上表现为
+/// 「好像有点慢」，所以必须在载荷这一层锁住。
+fn item_updated_payload(job: &queue::ProcessingJobRow, edit_version: Option<i64>) -> Value {
+    json!({
         "libraryItemId": job.library_item_id,
         "jobId": job.id,
         "stage": job.stage,
@@ -151,9 +158,20 @@ fn emit_item_updated(app: &AppHandle, job: &queue::ProcessingJobRow) {
         "progressPercent": stage_percent(&job.stage),
         "actionableCount": job.actionable_count,
         "displayMessage": display_message_for(job),
-        "stateVersion": job.event_seq
-    });
-    if let Err(error) = app.emit(EVENT_ITEM_UPDATED, payload) {
+        "stateVersion": job.event_seq,
+        "editVersion": edit_version
+    })
+}
+
+/// 发一次 `processing://item-updated`。
+///
+/// `edit_version` 是**权威稿当前版本号**，不是本次事件改了它。带上它的唯一目的是让
+/// 前端能区分「这条事件是我自己刚保存引起的回声」与「权威稿真的被别人/云端改了」：
+/// 只按 `stateVersion` 判断的话，前端只能选择「每次都重拉」（把自己正在编辑的内容
+/// 反复覆盖掉）或「干脆不重拉」（云端自主修复了内容，编辑器永远不知道）。
+/// 读不到（条目被删等）时如实发 `null`，让前端走「版本未知」的保守分支。
+fn emit_item_updated(app: &AppHandle, job: &queue::ProcessingJobRow, edit_version: Option<i64>) {
+    if let Err(error) = app.emit(EVENT_ITEM_UPDATED, item_updated_payload(job, edit_version)) {
         eprintln!("[processing] emit failed: {error}");
     }
 }
@@ -210,7 +228,7 @@ pub(crate) async fn cancel(state: Arc<ProcessingState>, app: AppHandle, job_id: 
         let conn = open_library_connection(&root)?;
         request_cancel(&conn, &job_id_owned)?;
         if let Some(job) = get_job(&conn, &job_id_owned)? {
-            emit_row(&app, &job);
+            emit_row(&conn, &app, &job);
         }
         Ok(())
     })
@@ -233,7 +251,7 @@ pub(crate) async fn retry_job(state: Arc<ProcessingState>, app: AppHandle, job_i
         let conn = open_library_connection(&root)?;
         retry(&conn, &job_id_owned)?;
         if let Some(job) = get_job(&conn, &job_id_owned)? {
-            emit_row(&app, &job);
+            emit_row(&conn, &app, &job);
         }
         Ok(())
     })
@@ -243,8 +261,60 @@ pub(crate) async fn retry_job(state: Arc<ProcessingState>, app: AppHandle, job_i
 
 use crate::CommandResult;
 
-fn emit_row(app: &AppHandle, job: &queue::ProcessingJobRow) {
-    emit_item_updated(app, job);
+fn emit_row(conn: &rusqlite::Connection, app: &AppHandle, job: &queue::ProcessingJobRow) {
+    // 版本号读不到不是发事件的理由：事件本身（阶段/状态）仍然有效，只是前端会走
+    // 「版本未知」的保守分支。这里**不**把读失败升级成错误，否则一次状态通知会因为
+    // 一个附加字段而整条丢掉。
+    let edit_version = crate::library::repository::current_edit_version(conn, &job.library_item_id)
+        .ok()
+        .flatten();
+    emit_item_updated(app, job, edit_version);
+}
+
+/// 内容提交后要发的通知行（**已推高序号**）；没有可通知的任务行时返回 `None`。
+///
+/// 与 [`notify_item_content_changed`] 分开是为了能被单独断言：这里不碰 `AppHandle`，
+/// 而「序号有没有真的推高」正是这条链路唯一的失效点——推不上去，前端会把通知
+/// 当成重复事件丢掉，且丢得毫无痕迹。
+pub(crate) fn prepare_content_change_notification(
+    conn: &rusqlite::Connection,
+    library_item_id: &str,
+) -> Result<Option<queue::ProcessingJobRow>, String> {
+    let Some(job) = queue::get_job_by_library_item(conn, library_item_id)? else {
+        return Ok(None);
+    };
+    if queue::bump_event_seq(conn, &job.id)?.is_none() {
+        return Ok(None);
+    }
+    // 重新读一行：`bump_event_seq` 只改了序号，但事件载荷里其它字段也必须是**落库后**
+    // 的值，否则会出现「序号是新的、状态是旧的」这种自相矛盾的载荷。
+    queue::get_job(conn, &job.id)
+}
+
+/// 内容提交后通知前端「权威稿变了」（复用 `processing://item-updated`）。
+///
+/// 为什么复用同一个事件而不是新开一个：前端只需要**一套**订阅、一套去重、一套刷新
+/// 逻辑。多开一个事件名意味着每个消费方都要记得订阅两个，漏一个就出现「保存了但面板
+/// 不更新」这类只在部分界面暴露的缺陷。
+///
+/// 为什么必须**先推高 `event_seq` 再发**：前端按 `stateVersion` 单调去重
+/// （`processingClient.ts` 的 `versions` 表）。若沿用上一次的序号，这次通知会被直接
+/// 丢弃——而且丢得毫无痕迹。推高是让这次通知「有资格」被消费。
+///
+/// 返回 `Ok(false)` 表示该条目当前没有处理任务行（任务已清理 / 条目是手工新建的）。
+/// 这**不是**错误：没有任务行就没有处理状态可推，编辑器自己的保存结果已经能反映版本。
+pub(crate) fn notify_item_content_changed(
+    conn: &rusqlite::Connection,
+    app: &AppHandle,
+    library_item_id: &str,
+) -> Result<bool, String> {
+    match prepare_content_change_notification(conn, library_item_id)? {
+        Some(job) => {
+            emit_row(conn, app, &job);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }
 
 async fn run_job(app: AppHandle, state: Arc<ProcessingState>, job: queue::ProcessingJobRow) {
@@ -288,7 +358,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         let _ = tauri::async_runtime::spawn_blocking(move || {
             let conn = open_library_connection(&root)?;
             let Some(job) = get_job(&conn, &job_id)? else { return Ok::<(), String>(()) };
-            emit_row(&app, &job);
+            emit_row(&conn, &app, &job);
             Ok(())
         })
         .await;
@@ -1244,7 +1314,7 @@ async fn advance(
                 let _ = tauri::async_runtime::spawn_blocking(move || {
                     let conn = open_library_connection(&root)?;
                     if let Some(job) = get_job(&conn, &job_id)? {
-                        emit_row(&app, &job);
+                        emit_row(&conn, &app, &job);
                     }
                     Ok::<(), String>(())
                 })
@@ -1285,7 +1355,7 @@ async fn set_cloud_status_only(
                 let _ = tauri::async_runtime::spawn_blocking(move || {
                     let conn = open_library_connection(&root)?;
                     if let Some(job) = get_job(&conn, &job_id)? {
-                        emit_row(&app, &job);
+                        emit_row(&conn, &app, &job);
                     }
                     Ok::<(), String>(())
                 })
@@ -1418,7 +1488,7 @@ async fn finish_cancelled(app: &AppHandle, state: &Arc<ProcessingState>, job_id:
         let _ = tauri::async_runtime::spawn_blocking(move || {
             let conn = open_library_connection(&root)?;
             if let Some(job) = get_job(&conn, &job_id)? {
-                emit_row(&app, &job);
+                emit_row(&conn, &app, &job);
             }
             Ok::<(), String>(())
         })
@@ -1469,7 +1539,7 @@ async fn set_item_status_ready(app: &AppHandle, job_id: &str) {
     let _ = tauri::async_runtime::spawn_blocking(move || {
         let conn = open_library_connection(&root)?;
         if let Some(job) = queue::get_job(&conn, &job_id)? {
-            emit_row(&app, &job);
+            emit_row(&conn, &app, &job);
         }
         Ok::<(), String>(())
     })
@@ -2155,6 +2225,96 @@ mod tests {
             "本地候选快照必须落盘，否则裁决无据可依"
         );
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 内容提交后的通知：**序号必须真的推高**，否则前端会把它当成重复事件丢掉。
+    ///
+    /// 这条链路唯一的失效点是「序号没变」——推不上去，通知会被 `processingClient.ts`
+    /// 的单调去重**静默**丢弃，症状是「改了内容，识别建议 / 门禁面板不更新」，界面上
+    /// 看起来只是慢。所以这里断言的是**严格变大**，而不是「函数没报错」。
+    ///
+    /// 同时断言事件携带的 `editVersion` 读的是**提交后**的版本：若它还是提交前的值，
+    /// 前端会把它当成「自己保存的回声」而忽略，云端自主修复就永远传不到编辑器。
+    #[test]
+    fn content_change_notification_advances_the_sequence_and_carries_the_committed_version() {
+        use crate::library::repository::{
+            current_edit_version, open_library_connection, seed_canonical_ds, upsert_item_shell,
+            UpsertItemInput,
+        };
+        use crate::processing::queue;
+        use uuid::Uuid;
+
+        let root =
+            std::env::temp_dir().join(format!("pdf2test-notify-{}", Uuid::new_v4().simple()));
+        crate::util::ensure_app_dirs(&root).expect("app dirs");
+
+        let item_id = "item-1";
+        let conn = open_library_connection(&root).expect("db");
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: item_id,
+                modality: "reading",
+                title: "t",
+                status: "action_required",
+                source_asset_id: None,
+            },
+        )
+        .expect("shell");
+        let ds = |title: &str| {
+            serde_json::json!({
+                "schemaVersion": "IeltsAuthoringIRV2",
+                "exam": {"title": title},
+                "taskGroups": [],
+                "answerSlots": {},
+                "answerKey": {},
+                "quality": {"coverageStatus": {"unassignedSourceNodeIds": []}}
+            })
+        };
+        seed_canonical_ds(&conn, item_id, &ds("t").to_string(), "action_required").expect("seed");
+        queue::enqueue(&conn, "job-1", item_id, "asset-1", &serde_json::Value::Null)
+            .expect("enqueue");
+
+        let before_seq = queue::get_job(&conn, "job-1").unwrap().unwrap().event_seq;
+        let before_version = current_edit_version(&conn, item_id).unwrap().expect("版本可读");
+
+        // 模拟一次内容提交落盘：版本 +1（`apply_editor_commands_tx` 做的正是这件事）。
+        conn.execute(
+            "UPDATE library_items_v2 SET current_edit_version = ?2, canonical_ds_json = ?3 WHERE id = ?1",
+            rusqlite::params![item_id, before_version + 1, ds("t2").to_string()],
+        )
+        .expect("bump version");
+
+        let row = prepare_content_change_notification(&conn, item_id)
+            .expect("通知准备不得失败")
+            .expect("有任务行就必须产出通知");
+        assert!(
+            row.event_seq > before_seq,
+            "序号必须严格变大，否则会被前端去重丢掉：{before_seq} -> {}",
+            row.event_seq
+        );
+
+        // 断言的是**真正会发出去的那份载荷**，不是函数有没有报错。
+        let committed_version = current_edit_version(&conn, item_id).unwrap();
+        assert_eq!(committed_version, Some(before_version + 1), "前提：提交确实推进了版本");
+        let payload = item_updated_payload(&row, committed_version);
+        assert_eq!(payload["libraryItemId"], item_id);
+        assert_eq!(
+            payload["stateVersion"], row.event_seq,
+            "载荷里的序号必须与推高后的行一致，否则前端仍会按旧序号去重"
+        );
+        assert_eq!(
+            payload["editVersion"], before_version + 1,
+            "事件必须携带**提交后**的版本；若是提交前的值，前端会把它当成自己的回声而忽略"
+        );
+
+        // 没有任务行的条目：如实返回 None，**不是**错误（条目可能被手工新建、任务已被清理）。
+        assert!(prepare_content_change_notification(&conn, "item-none")
+            .unwrap()
+            .is_none());
+
+        drop(conn);
         let _ = std::fs::remove_dir_all(&root);
     }
 

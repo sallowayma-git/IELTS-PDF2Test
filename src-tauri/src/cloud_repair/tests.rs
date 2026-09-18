@@ -14,6 +14,7 @@ use crate::library::repository::{
 use crate::reconcile::candidate::{
     cloud_authoring_candidate_from_normalized, normalize_cloud_authoring, CloudAuthoringIdentity,
 };
+use crate::auto_pipeline::repair_authoring_step_through_gateway;
 use crate::util::ensure_app_dirs;
 
 const ITEM_ID: &str = "early-approaches-architecture-proof";
@@ -424,5 +425,301 @@ fn read_source_evidence_fails_instead_of_fabricating() {
     ensure_app_dirs(&root).expect("ensure_app_dirs");
     let result = read_source_evidence(&root, "no-such-job", &json!({"pageIndex": 1}));
     assert!(result.is_err(), "没有原文件时必须失败，而不是返回空证据");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ── 受控模型服务 → 真实网关 → 真实工具执行 → 真实权威稿 ─────────────────────
+//
+// 上面所有用例都把模型输出**直接塞进** `run_repair_loop` 的 `step`，验证的是循环与
+// 工具分发。它们证明不了「模型服务那一端真的接上了」——网关的 prompt 构造、HTTP
+// 往返、`validate_repair_step_output`、`repair_authoring_step_through_gateway` 里的
+// profile / 主源文件 / 证据面解析，全在那条缝里。交接文档点名「云端完整识别和自主
+// 编辑循环仍未接通」，指的正是这条缝，所以这里必须真起一个 HTTP 服务、真发请求。
+//
+// 覆盖层次（AGENTS.md 的分类）：**服务/命令处理器层**，不是 UI。
+// 未覆盖：`run_job_inner` 的编排与前端界面（需要 `AppHandle`），报告里明说。
+
+/// 起一个**有剧本**的受控修复服务。
+///
+/// 与 `reconcile::commands` 里那个固定应答的服务不同：修复回合是多轮的，第二轮必须
+/// 用**第一轮真实读到的** `editVersion` 作 `baseVersion`，否则 CAS 会拒绝——静态样本
+/// 无法预知版本号，所以这里从请求体里把 `Input JSON:` 之后的那份输入解析出来现取。
+///
+/// 返回 `(baseUrl, 收到的请求体)`。请求体留痕是为了断言「发出去的确实是修复请求，
+/// 且带着原文件证据面」，而不是只看最终结果猜中间发生了什么。
+fn spawn_scripted_repair_service() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind controlled service");
+    let addr = listener.local_addr().expect("local addr");
+    let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorder = seen.clone();
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            // 必须把请求体读完再回写：否则客户端还在发 body 时会收到 RST，
+            // 得到一个与「受控服务」无关的传输错误，把要验证的东西掩盖掉。
+            let mut request = Vec::<u8>::new();
+            let mut chunk = [0u8; 4096];
+            let mut header_end: Option<usize> = None;
+            let mut content_length = 0usize;
+            loop {
+                if let Some(end) = header_end {
+                    if request.len() >= end + content_length {
+                        break;
+                    }
+                }
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        request.extend_from_slice(&chunk[..read]);
+                        if header_end.is_none() {
+                            if let Some(position) =
+                                request.windows(4).position(|window| window == b"\r\n\r\n")
+                            {
+                                header_end = Some(position + 4);
+                                let headers =
+                                    String::from_utf8_lossy(&request[..position]).to_lowercase();
+                                content_length = headers
+                                    .lines()
+                                    .find_map(|line| line.strip_prefix("content-length:"))
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                                    .unwrap_or(0);
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let body = String::from_utf8_lossy(&request).to_string();
+            let round = {
+                let mut guard = recorder.lock().expect("recorder");
+                guard.push(body.clone());
+                guard.len()
+            };
+
+            let content = scripted_repair_reply(&body, round);
+            let envelope = json!({
+                "id": "controlled-repair-0001",
+                "object": "chat.completion",
+                "model": "controlled-repair-v1",
+                "choices": [{
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": content}
+                }]
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                envelope.as_bytes().len(),
+                envelope
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+
+    (format!("http://127.0.0.1:{}/v1", addr.port()), seen)
+}
+
+/// 从请求体里取出网关嵌进 prompt 的那份输入 JSON（`Input JSON: {...}` 之后的全部内容）。
+///
+/// 必须**先按 JSON 解析信封**再取文本：prompt 是 `messages[1].content` 里的一个 text
+/// part，直接从原始字节里找 `Input JSON: ` 会拿到一层 `\"` 转义，解析必然失败——失败
+/// 的表现是版本号取成兜底值、`apply_edits` 被 CAS 拒，于是这条用例会「跑完了但什么都没改」，
+/// 看起来像产品没接通，其实是夹具没读懂请求。
+fn repair_request_input(body: &str) -> Option<Value> {
+    let envelope: Value = serde_json::from_str(body.get(body.find('{')?..)?).ok()?;
+    let text = envelope
+        .get("messages")?
+        .as_array()?
+        .iter()
+        .flat_map(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+        })
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let marker = "Input JSON: ";
+    let at = text.rfind(marker)?;
+    serde_json::from_str(text[at + marker.len()..].trim()).ok()
+}
+
+/// 剧本：先读稿 → 再按**真实读到的版本**提交一批合法编辑 → 收尾。
+fn scripted_repair_reply(body: &str, round: usize) -> String {
+    let input = repair_request_input(body);
+    let version = input
+        .as_ref()
+        .and_then(|value| value.pointer("/context/editVersion"))
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    match round {
+        1 => json!({
+            "callId": "c1",
+            "tool": "read_draft",
+            "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}
+        }),
+        2 => json!({
+            "callId": "c2",
+            "tool": "apply_edits",
+            "arguments": {
+                "baseVersion": version,
+                "commands": [set_answer("q14", "A")],
+                "evidence": [{
+                    "sourceFileId": "early-approaches-pdf",
+                    "pageIndex": 1,
+                    "quote": "14 A"
+                }]
+            }
+        }),
+        _ => json!({
+            "callId": "c3",
+            "tool": "finish",
+            "arguments": {"note": "受控服务：q14 已按原文件改为 A"}
+        }),
+    }
+    .to_string()
+}
+
+/// 造一份带主源文件的作业（网关要读 `uploads/<storedName>` 才能附上原文件证据）。
+fn seed_job_with_source(root: &Path) {
+    use crate::job_store::{make_job, save_job};
+    use crate::util::{ensure_job_dirs, job_dir, write_json};
+    use crate::{CreateJobInput, SourceFile, WorkflowStep};
+
+    let mut job = make_job(CreateJobInput {
+        title: Some("Early Approaches".to_string()),
+        category: Some("P1".to_string()),
+        frequency: Some("medium".to_string()),
+        tags: Some(vec!["controlled".to_string()]),
+        llm_profile_id: None,
+    });
+    // 作业 id 必须与 item id 一致：请求里 `job_id` 就是它，网关按它 `load_job`。
+    job.job_id = ITEM_ID.to_string();
+    job.current_step = WorkflowStep::Authoring;
+    job.active_llm_profile_id = Some("controlled-repair".to_string());
+    job.source_files = vec![SourceFile {
+        file_id: "early-approaches-pdf".to_string(),
+        original_name: "early-approaches.pdf".to_string(),
+        stored_name: "early-approaches.pdf".to_string(),
+        file_type: "pdf".to_string(),
+        sha256: "a".repeat(64),
+        size_bytes: 8,
+        role: "MainQuestion".to_string(),
+        imported_at: chrono::Utc::now(),
+    }];
+    save_job(root, &job).expect("save job");
+    let dir = job_dir(root, ITEM_ID);
+    ensure_job_dirs(&dir).expect("job dirs");
+    // 主源文件必须真实存在：`main_source_for_cloud` 找不到就报错，而不是静默降级成
+    // 「没有证据面」——那样这条用例会退化成「只发了一句 prompt 也能过」。
+    std::fs::create_dir_all(dir.join("uploads")).expect("uploads dir");
+    std::fs::write(dir.join("uploads").join("early-approaches.pdf"), b"%PDF-1.4\n")
+        .expect("write source");
+    write_json(
+        &dir.join("document-ir.json"),
+        &json!({"pages":[{"pageIndex":0,"lines":[{"text":"Early approaches to organisational design."}]}]}),
+    )
+    .expect("document-ir");
+}
+
+/// 受控服务 → 真实网关 → 真实工具执行 → 真实权威稿。
+#[test]
+fn controlled_model_service_drives_a_real_repair_round_through_the_real_gateway() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+    seed_job_with_source(&root);
+
+    let (base_url, requests) = spawn_scripted_repair_service();
+    crate::llm_profiles::save_profiles(
+        &root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": base_url,
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘，否则网关取不到 baseUrl");
+
+    let before = read_answer(&root, "q14");
+    let version_before = {
+        let conn = open_library_connection(&root).expect("打开库连接");
+        let (_, version) = get_canonical_ds(&conn, ITEM_ID).expect("读 canonical").expect("已播");
+        version
+    };
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_repair_loop(&request, |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("修复循环必须跑完");
+
+    // 1) 请求真的到了受控服务（而不是「循环自己以为调用了模型」）。
+    let seen = requests.lock().expect("requests");
+    assert!(
+        seen.len() >= 2,
+        "至少要有 read_draft 与 apply_edits 两轮真实 HTTP 请求，实际 {}",
+        seen.len()
+    );
+    assert!(
+        seen[0].contains("repair_authoring_step") || seen[0].contains("You are repairing"),
+        "发出去的必须是修复回合的 prompt，实际首轮请求：{}",
+        &seen[0][..seen[0].len().min(400)]
+    );
+    // 证据面：PDF 必须以附件形式带上原文件，而不是只发文字。
+    assert!(
+        seen[0].contains("application/pdf"),
+        "修复回合必须把原文件作为证据附上；只发 prompt 就等于让模型凭空猜"
+    );
+    // 第二轮必须带上第一轮的真实观察结果（`read_draft` 的返回），否则「读稿→改稿」
+    // 这条闭环是假的。
+    assert!(
+        seen[1].contains("read_draft") || seen[1].contains("CloudRepairToolResultV1"),
+        "第二轮必须把上一轮工具的真实结果回传给模型"
+    );
+    drop(seen);
+
+    // 2) 真实工具执行：权威稿真的被改了（不是只产生了一份「建议」）。
+    let after = read_answer(&root, "q14");
+    assert_ne!(after, before, "受控服务提交的编辑必须真的落到权威稿上");
+    assert_eq!(after["labels"], json!(["A"]), "落库的必须是模型提交的那个值");
+
+    // 3) 报告如实反映「改了、但未必改完」：finish 不是产品完成。
+    assert!(
+        report.applied_count > 0,
+        "至少有一批编辑被真实应用，实际 {}",
+        report.applied_count
+    );
+    assert_eq!(
+        report.repair_run_id, "run-1",
+        "修复运行归属必须原样带出，前端撤销依赖它"
+    );
+    assert!(
+        report.edit_version > version_before,
+        "编辑版本必须推进（{version_before} -> {}），否则「改了稿」这句话没有证据",
+        report.edit_version
+    );
+
     let _ = std::fs::remove_dir_all(&root);
 }

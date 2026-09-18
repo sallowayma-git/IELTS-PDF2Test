@@ -305,6 +305,53 @@ pub(crate) fn get_job(conn: &Connection, job_id: &str) -> CommandResult<Option<P
     .map_err(|error| format!("processing_get:{error}"))
 }
 
+/// 按库条目找它的处理任务行（一个条目最多一个任务）。
+///
+/// `created_at` 兜底排序：同一 item 理论上只会有一个 job（`enqueue` 幂等），
+/// 但历史数据或异常路径下可能残留多行；取**最新**的一行，避免读到一条早已
+/// 终态的旧任务而让「内容已改动」的通知发不出去。
+pub(crate) fn get_job_by_library_item(
+    conn: &Connection,
+    library_item_id: &str,
+) -> CommandResult<Option<ProcessingJobRow>> {
+    conn.query_row(
+        &format!(
+            "SELECT {JOB_COLUMNS} FROM processing_jobs_v2 \
+             WHERE library_item_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1"
+        ),
+        [library_item_id],
+        row_from,
+    )
+    .optional()
+    .map_err(|error| format!("processing_get_by_item:{error}"))
+}
+
+/// 推高任务的事件序号并返回新值（没有该行返回 `None`）。
+///
+/// **内容提交也必须走这里**：`apply_editor_commands` 同样改变了权威稿，前端需要
+/// 重拉识别建议/门禁。但前端是按 `event_seq` 单调去重的（见 `processingClient.ts`
+/// 的 `versions` 表），若沿用旧序号，这次通知会被**静默丢弃**。所以顺序是
+/// 先落库推高、再发事件——反过来就会出现「推高了但发的事件还带旧号」。
+pub(crate) fn bump_event_seq(conn: &Connection, job_id: &str) -> CommandResult<Option<i64>> {
+    let now = Utc::now().to_rfc3339();
+    let updated = conn
+        .execute(
+            "UPDATE processing_jobs_v2 SET event_seq = event_seq + 1, updated_at = ?2 WHERE id = ?1",
+            params![job_id, now],
+        )
+        .map_err(|error| format!("processing_bump_event_seq:{error}"))?;
+    if updated == 0 {
+        return Ok(None);
+    }
+    conn.query_row(
+        "SELECT event_seq FROM processing_jobs_v2 WHERE id = ?1",
+        [job_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|error| format!("processing_bump_event_seq_read:{error}"))
+}
+
 /// G1 对抗审计 P1-3：lease 丢失后的终态收尾。本地已成功 + 仍在运行阶段时，
 /// reclaim 守卫保证没有其他 worker 能接手（不会与在跑 worker 竞争），允许
 /// 免 lease 提交 ready_for_review，避免任务在"云端识别中"悬挂到重启。
@@ -788,5 +835,52 @@ mod tests {
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.stage, STAGE_QUEUED);
         assert!(row.cancel_requested_at.is_none());
+    }
+
+    #[test]
+    fn bump_event_seq_advances_the_sequence_so_content_edits_are_not_deduped_away() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &Value::Null).unwrap();
+        let before = get_job(&conn, "job-1").unwrap().unwrap().event_seq;
+
+        // 前端按 event_seq 单调去重（`processingClient.ts`）。内容提交后若不推高序号，
+        // 这次通知会被**静默丢弃**——症状是「改了内容，面板不刷新」。
+        let after = bump_event_seq(&conn, "job-1").unwrap().expect("row must exist");
+        assert_eq!(after, before + 1, "序号必须严格变大，否则会被前端去重丢掉");
+
+        // 连续提交两次必须继续变大（不能只从别处读回同一个值）。
+        assert_eq!(bump_event_seq(&conn, "job-1").unwrap(), Some(before + 2));
+    }
+
+    #[test]
+    fn bump_event_seq_on_a_missing_job_reports_none_not_a_fake_sequence() {
+        let conn = memory_queue();
+        assert_eq!(bump_event_seq(&conn, "nope").unwrap(), None);
+    }
+
+    #[test]
+    fn job_lookup_by_library_item_takes_the_newest_row() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-old", "it-1", "asset-1", &Value::Null).unwrap();
+        enqueue(&conn, "job-new", "it-1", "asset-1", &Value::Null).unwrap();
+        // 同一 item 理论上只有一个 job（enqueue 幂等），但历史/异常数据可能残留多行；
+        // 必须取**最新**的一行，否则会读到一条早已终态的旧任务而让通知发不出去。
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET created_at = '2020-01-01T00:00:00Z' WHERE id = 'job-old'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE processing_jobs_v2 SET created_at = '2026-01-01T00:00:00Z' WHERE id = 'job-new'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            get_job_by_library_item(&conn, "it-1").unwrap().unwrap().id,
+            "job-new"
+        );
+        assert!(get_job_by_library_item(&conn, "it-none").unwrap().is_none());
     }
 }
