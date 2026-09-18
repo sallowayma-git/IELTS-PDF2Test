@@ -598,6 +598,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           editVersion={editor.version}
           refreshKey={recognitionRefreshKey}
           onLocate={locateTarget}
+          // 文档级剩余任务（云端读不到原文件某一块、模型留下无法定位到题面的疑问）
+          // 唯一真能推进的动作就是打开原文件抽屉。
+          onOpenSource={() => setSourceOpen(true)}
           onApplied={() => editor.reload()}
           // 「这一项撤销过了吗」的权威答案是后端持久化的 `status === "undone"`；
           // 权威稿的答案位只作为次要判据（兜住废弃编辑器补丁路径写下的历史数据）。

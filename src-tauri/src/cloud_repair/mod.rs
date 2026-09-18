@@ -59,6 +59,59 @@ pub(crate) struct RepairRunRequest<'a> {
     pub deadline: Instant,
     /// 取消探针。由调用方（调度器）提供真实的取消状态。
     pub cancelled: &'a dyn Fn() -> bool,
+    /// 进度上报。**每落下一批有效修改就调一次**，调用方据此把「已修几处、现在是哪个
+    /// 版本」写进产品状态并通知界面。
+    ///
+    /// 为什么必须存在：修复循环的真实预算是十分钟。若只在循环结束时上报一次，用户在这
+    /// 十分钟里看不到任何变化——稿子已经改好了几处，画布却还是旧的，界面只会说「云端
+    /// 识别中」。这条缝以前确实存在，且只表现为「好像有点慢」，因此必须有显式出口。
+    ///
+    /// `None` = 调用方不需要进度（测试、或没有可写状态的地方）。
+    pub progress: Option<&'a dyn Fn(RepairProgress)>,
+}
+
+/// 一次进度上报的内容。
+///
+/// `remaining_tasks` **故意不在这里**：循环进行中的差异正是它正在处理的东西，把中间态
+/// 当成用户待办会制造一批「刚列出来就被修掉」的假任务。剩余任务只在循环结束后由后端
+/// 按当前 canonical 重算一次。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RepairProgress {
+    pub status: &'static str,
+    pub round: u32,
+    pub applied_count: usize,
+    pub edit_version: i64,
+}
+
+impl RepairProgress {
+    /// 写进批次行的「进行中」摘要。
+    ///
+    /// 与 [`RepairRunReport::to_json`] 共用同一组键名：前端只认一份形状，多一套字段名
+    /// 就意味着前端要维护两套解析，漏一套时表现为「修复中面板空白」。
+    pub fn to_json(&self) -> Value {
+        json!({
+            "status": self.status,
+            "editVersion": self.edit_version,
+            "appliedCount": self.applied_count,
+            "rounds": self.round,
+            // 进行中：剩余任务尚未重算，**不能**拿中间差异充数。
+            "remainingTasks": [],
+            "adjudicatedCount": 0,
+            "finishNote": Value::Null,
+            "lastError": Value::Null,
+            // 进行中**不**提供撤销入口：循环还在写，此时撤销会与 journal 错位。
+            // 撤销只在循环结束后由最终摘要给出（那时 `repairRunId` 才是权威的）。
+            "undoAvailable": false,
+            "repairRunId": Value::Null,
+        })
+    }
+}
+
+/// 上报一次进度；调用方没给 sink 时什么也不做。
+fn report_progress(request: &RepairRunRequest<'_>, progress: RepairProgress) {
+    if let Some(sink) = request.progress {
+        sink(progress);
+    }
 }
 
 /// 修复运行的结果。**这是后端按当前 canonical 重算出来的事实**，不是模型的自我描述。
@@ -1196,6 +1249,20 @@ where
         .unwrap_or_default();
     let mut model_questions: Vec<Value> = Vec::new();
 
+    // 开工就先落一次 `running`：修复循环最长十分钟，用户在它结束之前就该能看到
+    // 「云端正在自动修复」，而不是对着上一次的旧状态猜。
+    report_progress(
+        request,
+        RepairProgress {
+            status: REPAIR_STATUS_RUNNING,
+            round: 0,
+            applied_count: 0,
+            edit_version: current_canonical(request)?
+                .map(|(_, version)| version)
+                .unwrap_or(0),
+        },
+    );
+
     while rounds < request.max_rounds {
         if (request.cancelled)() {
             status = REPAIR_STATUS_CANCELLED;
@@ -1263,6 +1330,20 @@ where
             // 写成功之后必须重读上下文：版本变了，模型手里的 baseVersion 已过期。
             context = build_repair_context(request.root, request.item_id, request.job_id, request.batch_id)?;
             repeats.clear();
+            // 每落下一批有效修改立刻上报：调用方据此把新版本与已修数量写进产品状态、
+            // 并发出事件让画布跟上。**不等循环结束**——否则用户看到的是「改了但界面没变」。
+            report_progress(
+                request,
+                RepairProgress {
+                    status: REPAIR_STATUS_RUNNING,
+                    round: rounds,
+                    applied_count,
+                    edit_version: context
+                        .get("editVersion")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0),
+                },
+            );
         }
         observations.push(serde_json::to_value(&result).unwrap_or(Value::Null));
         if is_finish {

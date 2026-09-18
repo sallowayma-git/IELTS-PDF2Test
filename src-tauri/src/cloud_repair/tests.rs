@@ -231,6 +231,7 @@ fn request<'a>(root: &'a Path, cancelled: &'a dyn Fn() -> bool, max_rounds: u32)
         max_rounds,
         deadline: Instant::now() + std::time::Duration::from_secs(30),
         cancelled,
+        progress: None,
     }
 }
 
@@ -720,6 +721,55 @@ fn a_ruling_is_re_evaluated_once_the_content_changes_again() {
         "内容变了之后，基于旧内容的裁定必须作废、差异重新回到用户面前：{:?}",
         second.remaining_tasks
     );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 进度上报：开工一次 `running`，**每批有效写入之后立刻再来一次**。
+///
+/// 这条锁的是「不要等十分钟循环结束」。修复循环的真实预算十分钟，只在结尾上报一次
+/// 的话，用户在这十分钟里看不到任何变化——稿子已经改好了，画布还是旧的。缺陷的表现
+/// 只是「好像有点慢」，所以必须在进度这一层钉住。
+#[test]
+fn progress_is_reported_at_start_and_after_every_effective_commit() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+
+    let seen: std::cell::RefCell<Vec<RepairProgress>> = std::cell::RefCell::new(Vec::new());
+    let sink = |progress: RepairProgress| seen.borrow_mut().push(progress);
+    let not_cancelled = || false;
+    let mut request = request(&root, &not_cancelled, 6);
+    request.progress = Some(&sink);
+
+    let mut calls = 0u32;
+    run_repair_loop(&request, |context: &Value, _observations: &[Value]| {
+        calls += 1;
+        let version = context.get("editVersion").and_then(Value::as_i64).unwrap_or(0);
+        Ok(match calls {
+            1 => json!({"callId": "c1", "tool": "read_draft",
+                        "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}}),
+            2 => json!({"callId": "c2", "tool": "apply_edits",
+                        "arguments": {"baseVersion": version, "commands": [set_answer("q14", "A")]}}),
+            _ => json!({"callId": "c3", "tool": "finish", "arguments": {}}),
+        })
+    })
+    .expect("修复循环必须返回结果");
+
+    let progress = seen.borrow();
+    assert_eq!(progress.len(), 2, "开工一次 + 一批写入一次：{progress:?}");
+    assert_eq!(progress[0].status, REPAIR_STATUS_RUNNING);
+    assert_eq!(progress[0].applied_count, 0, "开工时还没改到东西");
+    assert_eq!(progress[0].round, 0);
+    // 第二次必须在**写入之后**，且带着真实的版本与已修数量。
+    assert_eq!(progress[1].applied_count, 1);
+    assert!(
+        progress[1].edit_version > progress[0].edit_version,
+        "写入后的进度必须带着推进过的版本：{progress:?}"
+    );
+    // 进行中的摘要不得把中间差异当成用户待办。
+    assert_eq!(progress[1].to_json()["remainingTasks"], json!([]));
+    assert_eq!(progress[1].to_json()["undoAvailable"], json!(false));
     let _ = std::fs::remove_dir_all(&root);
 }
 

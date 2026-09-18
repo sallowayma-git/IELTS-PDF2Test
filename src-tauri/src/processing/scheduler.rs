@@ -19,6 +19,7 @@ use tauri::{AppHandle, Emitter};
 use super::queue::{
     self, advance_stage, claim_next, finalize_cancelled_without_lease, finalize_ready_without_lease,
     get_job, renew_lease, request_cancel, retry, set_cloud_status, STAGE_CLOUD_RECOGNITION,
+    STAGE_RECONCILING,
     STAGE_FAILED, STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
 };
 use crate::auto_pipeline::run_auto_pipeline_core;
@@ -136,6 +137,12 @@ fn display_message_for(job: &queue::ProcessingJobRow) -> String {
     }
     if job.stage == STAGE_CLOUD_RECOGNITION && job.cloud_status == "running" {
         return "本地识别完成，可以打开编辑 · 云端识别中".to_string();
+    }
+    // 修复循环最长十分钟。这一行是用户在它跑完之前**唯一**能看到的进度说明，必须说清楚
+    // 「云端正在自己改稿、你仍然可以编辑」，而不是笼统的「正在合并」——后者会让用户以为
+    // 需要等他做点什么。
+    if job.stage == STAGE_RECONCILING && job.cloud_status == "running" {
+        return "云端正在自动修复题稿，可以继续编辑".to_string();
     }
     display_message(&job.stage, None)
 }
@@ -696,12 +703,21 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     };
 
-    // ── 新主链：完整候选接身份 → 云端修复循环（**唯一的云端写入者**）────────
+    // ── 新主链：本地周期 → 完整候选接身份 → 云端修复循环（**唯一的云端写入者**）──
+    //
+    // 顺序固定为「本地周期先跑、修复循环最后写」，两条理由都不是风格问题：
+    //
+    // 1. **修复进度必须有地方可写**。批次行由本地周期创建，而「云端正在自动修复 / 已修
+    //    几处 / 现在是哪个版本」只有写进批次行才能被前端读到（`repair_json` 是读取权威）。
+    //    批次行还不存在时那条进度无处安放，用户就只能在十分钟的修复里对着「云端识别中」
+    //    干等。先跑本地周期，修复循环才有地方如实汇报。
+    // 2. **这一轮稿子只能有一个最终作者**。修复循环是这条链上唯一的云端写入者，让它成为
+    //    `advance` 之前最后一个改稿的步骤，「最终稿是什么」就不再有歧义——此前本地周期
+    //    会在云端修复之后又动一次稿，两边的写入顺序只能靠守卫去猜。
     //
     // 旧 A3/A4 的模型通道（`verify_source_answers` / `adjudicate_divergence`）**不再**在
-    // 这条路径上叠加：新主链只有一个修复循环、一个写入出口。下面仍会跑一次本地周期，
-    // 把批次与决策证据落盘给前端（`cloud_enabled = false`，因此它既不调模型、
-    // 也不按云端结果自动写入）。
+    // 这条路径上叠加：本地周期以 `cloud_enabled = false` 运行，既不调模型，也不按云端
+    // 结果自动写入。
     let batch_id = {
         let source_sha256 = crate::reconcile::commands::source_sha256_for_job(&root, &job_id);
         crate::reconcile::commands::recognition_batch_id(&job_id, &source_sha256, base_edit_version)
@@ -710,9 +726,29 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     let mut repair_applied: i64 = 0;
     let mut repair_remaining: i64 = 0;
     let mut repair_error: Option<String> = None;
-    // 修复摘要（`repair` 契约）。这里只暂存；**等本地周期把批次行建出来之后**才写库，
-    // 因为批次行由那个周期创建，此刻写会撞上 `recognition_batch_missing`。
+    // 修复摘要（`repair` 契约）。最终一份写进批次行；修复过程中的进度在循环里直接写库。
     let mut repair_summary: Option<serde_json::Value> = None;
+
+    // 本地周期：把本地候选 / 原文核验 / 批次汇总落盘，并**建出批次行**。云端如实标
+    // `not_run`（本地周期看不见云端），下面的 advance 会用真实修复状态覆盖它。
+    let cycle = run_cycle_in_blocking_boundary({
+        let root = root.clone();
+        let job_id = job_id.clone();
+        move || run_local_only_recognition_cycle(&root, &job_id, base_edit_version)
+    })
+    .await;
+
+    let (mut cloud_status, reconcile_status, actionable) = match cycle {
+        Ok(report) => (
+            report.cloud_status,
+            report.reconcile_status,
+            report.actionable_count,
+        ),
+        Err(failure) => {
+            settle_cycle_failure(&app, &state, &job_id, &failure).await;
+            return;
+        }
+    };
 
     if let Some(Ok(raw)) = cloud_fetched.as_ref() {
         // 第一步：接身份 + 重算质量 + 独立落盘（候选**不写**权威稿）。
@@ -735,63 +771,118 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         .await;
         match finalized {
             Ok(()) => {
+                // 开工：阶段推到 `reconciling`、状态落 `running`。这一条**先发出去**，
+                // 用户在修复循环跑完之前就能看到「云端正在自动修复」，而不是等到最后
+                // 才知道云端到底参与没有。返回 `None`（lease 丢失 / 已被取消）时不继续：
+                // 后续每一条进度都会写进批次行，没有 lease 的写入是孤儿。
+                let announced = advance(
+                    &app,
+                    &state,
+                    &job_id,
+                    STAGE_RECONCILING,
+                    None,
+                    Some("running"),
+                    None,
+                    None,
+                    None,
+                )
+                .await;
                 // 云端 permit 覆盖整段修复循环的模型调用（每个回合一次请求）。
                 let cloud_permit = state.cloud_permits.clone().acquire_owned().await;
-                let repair = run_blocking({
-                    let root = root.clone();
-                    let job_id = job_id.clone();
-                    let batch_id = batch_id.clone();
-                    let profile = resolved_profile.clone();
-                    let state = state.clone();
-                    move || {
-                        let probe_job_id = job_id.clone();
-                        let cancelled_probe = move || -> bool {
-                            state
-                                .cancelled
-                                .try_read()
-                                .map(|guard| guard.contains(&probe_job_id))
-                                .unwrap_or(false)
-                        };
-                        let repair_run_id = format!("cloud-repair:{batch_id}");
-                        let request = crate::cloud_repair::RepairRunRequest {
-                            root: &root,
-                            item_id: &job_id,
-                            job_id: &job_id,
-                            batch_id: &batch_id,
-                            repair_run_id: &repair_run_id,
-                            max_rounds: crate::cloud_repair::DEFAULT_MAX_REPAIR_ROUNDS,
-                            deadline: std::time::Instant::now()
-                                + std::time::Duration::from_millis(
-                                    crate::cloud_repair::DEFAULT_REPAIR_TIMEOUT_MS,
-                                ),
-                            cancelled: &cancelled_probe,
-                        };
-                        let report = crate::cloud_repair::run_repair_loop(
-                            &request,
-                            |context, observations| {
-                                crate::auto_pipeline::repair_authoring_step_through_gateway(
-                                    &root,
-                                    &job_id,
-                                    profile.as_deref(),
-                                    context,
-                                    observations,
+                let repair = if announced.is_none() {
+                    Err("cloud_repair_lease_lost_before_start".to_string())
+                } else {
+                    run_blocking({
+                        let root = root.clone();
+                        let job_id = job_id.clone();
+                        let batch_id = batch_id.clone();
+                        let profile = resolved_profile.clone();
+                        let state = state.clone();
+                        let app = app.clone();
+                        move || {
+                            let probe_job_id = job_id.clone();
+                            let cancelled_probe = move || -> bool {
+                                state
+                                    .cancelled
+                                    .try_read()
+                                    .map(|guard| guard.contains(&probe_job_id))
+                                    .unwrap_or(false)
+                            };
+                            let repair_run_id = format!("cloud-repair:{batch_id}");
+                            // 进度出口：写进**批次行**（前端读取权威）并推一次事件。
+                            //
+                            // 为什么连事件一起发：内容变了而界面不知道，是这条链上最容易
+                            // 出现、又最难察觉的缺陷——稿子已经改好，画布还是旧的。云端
+                            // 工具写入必须和人工编辑走同一条通知路径，否则「保存后画布会
+                            // 刷新」这件事只在用户自己动手时成立。
+                            //
+                            // 写库 / 发事件失败都不打断修复：进度是**报告**，不是修复本身。
+                            // 把它变成致命错误，等于让一次通知失败毁掉已经落地的修改。
+                            let progress_job_id = job_id.clone();
+                            let progress_root = root.clone();
+                            let progress_batch_id = batch_id.clone();
+                            let progress_app = app.clone();
+                            let progress = move |update: crate::cloud_repair::RepairProgress| {
+                                let summary = update.to_json();
+                                let Ok(conn) = open_library_connection(&progress_root) else {
+                                    return;
+                                };
+                                if crate::reconcile::store::write_batch_repair(
+                                    &conn,
+                                    &progress_batch_id,
+                                    &summary,
                                 )
-                            },
-                        )?;
-                        // 修复摘要：**同一份 payload** 既落盘（诊断副本）也随后写进批次行
-                        // （前端读取权威）。只构造一次，避免两处形状漂移。
-                        // **完成判据始终是当前 canonical**，这份摘要不参与判定。
-                        let summary = report.to_json(report.applied_count > 0);
-                        crate::reconcile::store::write_repair_summary(
-                            &root,
-                            &job_id,
-                            &batch_id,
-                            &summary,
-                        )?;
-                        Ok((report, summary))
-                    }
-                })
-                .await;
+                                .is_err()
+                                {
+                                    return;
+                                }
+                                let _ = notify_item_content_changed(
+                                    &conn,
+                                    &progress_app,
+                                    &progress_job_id,
+                                );
+                            };
+                            let request = crate::cloud_repair::RepairRunRequest {
+                                root: &root,
+                                item_id: &job_id,
+                                job_id: &job_id,
+                                batch_id: &batch_id,
+                                repair_run_id: &repair_run_id,
+                                max_rounds: crate::cloud_repair::DEFAULT_MAX_REPAIR_ROUNDS,
+                                deadline: std::time::Instant::now()
+                                    + std::time::Duration::from_millis(
+                                        crate::cloud_repair::DEFAULT_REPAIR_TIMEOUT_MS,
+                                    ),
+                                cancelled: &cancelled_probe,
+                                progress: Some(&progress),
+                            };
+                            let report = crate::cloud_repair::run_repair_loop(
+                                &request,
+                                |context, observations| {
+                                    crate::auto_pipeline::repair_authoring_step_through_gateway(
+                                        &root,
+                                        &job_id,
+                                        profile.as_deref(),
+                                        context,
+                                        observations,
+                                    )
+                                },
+                            )?;
+                            // 修复摘要：**同一份 payload** 既落盘（诊断副本）也随后写进
+                            // 批次行（前端读取权威）。只构造一次，避免两处形状漂移。
+                            // **完成判据始终是当前 canonical**，这份摘要不参与判定。
+                            let summary = report.to_json(report.applied_count > 0);
+                            crate::reconcile::store::write_repair_summary(
+                                &root,
+                                &job_id,
+                                &batch_id,
+                                &summary,
+                            )?;
+                            Ok((report, summary))
+                        }
+                    })
+                    .await
+                };
                 match repair {
                     Ok((report, summary)) => {
                         repair_status = Some(report.status.to_string());
@@ -825,28 +916,10 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         repair_error = Some(error);
     }
 
-    // 本地周期：把本地候选 / 原文核验 / 批次汇总落盘。云端如实标 `not_run`
-    // （本地周期看不见云端），下面的 advance 会用真实修复状态覆盖它。
-    let cycle = run_cycle_in_blocking_boundary({
-        let root = root.clone();
-        let job_id = job_id.clone();
-        move || run_local_only_recognition_cycle(&root, &job_id, base_edit_version)
-    })
-    .await;
-
-    let (mut cloud_status, reconcile_status, actionable) = match cycle {
-        Ok(report) => (
-            report.cloud_status,
-            report.reconcile_status,
-            report.actionable_count,
-        ),
-        Err(failure) => {
-            settle_cycle_failure(&app, &state, &job_id, &failure).await;
-            return;
-        }
-    };
-
-    // 批次行此刻才存在（由上面那个本地周期创建），所以修复摘要写库放在这里。
+    // 修复摘要写库（批次行由上面的本地周期建出）。
+    //
+    // 修复过程中的进度（`running` / 已修数量 / 当前版本）在循环内部就已经按批写进同一
+    // 列了；这里补的是**最终**那一份：剩余任务、裁定条数、能不能撤销。
     //
     // 为什么要写库而不是只留 artifact：artifact 是诊断副本，会被清理策略回收、job 目录
     // 重建后也不在；「这次修复到什么状态、还剩哪些用户任务、能不能撤销」是前端每次打开

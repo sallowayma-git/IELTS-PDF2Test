@@ -87,8 +87,17 @@ export interface CloudRepairTaskV1 {
   targetIds?: string[];
   questionNumbers?: number[];
   message?: string | null;
+  /**
+   * 后端给出的**建议处理方式**（`fix_blocking_issue` / `review_difference` / `review_source`）。
+   *
+   * 它只用于决定按钮文案与「能不能定位过去」；能不能真正解决由用户在题面上做完决定。
+   * 前端**不**据此自己算一遍剩余任务——那会与后端重算结果分叉。
+   */
   action?: string;
+  /** 阻断项：不处理就不能导出。非阻断项只是「建议你确认一下」。 */
   blocking?: boolean;
+  /** 模型留下这条疑问时附的出处（可能与裁定一起给出）。 */
+  evidence?: unknown;
 }
 
 /**
@@ -111,6 +120,13 @@ export interface CloudRepairSummaryV1 {
   rounds?: number;
   /** 修复后仍需要用户处理的问题（后端重算，不是模型自报清单）。 */
   remainingTasks?: CloudRepairTaskV1[];
+  /**
+   * 本轮云端**替用户了结的争议条数**（含「当前稿对、候选错」与「原文件不足以定论」）。
+   *
+   * 这是「云端到底做了什么」的唯一可核对数字。没有它，用户只能看到「还剩几件事」，
+   * 看不出云端是不是只是把差异原样丢回来给他。
+   */
+  adjudicatedCount?: number;
   finishNote?: string | null;
   lastError?: string | null;
   /** 是否存在可撤销的本轮自动修改（`appliedCount > 0`）。 */
@@ -361,18 +377,34 @@ export async function getRecognitionDecision(itemId: string): Promise<Recognitio
  *  2. `completed` 只说「修复循环收工了」，不等于「整份题稿没问题」：`remainingTasks`
  *     非空时照样要把剩余条数说出来，否则用户会以为没别的事了。
  *  3. `budget_exhausted` / `unavailable` 是**降级**，不是失败：编辑照常，只是云端没帮上。
+ *
+ * 另外两条来自本轮任务书：
+ *  - `running` 是**进行中**，此时 `remainingTasks` 必然为空，不能说「还剩 0 处」——
+ *    那会被读成「没问题了」，而云端其实还在改；
+ *  - 有裁定条数时要说出来。用户有权知道云端替他**了结**了多少争议，否则「云端自动修复」
+ *    就只是一个说法：他看到的全是剩下的，看不到已经解决掉的。
  */
 export function describeRepairStatus(repair: CloudRepairSummaryV1 | null | undefined): string {
   if (!repair) return "未进行云端修复";
   const remaining = repair.remainingTasks?.length ?? 0;
+  const fixed = repair.appliedCount ?? 0;
+  const adjudicated = repair.adjudicatedCount ?? 0;
+  const settled = [
+    fixed > 0 ? `已自动修正 ${fixed} 处` : "",
+    adjudicated > 0 ? `已了结 ${adjudicated} 处差异` : ""
+  ].filter(Boolean).join("、");
   switch (repair.status) {
     case "running":
-      return "云端正在自动修复…";
+      // 进行中：只说正在做、做了多少，**不报**剩余条数（此刻还没有可信的剩余清单）。
+      return settled ? `云端正在自动修复…（${settled}）` : "云端正在自动修复…";
     case "completed":
       // 修复循环收工但仍有剩余：把剩余说出来，不能只说「已修复」。
-      return remaining > 0 ? `云端已自动修复，还有 ${remaining} 处待处理` : "云端已自动修复";
+      if (remaining > 0) return `${settled || "云端已自动修复"}，还有 ${remaining} 处待处理`;
+      return settled || "云端已自动修复";
     case "needs_attention":
-      return remaining > 0 ? `云端已自动修复，还有 ${remaining} 处需要你确认` : "云端已自动修复，还有内容需要你确认";
+      return remaining > 0
+        ? `${settled || "云端已自动修复"}，还有 ${remaining} 处需要你确认`
+        : `${settled || "云端已自动修复"}，还有内容需要你确认`;
     case "budget_exhausted":
       return "云端修复达到本轮上限，剩余问题需要你处理";
     case "cancelled":
