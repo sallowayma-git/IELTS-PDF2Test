@@ -740,6 +740,15 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     }
 
+    // 云端**拉取本身失败**（网关报错 / 候选生产失败）：上面那个 `if let Some(Ok(..))`
+    // 不会进来，于是 `repair_status` 会保持 `None`，任务行最后就会沿用本地周期的
+    // `not_run`——把一次真实的云端失败说成「本次没有云端参与」。这里显式把它记成
+    // `unavailable`（→ 映射为 `failed`），并保留真实错误码。
+    if let Some((status, error)) = repair_status_for_failed_cloud_fetch(cloud_fetched.as_ref()) {
+        repair_status = Some(status);
+        repair_error = Some(error);
+    }
+
     // 本地周期：把本地候选 / 原文核验 / 批次汇总落盘。云端如实标 `not_run`
     // （本地周期看不见云端），下面的 advance 会用真实修复状态覆盖它。
     let cycle = run_cycle_in_blocking_boundary({
@@ -761,16 +770,9 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     };
     // 云端**真的跑过**就以修复状态为准：本地周期看不见云端，会把 cloud_status 标成
-    // `not_run`（= 本次没有云端参与），拿它描述一次真实的云端修复是谎报。
-    if let Some(status) = repair_status.as_deref() {
-        cloud_status = match status {
-            crate::cloud_repair::REPAIR_STATUS_COMPLETED => "succeeded",
-            crate::cloud_repair::REPAIR_STATUS_NEEDS_ATTENTION
-            | crate::cloud_repair::REPAIR_STATUS_BUDGET_EXHAUSTED => "partial",
-            crate::cloud_repair::REPAIR_STATUS_CANCELLED => "not_run",
-            _ => "failed",
-        }
-        .to_string();
+    // `not_run`（= 本次没有云端参与），拿它描述一次真实的云端修复（成功或失败）都是谎报。
+    if let Some(mapped) = cloud_status_for_job(launch_cloud, repair_status.as_deref()) {
+        cloud_status = mapped;
     }
     let actionable_final = actionable.max(repair_remaining);
     let _ = repair_applied;
@@ -815,6 +817,56 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         }
     }
     set_item_status_ready(&app, &job_id).await;
+}
+
+/// 任务行里的 `cloud_status`：**云端真实跑过就以修复状态为准**。
+///
+/// 为什么不能直接用本地周期报的值：本地周期这次以 `cloud_enabled = false` 运行，
+/// 它看不见云端，会把状态标成 `not_run`（= 本次没有云端参与）。拿它描述一次真实的
+/// 云端修复（成功或失败）都是谎报。
+///
+/// 返回 `None` 表示「保留本地周期给出的值」——只在云端**从未启动**时发生（无云导入，
+/// 本地周期如实报 `not_run`）。云端启动了却拿不到结果（取消 / lease 丢失 / 冻结失败
+/// 主动放弃）时返回 `failed`：那是「跑了但没拿到结果」，不是「没参与」。
+fn cloud_status_for_job(launch_cloud: bool, repair_status: Option<&str>) -> Option<String> {
+    if let Some(status) = repair_status {
+        return Some(
+            match status {
+                crate::cloud_repair::REPAIR_STATUS_COMPLETED => "succeeded",
+                crate::cloud_repair::REPAIR_STATUS_NEEDS_ATTENTION
+                | crate::cloud_repair::REPAIR_STATUS_BUDGET_EXHAUSTED => "partial",
+                crate::cloud_repair::REPAIR_STATUS_CANCELLED => "not_run",
+                _ => "failed",
+            }
+            .to_string(),
+        );
+    }
+    // 云端**启动过**却拿不到任何修复状态（中止 / lease 丢失 / 冻结失败主动放弃，或
+    // 将来有人漏设 `repair_status`）：一律按失败处理。这里刻意**不**参考「有没有拿到
+    // 云端结果」——成功分支必然留下修复状态，因此"起了云端但没状态"本身就是异常，
+    // 宁可报失败让用户去查，也不能退回本地那个 `not_run` 谎称「没参与」。
+    if launch_cloud {
+        return Some("failed".to_string());
+    }
+    None
+}
+
+/// 云端拉取结果 → 「拉取失败」这一格的修复状态初值。
+///
+/// 为什么单独拎出来：主链里 `if let Some(Ok(raw)) = cloud_fetched` 只覆盖成功分支，
+/// `Some(Err(..))` 会**静默穿过**——`repair_status` 保持 `None`，任务行最后就沿用本地
+/// 周期的 `not_run`，把一次真实的云端失败说成「本次没有云端参与」。这一格必须有显式
+/// 出口，且必须可测。
+fn repair_status_for_failed_cloud_fetch(
+    cloud_fetched: Option<&Result<serde_json::Value, String>>,
+) -> Option<(String, String)> {
+    match cloud_fetched {
+        Some(Err(error)) => Some((
+            crate::cloud_repair::REPAIR_STATUS_UNAVAILABLE.to_string(),
+            error.clone(),
+        )),
+        _ => None,
+    }
 }
 
 /// 把一段同步工作放到阻塞边界上执行（HTTP / 数据库 / 文件 IO 都不该占 async worker）。
@@ -1867,6 +1919,96 @@ mod tests {
         assert_eq!(chain_status_to_job_status("partial"), "partial");
         assert_eq!(chain_status_to_job_status("unusable"), "failed");
         assert_eq!(chain_status_to_job_status("something_new"), "failed");
+    }
+
+    /// 云端**真实跑过**时，任务行的 `cloud_status` 以修复循环的状态为准。
+    ///
+    /// 这条锁的是「本地周期看不见云端」这个接缝：本地周期以 `cloud_enabled = false` 运行，
+    /// 它给出的 `not_run` 只表示「这次本地没找云端」，**不能**拿去描述一次真实云端修复。
+    /// 四种已知修复状态逐一钉死；未知值保守归为 `failed`（不认识 ≠ 成功）。
+    #[test]
+    fn cloud_status_maps_real_repair_status_not_local_not_run() {
+        use crate::cloud_repair::{
+            REPAIR_STATUS_BUDGET_EXHAUSTED, REPAIR_STATUS_CANCELLED, REPAIR_STATUS_COMPLETED,
+            REPAIR_STATUS_NEEDS_ATTENTION, REPAIR_STATUS_RUNNING, REPAIR_STATUS_UNAVAILABLE,
+        };
+
+        // 云端跑过 → 以修复状态为准（第 2 个参数此时无关紧要，取两种都验一遍）。
+        let cases = [
+            (REPAIR_STATUS_COMPLETED, "succeeded"),
+            (REPAIR_STATUS_NEEDS_ATTENTION, "partial"),
+            (REPAIR_STATUS_BUDGET_EXHAUSTED, "partial"),
+            (REPAIR_STATUS_CANCELLED, "not_run"),
+            (REPAIR_STATUS_UNAVAILABLE, "failed"),
+            // 运行中 / 未知值：不认识的不能报成功。
+            (REPAIR_STATUS_RUNNING, "failed"),
+            ("something_new", "failed"),
+        ];
+        for (repair_status, expected) in cases {
+            assert_eq!(
+                cloud_status_for_job(true, Some(repair_status)).as_deref(),
+                Some(expected),
+                "repair_status={repair_status}"
+            );
+        }
+    }
+
+    /// 云端**起了但没拿到修复状态**（取消 / lease 丢失 / 冻结失败 / 将来漏设状态）：
+    /// 必须报 `failed`，**绝不**报 `not_run`。
+    ///
+    /// `not_run` 的产品含义是「本次没有云端参与」——用户据此不会去排查云端。把一次真实
+    /// 失败的云端运行标成 `not_run`，等于让用户以为「无云导入」，是谎报。同时，云端**从未
+    /// 启动**时必须返回 `None`（保留本地周期给出的值），不能凭空造一个 `failed` 出来。
+    #[test]
+    fn cloud_status_never_reports_not_run_for_a_launched_but_resultless_cloud() {
+        // 起了云端但没拿到修复状态 → failed。
+        assert_eq!(
+            cloud_status_for_job(true, None).as_deref(),
+            Some("failed")
+        );
+        // 压根没起云端 → None，保留本地周期如实给出的 not_run。
+        assert_eq!(cloud_status_for_job(false, None), None);
+        // 对照：没起云端时即便有人误传了状态，也以状态为准（状态来自真实修复循环，
+        // 比「有没有起云端」更可信）。
+        assert_eq!(
+            cloud_status_for_job(false, Some("completed")).as_deref(),
+            Some("succeeded")
+        );
+    }
+
+    /// 端到端锁死「云端拉取失败」这一格：**任务行必须报 `failed`，不能报 `not_run`**。
+    ///
+    /// 这条复现的是修复前的真实缺陷：主链只用 `if let Some(Ok(raw))` 处理成功分支，
+    /// `Some(Err(..))` 静默穿过，`repair_status` 停在 `None`，最后 `cloud_status` 沿用
+    /// 本地周期的 `not_run`。用户看到 `not_run` 会以为「这次是无云导入」，压根不会去
+    /// 排查一个真实存在的云端故障。
+    ///
+    /// 这里把主链那两段判定按原样串起来（拉取失败 → 修复状态 → 任务行状态），断言的是
+    /// 串起来的**结果**，而不是单独某一格的映射表——单看映射表正确、接缝漏掉，正是这个
+    /// 缺陷的形状。
+    #[test]
+    fn failed_cloud_fetch_is_reported_as_failed_never_as_not_run() {
+        let failed_fetch: Option<Result<serde_json::Value, String>> =
+            Some(Err("cloud_authoring_candidate_llm_http_500".to_string()));
+
+        // 主链：先由拉取结果定出修复状态初值。
+        let (repair_status, repair_error) = repair_status_for_failed_cloud_fetch(failed_fetch.as_ref())
+            .expect("拉取失败必须产出显式的修复状态，不能静默穿过");
+        assert_eq!(repair_status, crate::cloud_repair::REPAIR_STATUS_UNAVAILABLE);
+        assert_eq!(repair_error, "cloud_authoring_candidate_llm_http_500");
+
+        // 主链：再据此改写任务行状态（本地周期这次给出的是 not_run）。
+        let cloud_status = cloud_status_for_job(true, Some(repair_status.as_str()))
+            .expect("云端跑过就必须由修复状态决定任务行状态");
+        assert_eq!(cloud_status, "failed");
+        assert_ne!(cloud_status, "not_run");
+
+        // 对照：拉取成功时这一格**不**该插手（成功分支自己会设修复状态）。
+        let ok_fetch: Option<Result<serde_json::Value, String>> =
+            Some(Ok(serde_json::json!({"status": "ok"})));
+        assert!(repair_status_for_failed_cloud_fetch(ok_fetch.as_ref()).is_none());
+        // 对照：压根没起云端时同样不插手（保留本地周期的 not_run）。
+        assert!(repair_status_for_failed_cloud_fetch(None).is_none());
     }
 
     /// 无云路径的**产品级**锁定（调度器这一层）。
