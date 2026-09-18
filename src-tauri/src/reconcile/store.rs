@@ -13,6 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
 use super::source::SourceVerificationV1;
+use crate::schema::cloud_repair_v1::CloudAuthoringCandidateV1;
 use crate::schema::recognition_v1::{
     ChainStatusSummaryV1, ChainStatusV1, DecisionItemV1, DecisionSummaryV1,
     RecognitionCandidateV1, RecognitionChainStateV1, RecognitionDecisionV1,
@@ -23,6 +24,7 @@ use crate::CommandResult;
 
 pub(crate) const LOCAL_CANDIDATE_FILE: &str = "local-candidate.json";
 pub(crate) const CLOUD_CANDIDATE_FILE: &str = "cloud-candidate.json";
+pub(crate) const CLOUD_AUTHORING_CANDIDATE_FILE: &str = "cloud-authoring-candidate.json";
 pub(crate) const SOURCE_VERIFICATION_FILE: &str = "source-verification.json";
 pub(crate) const DECISION_FILE: &str = "decision.json";
 pub(crate) const CURRENT_BATCH_FILE: &str = "current.json";
@@ -43,6 +45,21 @@ pub(crate) fn write_candidate(
     file: &str,
 ) -> CommandResult<PathBuf> {
     let path = artifact_path(root, &candidate.job_id, batch_id, file)?;
+    write_json(&path, candidate)?;
+    Ok(path)
+}
+
+/// 落盘云端「完整候选」artifact。
+///
+/// 候选只是 artifact：走独立的 `cloud-authoring-candidate.json`，**绝不**碰权威稿
+/// （不得调用 `seed_canonical_ds` / `write_canonical_json_atomic`，也不得写
+/// `library_items_v2.canonical_ds_json`）。序列化沿用 [`write_candidate`] 的 `write_json`。
+pub(crate) fn write_cloud_authoring_candidate(
+    root: &Path,
+    batch_id: &str,
+    candidate: &CloudAuthoringCandidateV1,
+) -> CommandResult<PathBuf> {
+    let path = artifact_path(root, &candidate.job_id, batch_id, CLOUD_AUTHORING_CANDIDATE_FILE)?;
     write_json(&path, candidate)?;
     Ok(path)
 }
@@ -114,6 +131,25 @@ pub(crate) fn read_candidate(
     let path = artifact_path(root, job_id, batch_id, file).ok()?;
     let value = read_json_opt(&path).ok().flatten()?;
     serde_json::from_value(value).ok()
+}
+
+/// 读取云端「完整候选」artifact。
+///
+/// 语义与 [`read_candidate`] 对齐：文件不存在 ⇒ `Ok(None)`（不是错误）；
+/// 文件损坏 / 反序列化失败 ⇒ 明确错误码 `cloud_authoring_candidate_corrupt:...`，
+/// 不静默吞掉（避免把坏候选当成「没有候选」）。
+pub(crate) fn read_cloud_authoring_candidate(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+) -> CommandResult<Option<CloudAuthoringCandidateV1>> {
+    let path = artifact_path(root, job_id, batch_id, CLOUD_AUTHORING_CANDIDATE_FILE)?;
+    let Some(value) = read_json_opt(&path)? else {
+        return Ok(None);
+    };
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|error| format!("cloud_authoring_candidate_corrupt:{error}"))
 }
 
 pub(crate) fn read_decision_file(
@@ -717,5 +753,177 @@ mod tests {
         assert!(journal_lookup(&conn, "req-2").unwrap().is_none());
         // 同一 request_id 重复写入必须失败（唯一约束）。
         assert!(journal_insert(&conn, "req-1", "item-1", "batch-1", 3, "{}", "{}").is_err());
+    }
+
+    // ── 云端完整候选 artifact ─────────────────────────────────────────────
+
+    use crate::schema::cloud_repair_v1::CloudAuthoringCandidateV1;
+
+    fn golden_authoring_path() -> std::path::PathBuf {
+        // 与 `schema/mod.rs` 的 `golden_authoring_path()` 取齐：
+        // `CARGO_MANIFEST_DIR` 指向 `src-tauri`，golden 稿在仓库根 `fixtures/` 下。
+        let manifest = env!("CARGO_MANIFEST_DIR").trim_end_matches(['\\', '/']);
+        std::path::Path::new(manifest)
+            .parent()
+            .expect("src-tauri 必须有父目录")
+            .join("fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json")
+    }
+
+    /// 用真实 golden fixture 构造候选，避免手写精简稿被 schema 拒。
+    fn golden_candidate() -> CloudAuthoringCandidateV1 {
+        let path = golden_authoring_path();
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("读取 golden 稿失败 path={path:?} err={error}"));
+        let authoring: Value =
+            serde_json::from_str(&text).expect("golden 稿必须是合法 JSON");
+        serde_json::from_value(json!({
+            "schemaVersion": "CloudAuthoringCandidateV1",
+            "batchId": "batch-1",
+            "itemId": "job-1",
+            "jobId": "job-1",
+            "sourceFileId": "early-approaches-pdf",
+            "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "baseEditVersion": 1,
+            "generatedAt": "2026-09-17T00:00:00Z",
+            "status": "succeeded",
+            "authoring": authoring,
+            "idMap": {"cloud-q14": "q14"},
+            "unresolvedReferences": [],
+            "unresolvedRegions": [{
+                "sourceFileId": "early-approaches-pdf",
+                "pageIndex": 3,
+                "reason": "page_image_unavailable",
+                "detail": "扫描页图不可用，该页内容未被覆盖"
+            }],
+            "sourceCoverageNotes": ["DOCX 图表证据不完整"],
+            "warnings": []
+        }))
+        .expect("golden 候选必须可解析")
+    }
+
+    fn temp_root() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "reconcile-store-{}",
+            uuid::Uuid::new_v4().simple()
+        ))
+    }
+
+    #[test]
+    fn cloud_authoring_candidate_round_trips_with_full_rich_authoring() {
+        let original = golden_candidate();
+        let root = temp_root();
+        let path = write_cloud_authoring_candidate(&root, "batch-1", &original).unwrap();
+        assert!(path.exists(), "候选 artifact 必须落到磁盘");
+
+        let readback = read_cloud_authoring_candidate(&root, "job-1", "batch-1")
+            .unwrap()
+            .expect("必须能读回候选");
+
+        // 整份逐字相等：任何字段被丢掉或压平都会在这里露出来。
+        assert_eq!(
+            serde_json::to_value(&readback).expect("重新序列化读回候选"),
+            serde_json::to_value(&original).expect("重新序列化原始候选"),
+            "往返必须逐字相等"
+        );
+        // 再具体点出「嵌套富内容还在」，防止「空壳也算相等」的假通过。
+        let authoring = serde_json::to_value(&readback.authoring).expect("重新序列化内嵌稿件");
+        assert_eq!(
+            authoring
+                .pointer("/taskGroups/0/responseGroups/0/prompt/0/children/0/text")
+                .and_then(Value::as_str),
+            Some("Which TWO factors influenced early organisational design?"),
+            "嵌套的子节点与文本必须逐字保留，不能被压平成纯文本"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 候选只是 artifact：写候选不得碰权威稿 `library_items_v2.canonical_ds_json`，
+    /// 也不得新增/删除 `library_items_v2` 的任何行。
+    #[test]
+    fn writing_cloud_authoring_candidate_does_not_touch_the_library_db() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+
+        // 既有一条真实行，canonical 内容取自 golden 稿，便于断言「完全不变」。
+        let seeded = serde_json::to_string(&golden_candidate().authoring).unwrap();
+        conn.execute(
+            "INSERT INTO library_items_v2
+                (id, modality, title, status, current_edit_version, canonical_ds_json,
+                 source_asset_id, created_at, updated_at, deleted_at)
+             VALUES ('item-1', 'reading', 't', 'processing', 1, ?1, NULL,
+                     '2026-01-01', '2026-01-01', NULL)",
+            [seeded.clone()],
+        )
+        .unwrap();
+
+        let row_count_before: i64 =
+            conn.query_row("SELECT COUNT(*) FROM library_items_v2", [], |row| row.get(0))
+                .unwrap();
+        let canonical_before: String = conn
+            .query_row(
+                "SELECT canonical_ds_json FROM library_items_v2 WHERE id = 'item-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // 关键一步：写候选。**绝不**打开数据库。
+        let written = write_cloud_authoring_candidate(&root, "batch-1", &golden_candidate()).unwrap();
+        assert!(written.exists(), "候选必须落到独立 artifact，而非库里");
+
+        let row_count_after: i64 =
+            conn.query_row("SELECT COUNT(*) FROM library_items_v2", [], |row| row.get(0))
+                .unwrap();
+        let canonical_after: String = conn
+            .query_row(
+                "SELECT canonical_ds_json FROM library_items_v2 WHERE id = 'item-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(row_count_before, 1, "写候选前必须恰好一条行");
+        assert_eq!(row_count_after, 1, "写候选不得新增/删除 library_items_v2 行");
+        assert_eq!(
+            canonical_after, canonical_before,
+            "写候选不得改动任何行的 canonical_ds_json"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn read_cloud_authoring_candidate_returns_none_when_absent() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let result = read_cloud_authoring_candidate(&root, "job-1", "never-written").unwrap();
+        assert!(
+            result.is_none(),
+            "读未写入的 batch 必须返回 Ok(None)，不是错误"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn read_cloud_authoring_candidate_reports_corrupt_with_explicit_code() {
+        let root = temp_root();
+        crate::util::ensure_app_dirs(&root).unwrap();
+        // 造一个「能解析、但不符合候选 schema」的文件：绕过写函数（写函数不会产出坏 JSON），
+        // 但命中 `from_value` 的反序列化失败分支，从而验证显式错误码映射。
+        let dir = root.join("jobs").join("job-1").join("recognition");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("batch-1.cloud-authoring-candidate.json");
+        std::fs::write(&path, r#"{"foo":"bar"}"#).unwrap();
+
+        let result = read_cloud_authoring_candidate(&root, "job-1", "batch-1");
+        assert!(
+            result.is_err(),
+            "损坏文件必须返回明确错误，而非 None 或 panic"
+        );
+        assert!(
+            result.unwrap_err().contains("cloud_authoring_candidate_corrupt"),
+            "错误码必须指明候选损坏（反序列化失败）"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -383,6 +383,128 @@ pub(crate) fn make_cloud_paper_generation_input(
     })
 }
 
+/// 云端**完整候选**识别的输入。
+///
+/// 与 [`make_cloud_paper_generation_input`] 的关键区别：后者要的是「比对用大纲」，
+/// 本函数要的是**可直接渲染的完整稿件**（正文、题组、富内容题干、选项库、作答位置、答案）。
+/// 模型只负责内容与**临时引用**；job/source 身份、质量、审计、稳定 ID 一律由后端生成。
+pub(crate) fn make_cloud_authoring_candidate_input(
+    profile: &Value,
+    job: &ImportJob,
+    profile_id: &str,
+    source: &crate::SourceFile,
+    pdf_path: &Path,
+    extraction: &Value,
+) -> Value {
+    json!({
+        "mode": "generate_authoring_candidate",
+        "job": {"jobId": job.job_id, "title": job.title, "category": job.category, "frequency": job.frequency, "tags": job.tags},
+        "profile": profile_payload(profile, profile_id),
+        "sourceFile": {
+            "fileId": source.file_id,
+            "originalName": source.original_name,
+            "fileType": source.file_type,
+            "sha256": source.sha256,
+            "sizeBytes": source.size_bytes
+        },
+        "pdfPath": pdf_path.to_string_lossy(),
+        "pages": extraction.get("pages").cloned().unwrap_or_else(|| json!([])),
+        "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        "outputContract": {
+            "schema": "CloudAuthoringCandidateV1",
+            "jsonOnly": true,
+            "shape": {
+                "passage": {
+                    "title": "passage title",
+                    "content": [{
+                        "type": "paragraph",
+                        "id": "TEMP-node-id",
+                        "children": [{"type": "text", "id": "TEMP-text-id", "text": "full paragraph text"}]
+                    }],
+                    "paragraphMap": {"A": "TEMP-node-id"}
+                },
+                "taskGroups": [{
+                    "taskId": "TEMP-group-id",
+                    "displayRange": {"kind": "range", "start": 1, "end": 5},
+                    "taskType": "true_false_not_given",
+                    "instructions": [{"type": "paragraph", "id": "TEMP-instr-id", "children": [{"type": "text", "id": "TEMP-instr-text", "text": "full instruction text"}]}],
+                    "stimulus": [{"type": "paragraph", "id": "TEMP-stim-id", "children": [{"type": "text", "id": "TEMP-stim-text", "text": "full notes / table / diagram text"}]}],
+                    "optionBank": {
+                        "optionBankId": "TEMP-bank-id",
+                        "scope": "task_group",
+                        "options": [{"optionId": "TEMP-option-id", "label": "A", "content": [{"type": "text", "id": "TEMP-option-text-id", "text": "full option text"}]}],
+                        "allowReuse": false
+                    },
+                    "responseGroups": [{
+                        "responseGroupId": "TEMP-rg-id",
+                        "kind": "choice",
+                        "prompt": [{"type": "paragraph", "id": "TEMP-prompt-id", "children": [{"type": "text", "id": "TEMP-prompt-text-id", "text": "full question prompt text"}]}],
+                        "slotIds": ["TEMP-slot-key"],
+                        "optionBankRef": "TEMP-bank-id",
+                        "cardinality": {"min": 1, "max": 1, "exact": 1},
+                        "assignment": "per_slot",
+                        "scoringPolicy": "per_slot_ielts_normalized",
+                        "duplicatePolicy": "reject_submission",
+                        "allowOptionReuse": false
+                    }]
+                }],
+                "answerSlots": {
+                    "TEMP-slot-key": {
+                        "slotId": "TEMP-slot-key",
+                        "questionNumber": 1,
+                        "displayLabel": "1",
+                        "hostNodeId": "TEMP-prompt-id",
+                        "hostType": "prompt",
+                        "interaction": "radio",
+                        "participation": "scoring",
+                        "constraints": {"acceptedOptionLabels": ["A", "B", "C"]},
+                        "confidence": 0.9
+                    }
+                },
+                "answerKey": {
+                    "TEMP-slot-key": {"kind": "option", "labels": ["B"], "assignment": "per_slot"}
+                },
+                "unresolvedRegions": [{
+                    "sourceFileId": "the source fileId you were given",
+                    "pageIndex": 3,
+                    "reason": "page_image_unavailable",
+                    "detail": "what could not be read"
+                }],
+                "sourceCoverageNotes": ["anything about source coverage you could not verify"],
+                "warnings": []
+            },
+            "enums": {
+                "taskType": ["single_choice", "multiple_choice", "true_false_not_given", "yes_no_not_given", "matching_information", "matching_headings", "matching_features", "matching_sentence_endings", "classification", "sentence_completion", "summary_completion", "note_completion", "table_completion", "form_completion", "flowchart_completion", "diagram_label_completion", "plan_map_label_completion", "short_answer"],
+                "displayRange.kind": ["range", "set"],
+                "responseGroup.kind": ["choice", "text_entry", "matching", "diagram_hotspot", "composite"],
+                "responseGroup.assignment": ["per_slot", "unordered_set", "ordered_slots"],
+                "responseGroup.scoringPolicy": ["per_slot_binary", "per_slot_ielts_normalized", "exact_set", "all_or_nothing"],
+                "responseGroup.duplicatePolicy": ["reject_submission", "ignore_duplicates"],
+                "answerSlot.hostType": ["prompt", "paragraph", "table_cell", "figure_hotspot", "flow_step"],
+                "answerSlot.interaction": ["radio", "checkbox", "text", "select", "dragdrop", "hotspot"],
+                "answerSlot.participation": ["scoring", "example", "non_scoring"],
+                "answerKey.kind": ["text", "option", "unresolved"],
+                "answerKey.assignment": ["per_slot", "unordered_set", "ordered"],
+                "answerKey.normalization": ["ielts_default", "exact"]
+            },
+            "rules": [
+                "Return FULL recognition content, not an outline and not a summary. This is used as a complete candidate draft.",
+                "Transcribe every question's FULL prompt text. Do not abbreviate, summarise or paraphrase any question.",
+                "Transcribe every option's label and FULL option text. Keep the option bank per task group.",
+                "Transcribe ALL passage text, notes, tables, diagrams and form text the task groups depend on into passage.content / instructions / stimulus.",
+                "Give every question an answerKey entry. If the original file does not provide an answer, use {\"kind\": \"unresolved\"} — never invent an answer.",
+                "Use temporary ids only (for example cloud-tg-1, cloud-q14, cloud-opt-a). NEVER copy ids from any other document and never use a real database id.",
+                "Every slotIds entry in a responseGroup MUST appear as a key in answerSlots. Every hostNodeId MUST be an id you defined in this same output.",
+                "Do NOT output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus, pageIndex hashes or any publish/verification flag. The backend fills all of those.",
+                "sourceAnchors are optional. If you provide them, use only {\"sourceFileId\": \"...\", \"pageIndex\": 1, \"nodeIds\": []}; pageIndex is 1-based. Never invent hashes or file paths.",
+                "Report anything you could not read in unresolvedRegions (with a 1-based pageIndex) and anything you could not verify in sourceCoverageNotes. Do not hide gaps with empty arrays.",
+                "Use only the enum values listed in outputContract.enums.",
+                "Return JSON only. No Markdown, no explanations, no code fences."
+            ]
+        }
+    })
+}
+
 pub(crate) fn save_llm_suggestion(
     root: &Path,
     job_id: &str,

@@ -44,6 +44,11 @@ pub(crate) fn run_llm_gateway(
         "generate_pdf_reading_outline" => {
             run_openai_compatible_cloud_outline_llm(root, job_id, input, api_key)
         }
+        // 云端**完整候选**识别：产出可直接渲染的完整稿件（正文 / 题组 / 富内容题干 /
+        // 选项库 / 作答位置 / 答案）。它是候选，不写权威稿；身份与质量由后端生成。
+        "generate_authoring_candidate" => {
+            run_openai_compatible_authoring_candidate_llm(root, job_id, input, api_key)
+        }
         // A4：分歧裁决。与云端识别共用证据面（PDF 附原文件 / 非 PDF 附原文文本），
         // 但输出契约与校验完全不同——它必须回指本次提交的 decisionId 集合。
         "adjudicate_divergence" => {
@@ -796,6 +801,292 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
         }
     }
     Ok(parsed)
+}
+
+/// 云端完整候选识别的 prompt。
+///
+/// 契约文字与 `make_cloud_authoring_candidate_input` 的 `outputContract` 是**同一套规则**：
+/// 「模型该返回什么」与「我们会校验什么」各写一份，两者迟早漂移，而漂移的代价是模型
+/// 产出被静默拒绝、用户看到「识别失败」却无从解释。
+///
+/// `repairNote`：上一次回复被校验器拒了，把**被拒原因原样**回给模型再问一次。
+/// 不带原因地重试同一句话，只会再拿到同一种错误——那不是修复，只是多烧一次配额。
+fn authoring_candidate_prompt(input: &Value) -> String {
+    let repair = input
+        .get("repairNote")
+        .and_then(Value::as_str)
+        .filter(|note| !note.trim().is_empty())
+        .map(|note| {
+            format!(
+                "\nYour previous reply was REJECTED by the backend validator. Fix exactly this and return the whole JSON object again.\nRejection reason: {note}\n"
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "You are recognising an IELTS Reading paper from its ORIGINAL FILE into a COMPLETE authoring draft.\n\
+Return JSON only. Do not return Markdown, HTML, JavaScript, explanations, or final export files.\n\
+This is NOT an outline and NOT a comparison summary: transcribe the FULL content so it can be rendered.\n\
+{repair}\n\
+Rules that matter most:\n\
+- Transcribe every question's FULL prompt text; never abbreviate or summarise a question.\n\
+- Transcribe every option label and its FULL text; keep one option bank per task group.\n\
+- Transcribe ALL passage text and all notes / tables / diagrams / form text a task group depends on.\n\
+- Give EVERY question an answerKey entry; use {{\"kind\":\"unresolved\"}} when the file gives no answer. Never invent answers.\n\
+- Use TEMPORARY ids only (cloud-tg-1, cloud-q14, cloud-opt-a ...). Never copy a real database id.\n\
+- Every responseGroups[].slotIds entry MUST be a key of answerSlots; every hostNodeId MUST be an id you defined here.\n\
+- NEVER output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus or any publish/verification flag — the backend owns those.\n\
+- Report unreadable areas in unresolvedRegions (1-based pageIndex) and unverified coverage in sourceCoverageNotes.\n\
+- Use only the enum values listed in outputContract.enums.\n\
+Job JSON: {}\nSource file JSON: {}\nOutput contract JSON: {}",
+        serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
+        serde_json::to_string(input.get("sourceFile").unwrap_or(&Value::Null)).unwrap_or_default(),
+        serde_json::to_string(input.get("outputContract").unwrap_or(&Value::Null)).unwrap_or_default()
+    )
+}
+
+/// 云端完整候选识别的执行体。
+///
+/// 证据面规则与云端大纲识别一致（模型看到的必须是**原文件**）：
+/// - PDF：附原文件本身，失败回退到渲染页图；
+/// - 非 PDF：附 `DocumentIRV2` 独立抽出的原文文本（`sourceText`），绝不读本地识别产物。
+fn run_openai_compatible_authoring_candidate_llm(
+    root: &Path,
+    job_id: &str,
+    input: &Value,
+    api_key: Option<&str>,
+) -> CommandResult<Value> {
+    let profile = llm_profile(input);
+    let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
+    let mut warnings = Vec::<String>::new();
+    let mut content = vec![json!({"type": "text", "text": authoring_candidate_prompt(input)})];
+    if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
+        content.push(pdf_part);
+    } else if let Some(source_text) = input
+        .get("sourceText")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+    {
+        content.push(json!({
+            "type": "text",
+            "text": format!(
+                "The original file is not a PDF, so no page image is attached. \
+The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
+--- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
+            )
+        }));
+    } else {
+        warnings.push("cloud_authoring_candidate_source_unavailable".to_string());
+    }
+    let mut body = json!({
+        "model": model,
+        "temperature": llm_temperature(profile),
+        "messages": [
+            {"role": "system", "content": "Return valid JSON only."},
+            {"role": "user", "content": content}
+        ]
+    });
+    if llm_force_json(profile) {
+        body["response_format"] = json!({"type": "json_object"});
+    }
+
+    let payload = match openai_post(profile, api_key, body) {
+        Ok(payload) => payload,
+        Err(pdf_error) => {
+            warnings.push(format!("direct_pdf_request_failed:{}", pdf_error));
+            let mut image_content = vec![
+                json!({"type": "text", "text": format!("{}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence.", authoring_candidate_prompt(input))}),
+            ];
+            let image_count = append_pdf_images_to_content(root, job_id, &mut image_content, input)?;
+            if image_count == 0 {
+                return Err(format!(
+                    "cloud_authoring_candidate_direct_pdf_failed_and_no_images:{}",
+                    pdf_error
+                ));
+            }
+            let mut fallback_body = json!({
+                "model": llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?,
+                "temperature": llm_temperature(profile),
+                "messages": [
+                    {"role": "system", "content": "Return valid JSON only."},
+                    {"role": "user", "content": image_content}
+                ]
+            });
+            if llm_force_json(profile) {
+                fallback_body["response_format"] = json!({"type": "json_object"});
+            }
+            openai_post(profile, api_key, fallback_body)?
+        }
+    };
+    let content = openai_chat_content(&payload)?;
+    let mut parsed = parse_llm_json_content(&content)?;
+    validate_authoring_candidate_output(&mut parsed)?;
+    if !warnings.is_empty() {
+        if let Some(items) = parsed.get_mut("warnings").and_then(Value::as_array_mut) {
+            for warning in warnings {
+                items.push(json!(warning));
+            }
+        }
+    }
+    Ok(parsed)
+}
+
+/// 云端完整候选输出的**结构**校验。
+///
+/// 只校验「形状是否可用」：内容对不对是模型结合原文的语义判断，程序替代不了。
+/// 但形状不对必须**具体**报错——原因会原样回给模型，让它定向修好再交一次。
+/// 这里刻意**不**校验 quality / audit / 身份字段：那些由后端生成，模型写什么都不采信。
+fn validate_authoring_candidate_output(output: &mut Value) -> CommandResult<()> {
+    let Some(object) = output.as_object_mut() else {
+        return Err("cloud_authoring_output_not_object".to_string());
+    };
+    let Some(groups) = object.get("taskGroups").and_then(Value::as_array) else {
+        return Err("cloud_authoring_output_task_groups_missing".to_string());
+    };
+    if groups.is_empty() {
+        return Err("cloud_authoring_output_task_groups_empty".to_string());
+    }
+    let slot_keys: std::collections::BTreeSet<String> = object
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .map(|slots| slots.keys().cloned().collect())
+        .unwrap_or_default();
+    if slot_keys.is_empty() {
+        return Err("cloud_authoring_output_answer_slots_empty".to_string());
+    }
+
+    let groups = groups.clone();
+    for (index, group) in groups.iter().enumerate() {
+        let Some(group_object) = group.as_object() else {
+            return Err(format!("cloud_authoring_output_group_not_object:{index}"));
+        };
+        if group_object
+            .get("taskId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            return Err(format!("cloud_authoring_output_group_task_id_missing:{index}"));
+        }
+        if group_object.get("displayRange").and_then(Value::as_object).is_none() {
+            return Err(format!("cloud_authoring_output_group_range_missing:{index}"));
+        }
+        if group_object
+            .get("taskType")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            return Err(format!("cloud_authoring_output_group_task_type_missing:{index}"));
+        }
+        if !group_object
+            .get("instructions")
+            .map(Value::is_array)
+            .unwrap_or(false)
+        {
+            return Err(format!("cloud_authoring_output_group_instructions_missing:{index}"));
+        }
+        let Some(response_groups) = group_object.get("responseGroups").and_then(Value::as_array)
+        else {
+            return Err(format!(
+                "cloud_authoring_output_group_response_groups_missing:{index}"
+            ));
+        };
+        for (position, response_group) in response_groups.iter().enumerate() {
+            let Some(response_object) = response_group.as_object() else {
+                return Err(format!(
+                    "cloud_authoring_output_response_group_not_object:{index}:{position}"
+                ));
+            };
+            if response_object
+                .get("responseGroupId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            {
+                return Err(format!(
+                    "cloud_authoring_output_response_group_id_missing:{index}:{position}"
+                ));
+            }
+            let Some(slot_ids) = response_object.get("slotIds").and_then(Value::as_array) else {
+                return Err(format!(
+                    "cloud_authoring_output_response_group_slot_ids_missing:{index}:{position}"
+                ));
+            };
+            if slot_ids.is_empty() {
+                return Err(format!(
+                    "cloud_authoring_output_response_group_slot_ids_empty:{index}:{position}"
+                ));
+            }
+            for slot_id in slot_ids {
+                let Some(slot_id) = slot_id.as_str().filter(|value| !value.trim().is_empty()) else {
+                    return Err(format!(
+                        "cloud_authoring_output_response_group_slot_id_invalid:{index}:{position}"
+                    ));
+                };
+                if !slot_keys.contains(slot_id) {
+                    return Err(format!(
+                        "cloud_authoring_output_slot_reference_dangling:{index}:{position}:{slot_id}"
+                    ));
+                }
+            }
+        }
+    }
+
+    if let Some(slots) = object.get("answerSlots").and_then(Value::as_object) {
+        for (key, slot) in slots {
+            let Some(slot_object) = slot.as_object() else {
+                return Err(format!("cloud_authoring_output_slot_not_object:{key}"));
+            };
+            if slot_object.get("questionNumber").and_then(Value::as_u64).is_none() {
+                return Err(format!(
+                    "cloud_authoring_output_slot_question_number_missing:{key}"
+                ));
+            }
+        }
+    }
+    if let Some(keys) = object.get("answerKey").and_then(Value::as_object) {
+        for key in keys.keys() {
+            if !slot_keys.contains(key) {
+                return Err(format!(
+                    "cloud_authoring_output_answer_key_dangling:{key}"
+                ));
+            }
+        }
+    }
+    if let Some(regions) = object.get("unresolvedRegions") {
+        let Some(regions) = regions.as_array() else {
+            return Err("cloud_authoring_output_unresolved_regions_invalid".to_string());
+        };
+        for (index, region) in regions.iter().enumerate() {
+            let Some(region_object) = region.as_object() else {
+                return Err(format!("cloud_authoring_output_unresolved_region_invalid:{index}"));
+            };
+            if region_object
+                .get("sourceFileId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            {
+                return Err(format!(
+                    "cloud_authoring_output_unresolved_region_source_missing:{index}"
+                ));
+            }
+            // 页索引 0 在本产品里是无效来源定位（见 `cloud_outline_group_quote_invalid`）。
+            match region_object.get("pageIndex").and_then(Value::as_i64) {
+                Some(page) if page >= 1 => {}
+                _ => {
+                    return Err(format!(
+                        "cloud_authoring_output_unresolved_region_page_invalid:{index}"
+                    ))
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A4：分歧裁决的 prompt。

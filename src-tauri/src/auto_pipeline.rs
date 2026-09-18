@@ -1446,6 +1446,172 @@ pub(crate) fn generate_cloud_reading_outline(
     )
 }
 
+/// 云端**完整候选**识别的第一段：原文件证据面 + 真实网关调用。
+///
+/// 返回的是**模型原始 JSON**（尚未接上后端身份）。之所以只做到这一步：
+/// 云端与本地并发起飞，而候选的 `batch_id` 由 `(job_id, source_sha256, base_edit_version)`
+/// 派生、`base_edit_version` 要到本地冻结之后才成立。把「调用」与「定身份 + 落盘」分开，
+/// 既保持并发，又不让候选挂在一个并不存在的批次上（那比没有候选更危险，因为它看着可信）。
+///
+/// 一次受约束修复：首次输出被结构校验拒了，把**被拒原因原样**回给模型再问一次。
+/// 不带原因地重试同一句话，只会再拿到同一种错误——那不是修复，只是多烧一次配额。
+pub(crate) fn generate_cloud_authoring_candidate_raw(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+) -> CommandResult<Value> {
+    let job = load_job(root, job_id)?;
+    let selected = profile_id
+        .map(str::to_string)
+        .or_else(|| job.active_llm_profile_id.clone())
+        .ok_or_else(|| "NO_PROFILE".to_string())?;
+    let profile = find_profile(root, &selected)?;
+    let (source, upload_path) = main_source_for_cloud(root, &job)?;
+    let is_pdf = source.file_type == "pdf";
+    let extraction = if is_pdf {
+        main_pdf_vision_extraction(root, &job)
+            .map(|(extraction, _asset_dir)| extraction)
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
+    let mut input = crate::llm_suggestions::make_cloud_authoring_candidate_input(
+        &profile,
+        &job,
+        &selected,
+        &source,
+        &upload_path,
+        &extraction,
+    );
+    if !is_pdf {
+        // `data_url_for_pdf` 会按 `data:application/pdf` 发送 `pdfPath`，对 DOCX 是
+        // 错误声明，必须先摘掉；证据面改为原文件独立抽出的文本。
+        if let Some(object) = input.as_object_mut() {
+            object.remove("pdfPath");
+        }
+        let source_text = prepare_cloud_source_evidence(root, &job)
+            .ok_or_else(|| format!("cloud_source_text_unavailable:{job_id}"))?;
+        input["sourceText"] = json!(source_text);
+    }
+    let api_key = load_llm_api_key(root, &selected);
+    match run_llm_gateway(
+        root,
+        job_id,
+        "generate_authoring_candidate",
+        &input,
+        api_key.as_deref(),
+    ) {
+        Ok(value) => Ok(value),
+        Err(first_error) => {
+            // 只有**结构**类拒绝才值得再问一次；网络/配置类错误重试同一句话毫无意义。
+            if !first_error.starts_with("cloud_authoring_output_") {
+                return Err(first_error);
+            }
+            if let Some(object) = input.as_object_mut() {
+                object.insert("repairNote".to_string(), json!(first_error));
+            }
+            run_llm_gateway(
+                root,
+                job_id,
+                "generate_authoring_candidate",
+                &input,
+                api_key.as_deref(),
+            )
+            .map_err(|second_error| format!("cloud_authoring_candidate_rejected:{second_error}"))
+        }
+    }
+}
+
+/// 云端**完整候选**识别的第二段：接上后端身份、重算质量、独立落盘。
+///
+/// 三段纪律：
+/// 1. **候选不写权威稿**：只落候选 artifact，不调用 `seed_canonical_ds`，
+///    不碰 `library_items_v2.canonical_ds_json`；
+/// 2. **身份由后端给**：job / source / exam / audit / quality / 稳定 ID 一律后端生成；
+/// 3. **质量真算**：候选先带一个显式「尚未评估」占位块，这里用同一套质量管线覆盖，
+///    绝不把占位块当成结论。
+pub(crate) fn finalize_cloud_authoring_candidate(
+    root: &Path,
+    job_id: &str,
+    batch_id: &str,
+    base_edit_version: i64,
+    raw: &Value,
+) -> CommandResult<crate::schema::cloud_repair_v1::CloudAuthoringCandidateV1> {
+    use crate::library::repository::{get_canonical_ds, open_library_connection};
+
+    let job = load_job(root, job_id)?;
+    let canonical = {
+        let conn = open_library_connection(root)?;
+        get_canonical_ds(&conn, job_id)?.map(|(ds, _)| ds)
+    };
+    let source_sha256 = crate::reconcile::commands::source_sha256_for_job(root, job_id);
+    let source_file_id = canonical
+        .as_ref()
+        .and_then(|ds| ds.pointer("/exam/sourceFiles/0/sourceFileId"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| job_id.to_string());
+    let exam = canonical
+        .as_ref()
+        .and_then(|ds| ds.get("exam"))
+        .filter(|exam| exam.is_object())
+        .cloned()
+        .unwrap_or_else(|| {
+            json!({
+                "examId": job_id,
+                "title": job.title,
+                "language": "en",
+                "tags": job.tags,
+                "sourceFiles": [{"sourceFileId": source_file_id, "role": "question_paper"}]
+            })
+        });
+    let modality = canonical
+        .as_ref()
+        .and_then(|ds| ds.get("modality"))
+        .and_then(Value::as_str)
+        .unwrap_or("reading")
+        .to_string();
+    let source_document_id = canonical
+        .as_ref()
+        .and_then(|ds| ds.get("sourceDocumentId"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{job_id}-document"));
+    // 抽取方式按**原文件类型**登记，而不是按模型声明：PDF 走原生文本层，DOCX 走 OOXML。
+    let (main_source, _) = main_source_for_cloud(root, &job)?;
+    let extraction_mode = if main_source.file_type == "pdf" {
+        "pdf_native"
+    } else {
+        "docx_ooxml"
+    };
+
+    let generated_at = Utc::now().to_rfc3339();
+    let identity = crate::reconcile::candidate::CloudAuthoringIdentity {
+        job_id,
+        item_id: job_id,
+        batch_id,
+        source_file_id: &source_file_id,
+        source_sha256: &source_sha256,
+        base_edit_version,
+        generated_at: &generated_at,
+        exam,
+        modality: &modality,
+        source_document_id: &source_document_id,
+        extraction_mode,
+    };
+    let mut normalized =
+        crate::reconcile::candidate::normalize_cloud_authoring(&identity, canonical.as_ref(), raw)?;
+    if normalized.document.is_object() {
+        // 用**同一套**质量管线评估候选，覆盖占位块。物理影子对不上时 `evaluate_quality`
+        // 自己会如实标 `physicalShadow: missing`，这里不做任何粉饰。
+        crate::authoring_v2_commands::refresh_quality_report(root, job_id, &mut normalized.document)?;
+    }
+    let candidate =
+        crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(&identity, normalized)?;
+    crate::reconcile::store::write_cloud_authoring_candidate(root, batch_id, &candidate)?;
+    Ok(candidate)
+}
+
 /// A4：把一批**待裁定的分歧项**交给真实模型，走与云端识别同一个 LLM 网关。
 ///
 /// 证据面规则与云端识别完全一致（同一条产品要求：模型看到的必须是**原文件**）：

@@ -8,10 +8,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
+use crate::ielts_grammar::quality::derive_instruction_signature_for_group;
+use crate::schema::cloud_repair_v1::{
+    CloudAuthoringCandidateV1, CloudCandidateUnresolvedRegionV1,
+    CLOUD_AUTHORING_CANDIDATE_V1_SCHEMA_VERSION,
+};
 use crate::schema::ielts_authoring_v2::{
     AnswerSlotHostTypeV2, AnswerSlotParticipationV2, AnswerValueV2, InteractionV2, ResponseGroupKindV2,
     TaskTypeV2,
 };
+use crate::CommandResult;
 use crate::schema::recognition_v1::{
     reason, CandidateAssetV1, CandidateOptionBankV1, CandidateOptionV1, CandidateResponseGroupV1,
     CandidateSlotV1, CandidateTaskGroupV1, CandidateUnresolvedRegionV1, ChainKindV1, ChainStatusV1,
@@ -1461,6 +1467,1267 @@ fn rewrite_asset_id(value: &mut Value, id_map: &BTreeMap<String, String>, outcom
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// 云端「完整候选」：标准化 / 身份对齐 / 引用重写
+//
+// 产品授权（见 `Plan With Files/Dual_Recognition/CLOUD_REPAIR_IMPLEMENTATION_BRIEF_2026-09-17.md`）：
+// 本地几何识别只负责快速初稿，云端**独立识别**产出完整候选（正文 / 题组 / 选项 / 作答
+// 位置 / 答案），再由云端校核修复真实调用编辑工具。云端可以纠正本地「确定性结论」。
+//
+// 本段负责把模型输出接上后端身份，三条纪律：
+//
+// 1. **模型不拥有身份**。job / source / audit / quality / reviewState / 稳定 ID 全部由后端
+//    生成或计算；模型只给内容与临时引用。
+// 2. **能唯一对齐就复用，不能就分配，确实不确定才留歧义**。响应组、选项库、内容节点
+//    **不得**因为「没有现成映射算法」而整类降级成人工问题；那是把后端的活推给用户。
+// 3. **引用重写全有或全无**。冲突即整篇放弃（复用 `rewrite_authoring_references`）。
+// ─────────────────────────────────────────────────────────────────────
+
+/// 参与身份对齐的**标量引用字段**（这些字段的值属于 ID 空间）。
+const REFERENCE_SCALAR_FIELDS: [&str; 11] = [
+    "id",
+    "taskId",
+    "optionBankId",
+    "responseGroupId",
+    "optionBankRef",
+    "slotId",
+    "hostNodeId",
+    "optionId",
+    "assetId",
+    "visualFallbackAssetId",
+    "assetRef",
+];
+
+/// 参与身份对齐的**引用数组字段**。
+const REFERENCE_ARRAY_FIELDS: [&str; 3] = ["slotIds", "taskIds", "assetIds"];
+
+/// 云端完整候选的**后端身份与元信息**。模型无权提供其中任何一项。
+pub(crate) struct CloudAuthoringIdentity<'a> {
+    pub job_id: &'a str,
+    pub item_id: &'a str,
+    pub batch_id: &'a str,
+    pub source_file_id: &'a str,
+    pub source_sha256: &'a str,
+    pub base_edit_version: i64,
+    pub generated_at: &'a str,
+    /// `ExamMetaV2` 形状的考试元信息（由 job 构造，模型无权填写）。
+    pub exam: Value,
+    pub modality: &'a str,
+    pub source_document_id: &'a str,
+    /// 后端登记的抽取方式（`ExtractionModeV2`）。模型无从得知，锚点缺该字段时由后端补。
+    pub extraction_mode: &'a str,
+}
+
+/// 标准化结果：**尚未**做质量重算与类型化，调用方负责补上（见 `auto_pipeline`）。
+pub(crate) struct NormalizedCloudAuthoring {
+    pub status: ChainStatusV1,
+    pub reason_code: Option<String>,
+    pub document: Value,
+    pub id_map: BTreeMap<String, String>,
+    pub unresolved_references: Vec<String>,
+    pub unresolved_regions: Vec<CloudCandidateUnresolvedRegionV1>,
+    pub source_coverage_notes: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// 权威稿里一个题组的**身份索引**（只读）。
+struct CanonicalGroupIndex {
+    task_id: String,
+    task_type: String,
+    numbers: BTreeSet<u32>,
+    response_groups: Vec<(String, BTreeSet<String>)>,
+    option_bank_id: Option<String>,
+}
+
+/// 权威稿里一个答案槽的身份索引。
+struct CanonicalSlotIndex {
+    key: String,
+    slot_id: String,
+    question_number: u32,
+    task_id: Option<String>,
+}
+
+/// 题组对齐结论。**不确定时绝不任取第一个**。
+enum GroupMatch {
+    /// 唯一对应当前稿件的题组。
+    Unique(usize),
+    /// 云端识别出的新增题组。
+    New,
+    /// 有多个候选，无法唯一确定。
+    Ambiguous(Vec<String>),
+}
+
+/// 收集一份稿件里**全部属于 ID 空间**的字符串（含 `answerSlots` / `answerKey` 的键）。
+///
+/// 用途有两个：界定「临时 ID 全集」（重写器据此区分临时引用与既有稳定引用），
+/// 以及统计已占用 ID（分配新 ID 时避免撞车）。
+fn collect_reference_ids(value: &Value, out: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                if key == "answerSlots" || key == "answerKey" {
+                    if let Some(entries) = child.as_object() {
+                        for (slot_key, slot) in entries {
+                            out.insert(slot_key.clone());
+                            collect_reference_ids(slot, out);
+                        }
+                        continue;
+                    }
+                }
+                if REFERENCE_SCALAR_FIELDS.contains(&key.as_str()) {
+                    if let Some(text) = child.as_str() {
+                        out.insert(text.to_string());
+                    }
+                } else if REFERENCE_ARRAY_FIELDS.contains(&key.as_str()) {
+                    if let Some(items) = child.as_array() {
+                        for item in items {
+                            if let Some(text) = item.as_str() {
+                                out.insert(text.to_string());
+                            }
+                        }
+                    }
+                }
+                collect_reference_ids(child, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_reference_ids(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 分配一个当前未被占用的稳定 ID（确定性：同一输入必得同一结果）。
+fn alloc_stable_id(preferred: &str, used: &BTreeSet<String>) -> String {
+    if !used.contains(preferred) {
+        return preferred.to_string();
+    }
+    let mut suffix = 2u32;
+    loop {
+        let candidate = format!("{preferred}-{suffix}");
+        if !used.contains(&candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+/// 权威稿的题组身份索引。
+fn canonical_group_index(canonical: &Value) -> Vec<CanonicalGroupIndex> {
+    let Some(groups) = canonical.get("taskGroups").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    groups
+        .iter()
+        .filter_map(|group| {
+            let task_id = group.get("taskId").and_then(Value::as_str)?.to_string();
+            let task_type = group
+                .get("taskType")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let numbers: BTreeSet<u32> = group
+                .get("displayRange")
+                .map(expand_question_numbers)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            let mut response_groups = Vec::new();
+            if let Some(items) = group.get("responseGroups").and_then(Value::as_array) {
+                for item in items {
+                    let Some(id) = item.get("responseGroupId").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let slot_ids: BTreeSet<String> = item
+                        .get("slotIds")
+                        .and_then(Value::as_array)
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    response_groups.push((id.to_string(), slot_ids));
+                }
+            }
+            let option_bank_id = group
+                .get("optionBank")
+                .and_then(|bank| bank.get("optionBankId"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            Some(CanonicalGroupIndex {
+                task_id,
+                task_type,
+                numbers,
+                response_groups,
+                option_bank_id,
+            })
+        })
+        .collect()
+}
+
+/// 权威稿的答案槽身份索引。
+///
+/// 所属题组通过 `responseGroups[].slotIds` **反查**得到，而不是靠 `qN` 命名规则猜。
+fn canonical_slot_index(canonical: &Value, groups: &[CanonicalGroupIndex]) -> Vec<CanonicalSlotIndex> {
+    let Some(slots) = canonical.get("answerSlots").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    // slotId 字段值 → 所属 taskId（由题组的 responseGroups 建立）。
+    let mut owner_by_ref: BTreeMap<String, String> = BTreeMap::new();
+    for group in groups {
+        for (_, slot_ids) in &group.response_groups {
+            for reference in slot_ids {
+                owner_by_ref
+                    .entry(reference.clone())
+                    .or_insert_with(|| group.task_id.clone());
+            }
+        }
+    }
+    slots
+        .iter()
+        .filter_map(|(key, slot)| {
+            let slot_id = slot
+                .get("slotId")
+                .and_then(Value::as_str)
+                .unwrap_or(key)
+                .to_string();
+            let question_number = slot.get("questionNumber").and_then(Value::as_u64)? as u32;
+            let task_id = owner_by_ref
+                .get(&slot_id)
+                .or_else(|| owner_by_ref.get(key))
+                .cloned();
+            Some(CanonicalSlotIndex {
+                key: key.clone(),
+                slot_id,
+                question_number,
+                task_id,
+            })
+        })
+        .collect()
+}
+
+/// 云端题组声明的答案槽引用（`responseGroups[].slotIds`）。
+fn cloud_group_slot_refs(group: &Value) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    if let Some(groups) = group.get("responseGroups").and_then(Value::as_array) {
+        for item in groups {
+            if let Some(ids) = item.get("slotIds").and_then(Value::as_array) {
+                for id in ids {
+                    if let Some(text) = id.as_str() {
+                        out.insert(text.to_string());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 云端题组的题号集合：优先 `displayRange`，缺失时由它声明的答案槽题号回填。
+fn cloud_group_numbers(group: &Value, draft: &Value) -> BTreeSet<u32> {
+    let mut numbers: BTreeSet<u32> = group
+        .get("displayRange")
+        .map(expand_question_numbers)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    if !numbers.is_empty() {
+        return numbers;
+    }
+    let refs = cloud_group_slot_refs(group);
+    if let Some(slots) = draft.get("answerSlots").and_then(Value::as_object) {
+        for (key, slot) in slots {
+            let slot_id = slot.get("slotId").and_then(Value::as_str).unwrap_or(key);
+            if refs.contains(key) || refs.contains(slot_id) {
+                if let Some(number) = slot.get("questionNumber").and_then(Value::as_u64) {
+                    numbers.insert(number as u32);
+                }
+            }
+        }
+    }
+    numbers
+}
+
+/// 把云端题组对齐到当前权威稿的题组。
+///
+/// 判据（依次收紧到放宽，**唯一才认**）：
+/// 1. 题型相同 **且** 题号有交集；
+/// 2. 退一步，只要题号有交集（题型本身可能就是云端要纠正的对象）。
+///
+/// 任何一层出现多个候选都算歧义——交给修复回合结合原文判断，绝不任取第一个。
+fn match_task_group(
+    cloud_type: &str,
+    cloud_numbers: &BTreeSet<u32>,
+    canonical: &[CanonicalGroupIndex],
+) -> GroupMatch {
+    if cloud_numbers.is_empty() {
+        return GroupMatch::New;
+    }
+    let overlapping: Vec<usize> = canonical
+        .iter()
+        .enumerate()
+        .filter(|(_, group)| group.numbers.intersection(cloud_numbers).next().is_some())
+        .map(|(index, _)| index)
+        .collect();
+    if overlapping.is_empty() {
+        return GroupMatch::New;
+    }
+    let strict: Vec<usize> = overlapping
+        .iter()
+        .copied()
+        .filter(|index| canonical[*index].task_type == cloud_type)
+        .collect();
+    let chosen = if strict.len() == 1 {
+        strict
+    } else if strict.len() > 1 {
+        return GroupMatch::Ambiguous(
+            strict
+                .iter()
+                .map(|index| canonical[*index].task_id.clone())
+                .collect(),
+        );
+    } else if overlapping.len() == 1 {
+        overlapping
+    } else {
+        return GroupMatch::Ambiguous(
+            overlapping
+                .iter()
+                .map(|index| canonical[*index].task_id.clone())
+                .collect(),
+        );
+    };
+    GroupMatch::Unique(chosen[0])
+}
+
+/// 为内容节点分配稳定 ID：**同一容器内位置相同且节点类型相同**才复用权威稿的 ID，
+/// 否则由后端分配新 ID。
+///
+/// 为什么可以按位置复用：只有在题组已经被**唯一对齐**之后才会走到这里，此时两个容器的
+/// 语义位置是同一条；类型不同说明该位置确实换了节点，那就必须是新身份。
+/// 注意 `nodeIds`（源文档锚点）**不**在这里，也不在任何重写范围内——它指向源文档节点，
+/// 与题稿节点是两个命名空间。
+fn assign_node_ids(
+    cloud: &Value,
+    canonical: Option<&Value>,
+    prefix: &str,
+    counter: &mut usize,
+    id_map: &mut BTreeMap<String, String>,
+) {
+    match cloud {
+        Value::Array(items) => {
+            let canonical_items = canonical.and_then(Value::as_array);
+            for (index, item) in items.iter().enumerate() {
+                let counterpart = canonical_items.and_then(|arr| arr.get(index));
+                assign_node_ids(item, counterpart, prefix, counter, id_map);
+            }
+        }
+        Value::Object(map) => {
+            if let Some(old) = map.get("id").and_then(Value::as_str) {
+                let same_shape = canonical
+                    .and_then(|value| value.get("type"))
+                    .and_then(Value::as_str)
+                    .zip(map.get("type").and_then(Value::as_str))
+                    .map(|(left, right)| left == right)
+                    .unwrap_or(false);
+                let reused = if same_shape {
+                    canonical
+                        .and_then(|value| value.get("id"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                } else {
+                    None
+                };
+                let stable = reused.unwrap_or_else(|| {
+                    *counter += 1;
+                    format!("{prefix}-cn-{counter}")
+                });
+                id_map.insert(old.to_string(), stable);
+            }
+            if let Some(children) = map.get("children") {
+                let canonical_children = canonical.and_then(|value| value.get("children"));
+                assign_node_ids(children, canonical_children, prefix, counter, id_map);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 按标签在权威稿的选项库里找同名选项（选项 ID 的身份来自**标签**，不是数组下标）。
+fn canonical_option_id_for_label(canonical_bank: Option<&Value>, label: &str) -> Option<String> {
+    canonical_bank?
+        .get("options")?
+        .as_array()?
+        .iter()
+        .find(|option| option.get("label").and_then(Value::as_str) == Some(label))?
+        .get("optionId")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// 为一个云端题组内部的对象分配稳定 ID（内容节点、选项、提示等）。
+fn assign_group_inner_ids(
+    cloud_group: &Value,
+    canonical_group: Option<&Value>,
+    stable_task_id: &str,
+    id_map: &mut BTreeMap<String, String>,
+) {
+    let mut counter = 0usize;
+
+    for container in ["instructions", "stimulus"] {
+        if let Some(cloud_nodes) = cloud_group.get(container) {
+            let canonical_nodes = canonical_group.and_then(|group| group.get(container));
+            assign_node_ids(cloud_nodes, canonical_nodes, stable_task_id, &mut counter, id_map);
+        }
+    }
+
+    if let Some(cloud_bank) = cloud_group.get("optionBank") {
+        let canonical_bank = canonical_group.and_then(|group| group.get("optionBank"));
+        if let Some(title) = cloud_bank.get("title") {
+            let canonical_title = canonical_bank.and_then(|bank| bank.get("title"));
+            assign_node_ids(title, canonical_title, stable_task_id, &mut counter, id_map);
+        }
+        if let Some(options) = cloud_bank.get("options").and_then(Value::as_array) {
+            for (index, option) in options.iter().enumerate() {
+                let label = option.get("label").and_then(Value::as_str).unwrap_or("");
+                if let Some(old) = option.get("optionId").and_then(Value::as_str) {
+                    let stable = canonical_option_id_for_label(canonical_bank, label)
+                        .unwrap_or_else(|| {
+                            if label.is_empty() {
+                                format!("{stable_task_id}-opt-{}", index + 1)
+                            } else {
+                                format!("{stable_task_id}-opt-{label}")
+                            }
+                        });
+                    id_map.insert(old.to_string(), stable);
+                }
+                if let Some(content) = option.get("content") {
+                    let canonical_content = canonical_bank
+                        .and_then(|bank| bank.get("options"))
+                        .and_then(Value::as_array)
+                        .and_then(|arr| {
+                            arr.iter()
+                                .find(|candidate| {
+                                    candidate.get("label").and_then(Value::as_str) == Some(label)
+                                })
+                        })
+                        .and_then(|candidate| candidate.get("content"));
+                    assign_node_ids(content, canonical_content, stable_task_id, &mut counter, id_map);
+                }
+            }
+        }
+    }
+
+    if let Some(response_groups) = cloud_group.get("responseGroups").and_then(Value::as_array) {
+        for response_group in response_groups {
+            if let Some(prompt) = response_group.get("prompt") {
+                // 提示节点没有天然对应物：只有该题组被唯一对齐时才按位置复用。
+                let canonical_prompt = canonical_group
+                    .and_then(|group| group.get("responseGroups"))
+                    .and_then(Value::as_array)
+                    .and_then(|arr| arr.first())
+                    .and_then(|group| group.get("prompt"));
+                assign_node_ids(prompt, canonical_prompt, stable_task_id, &mut counter, id_map);
+            }
+            if let Some(options) = response_group.get("options").and_then(Value::as_array) {
+                for option in options {
+                    if let Some(content) = option.get("content") {
+                        assign_node_ids(content, None, stable_task_id, &mut counter, id_map);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 驼峰 / 短横线 / 空格 → snake_case（枚举别名归一用）。
+fn to_snake_case(input: &str) -> String {
+    let mut out = String::new();
+    for (index, ch) in input.trim().chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 && !out.ends_with('_') {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else if ch == '-' || ch == ' ' {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// 把某个字段的值收敛到枚举的 snake_case 写法。
+///
+/// 未知值**原样保留**（不猜），由后续反序列化如实报错——这是 fail-closed：
+/// 宁可让网关拿到一个具体的 schema 错误回给模型，也不要把一个不认识的题型
+/// 悄悄改成别的题型。
+fn normalize_enum_field(map: &mut Map<String, Value>, key: &str, aliases: &[(&str, &str)]) {
+    let Some(raw) = map.get(key).and_then(Value::as_str) else {
+        return;
+    };
+    let snake = to_snake_case(raw);
+    let resolved = aliases
+        .iter()
+        .find(|(from, _)| *from == snake.as_str())
+        .map(|(_, to)| (*to).to_string())
+        .unwrap_or(snake);
+    map.insert(key.to_string(), Value::String(resolved));
+}
+
+/// 保留白名单键，其余剥离。
+fn retain_keys(map: &mut Map<String, Value>, allowed: &[&str]) {
+    map.retain(|key, _| allowed.contains(&key.as_str()));
+}
+
+/// 补齐来源锚点的**后端**字段。
+///
+/// `extractionMode` 与 `sourceHash` 属于后端登记的事实，模型无从得知：让它们缺失
+/// 直接导致 `deny_unknown_fields` / 必填字段缺失而拒掉整份候选。这里按后端身份补上，
+/// 并剥掉契约外的键（模型多写一个字段不该烧掉整次识别）。
+fn normalize_source_anchor(anchor: &mut Value, identity: &CloudAuthoringIdentity<'_>) {
+    let Some(map) = anchor.as_object_mut() else {
+        return;
+    };
+    let file_id = map
+        .get("sourceFileId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| identity.source_file_id.to_string());
+    map.insert("sourceFileId".to_string(), json!(file_id));
+    let page_index = map.get("pageIndex").and_then(Value::as_i64).unwrap_or(0);
+    map.insert("pageIndex".to_string(), json!(page_index));
+    let node_ids = map
+        .get("nodeIds")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    map.insert("nodeIds".to_string(), json!(node_ids));
+    if map
+        .get("extractionMode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        map.insert(
+            "extractionMode".to_string(),
+            json!(identity.extraction_mode),
+        );
+    }
+    if map
+        .get("sourceHash")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        map.insert("sourceHash".to_string(), json!(identity.source_sha256));
+    }
+    retain_keys(
+        map,
+        &[
+            "sourceFileId",
+            "pageIndex",
+            "nodeIds",
+            "bbox",
+            "nativeBBox",
+            "displayBBox",
+            "pdfToDisplay",
+            "charRange",
+            "ooxmlPath",
+            "relationshipId",
+            "extractionMode",
+            "sourceHash",
+            "variants",
+        ],
+    );
+}
+
+/// 递归补齐稿件里所有来源锚点。
+fn sanitize_anchors(value: &mut Value, identity: &CloudAuthoringIdentity<'_>) {
+    match value {
+        Value::Object(map) => {
+            for key in ["sourceAnchors", "evidenceAnchors"] {
+                if let Some(Value::Array(items)) = map.get_mut(key) {
+                    for item in items.iter_mut() {
+                        normalize_source_anchor(item, identity);
+                    }
+                }
+            }
+            if let Some(anchor) = map.get_mut("sourceAnchor") {
+                normalize_source_anchor(anchor, identity);
+            }
+            for (_, child) in map.iter_mut() {
+                sanitize_anchors(child, identity);
+            }
+        }
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                sanitize_anchors(item, identity);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 把模型草稿收敛到 `IeltsAuthoringIRV2` 的**精确**形状。
+///
+/// 只做三件事：枚举别名归一、锚点补后端字段、剥掉契约外的键。**不动内容**——
+/// 文本、选项、答案一律原样搬运，缺失就保持缺失（由解析如实报错）。
+fn sanitize_cloud_authoring_draft(draft: &mut Value, identity: &CloudAuthoringIdentity<'_>) {
+    sanitize_anchors(draft, identity);
+
+    let Some(document) = draft.as_object_mut() else {
+        return;
+    };
+
+    if let Some(groups) = document.get_mut("taskGroups").and_then(Value::as_array_mut) {
+        for group in groups.iter_mut() {
+            let Some(group_map) = group.as_object_mut() else {
+                continue;
+            };
+            normalize_enum_field(group_map, "taskType", &[]);
+            if let Some(bank) = group_map.get_mut("optionBank").and_then(Value::as_object_mut) {
+                normalize_enum_field(bank, "scope", &[]);
+                retain_keys(
+                    bank,
+                    &[
+                        "optionBankId",
+                        "scope",
+                        "title",
+                        "options",
+                        "allowReuse",
+                        "sourceAnchors",
+                    ],
+                );
+                if let Some(options) = bank.get_mut("options").and_then(Value::as_array_mut) {
+                    for option in options.iter_mut() {
+                        let Some(option_map) = option.as_object_mut() else {
+                            continue;
+                        };
+                        retain_keys(
+                            option_map,
+                            &["optionId", "label", "content", "sourceAnchors", "provenanceStatus"],
+                        );
+                    }
+                }
+            }
+            if let Some(response_groups) =
+                group_map.get_mut("responseGroups").and_then(Value::as_array_mut)
+            {
+                for response_group in response_groups.iter_mut() {
+                    let Some(response_map) = response_group.as_object_mut() else {
+                        continue;
+                    };
+                    normalize_enum_field(response_map, "kind", &[]);
+                    normalize_enum_field(response_map, "assignment", &[]);
+                    normalize_enum_field(response_map, "scoringPolicy", &[]);
+                    normalize_enum_field(response_map, "duplicatePolicy", &[]);
+                    retain_keys(
+                        response_map,
+                        &[
+                            "responseGroupId",
+                            "kind",
+                            "prompt",
+                            "slotIds",
+                            "options",
+                            "optionBankRef",
+                            "cardinality",
+                            "assignment",
+                            "scoringPolicy",
+                            "duplicatePolicy",
+                            "allowOptionReuse",
+                            "sourceAnchors",
+                        ],
+                    );
+                }
+            }
+        }
+    }
+
+    if let Some(slots) = document.get_mut("answerSlots").and_then(Value::as_object_mut) {
+        for (_, slot) in slots.iter_mut() {
+            let Some(slot_map) = slot.as_object_mut() else {
+                continue;
+            };
+            normalize_enum_field(slot_map, "hostType", &[]);
+            normalize_enum_field(slot_map, "interaction", &[("drag_drop", "dragdrop")]);
+            normalize_enum_field(slot_map, "participation", &[]);
+            if let Some(constraints) = slot_map
+                .get_mut("constraints")
+                .and_then(Value::as_object_mut)
+            {
+                retain_keys(
+                    constraints,
+                    &[
+                        "maxWords",
+                        "maxNumbers",
+                        "maxCharacters",
+                        "acceptedOptionLabels",
+                    ],
+                );
+            }
+            retain_keys(
+                slot_map,
+                &[
+                    "slotId",
+                    "questionNumber",
+                    "displayLabel",
+                    "hostNodeId",
+                    "hostType",
+                    "interaction",
+                    "participation",
+                    "constraints",
+                    "sourceAnchors",
+                    "provenanceStatus",
+                    "confidence",
+                ],
+            );
+        }
+    }
+
+    if let Some(keys) = document.get_mut("answerKey").and_then(Value::as_object_mut) {
+        for (_, entry) in keys.iter_mut() {
+            let Some(entry_map) = entry.as_object_mut() else {
+                continue;
+            };
+            normalize_enum_field(entry_map, "kind", &[]);
+            normalize_enum_field(entry_map, "normalization", &[]);
+            // 答案值的 assignment 是 `AnswerAssignmentV2`（ordered），与响应组的
+            // `AssignmentV2`（ordered_slots）不是同一个枚举，这里如实收敛。
+            normalize_enum_field(entry_map, "assignment", &[("ordered_slots", "ordered")]);
+            retain_keys(entry_map, &["kind", "values", "normalization", "labels", "assignment"]);
+        }
+    }
+}
+
+/// 把模型输出标准化成一份**完整**的 `IeltsAuthoringIRV2` 值（含后端身份）。
+///
+/// 输入 `raw` 是模型原始 JSON：`{"authoring": {...}}` 或直接就是稿件对象。
+/// 输出 `document` 是**完整富内容**（passage / instructions / stimulus / prompt / 选项库 /
+/// responseGroups / answerSlots / answerKey 全部保留），绝不压平成纯文本投影。
+pub(crate) fn normalize_cloud_authoring(
+    identity: &CloudAuthoringIdentity<'_>,
+    canonical: Option<&Value>,
+    raw: &Value,
+) -> CommandResult<NormalizedCloudAuthoring> {
+    let mut warnings: Vec<String> = Vec::new();
+
+    let mut draft = raw
+        .get("authoring")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| raw.clone());
+    if !draft.is_object() {
+        return Err("cloud_authoring_candidate_not_object".to_string());
+    }
+    // 先做一次契约收敛：枚举别名归一 + 锚点补齐后端来源字段 + 剥掉多余键。
+    // 目的是让「无害的写法差异」不要升级成整份候选反序列化失败。
+    sanitize_cloud_authoring_draft(&mut draft, identity);
+
+    let source_coverage_notes: Vec<String> = raw
+        .get("sourceCoverageNotes")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default();
+    let unresolved_regions: Vec<CloudCandidateUnresolvedRegionV1> = raw
+        .get("unresolvedRegions")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| format!("cloud_authoring_unresolved_regions_invalid:{error}"))?
+        .unwrap_or_default();
+    if let Some(items) = raw.get("warnings").and_then(Value::as_array) {
+        warnings.extend(items.iter().filter_map(Value::as_str).map(str::to_string));
+    }
+
+    let groups: Vec<Value> = draft
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if groups.is_empty() {
+        // 没有题组就没有可用的完整候选。如实标 `unusable`，不假装识别成功。
+        return Ok(NormalizedCloudAuthoring {
+            status: ChainStatusV1::Unusable,
+            reason_code: Some("cloud_authoring_candidate_no_task_groups".to_string()),
+            document: Value::Null,
+            id_map: BTreeMap::new(),
+            unresolved_references: Vec::new(),
+            unresolved_regions,
+            source_coverage_notes,
+            warnings,
+        });
+    }
+
+    // 临时 ID 全集：界定「模型临时空间」与「既有稳定引用」。
+    let mut temp_ids: BTreeSet<String> = BTreeSet::new();
+    collect_reference_ids(&draft, &mut temp_ids);
+
+    // 已占用的稳定 ID：来自当前权威稿 + 本次已分配的。
+    let mut used: BTreeSet<String> = BTreeSet::new();
+    if let Some(canonical) = canonical {
+        collect_reference_ids(canonical, &mut used);
+    }
+
+    let canonical_groups = canonical.map(canonical_group_index).unwrap_or_default();
+    let canonical_slots = canonical
+        .map(|value| canonical_slot_index(value, &canonical_groups))
+        .unwrap_or_default();
+
+    let mut id_map: BTreeMap<String, String> = BTreeMap::new();
+    let mut unresolved: BTreeSet<String> = BTreeSet::new();
+
+    // ── 1) 题组身份 ────────────────────────────────────────────────
+    // cloud_group_index -> (stable task id 或 None 表示保留临时 ID)
+    let mut group_stable: Vec<Option<String>> = Vec::with_capacity(groups.len());
+    let mut group_canonical: Vec<Option<usize>> = Vec::with_capacity(groups.len());
+    for (index, group) in groups.iter().enumerate() {
+        let cloud_task_id = group
+            .get("taskId")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let cloud_type = group.get("taskType").and_then(Value::as_str).unwrap_or("");
+        let numbers = cloud_group_numbers(group, &draft);
+        match match_task_group(cloud_type, &numbers, &canonical_groups) {
+            GroupMatch::Unique(target) => {
+                let stable = canonical_groups[target].task_id.clone();
+                if !cloud_task_id.is_empty() && cloud_task_id != stable {
+                    id_map.insert(cloud_task_id, stable.clone());
+                }
+                used.insert(stable.clone());
+                group_stable.push(Some(stable));
+                group_canonical.push(Some(target));
+            }
+            GroupMatch::New => {
+                let preferred = if numbers.is_empty() {
+                    format!("cloud-tg-{}", index + 1)
+                } else {
+                    let list = numbers
+                        .iter()
+                        .map(|number| number.to_string())
+                        .collect::<Vec<_>>()
+                        .join("-");
+                    format!("cloud-tg-{list}")
+                };
+                let stable = alloc_stable_id(&preferred, &used);
+                used.insert(stable.clone());
+                if !cloud_task_id.is_empty() && cloud_task_id != stable {
+                    id_map.insert(cloud_task_id, stable.clone());
+                }
+                group_stable.push(Some(stable));
+                group_canonical.push(None);
+            }
+            GroupMatch::Ambiguous(candidates) => {
+                // 歧义**不**静默挑选：题组自身的身份保留在临时空间（随后被记进
+                // `unresolved_references`），交给修复回合结合原文继续判断。
+                //
+                // 但**组内对象照常分配后端 ID**：响应组 / 选项库 / 内容节点没有现成映射
+                // 算法，不等于它们要整类降级成人工问题——那是把后端的活推给用户。
+                let _ = candidates;
+                unresolved.insert(format!("task_group:{cloud_task_id}:ambiguous"));
+                let prefix = if cloud_task_id.is_empty() {
+                    format!("cloud-tg-{}", index + 1)
+                } else {
+                    cloud_task_id.clone()
+                };
+                group_stable.push(Some(prefix));
+                group_canonical.push(None);
+            }
+        }
+    }
+
+    // ── 2) 答案槽身份 ──────────────────────────────────────────────
+    // 云端槽位引用（key 或 slotId）→ 所属云端题组下标。
+    let mut cloud_owner: BTreeMap<String, usize> = BTreeMap::new();
+    for (index, group) in groups.iter().enumerate() {
+        for reference in cloud_group_slot_refs(group) {
+            cloud_owner.entry(reference).or_insert(index);
+        }
+    }
+    let cloud_slots: Map<String, Value> = draft
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    for (key, slot) in &cloud_slots {
+        let cloud_slot_id = slot
+            .get("slotId")
+            .and_then(Value::as_str)
+            .unwrap_or(key)
+            .to_string();
+        let Some(question_number) = slot.get("questionNumber").and_then(Value::as_u64) else {
+            unresolved.insert(format!("slot:{key}:missing_question_number"));
+            continue;
+        };
+        let owner = cloud_owner
+            .get(key)
+            .or_else(|| cloud_owner.get(&cloud_slot_id))
+            .copied();
+        let owner_task_id = owner
+            .and_then(|index| group_stable.get(index).cloned().flatten());
+        let candidates: Vec<&CanonicalSlotIndex> = canonical_slots
+            .iter()
+            .filter(|candidate| candidate.question_number == question_number as u32)
+            .filter(|candidate| match &owner_task_id {
+                Some(task_id) => candidate.task_id.as_deref() == Some(task_id.as_str()),
+                None => true,
+            })
+            .collect();
+        let stable = match candidates.len() {
+            1 => Some(candidates[0].key.clone()),
+            0 => None,
+            _ => {
+                unresolved.insert(format!("slot:{key}:ambiguous"));
+                continue;
+            }
+        };
+        let stable = stable.unwrap_or_else(|| {
+            let preferred = format!("q{question_number}");
+            alloc_stable_id(&preferred, &used)
+        });
+        used.insert(stable.clone());
+        if key != &stable {
+            id_map.insert(key.clone(), stable.clone());
+        }
+        if cloud_slot_id != stable {
+            id_map.insert(cloud_slot_id, stable);
+        }
+    }
+
+    // ── 3) 响应组 / 选项库身份 ─────────────────────────────────────
+    for (index, group) in groups.iter().enumerate() {
+        let Some(stable_task_id) = group_stable[index].clone() else {
+            continue;
+        };
+        let canonical_group = group_canonical[index].map(|target| &canonical_groups[target]);
+
+        if let Some(bank) = group.get("optionBank") {
+            if let Some(cloud_bank_id) = bank.get("optionBankId").and_then(Value::as_str) {
+                let stable = canonical_group
+                    .and_then(|group| group.option_bank_id.clone())
+                    .unwrap_or_else(|| format!("{stable_task_id}-options"));
+                used.insert(stable.clone());
+                if cloud_bank_id != stable {
+                    id_map.insert(cloud_bank_id.to_string(), stable);
+                }
+            }
+        }
+
+        if let Some(response_groups) = group.get("responseGroups").and_then(Value::as_array) {
+            for (position, response_group) in response_groups.iter().enumerate() {
+                let Some(cloud_id) = response_group
+                    .get("responseGroupId")
+                    .and_then(Value::as_str)
+                else {
+                    continue;
+                };
+                // 该响应组覆盖的槽位（已重写为稳定 ID 的话优先用稳定集合）。
+                let slots: BTreeSet<String> = response_group
+                    .get("slotIds")
+                    .and_then(Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(|value| {
+                                id_map
+                                    .get(value)
+                                    .cloned()
+                                    .unwrap_or_else(|| value.to_string())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let stable = canonical_group
+                    .and_then(|group| {
+                        let matches: Vec<&(String, BTreeSet<String>)> = group
+                            .response_groups
+                            .iter()
+                            .filter(|(_, slot_ids)| !slot_ids.is_empty() && *slot_ids == slots)
+                            .collect();
+                        if matches.len() == 1 {
+                            Some(matches[0].0.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| format!("{stable_task_id}-rg-{}", position + 1));
+                used.insert(stable.clone());
+                if cloud_id != stable {
+                    id_map.insert(cloud_id.to_string(), stable);
+                }
+            }
+        }
+    }
+
+    // ── 4) 题组内部对象（内容节点 / 选项）──────────────────────────
+    for (index, group) in groups.iter().enumerate() {
+        let Some(stable_task_id) = group_stable[index].clone() else {
+            continue;
+        };
+        let canonical_group = group_canonical[index].map(|target| {
+            canonical
+                .and_then(|value| value.get("taskGroups"))
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.get(target))
+        });
+        assign_group_inner_ids(
+            group,
+            canonical_group.flatten(),
+            &stable_task_id,
+            &mut id_map,
+        );
+    }
+
+    // ── 5) 引用重写（全有或全无）──────────────────────────────────
+    let outcome = rewrite_authoring_references(&mut draft, &id_map, &temp_ids);
+    if !outcome.conflicts.is_empty() {
+        return Err(format!(
+            "cloud_authoring_reference_conflict:{}",
+            outcome.conflicts.join(";")
+        ));
+    }
+    unresolved.extend(outcome.unmapped.iter().cloned());
+
+    // ── 6) 组装后端字段 ────────────────────────────────────────────
+    let mut document = Map::new();
+    document.insert(
+        "schemaVersion".to_string(),
+        json!(crate::schema::ielts_authoring_v2::IELTS_AUTHORING_IR_V2_SCHEMA_VERSION),
+    );
+    document.insert("jobId".to_string(), json!(identity.job_id));
+    document.insert("exam".to_string(), identity.exam.clone());
+    document.insert("modality".to_string(), json!(identity.modality));
+    if let Some(passage) = draft.get("passage") {
+        if passage.is_object() {
+            document.insert("passage".to_string(), passage.clone());
+        }
+    }
+
+    // 重写之后再取题组：`groups` 是重写**前**的克隆，里面的 taskId 仍是临时 ID，
+    // 直接拿它装配会产出「身份没接上」的候选（看着完整、其实全是临时引用）。
+    let rewritten_groups: Vec<Value> = draft
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut sanitized_groups: Vec<Value> = Vec::with_capacity(rewritten_groups.len());
+    for (index, group) in rewritten_groups.iter().enumerate() {
+        let mut next = Map::new();
+        for key in [
+            "taskId",
+            "displayRange",
+            "taskType",
+            "instructions",
+            "stimulus",
+            "optionBank",
+            "responseGroups",
+            "sourceAnchors",
+        ] {
+            if let Some(value) = group.get(key) {
+                next.insert(key.to_string(), value.clone());
+            }
+        }
+        // 模型漏填 taskId 时用后端分配的身份补上，而不是留下空串。
+        let has_task_id = next
+            .get("taskId")
+            .and_then(Value::as_str)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        if !has_task_id {
+            if let Some(Some(stable)) = group_stable.get(index) {
+                next.insert("taskId".to_string(), json!(stable));
+            }
+        }
+        next.entry("instructions".to_string())
+            .or_insert_with(|| json!([]));
+        next.entry("responseGroups".to_string())
+            .or_insert_with(|| json!([]));
+        next.entry("sourceAnchors".to_string())
+            .or_insert_with(|| json!([]));
+        // 后端派生 / 后端裁定，模型无权填写。
+        let mut group_value = Value::Object(next);
+        derive_instruction_signature_for_group(&mut group_value);
+        let numbers: Vec<u32> = group_value
+            .get("displayRange")
+            .map(expand_question_numbers)
+            .unwrap_or_default();
+        let task_type = group_value
+            .get("taskType")
+            .cloned()
+            .unwrap_or_else(|| json!("short_answer"));
+        let needs_signature = group_value.get("instructionSignature").is_none();
+        if let Some(object) = group_value.as_object_mut() {
+            if needs_signature {
+                // 派生器无从推断（instructions 为空或无文本）时给一个**显式 confidence=0**
+                // 的最小签名：缺字段会让整份候选反序列化失败，那是把「识别不完整」升级成
+                // 「候选完全不可用」，代价远大于一条低置信度签名。
+                object.insert(
+                    "instructionSignature".to_string(),
+                    json!({
+                        "normalizedText": "",
+                        "taskType": task_type,
+                        "expectedQuestionNumbers": numbers,
+                        "expectedSlotCount": numbers.len(),
+                        "evidenceAnchors": [],
+                        "confidence": 0.0
+                    }),
+                );
+            }
+            object.insert(
+                "quality".to_string(),
+                json!({"score": 0.0, "sourceCoverage": 0.0, "hardFailures": []}),
+            );
+            object.insert("reviewState".to_string(), json!("unreviewed"));
+        }
+        sanitized_groups.push(group_value);
+    }
+    document.insert("taskGroups".to_string(), json!(sanitized_groups));
+
+    document.insert(
+        "answerSlots".to_string(),
+        draft.get("answerSlots").cloned().unwrap_or_else(|| json!({})),
+    );
+    document.insert(
+        "answerKey".to_string(),
+        draft.get("answerKey").cloned().unwrap_or_else(|| json!({})),
+    );
+    // 资源只引用后端已登记的资源目录项；候选不臆造文件地址，也不改写权威稿的资源表。
+    if raw.get("assets").is_some() {
+        warnings.push("cloud_authoring_candidate_assets_not_applied".to_string());
+    }
+    document.insert("assets".to_string(), json!([]));
+    document.insert(
+        "sourceDocumentId".to_string(),
+        json!(identity.source_document_id),
+    );
+    document.insert(
+        "quality".to_string(),
+        placeholder_quality_report(identity.generated_at),
+    );
+    document.insert(
+        "audit".to_string(),
+        json!({
+            "revision": 0,
+            "source": "auto_extract",
+            "humanVerified": false,
+            "llmUsed": true,
+            "updatedAt": identity.generated_at,
+            "notes": ["云端完整候选：由后端标准化，未写入权威稿"],
+        }),
+    );
+
+    let status = if unresolved.is_empty() {
+        ChainStatusV1::Succeeded
+    } else {
+        ChainStatusV1::Partial
+    };
+    let reason_code = if unresolved.is_empty() {
+        None
+    } else {
+        Some("cloud_authoring_candidate_unresolved_references".to_string())
+    };
+
+    Ok(NormalizedCloudAuthoring {
+        status,
+        reason_code,
+        document: Value::Object(document),
+        id_map,
+        unresolved_references: unresolved.into_iter().collect(),
+        unresolved_regions,
+        source_coverage_notes,
+        warnings,
+    })
+}
+
+/// 把标准化结果装配成可落盘的 [`CloudAuthoringCandidateV1`]。
+///
+/// 后端身份在这里写进契约：`jobId` / `batchId` / `sourceFileId` / `sourceSha256` /
+/// `baseEditVersion` 只从 [`CloudAuthoringIdentity`] 取，模型输出里的同名字段一律不采信。
+pub(crate) fn cloud_authoring_candidate_from_normalized(
+    identity: &CloudAuthoringIdentity<'_>,
+    normalized: NormalizedCloudAuthoring,
+) -> CommandResult<CloudAuthoringCandidateV1> {
+    if normalized.document.is_null() {
+        // 没有可用候选：契约要求 `authoring` 是完整稿件，构造不出就如实失败，
+        // 绝不拿一个空壳冒充「完整候选」。
+        return Err(normalized
+            .reason_code
+            .clone()
+            .unwrap_or_else(|| "cloud_authoring_candidate_unusable".to_string()));
+    }
+    let authoring = serde_json::from_value(normalized.document)
+        .map_err(|error| format!("cloud_authoring_candidate_schema_invalid:{error}"))?;
+    Ok(CloudAuthoringCandidateV1 {
+        schema_version: CLOUD_AUTHORING_CANDIDATE_V1_SCHEMA_VERSION.to_string(),
+        batch_id: identity.batch_id.to_string(),
+        item_id: identity.item_id.to_string(),
+        job_id: identity.job_id.to_string(),
+        source_file_id: identity.source_file_id.to_string(),
+        source_sha256: identity.source_sha256.to_string(),
+        base_edit_version: identity.base_edit_version,
+        generated_at: identity.generated_at.to_string(),
+        status: normalized.status,
+        reason_code: normalized.reason_code,
+        authoring,
+        id_map: normalized.id_map,
+        unresolved_references: normalized.unresolved_references,
+        unresolved_regions: normalized.unresolved_regions,
+        source_coverage_notes: normalized.source_coverage_notes,
+        warnings: normalized.warnings,
+    })
+}
+
+/// 候选的**占位**质量块：明确标注「尚未评估」，绝不伪装成已通过。
+///
+/// 真实评估由调用方在拿到 `root` 后调用 `refresh_quality_report` 覆盖（见 `auto_pipeline`）。
+fn placeholder_quality_report(generated_at: &str) -> Value {
+    json!({
+        "schemaVersion": "QualityReportV2",
+        "state": "review_required",
+        "documentScore": 0.0,
+        "sourceCoverage": 0.0,
+        "coverageLedger": [],
+        "coverageStatus": {
+            "physicalShadow": "missing",
+            "complete": false,
+            "significantSourceNodeCount": 0,
+            "explainedSourceNodeCount": 0,
+            "unassignedSourceNodeIds": []
+        },
+        "compilerProbes": {
+            "v2Runtime": {
+                "status": "failed",
+                "schemaVersion": "ReadingExamSourceV2",
+                "issueCodes": ["CLOUD_CANDIDATE_QUALITY_NOT_EVALUATED"],
+                "details": ["候选尚未评估；调用方须用 refresh_quality_report 覆盖"]
+            },
+            "v1Compatibility": {
+                "status": "failed",
+                "schemaVersion": "ReadingExamSourceV1",
+                "issueCodes": ["CLOUD_CANDIDATE_QUALITY_NOT_EVALUATED"],
+                "details": ["候选尚未评估；调用方须用 refresh_quality_report 覆盖"]
+            }
+        },
+        "taskScores": {},
+        "hardFailures": [],
+        "issues": [],
+        "metrics": {},
+        "evaluatedAt": generated_at,
+        "evaluatorVersion": "cloud_authoring_candidate_placeholder"
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2413,4 +3680,366 @@ fn rewrite_does_not_report_unknown_asset_ids_as_unmapped() {
     assert_eq!(doc.pointer("/assets/0/assetId").and_then(Value::as_str), Some("asset-unknown"));
     assert!(outcome.unmapped.is_empty(), "未知资源不是 id 映射缺口");
 }
+}
+
+/// 云端完整候选标准化与身份对齐的测试。
+///
+/// 与既有 `tests` 模块分开，避免混进「扁平候选投影」的历史用例里；
+/// 这里的断言针对**完整富内容 + 后端身份**这一组新契约。
+#[cfg(test)]
+mod cloud_authoring_tests {
+    use super::*;
+
+    fn golden_authoring() -> Value {
+        let manifest = env!("CARGO_MANIFEST_DIR").trim_end_matches(['\\', '/']);
+        let path = std::path::Path::new(manifest)
+            .parent()
+            .expect("src-tauri 必须有父目录")
+            .join("fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("读取 golden 稿失败 path={path:?} err={error}"));
+        serde_json::from_str(&text).expect("golden 稿必须是合法 JSON")
+    }
+
+    fn identity() -> CloudAuthoringIdentity<'static> {
+        CloudAuthoringIdentity {
+            job_id: "job-1",
+            item_id: "job-1",
+            batch_id: "batch-1",
+            source_file_id: "early-approaches-pdf",
+            source_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            base_edit_version: 3,
+            generated_at: "2026-09-18T00:00:00Z",
+            exam: json!({
+                "examId": "early-approaches",
+                "title": "Early Approaches to Organisational Design",
+                "category": "P3",
+                "frequency": "medium",
+                "language": "en",
+                "tags": ["cloud"],
+                "sourceFiles": [{"sourceFileId": "early-approaches-pdf", "role": "question_paper"}]
+            }),
+            modality: "reading",
+            source_document_id: "early-approaches-document",
+            extraction_mode: "pdf_native",
+        }
+    }
+
+    fn paragraph(id: &str, child: &str, text: &str) -> Value {
+        json!({
+            "type": "paragraph",
+            "id": id,
+            "sourceAnchors": [],
+            "provenanceStatus": "source",
+            "children": [{
+                "type": "text",
+                "id": child,
+                "sourceAnchors": [],
+                "provenanceStatus": "source",
+                "text": text
+            }]
+        })
+    }
+
+    /// 构造一份「模型原始输出」形态的完整候选草稿：全部使用**临时 ID**。
+    fn cloud_draft(numbers: &[u32], suffix: &str) -> Value {
+        let task_group_id = format!("{suffix}-tg-1");
+        let response_group_id = format!("{suffix}-rg-1");
+        let option_bank_id = format!("{suffix}-ob-1");
+        let instruction_id = format!("{suffix}-ins");
+        let instruction_text_id = format!("{suffix}-ins-text");
+        let prompt_id = format!("{suffix}-prompt");
+        let prompt_text_id = format!("{suffix}-prompt-text");
+        let slot_refs: Vec<String> = numbers.iter().map(|n| format!("{suffix}-q{n}")).collect();
+        let options: Vec<Value> = ["A", "B", "C", "D", "E"]
+            .iter()
+            .map(|label| {
+                json!({
+                    "optionId": format!("{suffix}-opt-{label}"),
+                    "label": label,
+                    "content": [{
+                        "type": "text",
+                        "id": format!("{suffix}-opt-{label}-text"),
+                        "sourceAnchors": [],
+                        "provenanceStatus": "source",
+                        "text": format!("factor {label}")
+                    }],
+                    "sourceAnchors": []
+                })
+            })
+            .collect();
+
+        let mut slots = Map::new();
+        for number in numbers {
+            slots.insert(
+                format!("{suffix}-q{number}"),
+                json!({
+                    "slotId": format!("{suffix}-q{number}"),
+                    "questionNumber": number,
+                    "displayLabel": number.to_string(),
+                    "hostNodeId": prompt_id,
+                    "hostType": "prompt",
+                    "interaction": "checkbox",
+                    "participation": "scoring",
+                    "sourceAnchors": [],
+                    "confidence": 0.9
+                }),
+            );
+        }
+        let mut answer_key = Map::new();
+        let labels = ["B", "D", "A", "C", "E"];
+        for (index, number) in numbers.iter().enumerate() {
+            let label = labels.get(index).copied().unwrap_or("A");
+            answer_key.insert(
+                format!("{suffix}-q{number}"),
+                json!({"kind": "option", "labels": [label], "assignment": "unordered_set"}),
+            );
+        }
+
+        json!({
+            "taskGroups": [{
+                "taskId": task_group_id,
+                "displayRange": {"kind": "set", "values": numbers},
+                "taskType": "multiple_choice",
+                "instructions": [paragraph(
+                    &instruction_id,
+                    &instruction_text_id,
+                    "Choose TWO letters, A-E."
+                )],
+                "optionBank": {
+                    "optionBankId": option_bank_id.clone(),
+                    "scope": "task_group",
+                    "options": options,
+                    "allowReuse": false,
+                    "sourceAnchors": []
+                },
+                "responseGroups": [{
+                    "responseGroupId": response_group_id,
+                    "kind": "choice",
+                    "prompt": [paragraph(
+                        &prompt_id,
+                        &prompt_text_id,
+                        "Which TWO factors influenced early organisational design?"
+                    )],
+                    "slotIds": slot_refs,
+                    "optionBankRef": option_bank_id,
+                    "cardinality": {"min": 2, "max": 2, "exact": 2},
+                    "assignment": "unordered_set",
+                    "scoringPolicy": "per_slot_ielts_normalized",
+                    "duplicatePolicy": "reject_submission",
+                    "allowOptionReuse": false,
+                    "sourceAnchors": []
+                }],
+                "sourceAnchors": []
+            }],
+            "answerSlots": Value::Object(slots),
+            "answerKey": Value::Object(answer_key),
+            "assets": []
+        })
+    }
+
+    /// 能唯一对应当前稿件的对象：**复用** canonical 的稳定 ID，富内容一字不丢。
+    #[test]
+    fn cloud_authoring_reuses_canonical_identity_and_keeps_rich_content() {
+        let canonical = golden_authoring();
+        let raw = json!({"authoring": cloud_draft(&[14, 15], "cloud")});
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须成功");
+
+        assert_eq!(normalized.status, ChainStatusV1::Succeeded);
+        assert!(
+            normalized.unresolved_references.is_empty(),
+            "唯一对齐时不应留下未解析引用：{:?}",
+            normalized.unresolved_references
+        );
+
+        let candidate =
+            cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("必须可装配");
+        let group = &candidate.authoring.task_groups[0];
+
+        // 题组 / 响应组 / 选项库 / 选项：全部接到 canonical 的稳定 ID 上。
+        assert_eq!(group.task_id, "early-approaches-q14-15");
+        assert_eq!(
+            group.response_groups[0].response_group_id,
+            "early-approaches-shared-response"
+        );
+        assert_eq!(
+            group.option_bank.as_ref().unwrap().option_bank_id,
+            "early-approaches-options"
+        );
+        assert_eq!(
+            group.option_bank.as_ref().unwrap().options[0].option_id,
+            "option-a"
+        );
+        assert!(candidate.authoring.answer_slots.contains_key("q14"));
+        assert!(candidate.authoring.answer_slots.contains_key("q15"));
+        assert_eq!(candidate.authoring.answer_slots["q14"].slot_id, "q14");
+        // `hostNodeId` 必须指向 canonical 的提示节点，不能残留临时 ID。
+        assert_eq!(
+            candidate.authoring.answer_slots["q14"].host_node_id.as_deref(),
+            Some("early-approaches-shared-prompt")
+        );
+
+        // 完整富内容必须原样保留（不是被压平成纯文本的投影）。
+        let prompt = group.response_groups[0].prompt.as_ref().unwrap();
+        assert_eq!(
+            nodes_text(&serde_json::to_value(prompt).unwrap()),
+            "Which TWO factors influenced early organisational design?"
+        );
+        let option_content = &group.option_bank.as_ref().unwrap().options[0].content;
+        assert_eq!(
+            nodes_text(&serde_json::to_value(option_content).unwrap()),
+            "factor A"
+        );
+        assert_eq!(
+            candidate.authoring.answer_key["q14"],
+            crate::schema::ielts_authoring_v2::AnswerValueV2::Option {
+                labels: vec!["B".to_string()],
+                assignment: crate::schema::ielts_authoring_v2::AnswerAssignmentV2::UnorderedSet,
+            }
+        );
+    }
+
+    /// 云端识别出的**新增**对象：后端分配稳定 ID，绝不整类降级成人工问题。
+    #[test]
+    fn cloud_authoring_new_objects_get_backend_identity_without_degrading() {
+        let canonical = golden_authoring();
+        let raw = json!({"authoring": cloud_draft(&[16, 17], "cloud")});
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须成功");
+
+        assert_eq!(normalized.status, ChainStatusV1::Succeeded);
+        assert!(
+            normalized.unresolved_references.is_empty(),
+            "新增对象由后端分配身份，不应产生未解析引用：{:?}",
+            normalized.unresolved_references
+        );
+
+        let candidate =
+            cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("必须可装配");
+        let group = &candidate.authoring.task_groups[0];
+        assert_eq!(group.task_id, "cloud-tg-16-17");
+        assert!(candidate.authoring.answer_slots.contains_key("q16"));
+        assert!(candidate.authoring.answer_slots.contains_key("q17"));
+        // 响应组 / 选项库 / 选项 / 内容节点都必须拿到后端 ID。
+        assert_eq!(group.response_groups[0].response_group_id, "cloud-tg-16-17-rg-1");
+        assert_eq!(
+            group.option_bank.as_ref().unwrap().option_bank_id,
+            "cloud-tg-16-17-options"
+        );
+        assert!(!candidate.id_map.is_empty(), "临时 ID 必须建立映射");
+        // 槽位引用必须自洽：响应组声明的 slotIds 就是 answerSlots 的键。
+        let declared = &group.response_groups[0].slot_ids;
+        assert_eq!(declared, &vec!["q16".to_string(), "q17".to_string()]);
+        assert!(declared
+            .iter()
+            .all(|slot| candidate.authoring.answer_slots.contains_key(slot)));
+    }
+
+    /// 题组身份**确实无法确定**时：如实保留歧义，绝不任取第一个。
+    #[test]
+    fn cloud_authoring_ambiguous_group_identity_is_reported_not_guessed() {
+        let mut canonical = golden_authoring();
+        // 造一个真实的歧义：两份 canonical 题组都覆盖 q14/q15。
+        let duplicate = canonical["taskGroups"][0].clone();
+        canonical["taskGroups"]
+            .as_array_mut()
+            .expect("taskGroups 必须是数组")
+            .push(duplicate);
+
+        let raw = json!({"authoring": cloud_draft(&[14, 15], "cloud")});
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须成功");
+
+        assert_eq!(normalized.status, ChainStatusV1::Partial);
+        assert!(
+            normalized
+                .unresolved_references
+                .iter()
+                .any(|entry| entry.contains("ambiguous")),
+            "歧义必须如实上报：{:?}",
+            normalized.unresolved_references
+        );
+
+        let candidate =
+            cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("必须可装配");
+        // 身份没有被伪造：题组仍留在临时空间。
+        assert_eq!(candidate.authoring.task_groups[0].task_id, "cloud-tg-1");
+        // 但组内对象照常拿到后端 ID —— 歧义只影响题组自身的身份判定。
+        assert_eq!(
+            candidate.authoring.task_groups[0].response_groups[0].response_group_id,
+            "cloud-tg-1-rg-1"
+        );
+    }
+
+    /// 后端身份字段只从 `identity` 取：模型在输出里伪造 jobId / batchId 一律不采信。
+    #[test]
+    fn cloud_authoring_ignores_model_supplied_backend_identity() {
+        let canonical = golden_authoring();
+        let mut draft = cloud_draft(&[14, 15], "cloud");
+        draft["jobId"] = json!("attacker-job");
+        draft["schemaVersion"] = json!("SomethingElse");
+        draft["audit"] = json!({"humanVerified": true, "source": "human"});
+        draft["quality"] = json!({"state": "ready"});
+        let raw = json!({"authoring": draft});
+
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须成功");
+        let candidate =
+            cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("必须可装配");
+
+        assert_eq!(candidate.job_id, "job-1");
+        assert_eq!(candidate.batch_id, "batch-1");
+        assert_eq!(candidate.authoring.job_id, "job-1");
+        assert_eq!(candidate.authoring.schema_version, "IeltsAuthoringIRV2");
+        assert!(!candidate.authoring.audit.human_verified, "模型不得声称已人工核验");
+        assert!(candidate.authoring.audit.llm_used);
+        assert_ne!(
+            candidate.authoring.quality.state,
+            crate::schema::quality_report_v2::ReadinessStateV2::Ready,
+            "候选质量块不得被模型写成 ready"
+        );
+    }
+
+    /// 没有题组时如实标 `unusable`，不拿空壳冒充完整候选。
+    #[test]
+    fn cloud_authoring_without_task_groups_is_unusable_not_a_shell() {
+        let canonical = golden_authoring();
+        let raw = json!({"authoring": {"taskGroups": [], "answerSlots": {}, "answerKey": {}}});
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须返回结果");
+        assert_eq!(normalized.status, ChainStatusV1::Unusable);
+        assert_eq!(
+            normalized.reason_code.as_deref(),
+            Some("cloud_authoring_candidate_no_task_groups")
+        );
+        assert!(
+            cloud_authoring_candidate_from_normalized(&identity(), normalized).is_err(),
+            "不可用候选不得装配成 CloudAuthoringCandidateV1"
+        );
+    }
+
+    /// 未覆盖区域与来源覆盖说明必须原样带出，不允许用空数组掩盖。
+    #[test]
+    fn cloud_authoring_carries_unresolved_regions_verbatim() {
+        let canonical = golden_authoring();
+        let raw = json!({
+            "authoring": cloud_draft(&[14, 15], "cloud"),
+            "unresolvedRegions": [{
+                "sourceFileId": "early-approaches-pdf",
+                "pageIndex": 4,
+                "reason": "page_image_unavailable",
+                "detail": "扫描页图不可用"
+            }],
+            "sourceCoverageNotes": ["DOCX 图表证据不完整"]
+        });
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &raw).expect("标准化必须成功");
+        assert_eq!(normalized.unresolved_regions.len(), 1);
+        assert_eq!(normalized.unresolved_regions[0].page_index, 4);
+        assert_eq!(
+            normalized.source_coverage_notes,
+            vec!["DOCX 图表证据不完整".to_string()]
+        );
+    }
 }
