@@ -640,6 +640,9 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     let mut repair_applied: i64 = 0;
     let mut repair_remaining: i64 = 0;
     let mut repair_error: Option<String> = None;
+    // 修复摘要（`repair` 契约）。这里只暂存；**等本地周期把批次行建出来之后**才写库，
+    // 因为批次行由那个周期创建，此刻写会撞上 `recognition_batch_missing`。
+    let mut repair_summary: Option<serde_json::Value> = None;
 
     if let Some(Ok(raw)) = cloud_fetched.as_ref() {
         // 第一步：接身份 + 重算质量 + 独立落盘（候选**不写**权威稿）。
@@ -705,24 +708,27 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                                 )
                             },
                         )?;
-                        // 修复摘要落盘（诊断副本）。**完成判据始终是当前 canonical**，
-                        // 这份摘要不参与「是否完成」的判定。
+                        // 修复摘要：**同一份 payload** 既落盘（诊断副本）也随后写进批次行
+                        // （前端读取权威）。只构造一次，避免两处形状漂移。
+                        // **完成判据始终是当前 canonical**，这份摘要不参与判定。
+                        let summary = report.to_json(report.applied_count > 0);
                         crate::reconcile::store::write_repair_summary(
                             &root,
                             &job_id,
                             &batch_id,
-                            &report.to_json(report.applied_count > 0),
+                            &summary,
                         )?;
-                        Ok(report)
+                        Ok((report, summary))
                     }
                 })
                 .await;
                 match repair {
-                    Ok(report) => {
+                    Ok((report, summary)) => {
                         repair_status = Some(report.status.to_string());
                         repair_applied = report.applied_count as i64;
                         repair_remaining = report.remaining_tasks.len() as i64;
                         repair_error = report.last_error.clone();
+                        repair_summary = Some(summary);
                     }
                     Err(error) => {
                         // 修复循环本身失败：已提交的有效修改保留，状态如实记录。
@@ -769,6 +775,30 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             return;
         }
     };
+
+    // 批次行此刻才存在（由上面那个本地周期创建），所以修复摘要写库放在这里。
+    //
+    // 为什么要写库而不是只留 artifact：artifact 是诊断副本，会被清理策略回收、job 目录
+    // 重建后也不在；「这次修复到什么状态、还剩哪些用户任务、能不能撤销」是前端每次打开
+    // 都要读的产品状态，必须和批次一起可查。写库失败**不**推翻已经落地的有效修改，也
+    // 不谎报云端失败：只把错误如实记进 `repair_error`，让诊断看得到，状态维持修复循环
+    // 自己给出的那份。
+    if let Some(summary) = repair_summary.as_ref() {
+        let written = run_blocking({
+            let root = root.clone();
+            let batch_id = batch_id.clone();
+            let summary = summary.clone();
+            move || {
+                let conn = crate::library::repository::open_library_connection(&root)?;
+                crate::reconcile::store::write_batch_repair(&conn, &batch_id, &summary)
+            }
+        })
+        .await;
+        if let Err(error) = written {
+            // 只在还没有更具体的错误时记录，别覆盖修复循环自己报的失败原因。
+            repair_error.get_or_insert(error);
+        }
+    }
     // 云端**真的跑过**就以修复状态为准：本地周期看不见云端，会把 cloud_status 标成
     // `not_run`（= 本次没有云端参与），拿它描述一次真实的云端修复（成功或失败）都是谎报。
     if let Some(mapped) = cloud_status_for_job(launch_cloud, repair_status.as_deref()) {

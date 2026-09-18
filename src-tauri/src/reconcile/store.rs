@@ -191,6 +191,9 @@ pub(crate) struct BatchRow {
     pub summary: DecisionSummaryV1,
     /// 四阶段完整状态。旧行可能为 `None`（迁移前写入），由调用方降级重建。
     pub chain_state: Option<RecognitionChainStateV1>,
+    /// 云端自主修复摘要（`repair` 契约）。`None` = 没有修复记录（旧批次，或本次无云
+    /// 导入）。**调用方不得把 `None` 当成 completed**——它只表示「不知道」。
+    pub repair: Option<Value>,
     pub updated_at: String,
 }
 
@@ -219,7 +222,7 @@ pub(crate) fn load_batch_by_id(
                 local_status, cloud_status, source_status,
                 cloud_reason_code, source_reason_code,
                 agreed_count, auto_fixed_count, needs_review_count, unverifiable_count,
-                stages_json, updated_at
+                stages_json, repair_json, updated_at
          FROM recognition_batches_v1 WHERE batch_id = ?1",
         params![batch_id],
     )
@@ -398,7 +401,7 @@ pub(crate) fn load_latest_batch(
                 local_status, cloud_status, source_status,
                 cloud_reason_code, source_reason_code,
                 agreed_count, auto_fixed_count, needs_review_count, unverifiable_count,
-                stages_json, updated_at
+                stages_json, repair_json, updated_at
          FROM recognition_batches_v1
          WHERE library_item_id = ?1
          ORDER BY created_at DESC, rowid DESC LIMIT 1",
@@ -430,7 +433,8 @@ fn query_batch_row(
                 row.get::<_, i64>(12)?,
                 row.get::<_, i64>(13)?,
                 row.get::<_, String>(14)?,
-                row.get::<_, String>(15)?,
+                row.get::<_, Option<String>>(15)?,
+                row.get::<_, String>(16)?,
             ))
         })
         .optional()
@@ -451,6 +455,7 @@ fn query_batch_row(
         needs_review,
         unverifiable,
         stages_json,
+        repair_json,
         updated_at,
     )) = row
     else {
@@ -478,8 +483,40 @@ fn query_batch_row(
         chain_state: serde_json::from_str::<RecognitionChainStateV1>(&stages_json)
             .ok()
             .filter(|_| stages_json != "{}"),
+        // 坏 JSON 不静默成 `None`（那会让「修复记录损坏」看起来像「没做过修复」）；
+        // 但也绝不因此让整行读取失败——批次状态本身仍然可用。
+        repair: repair_json.and_then(|json| match serde_json::from_str::<Value>(&json) {
+            Ok(value) => Some(value),
+            Err(_) => Some(serde_json::json!({
+                "status": "unavailable",
+                "reasonCode": "repair_json_corrupt",
+            })),
+        }),
         updated_at,
     }))
+}
+
+/// 写入批次的云端修复摘要（与批次状态同库提交）。
+///
+/// 只写这一列，不碰其它批次字段：修复摘要由修复循环单独产出，批次状态由识别周期产出，
+/// 两者互不覆盖。`batch_id` 不存在时返回错误——绝不 INSERT 出一个没有识别依据的批次行。
+pub(crate) fn write_batch_repair(
+    conn: &Connection,
+    batch_id: &str,
+    repair: &Value,
+) -> CommandResult<()> {
+    let json = serde_json::to_string(repair)
+        .map_err(|error| format!("recognition_repair_json_serialize:{error}"))?;
+    let affected = conn
+        .execute(
+            "UPDATE recognition_batches_v1 SET repair_json = ?2, updated_at = ?3 WHERE batch_id = ?1",
+            params![batch_id, json, chrono::Utc::now().to_rfc3339()],
+        )
+        .map_err(|error| format!("recognition_write_batch_repair:{error}"))?;
+    if affected == 0 {
+        return Err(format!("recognition_batch_missing:{batch_id}"));
+    }
+    Ok(())
 }
 
 /// 读取条目最新批次的裁决（数据库为读取权威）。
@@ -684,6 +721,52 @@ mod tests {
                 unverifiable: 2,
             },
         }
+    }
+
+    #[test]
+    fn repair_summary_round_trips_and_never_fakes_completion() {
+        let conn = memory();
+        let decision = decision("batch-1");
+        upsert_batch(&conn, &decision).unwrap();
+
+        // 没写过修复摘要 ⇒ `None`（「没有修复记录」）。前端必须按「不知道」降级，
+        // 不得当成 completed —— 否则一次无云导入会被显示成「云端已修好」。
+        let row = load_batch_by_id(&conn, "batch-1").unwrap().unwrap();
+        assert!(row.repair.is_none(), "没写过摘要时必须是没有记录，而不是 completed");
+
+        let summary = json!({
+            "status": "needs_attention",
+            "editVersion": 3,
+            "appliedCount": 2,
+            "remainingTasks": [{"userTaskId": "u1", "blocking": true}],
+            "undoAvailable": true
+        });
+        write_batch_repair(&conn, "batch-1", &summary).unwrap();
+        let row = load_batch_by_id(&conn, "batch-1").unwrap().unwrap();
+        let repair = row.repair.expect("摘要必须能读回来");
+        assert_eq!(repair["status"], "needs_attention");
+        assert_eq!(repair["appliedCount"], 2);
+        assert_eq!(repair["undoAvailable"], true);
+
+        // 同一行也走 `load_latest_batch`（两条 SELECT 的列必须一致）。
+        let latest = load_latest_batch(&conn, "item-1").unwrap().unwrap();
+        assert_eq!(latest.repair.unwrap()["status"], "needs_attention");
+
+        // 批次不存在：报错，绝不 INSERT 出一个没有识别依据的批次行。
+        let error = write_batch_repair(&conn, "batch-nope", &summary).unwrap_err();
+        assert!(error.contains("recognition_batch_missing"), "{error}");
+
+        // 摘要损坏：不能静默成 `None`（那会让「修复记录损坏」看起来像「没做过修复」），
+        // 也不能让整行读取失败——批次状态本身仍然可用。
+        conn.execute(
+            "UPDATE recognition_batches_v1 SET repair_json = '{oops' WHERE batch_id = 'batch-1'",
+            [],
+        )
+        .unwrap();
+        let row = load_batch_by_id(&conn, "batch-1").unwrap().unwrap();
+        let repair = row.repair.expect("损坏也要给出可解释的降级值");
+        assert_eq!(repair["reasonCode"], "repair_json_corrupt");
+        assert_eq!(row.batch_id, "batch-1");
     }
 
     #[test]

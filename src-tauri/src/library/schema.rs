@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 6;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 7;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let transaction = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
@@ -89,6 +89,17 @@ fn migrations() -> Vec<(i64, &'static str)> {
              CREATE INDEX IF NOT EXISTS idx_editor_journal_v1_repair_run
                  ON editor_journal_v1(repair_run_id)
                  WHERE repair_run_id IS NOT NULL;",
+        ),
+        // v7：云端自主修复的摘要（批次级）。
+        //
+        // 为什么放批次行而不是只留 artifact：artifact（`repair.json`）是诊断副本，
+        // 会被清理策略回收，且 job 目录重建后不再存在；而「这次修复跑到什么状态、
+        // 还剩哪些用户任务、能不能撤销」是前端每次打开都要读的产品状态，必须和批次
+        // 一起在同一事务里提交。旧行取 NULL，前端按「无修复记录」降级——注意
+        // **不能**把 NULL 读成 completed。
+        (
+            7,
+            "ALTER TABLE recognition_batches_v1 ADD COLUMN repair_json TEXT;",
         ),
     ]
 }
@@ -269,9 +280,29 @@ mod tests {
         }
     }
 
+    /// v7 迁移必须真的把 `repair_json` 加上。
+    ///
+    /// 这一列是前端读取「这次修复到什么状态 / 还剩哪些用户任务」的权威来源，而批次读取
+    /// 用的是**固定列序**的 SELECT——列不存在时不是降级，而是整行读取直接失败
+    /// （`recognition_load_batch:Invalid column index`）。所以列的存在必须被显式钉住，
+    /// 不能只靠 `user_version` 对得上。
     #[test]
-    fn canonical_ds_rejects_missing_modality() {
+    fn v7_migration_adds_the_batch_repair_column() {
         let conn = Connection::open_in_memory().unwrap();
+        ensure_v2_schema(&conn).unwrap();
+        let present: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('recognition_batches_v1')
+                 WHERE name = 'repair_json'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(present, 1, "repair_json 列必须存在");
+    }
+
+    #[test]
+    fn canonical_ds_rejects_missing_modality() {        let conn = Connection::open_in_memory().unwrap();
         ensure_v2_schema(&conn).unwrap();
         let insert = conn.execute(
             "INSERT INTO library_items_v2 (id, modality, title, status, created_at, updated_at)

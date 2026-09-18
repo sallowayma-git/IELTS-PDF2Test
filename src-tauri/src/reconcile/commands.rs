@@ -231,6 +231,9 @@ fn build_view(
         summary: batch.summary.clone(),
         actionable,
         auto_applied,
+        // 修复摘要随批次一起读出。**没有就如实为空**，前端按「未进行云端修复」降级；
+        // 绝不在缺失时编一个 completed 出来。
+        repair: batch.repair.clone(),
     }
 }
 
@@ -260,8 +263,7 @@ pub(crate) fn get_recognition_decision_core(
             "summary": {"agreed": 0, "autoFixed": 0, "needsReview": 0, "unverifiable": 0},
             "actionable": [],
             "autoApplied": []
-        }));
-    };
+        }));    };
     let items = store::load_decision_items(&conn, &batch.batch_id)?;
     let current = store::current_edit_version(&conn, item_id)?.unwrap_or(batch.base_edit_version);
     // 权威稿用于判定「已写入的修正是否仍生效」。读不到时传 `None`：判定取保守
@@ -1447,6 +1449,8 @@ mod tests {
                 unverifiable: 0,
             },
             chain_state: None,
+            // 本次没有修复记录：调用方必须按「不知道」降级，不得当成 completed。
+            repair: None,
             updated_at: "2026-09-15T00:00:00Z".to_string(),
         };
 

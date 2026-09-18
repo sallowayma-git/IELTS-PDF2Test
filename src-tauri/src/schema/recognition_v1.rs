@@ -683,6 +683,14 @@ pub struct RecognitionDecisionViewV1 {
     /// 已自动应用的修正记录（可解释、可撤销），不构成「问题」。
     #[serde(default)]
     pub auto_applied: Vec<DecisionItemV1>,
+    /// 云端自主修复的摘要（`repair` 契约）。
+    ///
+    /// `None` = 没有修复记录（旧批次，或本次无云导入）。**前端不得把 `None` 读成
+    /// `completed`**——它只表示「不知道」，应显示为「未进行云端修复」而不是「已修好」。
+    /// 修复是否真的完成，一律以当前 canonical 重算出的剩余问题为准；这份摘要只是
+    /// 让用户看见「跑到哪一步、还剩什么、能不能撤销」。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<Value>,
 }
 
 impl RecognitionDecisionViewV1 {
@@ -906,9 +914,14 @@ mod tests {
             summary: DecisionSummaryV1::default(),
             actionable: vec![],
             auto_applied: vec![],
+            repair: None,
         };
         assert!(view.is_supported_schema_version());
         assert!(view.stale);
+        // 没有修复记录时必须**不带** `repair` 键（而不是带一个 completed），
+        // 前端据此显示「未进行云端修复」。
+        let encoded = serde_json::to_value(&view).unwrap();
+        assert!(encoded.get("repair").is_none(), "{encoded}");
         assert!(!view.has_actionable_items());
         let encoded = serde_json::to_value(&view).unwrap();
         assert_eq!(encoded["chains"]["cloud"]["reasonCode"], json!(reason::SALVAGE_PARTIAL));
@@ -976,6 +989,7 @@ mod tests {
                 summary: DecisionSummaryV1::default(),
                 actionable: vec![],
                 auto_applied: vec![],
+                repair: None,
             },
         };
         let encoded = serde_json::to_value(&result).unwrap();
