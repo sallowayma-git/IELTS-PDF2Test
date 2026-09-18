@@ -1063,10 +1063,15 @@ where
 
 /// 识别周期的精简结果（调度器只关心阶段状态与待确认数量）。
 #[derive(Debug, Clone)]
-struct RecognitionCycleReport {
-    cloud_status: String,
-    reconcile_status: String,
-    actionable_count: i64,
+/// 一次识别周期的结果摘要。
+///
+/// `pub(crate)`：真实主链的回归用例要按生产顺序调用本地周期并断言「它自己成功了」，
+/// 而这个判定只在调度器这一层产生（`summarize_cycle_report`）。结构体可见、字段保持
+/// `pub(crate)`，是为了不把内部字段暴露成模块外可改的东西。
+pub(crate) struct RecognitionCycleReport {
+    pub(crate) cloud_status: String,
+    pub(crate) reconcile_status: String,
+    pub(crate) actionable_count: i64,
 }
 
 /// 链状态 → 任务行里的 `cloud_status`。
@@ -1253,7 +1258,10 @@ where
 /// 注入点在此路径上**不可达**（`cloud_enabled = false` 是云端选择的第一分支）。若将来
 /// 有人改坏了这个前置判断，这里会返回一个显式错误，被外层记成 `RECONCILE_FAILED`，
 /// 而不是静默地假装云端跑过、更不是拿一个假失败 profile 去顶替。
-fn run_local_only_recognition_cycle(
+///
+/// `pub(crate)` 是为了让「真实主链」的回归用例能按**生产顺序**调用它（本地周期 → 接身份
+/// → 修复循环），而不是在测试里另写一份等价的调用序列——那样测的就不是产品那条链了。
+pub(crate) fn run_local_only_recognition_cycle(
     root: &Path,
     job_id: &str,
     base_edit_version: i64,

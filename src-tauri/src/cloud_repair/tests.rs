@@ -790,9 +790,15 @@ fn progress_is_reported_at_start_and_after_every_effective_commit() {
 /// 用**第一轮真实读到的** `editVersion` 作 `baseVersion`，否则 CAS 会拒绝——静态样本
 /// 无法预知版本号，所以这里从请求体里把 `Input JSON:` 之后的那份输入解析出来现取。
 ///
+/// `script` 决定每一轮回什么。**按请求体现算**（而不是预置一份样本），是为了让剧本能
+/// 引用真实读到的版本、真实看到的差异——预置样本做不到这两件事，于是「读稿→改稿」这条
+/// 闭环就只能在测试里假装成立。
+///
 /// 返回 `(baseUrl, 收到的请求体)`。请求体留痕是为了断言「发出去的确实是修复请求，
 /// 且带着原文件证据面」，而不是只看最终结果猜中间发生了什么。
-fn spawn_scripted_repair_service() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+fn spawn_scripted_repair_service_with(
+    script: fn(&str, usize) -> String,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind controlled service");
     let addr = listener.local_addr().expect("local addr");
@@ -844,7 +850,7 @@ fn spawn_scripted_repair_service() -> (String, std::sync::Arc<std::sync::Mutex<V
                 guard.len()
             };
 
-            let content = scripted_repair_reply(&body, round);
+            let content = script(&body, round);
             let envelope = json!({
                 "id": "controlled-repair-0001",
                 "object": "chat.completion",
@@ -867,6 +873,10 @@ fn spawn_scripted_repair_service() -> (String, std::sync::Arc<std::sync::Mutex<V
     });
 
     (format!("http://127.0.0.1:{}/v1", addr.port()), seen)
+}
+
+fn spawn_scripted_repair_service() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    spawn_scripted_repair_service_with(scripted_repair_reply)
 }
 
 /// 从请求体里取出网关嵌进 prompt 的那份输入 JSON（`Input JSON: {...}` 之后的全部内容）。
@@ -1066,5 +1076,750 @@ fn controlled_model_service_drives_a_real_repair_round_through_the_real_gateway(
         report.edit_version
     );
 
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ── 真实调度分支：本地周期 → 完整候选 → 云端修复 → 真实事务写入 ─────────────
+//
+// 上面那条受控服务用例证明的是「网关那一端真的接上了」。这一组再往前一步：按**生产的
+// 调用顺序**把 `processing/scheduler.rs` 主链上的四个真实函数串起来跑，证明
+// 「云端可以纠正本地的错误结论」——不是「修复函数自己能跑」。
+//
+// 为什么不能直接调用修复函数代替这条链：`finalize_cloud_authoring_candidate` 负责给候选
+// 接身份、`run_local_only_recognition_cycle` 负责建批次行与本地候选。跳过它们，测的就
+// 只剩一个孤立的循环；而缺陷恰恰长在这些接缝上。
+//
+// 覆盖层次（AGENTS.md 的分类）：**服务/命令处理器层**，不是 UI。`run_job_inner` 需要
+// `AppHandle`，因此「事件真的发到前端」只能由 CDP 那条真机脚本证明，报告里明说。
+
+/// 剧本：读稿 → 按原文件把 q14 改成 C → 收尾。
+///
+/// C 是**本地与候选之外的第三种内容**也无所谓，这里的关键是「本地是 B、原文件是 C」：
+/// 模型必须能推翻本地结论，而不是只能在候选与当前稿之间二选一。
+fn scripted_third_answer_reply(body: &str, round: usize) -> String {
+    let input = repair_request_input(body);
+    let version = input
+        .as_ref()
+        .and_then(|value| value.pointer("/context/editVersion"))
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    match round {
+        1 => json!({
+            "callId": "c1",
+            "tool": "read_draft",
+            "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}
+        }),
+        2 => json!({
+            "callId": "c2",
+            "tool": "apply_edits",
+            "arguments": {
+                "baseVersion": version,
+                "commands": [set_answer("q14", "C")],
+                "evidence": [{
+                    "sourceFileId": "early-approaches-pdf",
+                    "pageIndex": 1,
+                    "quote": "14 C"
+                }]
+            }
+        }),
+        _ => json!({
+            "callId": "c3",
+            "tool": "finish",
+            "arguments": {"note": "按原文件把 q14 改成 C"}
+        }),
+    }
+    .to_string()
+}
+
+/// 剧本：读稿 → 试图改 q14 → 收尾（改不动也要如实收尾，不能卡死）。
+fn scripted_edit_attempt_reply(body: &str, round: usize) -> String {
+    let input = repair_request_input(body);
+    let version = input
+        .as_ref()
+        .and_then(|value| value.pointer("/context/editVersion"))
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    match round {
+        1 => json!({
+            "callId": "c1",
+            "tool": "read_draft",
+            "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}
+        }),
+        2 => json!({
+            "callId": "c2",
+            "tool": "apply_edits",
+            "arguments": {"baseVersion": version, "commands": [set_answer("q14", "C")]}
+        }),
+        _ => json!({"callId": "c3", "tool": "finish", "arguments": {"note": "改不动，交给用户"}}),
+    }
+    .to_string()
+}
+
+/// 剧本：读稿 → 修正**选项库**与**作答结构**（都是已有题组内的结构写入）→ 收尾。
+///
+/// 为什么必须验结构而不只是答案：云端独立识别最常见的偏差不是「答案选错一个字母」，
+/// 而是「选项文字读错」「作答区提示读错」。只验 `setAnswer` 的话，
+/// `setOptionBank` / `setResponseGroup` 这两条真正承载结构的路径一次都没被真实执行过。
+///
+/// 剧本有意复刻真实情形：**改写结构时必须把原有的来源依据一并带回来**。`setOptionBank`
+/// 是整块替换，漏掉 `sourceAnchors` 就等于把「这段文字出自原文件哪一页」抹掉，质量门禁
+/// 会逐个点名拒绝。所以第二轮先漏、第三轮从 `read_draft` 的**真实返回**里把依据取回来。
+fn scripted_structure_fix_reply(body: &str, round: usize) -> String {
+    let input = repair_request_input(body);
+    let version = input
+        .as_ref()
+        .and_then(|value| value.pointer("/context/editVersion"))
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    // 从上一轮的真实观察里取回某个对象的来源依据——这正是模型手里能拿到的东西。
+    let anchors = |pointer: &str| -> Value {
+        input
+            .as_ref()
+            .and_then(|value| value.pointer(&format!("/observations/0/result{pointer}")))
+            .cloned()
+            .unwrap_or_else(|| json!([]))
+    };
+    let complete = round >= 3;
+    let text_node = |id: &str, text: &str| {
+        json!({
+            "type": "text",
+            "id": id,
+            "sourceAnchors": [],
+            "provenanceStatus": "source",
+            "text": text
+        })
+    };
+    let option = |index: usize, label: &str, text: &str| {
+        json!({
+            "optionId": format!("option-{}", label.to_lowercase()),
+            "label": label,
+            "content": [text_node(&format!("option-{}-text", label.to_lowercase()), text)],
+            // 整块替换：依据必须带回来，否则「这段文字出自哪一页」就没了。
+            "sourceAnchors": if complete {
+                anchors(&format!("/taskGroups/0/optionBank/options/{index}/sourceAnchors"))
+            } else {
+                json!([])
+            }
+        })
+    };
+    let options: Vec<Value> = vec![
+        option(0, "A", "factor A"),
+        // 原文件里 B 的措辞是 "factor B (revised)"：本地读漏了括号部分。
+        option(1, "B", "factor B (revised)"),
+        option(2, "C", "factor C"),
+        option(3, "D", "factor D"),
+        option(4, "E", "factor E"),
+    ];
+    match round {
+        1 => json!({
+            "callId": "c1",
+            "tool": "read_draft",
+            "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}
+        }),
+        2 | 3 => json!({
+            "callId": format!("c{round}"),
+            "tool": "apply_edits",
+            "arguments": {
+                "baseVersion": version,
+                "commands": [
+                    {
+                        "op": "setOptionBank",
+                        "taskId": "early-approaches-q14-15",
+                        "optionBank": {
+                            "optionBankId": "early-approaches-options",
+                            "scope": "task_group",
+                            "options": options,
+                            "allowReuse": false,
+                            "sourceAnchors": if complete {
+                                anchors("/taskGroups/0/optionBank/sourceAnchors")
+                            } else {
+                                json!([])
+                            }
+                        }
+                    },
+                    {
+                        "op": "setResponseGroup",
+                        "taskId": "early-approaches-q14-15",
+                        "responseGroup": {
+                            "responseGroupId": "early-approaches-shared-response",
+                            "kind": "choice",
+                            "prompt": [{
+                                "type": "paragraph",
+                                "id": "early-approaches-shared-prompt",
+                                "sourceAnchors": if complete {
+                                    anchors("/taskGroups/0/responseGroups/0/prompt/0/sourceAnchors")
+                                } else {
+                                    json!([])
+                                },
+                                "provenanceStatus": "source",
+                                "children": [text_node(
+                                    "early-approaches-shared-prompt-text",
+                                    "Which TWO factors shaped early organisational design?"
+                                )]
+                            }],
+                            "slotIds": ["q14", "q15"],
+                            "optionBankRef": "early-approaches-options",
+                            "cardinality": {"min": 2, "max": 2, "exact": 2},
+                            "assignment": "unordered_set",
+                            "scoringPolicy": "per_slot_ielts_normalized",
+                            "duplicatePolicy": "reject_submission",
+                            "allowOptionReuse": false,
+                            "sourceAnchors": if complete {
+                                anchors("/taskGroups/0/responseGroups/0/sourceAnchors")
+                            } else {
+                                json!([])
+                            }
+                        }
+                    }
+                ],
+                "evidence": [{
+                    "sourceFileId": "early-approaches-pdf",
+                    "pageIndex": 1,
+                    "quote": "factor B (revised)"
+                }]
+            }
+        }),
+        _ => json!({"callId": "c4", "tool": "finish", "arguments": {"note": "选项与作答结构已按原文件修正"}}),
+    }
+    .to_string()
+}
+
+/// 剧本：读稿 → 试图**凭空新增一整组题**（两遍，第二遍补上 sourceAnchors）→ 收尾。
+///
+/// 这个剧本存在的意义是记录一条**权限边界**，而不是记录一次失败：
+/// `upsertTaskGroupBundle` 在实现里把 `sourceAnchors` / `evidenceAnchors` 强制写成空数组，
+/// 而模型又**没有** `bindSource`（`MODEL_ALLOWED_OPS` 有意排除）。因此模型**结构上不可能**
+/// 造出一个带来源依据的新题组，质量门禁会如实拒绝它。
+///
+/// 这决定了一件产品事实：**「云端补上本地漏掉的整组题」目前做不到**，正确的行为是
+/// 模型把这件事作为未解疑问留给用户，而不是硬写进去制造一份无法发布、看起来却已完成的稿。
+fn scripted_new_task_group_reply(body: &str, round: usize) -> String {
+    let input = repair_request_input(body);
+    let version = input
+        .as_ref()
+        .and_then(|value| value.pointer("/context/editVersion"))
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    // 第一遍缺 `sourceAnchors`（schema 直接拒），第二遍补上（过 schema，但过不了质量门禁）。
+    let complete = round >= 3;
+    match round {
+        1 => json!({
+            "callId": "c1",
+            "tool": "read_draft",
+            "arguments": {"questionNumbers": [14, 15]}
+        }),
+        2 | 3 => json!({
+            "callId": format!("c{round}"),
+            "tool": "apply_edits",
+            "arguments": {
+                "baseVersion": version,
+                "commands": [new_task_group_bundle(complete)],
+                "evidence": [{
+                    "sourceFileId": "early-approaches-pdf",
+                    "pageIndex": 1,
+                    "quote": "16-17 new factors"
+                }]
+            }
+        }),
+        _ => json!({
+            "callId": "c4",
+            "tool": "finish",
+            "arguments": {
+                "note": "新增题组被质量门禁拒绝，留给用户",
+                "unresolved": [{
+                    "message": "原文件里 16-17 题似乎是一整组新题，但云端没有来源绑定权限，无法新增"
+                }]
+            }
+        }),
+    }
+    .to_string()
+}
+
+/// `upsertTaskGroupBundle` 的载荷。
+///
+/// `complete = false` 时**省略** `sourceAnchors`——这正是模型第一次提交时的真实样子。
+/// 结构类补丁的必填字段必须逐个补齐（任务组 / 指令 / 选项库 / 响应组 / 选项各自都要），
+/// 后端会指名缺哪一个，模型据此改对。
+fn new_task_group_bundle(complete: bool) -> Value {
+    let anchors = || json!([]);
+    let node = |id: &str, text: &str| {
+        let mut object = serde_json::Map::new();
+        object.insert("type".to_string(), json!("text"));
+        object.insert("id".to_string(), json!(id));
+        object.insert("text".to_string(), json!(text));
+        if complete {
+            object.insert("sourceAnchors".to_string(), anchors());
+            object.insert("provenanceStatus".to_string(), json!("source"));
+        }
+        Value::Object(object)
+    };
+    let paragraph = |id: &str, child: &str, text: &str| {
+        let mut object = serde_json::Map::new();
+        object.insert("type".to_string(), json!("paragraph"));
+        object.insert("id".to_string(), json!(id));
+        object.insert("children".to_string(), json!([node(child, text)]));
+        if complete {
+            object.insert("sourceAnchors".to_string(), anchors());
+            object.insert("provenanceStatus".to_string(), json!("source"));
+        }
+        Value::Object(object)
+    };
+    let options: Vec<Value> = ["A", "B", "C"]
+        .iter()
+        .map(|label| {
+            let mut object = serde_json::Map::new();
+            object.insert("optionId".to_string(), json!(format!("cloud-new-option-{label}")));
+            object.insert("label".to_string(), json!(label));
+            object.insert(
+                "content".to_string(),
+                json!([node(&format!("cloud-new-option-{label}-text"), &format!("new factor {label}"))]),
+            );
+            if complete {
+                object.insert("sourceAnchors".to_string(), anchors());
+            }
+            Value::Object(object)
+        })
+        .collect();
+
+    let mut task_group = serde_json::Map::new();
+    task_group.insert("taskType".to_string(), json!("multiple_choice"));
+    task_group.insert(
+        "instructions".to_string(),
+        json!([paragraph("cloud-new-instructions", "cloud-new-instructions-text", "Choose TWO letters, A-C.")]),
+    );
+    let mut option_bank = serde_json::Map::new();
+    option_bank.insert("optionBankId".to_string(), json!("cloud-new-options"));
+    option_bank.insert("scope".to_string(), json!("task_group"));
+    option_bank.insert("options".to_string(), json!(options));
+    option_bank.insert("allowReuse".to_string(), json!(false));
+    if complete {
+        option_bank.insert("sourceAnchors".to_string(), anchors());
+    }
+    task_group.insert("optionBank".to_string(), Value::Object(option_bank));
+    let mut response_group = serde_json::Map::new();
+    response_group.insert("kind".to_string(), json!("choice"));
+    response_group.insert(
+        "prompt".to_string(),
+        json!([paragraph("cloud-new-prompt", "cloud-new-prompt-text", "Which TWO new factors were identified?")]),
+    );
+    response_group.insert("slotIds".to_string(), json!(["q16", "q17"]));
+    response_group.insert("optionBankRef".to_string(), json!("cloud-new-options"));
+    response_group.insert("cardinality".to_string(), json!({"min": 2, "max": 2, "exact": 2}));
+    response_group.insert("assignment".to_string(), json!("unordered_set"));
+    if complete {
+        response_group.insert("sourceAnchors".to_string(), anchors());
+    }
+    task_group.insert("responseGroups".to_string(), json!([Value::Object(response_group)]));
+    if complete {
+        task_group.insert("sourceAnchors".to_string(), anchors());
+    }
+
+    json!({
+        "op": "upsertTaskGroupBundle",
+        "taskGroup": Value::Object(task_group),
+        "answerSlots": [
+            {"slotId": "q16", "questionNumber": 16, "interaction": "checkbox"},
+            {"slotId": "q17", "questionNumber": 17, "interaction": "checkbox"}
+        ],
+        "answerKey": {
+            "q16": {"kind": "option", "labels": ["A"], "assignment": "unordered_set"},
+            "q17": {"kind": "option", "labels": ["C"], "assignment": "unordered_set"}
+        }
+    })
+}
+
+/// 起服务 + 落 profile（真实网关按 profile 取 baseUrl）。
+fn start_repair_service(
+    root: &Path,
+    script: fn(&str, usize) -> String,
+) -> std::sync::Arc<std::sync::Mutex<Vec<String>>> {
+    let (base_url, requests) = spawn_scripted_repair_service_with(script);
+    crate::llm_profiles::save_profiles(
+        root,
+        &[json!({
+            "profileId": "controlled-repair",
+            "name": "Controlled Repair Service",
+            "provider": "OpenAiCompatible",
+            "baseUrl": base_url,
+            "model": "controlled-repair-v1",
+            "temperature": 0,
+            "timeoutMs": 60000,
+            "forceJson": true,
+            "enabled": true
+        })],
+    )
+    .expect("profile 必须能落盘，否则网关取不到 baseUrl");
+    requests
+}
+
+fn batch_id_for(root: &Path, base_edit_version: i64) -> String {
+    let source_sha256 = crate::reconcile::commands::source_sha256_for_job(root, ITEM_ID);
+    crate::reconcile::commands::recognition_batch_id(ITEM_ID, &source_sha256, base_edit_version)
+}
+
+fn canonical_version(root: &Path) -> i64 {
+    let conn = open_library_connection(root).expect("打开库连接");
+    let (_, version) = get_canonical_ds(&conn, ITEM_ID).expect("读 canonical").expect("已播");
+    version
+}
+
+/// 场景：**本地规则识别错、云端识别对**。要求云端自动改对并落库，全程没有用户点过接受。
+#[test]
+fn cloud_repair_overrules_a_wrong_local_answer_through_the_real_chain() {
+    use crate::auto_pipeline::finalize_cloud_authoring_candidate;
+    use crate::processing::scheduler::run_local_only_recognition_cycle;
+
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    seed_job_with_source(&root);
+    let _requests = start_repair_service(&root, scripted_third_answer_reply);
+
+    // 前提：本地结论是 B（错），原文件的文本层里**没有**任何可读的答案行。
+    // 没有答案行这件事很重要：它保证 C 只可能来自模型的判断，而不是某条确定性抽取。
+    let base_edit_version = canonical_version(&root);
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["B"]));
+    let document_ir = std::fs::read_to_string(
+        crate::util::job_dir(&root, ITEM_ID).join("document-ir.json"),
+    )
+    .expect("document-ir");
+    assert!(
+        !document_ir.contains("14 C"),
+        "夹具必须先保证原文件的文本层里没有这条答案，否则「云端推翻本地」无从谈起"
+    );
+
+    // ① 真实本地周期：建批次行 + 落本地候选 / 决策证据。
+    let cycle = run_local_only_recognition_cycle(&root, ITEM_ID, base_edit_version)
+        .expect("本地周期必须跑完");
+    assert_eq!(cycle.reconcile_status, "succeeded", "本地周期本身必须成功");
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["B"]),
+        "本地周期不得改动一个**非空**答案（旧策略只补空）"
+    );
+    let batch_id = batch_id_for(&root, base_edit_version);
+    let local = store::read_candidate(&root, ITEM_ID, &batch_id, store::LOCAL_CANDIDATE_FILE)
+        .expect("本地候选必须真正落盘");
+    let local_q14 = local
+        .slots
+        .iter()
+        .find(|slot| slot.slot_id == "q14")
+        .and_then(|slot| slot.answer.as_ref())
+        .unwrap_or_else(|| panic!("本地候选必须带 q14 的答案：{:?}", local.slots));
+    assert_eq!(
+        local_q14.get("labels"),
+        Some(&json!(["B"])),
+        "本地候选必须带着那个错误结论，否则这条用例什么都没证明"
+    );
+
+    // ② 完整候选接身份 + 独立落盘：候选**不写**权威稿。
+    let raw = json!({"authoring": cloud_draft("C")});
+    finalize_cloud_authoring_candidate(&root, ITEM_ID, &batch_id, base_edit_version, &raw)
+        .expect("候选必须能接身份并落盘");
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["B"]),
+        "云端候选绝不能写权威稿——它只是输入"
+    );
+
+    // ③ 真实修复循环：真实网关 → 受控服务 → 真实工具执行 → 真实事务写入。
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_repair_loop(&request, |context, observations| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("修复循环必须跑完");
+
+    assert_eq!(report.applied_count, 1, "必须有一批真实写入");
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["C"]),
+        "云端必须把本地的错误结论改成原文件的 C——没有任何用户点击参与"
+    );
+    assert!(
+        report.edit_version > base_edit_version,
+        "写入必须推进版本（{base_edit_version} -> {}）",
+        report.edit_version
+    );
+    // 差异已被云端自己了结：不再有需要用户处理的 q14 任务。
+    assert!(
+        !has_task(&report.remaining_tasks, "cloud-diff:slot:q14:answer"),
+        "云端已经改对，就不该再把这条差异丢回给用户：{:?}",
+        report.remaining_tasks
+    );
+
+    // ④ 再跑一次本地周期：本地候选仍是 B、权威稿是 C，守卫必须拒绝把 C 改回 B。
+    // 这一条在产品上真实存在——用户点「重新识别」或任务重试都会再跑一遍这条链。
+    let second = run_local_only_recognition_cycle(&root, ITEM_ID, base_edit_version)
+        .expect("本地周期必须可重复跑");
+    assert_eq!(second.reconcile_status, "succeeded");
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["C"]),
+        "修复后的内容不得被本地周期改回去"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 人工编辑保护在这条链上仍然有效：云端**改不动**人改过的地方，且必须收到具体原因。
+#[test]
+fn cloud_repair_cannot_overwrite_a_human_edited_target_on_the_real_chain() {
+    use crate::auto_pipeline::finalize_cloud_authoring_candidate;
+    use crate::processing::scheduler::run_local_only_recognition_cycle;
+
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    seed_job_with_source(&root);
+    let _requests = start_repair_service(&root, scripted_edit_attempt_reply);
+
+    let base_edit_version = canonical_version(&root);
+    let _ = run_local_only_recognition_cycle(&root, ITEM_ID, base_edit_version).expect("本地周期");
+    let batch_id = batch_id_for(&root, base_edit_version);
+    let raw = json!({"authoring": cloud_draft("C")});
+    finalize_cloud_authoring_candidate(&root, ITEM_ID, &batch_id, base_edit_version, &raw)
+        .expect("候选落盘");
+
+    // 用户改过 q14：写入人工保护目标（v5 起由人工编辑事务同事务维护）。
+    {
+        let conn = open_library_connection(&root).expect("打开库连接");
+        conn.execute(
+            "UPDATE library_items_v2 SET protected_edits_json = ?1 WHERE id = ?2",
+            rusqlite::params![json!({"targets": ["q14"]}).to_string(), ITEM_ID],
+        )
+        .expect("写入 protected_edits_json");
+    }
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_repair_loop(&request, |context, observations| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("修复循环必须跑完");
+
+    assert_eq!(report.applied_count, 0, "受保护目标不得有任何写入");
+    assert_eq!(
+        read_answer(&root, "q14")["labels"],
+        json!(["B"]),
+        "人工编辑过的答案必须原样保留"
+    );
+    // 拒绝理由必须**具体到目标**：模型要据此缩小修复范围，而不是空转重试。
+    let rejected = report
+        .observations
+        .iter()
+        .find(|observation| observation["status"] == "rejected")
+        .unwrap_or_else(|| panic!("必须有被拒的观察：{:?}", report.observations));
+    assert!(
+        rejected["errors"]
+            .as_array()
+            .map(|errors| errors.iter().any(|error| error
+                .as_str()
+                .unwrap_or("")
+                .contains("EDIT_PROTECTED_TARGET")))
+            .unwrap_or(false),
+        "拒绝理由必须具体：{rejected:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 云端能写入**结构**，不只是答案：选项库与作答结构都能按原文件修正并落库。
+#[test]
+fn cloud_repair_writes_option_bank_and_response_structure_through_the_real_chain() {
+    use crate::auto_pipeline::finalize_cloud_authoring_candidate;
+    use crate::processing::scheduler::run_local_only_recognition_cycle;
+
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    seed_job_with_source(&root);
+    let _requests = start_repair_service(&root, scripted_structure_fix_reply);
+
+    let base_edit_version = canonical_version(&root);
+    let _ = run_local_only_recognition_cycle(&root, ITEM_ID, base_edit_version).expect("本地周期");
+    let batch_id = batch_id_for(&root, base_edit_version);
+    // 候选与当前稿的**答案**没有差异：这条用例验的是结构写入，不是答案差异。
+    let raw = json!({"authoring": cloud_draft("B")});
+    finalize_cloud_authoring_candidate(&root, ITEM_ID, &batch_id, base_edit_version, &raw)
+        .expect("候选落盘");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_repair_loop(&request, |context, observations| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("修复循环必须跑完");
+
+    // 第一轮漏带来源依据 → 被拒，且逐个点名缺的是谁（模型据此知道要把依据带回来）。
+    let first_attempt = &report.observations[1];
+    assert_eq!(first_attempt["status"], "rejected", "漏带依据必须被拒：{first_attempt:?}");
+    let first_errors = first_attempt["errors"]
+        .as_array()
+        .map(|errors| errors.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" "))
+        .unwrap_or_default();
+    assert!(
+        first_errors.contains("PROVENANCE_MISSING@response_group:early-approaches-shared-response"),
+        "拒绝理由必须点名是哪个对象丢了依据：{first_errors}"
+    );
+    // 第二轮把依据带回来 → 两条命令都落库。
+    assert_eq!(
+        report.applied_count,
+        2,
+        "选项库与作答结构两条命令都要落库：{:?}",
+        report.observations
+    );
+
+    let conn = open_library_connection(&root).expect("打开库连接");
+    let (ds, _) = get_canonical_ds(&conn, ITEM_ID).expect("读 canonical").expect("已播");
+    // 选项库：B 的措辞必须被改成原文件里的那份。
+    let option_b_text = ds
+        .pointer("/taskGroups/0/optionBank/options/1/content/0/text")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    assert_eq!(
+        option_b_text, "factor B (revised)",
+        "选项库必须被真实写入，而不是只回一句「已修正」"
+    );
+    // 作答结构：提示语必须被改写。
+    let prompt_text = ds
+        .pointer("/taskGroups/0/responseGroups/0/prompt/0/children/0/text")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    assert_eq!(
+        prompt_text, "Which TWO factors shaped early organisational design?",
+        "作答结构必须被真实写入"
+    );
+    // 结构写入不得把答案或槽位搞丢。
+    assert_eq!(ds.pointer("/answerKey/q14/labels"), Some(&json!(["B"])));
+    assert_eq!(
+        ds.pointer("/taskGroups/0/responseGroups/0/slotIds"),
+        Some(&json!(["q14", "q15"])),
+        "改写作答结构不得丢掉槽位"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 权限边界：云端**不能**凭空新增一整组题——门禁会拒绝，且模型必须把它留成未解疑问。
+///
+/// 这条记录的是产品事实而不是缺陷：`upsertTaskGroupBundle` 把 `sourceAnchors` /
+/// `evidenceAnchors` 强制写成空数组，模型又没有 `bindSource`（`MODEL_ALLOWED_OPS` 有意
+/// 排除，见 `tools.rs` 的说明）。于是「云端补上本地漏掉的整组题」在**当前权限模型下做不到**。
+///
+/// 关键的不是「它做不到」，而是**做不到时产品怎么表现**：
+///  - 门禁必须拒绝（绝不落一份无法发布、却看起来已完成的稿）；
+///  - 拒绝理由必须具体到哪个对象缺什么，模型才有机会缩小范围或如实上报；
+///  - 模型把它留成未解疑问之后，它必须出现在用户的剩余任务里。
+#[test]
+fn cloud_repair_cannot_invent_an_ungrounded_task_group_and_says_so() {
+    use crate::auto_pipeline::finalize_cloud_authoring_candidate;
+    use crate::processing::scheduler::run_local_only_recognition_cycle;
+
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    seed_job_with_source(&root);
+    let _requests = start_repair_service(&root, scripted_new_task_group_reply);
+
+    let base_edit_version = canonical_version(&root);
+    let _ = run_local_only_recognition_cycle(&root, ITEM_ID, base_edit_version).expect("本地周期");
+    let batch_id = batch_id_for(&root, base_edit_version);
+    let raw = json!({"authoring": cloud_draft("B")});
+    finalize_cloud_authoring_candidate(&root, ITEM_ID, &batch_id, base_edit_version, &raw)
+        .expect("候选落盘");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 6);
+    let report = run_repair_loop(&request, |context, observations| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("修复循环必须跑完");
+
+    // 两次尝试都被拒：第一次缺必填字段，第二次过 schema 但过不了质量门禁。
+    assert_eq!(report.applied_count, 0, "无来源依据的新题组绝不能落库");
+    let rejections: Vec<&Value> = report
+        .observations
+        .iter()
+        .filter(|observation| observation["status"] == "rejected")
+        .collect();
+    assert_eq!(rejections.len(), 2, "两次尝试都应被拒：{:?}", report.observations);
+    let second_errors = rejections[1]["errors"]
+        .as_array()
+        .map(|errors| {
+            errors
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    // 拒绝理由必须点名**具体对象与具体缺口**，模型才可能据此缩小范围。
+    assert!(
+        second_errors.contains("PROVENANCE_MISSING")
+            || second_errors.contains("INSTRUCTION_PROVENANCE_MISSING"),
+        "拒绝理由必须具体到「哪个对象缺来源依据」：{second_errors}"
+    );
+    assert!(
+        second_errors.contains("OPTION_BANK_REFERENCE_MISSING"),
+        "拒绝理由必须点名选项库引用缺失：{second_errors}"
+    );
+
+    // 权威稿一字未改：仍然只有原来那一组题。
+    let conn = open_library_connection(&root).expect("打开库连接");
+    let (ds, _) = get_canonical_ds(&conn, ITEM_ID).expect("读 canonical").expect("已播");
+    assert_eq!(
+        ds.pointer("/taskGroups").and_then(Value::as_array).map(Vec::len),
+        Some(1),
+        "被拒的新题组不得留在稿里"
+    );
+    assert_eq!(ds.pointer("/answerKey/q16"), None, "新槽位也不得残留");
+
+    // 模型如实把它留成了未解疑问 → 必须出现在用户的剩余任务里，而不是无声消失。
+    let question = report
+        .remaining_tasks
+        .iter()
+        .find(|task| {
+            task["userTaskId"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("cloud-question:")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "做不到的事必须留给用户，实际剩余任务：{:?}",
+                report.remaining_tasks
+            )
+        });
+    assert!(
+        question["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("16-17"),
+        "疑问必须带着模型的原话：{question:?}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
