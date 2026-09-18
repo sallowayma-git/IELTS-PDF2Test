@@ -505,6 +505,75 @@ pub(crate) fn make_cloud_authoring_candidate_input(
     })
 }
 
+/// 修复回合的输入：上下文 + 之前所有 observation。
+///
+/// 采用**应用层 JSON 工具消息**（模型输出 JSON → Rust 分发 → 结果回传），而不是供应商
+/// native tools：现有网关只读 `message.content`，本轮不改造 SDK，也不实现第二套协议。
+pub(crate) fn make_repair_authoring_step_input(
+    profile: &Value,
+    job: &ImportJob,
+    profile_id: &str,
+    source: &crate::SourceFile,
+    pdf_path: &Path,
+    context: &Value,
+    observations: &[Value],
+) -> Value {
+    json!({
+        "mode": "repair_authoring_step",
+        "job": {"jobId": job.job_id, "title": job.title},
+        "profile": profile_payload(profile, profile_id),
+        "sourceFile": {
+            "fileId": source.file_id,
+            "originalName": source.original_name,
+            "fileType": source.file_type,
+            "sha256": source.sha256
+        },
+        "pdfPath": pdf_path.to_string_lossy(),
+        "context": context,
+        "observations": observations,
+        "tools": {
+            "read_draft": {
+                "purpose": "Read the CURRENT draft (authoritative canonical) for specific task groups.",
+                "arguments": {"taskGroupIds": ["optional task id list"], "questionNumbers": [1, 2]}
+            },
+            "read_source": {
+                "purpose": "Read the ORIGINAL FILE evidence. You cannot choose a path.",
+                "arguments": {"pageIndex": 1, "pageTo": 2, "quote": "optional exact quote to locate"}
+            },
+            "apply_edits": {
+                "purpose": "Submit a batch of domain commands. This really writes to the authoritative draft.",
+                "arguments": {
+                    "baseVersion": "the editVersion you based this batch on (REQUIRED)",
+                    "commands": [{"op": "setAnswer", "slotId": "slot-27", "value": {"kind": "text", "values": ["example"]}}],
+                    "evidence": [{"sourceFileId": "answer-source", "pageIndex": 1, "quote": "27 example"}]
+                }
+            },
+            "finish": {
+                "purpose": "Declare that you have done what you can. The backend still recomputes what is left.",
+                "arguments": {"note": "short explanation", "unresolved": ["what you could not fix"]}
+            }
+        },
+        "allowedOps": [
+            "replaceText", "replaceContent", "insertNode", "moveNode", "deleteNode", "setAnswer",
+            "setTaskType", "setQuestionExpression", "setResponseCardinality", "setResponseGroup",
+            "setOptionBank", "insertAnswerSlot", "setNodeAttrs", "upsertTaskGroupBundle"
+        ],
+        "rules": [
+            "Return JSON only: exactly one object {\"callId\":\"...\",\"tool\":\"...\",\"arguments\":{...}}.",
+            "tool MUST be one of read_draft, read_source, apply_edits, finish. There is no other tool.",
+            "You may only use the ops listed in allowedOps. resolveIssue and any quality/audit/provenance flag are NOT available.",
+            "apply_edits REQUIRES baseVersion. Call read_draft first and pass back the editVersion you actually saw.",
+            "Target ids MUST be the stable ids you got from read_draft or the context. Never invent an id.",
+            "Content changes need evidence from the original file (sourceFileId, 1-based pageIndex, exact quote).",
+            "Never invent an answer the original file does not provide. Leave it unresolved instead.",
+            "Some targets are protected because a human edited them. If a batch is rejected for that reason, narrow the batch instead of retrying the same commands.",
+            "The context lists the WHOLE document. Do not claim the paper is verified just because you handled the listed differences.",
+            "When a batch is rejected you get the specific error in the next observation. Fix exactly that and try again.",
+            "Call finish when you are done; the backend recomputes the remaining work from the current draft."
+        ]
+    })
+}
+
 pub(crate) fn save_llm_suggestion(
     root: &Path,
     job_id: &str,

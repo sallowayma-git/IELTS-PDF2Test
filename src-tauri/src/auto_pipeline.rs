@@ -1612,6 +1612,86 @@ pub(crate) fn finalize_cloud_authoring_candidate(
     Ok(candidate)
 }
 
+/// 修复回合的原文证据：PDF 走已抽取的页文本，非 PDF 走独立抽取的全文。
+///
+/// **不读本地识别产物**（`document-ir.json`）：它与本地识别并行，可能还没落盘；
+/// 云端修复看到的必须是**原文件本身**的抽取结果。
+pub(crate) fn cloud_source_evidence(root: &Path, job_id: &str) -> CommandResult<Value> {
+    let job = load_job(root, job_id)?;
+    let (source, _) = main_source_for_cloud(root, &job)?;
+    if source.file_type == "pdf" {
+        let extraction = main_pdf_vision_extraction(root, &job)
+            .map(|(extraction, _asset_dir)| extraction)
+            .unwrap_or(Value::Null);
+        let pages = extraction
+            .get("pages")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Ok(json!({
+            "kind": "pdf",
+            "sourceFileId": source.file_id,
+            "originalName": source.original_name,
+            "pages": pages
+        }))
+    } else {
+        let text = prepare_cloud_source_evidence(root, &job).unwrap_or_default();
+        Ok(json!({
+            "kind": "text",
+            "sourceFileId": source.file_id,
+            "originalName": source.original_name,
+            "text": text
+        }))
+    }
+}
+
+/// 修复回合：把「当前稿上下文 + 已发生的真实执行结果」交给真实模型，取回一个工具消息。
+///
+/// 证据面规则与完整候选识别一致（模型看到的必须是**原文件**）：PDF 附原文件本身，
+/// 非 PDF 附独立抽取的原文文本。**不接受任意路径**——来源只由后端按 job 解析。
+pub(crate) fn repair_authoring_step_through_gateway(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+    context: &Value,
+    observations: &[Value],
+) -> CommandResult<Value> {
+    let job = load_job(root, job_id)?;
+    let selected = profile_id
+        .map(str::to_string)
+        .or_else(|| job.active_llm_profile_id.clone())
+        .ok_or_else(|| "NO_PROFILE".to_string())?;
+    let profile = find_profile(root, &selected)?;
+    let (source, upload_path) = main_source_for_cloud(root, &job)?;
+    let is_pdf = source.file_type == "pdf";
+    let mut input = crate::llm_suggestions::make_repair_authoring_step_input(
+        &profile,
+        &job,
+        &selected,
+        &source,
+        &upload_path,
+        context,
+        observations,
+    );
+    if !is_pdf {
+        if let Some(object) = input.as_object_mut() {
+            object.remove("pdfPath");
+        }
+        // 没有可抽取文本时如实失败，不让模型在空证据上猜。
+        let source_text = prepare_cloud_source_evidence(root, &job)
+            .ok_or_else(|| format!("cloud_source_text_unavailable:{job_id}"))?;
+        input["sourceText"] = json!(source_text);
+    }
+    let api_key = load_llm_api_key(root, &selected);
+    run_llm_gateway(
+        root,
+        job_id,
+        "repair_authoring_step",
+        &input,
+        api_key.as_deref(),
+    )
+}
+
 /// A4：把一批**待裁定的分歧项**交给真实模型，走与云端识别同一个 LLM 网关。
 ///
 /// 证据面规则与云端识别完全一致（同一条产品要求：模型看到的必须是**原文件**）：

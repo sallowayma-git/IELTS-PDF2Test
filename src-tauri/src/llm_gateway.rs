@@ -49,6 +49,11 @@ pub(crate) fn run_llm_gateway(
         "generate_authoring_candidate" => {
             run_openai_compatible_authoring_candidate_llm(root, job_id, input, api_key)
         }
+        // 修复回合：模型输出一个**应用层 JSON 工具消息**，由 Rust 真实执行并把真实结果
+        // 回传下一轮。不是建议卡，也不改造供应商 native tools 协议。
+        "repair_authoring_step" => {
+            run_openai_compatible_repair_step_llm(root, job_id, input, api_key)
+        }
         // A4：分歧裁决。与云端识别共用证据面（PDF 附原文件 / 非 PDF 附原文文本），
         // 但输出契约与校验完全不同——它必须回指本次提交的 decisionId 集合。
         "adjudicate_divergence" => {
@@ -1084,6 +1089,152 @@ fn validate_authoring_candidate_output(output: &mut Value) -> CommandResult<()> 
                     ))
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// 修复回合的 prompt。
+///
+/// 工具清单来自 [`crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS`]——**唯一真源**。
+/// 提示词里写一个、分发器不认，是这类循环最典型的漂移；这里刻意引用同一份常量。
+fn repair_step_prompt(input: &Value) -> String {
+    let tools = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.join(", ");
+    let repair = input
+        .get("repairNote")
+        .and_then(Value::as_str)
+        .filter(|note| !note.trim().is_empty())
+        .map(|note| {
+            format!(
+                "\nYour previous reply was REJECTED by the backend. Fix exactly this and reply with one JSON object again.\nRejection reason: {note}\n"
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "You are repairing an IELTS Reading authoring draft so it matches the ORIGINAL FILE.\n\
+Return JSON only: exactly one object {{\"callId\":\"...\",\"tool\":\"...\",\"arguments\":{{...}}}}.\n\
+Do not return Markdown, prose, or several objects.\n\
+Allowed tools (and nothing else): {tools}.\n\
+{repair}\n\
+Work like an editor: read what you need, then submit ONE batch of domain commands per turn, then read the result.\n\
+- apply_edits requires baseVersion: pass the editVersion you actually saw from read_draft.\n\
+- Use only the stable ids you were given. Never invent ids.\n\
+- Content changes need evidence copied from the original file.\n\
+- Never invent an answer the file does not give.\n\
+- If a batch is rejected because a target is protected by a human edit, narrow the batch — do not retry the same commands.\n\
+- The context lists the whole document. Do not claim the paper is verified because you handled the listed differences.\n\
+- Call finish when you are done.\n\
+Input JSON: {}",
+        serde_json::to_string(input).unwrap_or_default()
+    )
+}
+
+/// 修复回合的执行体。证据面规则与完整候选识别一致（模型看到的必须是原文件）。
+fn run_openai_compatible_repair_step_llm(
+    root: &Path,
+    job_id: &str,
+    input: &Value,
+    api_key: Option<&str>,
+) -> CommandResult<Value> {
+    let profile = llm_profile(input);
+    let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
+    let mut warnings = Vec::<String>::new();
+    let mut content = vec![json!({"type": "text", "text": repair_step_prompt(input)})];
+    if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
+        content.push(pdf_part);
+    } else if let Some(source_text) = input
+        .get("sourceText")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+    {
+        content.push(json!({
+            "type": "text",
+            "text": format!(
+                "The original file is not a PDF, so no page image is attached. \
+The extracted source text below is the ONLY evidence you may use; do not invent content.\n\
+--- SOURCE TEXT BEGIN ---\n{source_text}\n--- SOURCE TEXT END ---"
+            )
+        }));
+    } else {
+        warnings.push("cloud_repair_source_unavailable".to_string());
+    }
+    let mut body = json!({
+        "model": model,
+        "temperature": llm_temperature(profile),
+        "messages": [
+            {"role": "system", "content": "Return valid JSON only."},
+            {"role": "user", "content": content}
+        ]
+    });
+    if llm_force_json(profile) {
+        body["response_format"] = json!({"type": "json_object"});
+    }
+
+    let payload = match openai_post(profile, api_key, body) {
+        Ok(payload) => payload,
+        Err(pdf_error) => {
+            warnings.push(format!("direct_pdf_request_failed:{}", pdf_error));
+            let mut image_content = vec![
+                json!({"type": "text", "text": format!("{}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence.", repair_step_prompt(input))}),
+            ];
+            let image_count = append_pdf_images_to_content(root, job_id, &mut image_content, input)?;
+            if image_count == 0 {
+                return Err(format!(
+                    "cloud_repair_step_direct_pdf_failed_and_no_images:{}",
+                    pdf_error
+                ));
+            }
+            let mut fallback_body = json!({
+                "model": llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?,
+                "temperature": llm_temperature(profile),
+                "messages": [
+                    {"role": "system", "content": "Return valid JSON only."},
+                    {"role": "user", "content": image_content}
+                ]
+            });
+            if llm_force_json(profile) {
+                fallback_body["response_format"] = json!({"type": "json_object"});
+            }
+            openai_post(profile, api_key, fallback_body)?
+        }
+    };
+    let content = openai_chat_content(&payload)?;
+    let mut parsed = parse_llm_json_content(&content)?;
+    validate_repair_step_output(&mut parsed)?;
+    if !warnings.is_empty() {
+        if let Some(object) = parsed.as_object_mut() {
+            object.insert("warnings".to_string(), json!(warnings));
+        }
+    }
+    Ok(parsed)
+}
+
+/// 修复回合输出的**结构**校验：形状不对就给出具体原因，让模型定向改好。
+///
+/// 注意：这里**不**执行工具。执行发生在 `cloud_repair` 的分发器里，只有那里才知道
+/// 运行归属、取消状态与真实稿件。
+fn validate_repair_step_output(output: &mut Value) -> CommandResult<()> {
+    let Some(object) = output.as_object() else {
+        return Err("cloud_repair_step_not_object".to_string());
+    };
+    if object
+        .get("callId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty()
+    {
+        return Err("cloud_repair_step_call_id_missing".to_string());
+    }
+    let Some(tool) = object.get("tool").and_then(Value::as_str).map(str::trim) else {
+        return Err("cloud_repair_step_tool_missing".to_string());
+    };
+    if !crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.contains(&tool) {
+        return Err(format!("cloud_repair_step_tool_unknown:{tool}"));
+    }
+    if let Some(arguments) = object.get("arguments") {
+        if !arguments.is_object() && !arguments.is_null() {
+            return Err("cloud_repair_step_arguments_not_object".to_string());
         }
     }
     Ok(())
