@@ -117,6 +117,15 @@ pub(crate) struct CloudEditOutcome {
     /// 被剥离的越权 / 无意义字段，如实回报。
     pub stripped_keys: Vec<String>,
     /// 本次引入的新机械错误（硬失败）。空 = 没有引入新的结构破坏。
+    ///
+    /// **重要**：这里每一项是一条**事实指纹**（`错误码@目标类型:目标id[来源锚点]`），
+    /// 而**不是**裸的 `quality.hardFailures` 错误码。原因：`/quality/hardFailures` 是按
+    /// code 去重后的列表（`push_issue` 只在 `severity == "blocking"` 时压入 code），它把
+    /// 「问题落在哪个目标上」丢掉了。于是「q15 缺答案」与「q16 缺答案」在 code 集合里是
+    /// 同一个 `ANSWER_KEY_MISSING_SLOT`：云端若把 q16 的答案也删掉，code 集合前后不变、差集
+    /// 为空，会被判成「没引入新问题」而放行，用户的内容就此静默丢失。反向同理：code 集合少
+    /// 一个元素，并不等于那个问题真的被修好。所以这里比较的是 `/quality/issues[]` 里的
+    /// **具体诊断指纹**——模型也能从指纹里直接读出「哪道题」出了问题。
     pub introduced_hard_failures: Vec<String>,
 }
 
@@ -186,14 +195,67 @@ fn request_id_for(request: &CloudEditRequest) -> String {
     )
 }
 
-fn hard_failures_of(ds: &Value) -> BTreeSet<String> {
-    ds.pointer("/quality/hardFailures")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| value.as_str())
-        .map(str::to_string)
-        .collect()
+/// 阻断性诊断的**事实指纹**：错误码 + 稳定目标 + 必要引用。
+///
+/// 为什么不能只比较错误码集合：`/quality/hardFailures` 是**去重后的 code 列表**
+/// （见 `ielts_grammar/quality.rs::push_issue`），它丢掉了「问题落在哪个目标上」。
+/// 于是「q11 缺答案」与「q12 缺答案」在集合里是同一个 `ANSWER_KEY_MISSING_SLOT`：
+/// 云端把 q12 的答案删掉后，集合前后相同、差集为空 ⇒ 被判为「没引入新问题」而放行，
+/// 用户的内容就此静默丢失。反向同样立不住：集合里少一个元素并不等于那个问题真被修好。
+/// 所以比较的必须是**具体诊断**（`/quality/issues[]`），而不是它的 code 投影。
+///
+/// 指纹形状：`{code}@{targetType}:{targetId}`，当 `sourceAnchors` 非空时追加
+/// `[sourceFileId#pageIndex#nodeIds,...]` 后缀（锚点按字符串排序后拼接，每个锚点的
+/// nodeIds 用 `+` 连接）。整体确定性、可读，模型能从中直接读出「哪道题」坏。
+fn blocking_diagnostic_fingerprints(ds: &Value) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let Some(issues) = ds.pointer("/quality/issues").and_then(Value::as_array) else {
+        return out;
+    };
+    for issue in issues {
+        let Some(obj) = issue.as_object() else {
+            continue;
+        };
+        // 与 `push_issue` 填充 `hardFailures` 用同一个判据，二者保持一致。
+        if obj.get("severity").and_then(Value::as_str) != Some("blocking") {
+            continue;
+        }
+        let code = obj.get("code").and_then(Value::as_str).unwrap_or("");
+        let target_type = obj.get("targetType").and_then(Value::as_str).unwrap_or("");
+        let target_id = obj.get("targetId").and_then(Value::as_str).unwrap_or("");
+        let mut fingerprint = format!("{code}@{target_type}:{target_id}");
+        if let Some(anchors) = obj.get("sourceAnchors").and_then(Value::as_array) {
+            if !anchors.is_empty() {
+                let mut rendered: Vec<String> = anchors
+                    .iter()
+                    .filter_map(|anchor| {
+                        let file = anchor
+                            .get("sourceFileId")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let page = anchor.get("pageIndex").and_then(Value::as_i64).unwrap_or(0);
+                        let node_ids = anchor
+                            .get("nodeIds")
+                            .and_then(Value::as_array)
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(Value::as_str)
+                                    .collect::<Vec<_>>()
+                                    .join("+")
+                            })
+                            .unwrap_or_default();
+                        Some(format!("{file}#{page}#{node_ids}"))
+                    })
+                    .collect();
+                rendered.sort();
+                fingerprint.push('[');
+                fingerprint.push_str(&rendered.join(","));
+                fingerprint.push(']');
+            }
+        }
+        out.insert(fingerprint);
+    }
+    out
 }
 
 /// 证据条目的结构校验。
@@ -257,13 +319,17 @@ pub(crate) fn apply_cloud_edits(
         .ok_or_else(|| format!("ITEM_DS_NOT_SEEDED:{}", request.item_id))?;
 
     // 基线必须用**同一套质量管线**在"未施加本次编辑的同一份稿件"上重算，而不是直接读
-    // 库里那一份 `quality.hardFailures`。理由：库里那份可能是播种 / 迁移时写下的、与当前
-    // 内容不同步的旧结果，于是「本次是否引入新机械错误」会退化成「库里那份质量块新不新」，
-    // 一批与本次修复无关的旧差异就能把一次有效修复顶掉——正是任务书要避免的
-    // 「有一个问题就整卷修不动」。用 clone 重算，基线才有唯一、可复现的含义。
+    // 库里那一份 `quality.hardFailures` / `quality.issues`。理由：库里那份可能是播种 / 迁移
+    // 时写下的、与当前内容不同步的旧结果，于是「本次是否引入新机械错误」会退化成
+    // 「库里那份质量块新不新」，一批与本次修复无关的旧差异就能把一次有效修复顶掉——正是
+    // 任务书要避免的「有一个问题就整卷修不动」。用 clone 重算，基线才有唯一、可复现的含义。
+    // 注意：比较的是**阻断性诊断指纹**（`blocking_diagnostic_fingerprints`，即
+    // `/quality/issues[]` 里 severity == "blocking" 的 `[code@targetType:targetId[锚点]]`），
+    // 而不是去重后的 code 集合——否则「q15 缺答案」与「q16 缺答案」会被当成同一个
+    // `ANSWER_KEY_MISSING_SLOT` 而漏判。
     let mut baseline_ds = current_ds.clone();
     refresh_quality_report(root, &request.item_id, &mut baseline_ds)?;
-    let before_hard_failures = hard_failures_of(&baseline_ds);
+    let before_diagnostics = blocking_diagnostic_fingerprints(&baseline_ds);
 
     if !evidence_problems.is_empty() {
         return Ok(CloudEditOutcome {
@@ -315,8 +381,8 @@ pub(crate) fn apply_cloud_edits(
             // **本次新增**的硬失败。原稿本来就有的问题不阻止本次有效修复。
             refresh_quality_report(root, &request.item_id, ds)?;
             validate_authoring(ds)?;
-            let after = hard_failures_of(ds);
-            let new_ones: Vec<String> = after.difference(&before_hard_failures).cloned().collect();
+            let after = blocking_diagnostic_fingerprints(ds);
+            let new_ones: Vec<String> = after.difference(&before_diagnostics).cloned().collect();
             if !new_ones.is_empty() {
                 let message = format!(
                     "CLOUD_EDIT_INTRODUCED_HARD_FAILURES:{}",
@@ -473,6 +539,99 @@ mod tests {
         let error = sanitize_commands(&[]).expect_err("空批次必须被拒，不能静默成功");
         assert_eq!(error, "CLOUD_EDIT_NO_COMMANDS");
     }
+
+    #[test]
+    fn blocking_diagnostics_distinguish_same_code_on_different_targets() {
+        // 两个质量块：hardFailures 的 code 数组**完全相同**，但 issue 落在不同目标上。
+        let on_q11 = json!({
+            "quality": {
+                "hardFailures": ["ANSWER_KEY_MISSING_SLOT"],
+                "issues": [{
+                    "issueId": "i-q11",
+                    "code": "ANSWER_KEY_MISSING_SLOT",
+                    "severity": "blocking",
+                    "message": "slot 缺答案",
+                    "targetType": "slot",
+                    "targetId": "q11",
+                    "sourceAnchors": [],
+                    "suggestedActions": []
+                }]
+            }
+        });
+        let on_q12 = json!({
+            "quality": {
+                "hardFailures": ["ANSWER_KEY_MISSING_SLOT"],
+                "issues": [{
+                    "issueId": "i-q12",
+                    "code": "ANSWER_KEY_MISSING_SLOT",
+                    "severity": "blocking",
+                    "message": "slot 缺答案",
+                    "targetType": "slot",
+                    "targetId": "q12",
+                    "sourceAnchors": [],
+                    "suggestedActions": []
+                }]
+            }
+        });
+
+        // 前提（显式断言）：旧逻辑只比较 hardFailures 的 code 集合，会认为两者无差异。
+        let codes_q11: Vec<String> = on_q11
+            .pointer("/quality/hardFailures")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+        let codes_q12: Vec<String> = on_q12
+            .pointer("/quality/hardFailures")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+        assert_eq!(
+            codes_q11, codes_q12,
+            "前提：两个质量块的 hardFailures code 数组必须字节相等，否则证明不了旧逻辑的盲区"
+        );
+
+        let fp_q11 = blocking_diagnostic_fingerprints(&on_q11);
+        let fp_q12 = blocking_diagnostic_fingerprints(&on_q12);
+        // 关键断言：同样的 code、不同目标 ⇒ 不同指纹（旧逻辑则看不到差异）。
+        assert_ne!(
+            fp_q11, fp_q12,
+            "不同目标的同 code 必须产生不同指纹：{:?} vs {:?}",
+            fp_q11, fp_q12
+        );
+        // 确定性：同一输入跑两次结果一致。
+        assert_eq!(fp_q11, blocking_diagnostic_fingerprints(&on_q11));
+        assert_eq!(fp_q12, blocking_diagnostic_fingerprints(&on_q12));
+        // 指纹必须包含目标，模型才能读出「哪道题」坏。
+        assert!(fp_q11.iter().any(|f| f.contains("q11")), "指纹应含目标 q11: {:?}", fp_q11);
+        assert!(fp_q12.iter().any(|f| f.contains("q12")), "指纹应含目标 q12: {:?}", fp_q12);
+
+        // 非阻断（warning）诊断必须被排除。
+        let with_warning = json!({
+            "quality": {
+                "hardFailures": [],
+                "issues": [{
+                    "issueId": "w",
+                    "code": "SOME_WARNING",
+                    "severity": "warning",
+                    "message": "无害",
+                    "targetType": "document",
+                    "targetId": "document",
+                    "sourceAnchors": [],
+                    "suggestedActions": []
+                }]
+            }
+        });
+        assert!(
+            blocking_diagnostic_fingerprints(&with_warning).is_empty(),
+            "warning 不应进入阻断指纹"
+        );
+    }
 }
 
 /// 云端修复「写入入口」的端到端测试。
@@ -576,6 +735,51 @@ mod cloud_repair_write_entry_tests {
             commands: vec![command],
             evidence: Vec::new(),
         }
+    }
+
+    /// 生成一个 `insertAnswerSlot` 命令：在 golden fixture 的共享题组里插入一个**答案未解**
+    /// （`unresolved`）的新槽。这会令质量管线在**新目标**上产生一条 `ANSWER_KEY_MISSING_SLOT`
+    /// 阻断诊断——用于验证「同 code、不同目标」必须被识别为新引入的硬失败。
+    fn insert_unresolved_slot_command(slot_id: &str, question_number: u64, index: usize) -> Value {
+        let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        json!({
+            "op": "insertAnswerSlot",
+            "taskId": "early-approaches-q14-15",
+            "responseGroupId": "early-approaches-shared-response",
+            "target": {"kind": "responsePrompt", "responseGroupId": "early-approaches-shared-response"},
+            "parentId": "early-approaches-shared-prompt",
+            "index": index,
+            "slotIndex": index,
+            "node": {
+                "type": "answer_slot",
+                "id": format!("slot-node-{slot_id}"),
+                "slotId": slot_id,
+                "displayLabel": question_number.to_string(),
+                "inline": true,
+                "sourceAnchors": [],
+                "provenanceStatus": "manual"
+            },
+            "slot": {
+                "slotId": slot_id,
+                "questionNumber": question_number,
+                "displayLabel": question_number.to_string(),
+                "hostNodeId": "early-approaches-shared-prompt",
+                "hostType": "prompt",
+                "interaction": "checkbox",
+                "participation": "scoring",
+                "constraints": {"acceptedOptionLabels": ["A", "B", "C", "D", "E"]},
+                "sourceAnchors": [{
+                    "sourceFileId": "early-approaches-pdf",
+                    "pageIndex": 1,
+                    "nodeIds": [format!("slot-{slot_id}"), "line-shared-prompt"],
+                    "extractionMode": "pdf_native",
+                    "sourceHash": hash
+                }],
+                "confidence": 1.0
+            },
+            "value": {"kind": "unresolved"},
+            "expression": {"kind": "set", "values": [14, 15, question_number]}
+        })
     }
 
     // 1. 成功路径：setAnswer 改一个真实存在的槽位 → Applied、版本推进、canonical 真变、journal 落库。
@@ -727,6 +931,151 @@ mod cloud_repair_write_entry_tests {
             read_answer(&root, &item_id, "q14").pointer("/labels"),
             Some(&json!(["A"])),
             "合法修复仍应写入"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // 7. 同 code、不同目标：稿件已存在 q15 缺答案（陈旧阻断 ANSWER_KEY_MISSING_SLOT）的前提下，
+    //    又对**新**目标 q16 引入同样的 ANSWER_KEY_MISSING_SLOT，必须被拒。这是任务书点名的
+    //    静默丢失回归——旧逻辑只比较 hardFailures 的 code 集合，q15 与 q16 都是同一个 code，
+    //    差集为空 ⇒ 误判「没引入新问题」而放行。新指纹逻辑按具体目标区分，q16 被识别为新引入。
+    #[test]
+    fn cloud_edit_rejects_new_same_code_failure_on_a_different_target() {
+        let root = temp_root();
+        let mut ds = load_fixture();
+        // 预置一个陈旧的真实阻断：删掉 q15 的答案 ⇒ q15 缺答案（ANSWER_KEY_MISSING_SLOT）。
+        ds["answerKey"].as_object_mut().unwrap().remove("q15");
+        let item_id = seed_item(&root, &ds);
+
+        // 编辑：插入一个**新**槽 q16，答案为 unresolved ⇒ 在 q16 上引入新的
+        // ANSWER_KEY_MISSING_SLOT，而 q15 的老问题依旧存在。两者 code 相同、目标不同。
+        let command = insert_unresolved_slot_command("q16", 16, 1);
+        let request = base_request(&item_id, "run-same-code-diff-target", 1, command);
+        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Rejected,
+            "同 code 不同目标的新硬失败必须被拒 errors={:?}",
+            outcome.errors
+        );
+        // 必须是一条**指纹**（含 code 与具体目标），而不只是裸 code——否则模型读不出哪道题坏。
+        let hit = outcome
+            .introduced_hard_failures
+            .iter()
+            .find(|f| f.contains("ANSWER_KEY_MISSING_SLOT") && f.contains("q16"));
+        assert!(
+            hit.is_some(),
+            "应报出 q16 的 ANSWER_KEY_MISSING_SLOT 指纹，实际 introduced_hard_failures={:?}",
+            outcome.introduced_hard_failures
+        );
+        // 错误前缀必须保持可识别（任务书要求保留 CLOUD_EDIT_INTRODUCED_HARD_FAILURES:）。
+        assert!(
+            outcome.errors.iter().any(|e| e.contains("CLOUD_EDIT_INTRODUCED_HARD_FAILURES")),
+            "错误码前缀必须保持可识别: {:?}",
+            outcome.errors
+        );
+        // canonical 不变：q14 答案仍是原始 B，且不应出现新槽 q16。
+        assert_eq!(
+            read_answer(&root, &item_id, "q14").pointer("/labels"),
+            Some(&json!(["B"])),
+            "被拒后 q14 答案不得改变"
+        );
+        assert!(
+            read_answer(&root, &item_id, "q16").is_null(),
+            "被拒后不应出现新槽 q16 的 answerKey"
+        );
+        let conn = open_library_connection(&root).expect("打开库连接");
+        let (stored, _) = get_canonical_ds(&conn, &item_id)
+            .expect("读 canonical")
+            .expect("稿件已播");
+        assert!(
+            stored["answerSlots"].get("q16").is_none(),
+            "被拒后 answerSlots 不应含 q16"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // 8. 静默放行回归（用户真正要防的场景）：稿件已存在 q15 缺答案（陈旧 ANSWER_KEY_MISSING_SLOT）
+    //    的前提下，云端用 setAnswer 把 **q14 原本正确的答案**替换成 unresolved，从而「销毁」q14 的
+    //    答案。这次编辑前后 hardFailures 的 code 集合完全相同（都只有 ANSWER_KEY_MISSING_SLOT），
+    //    旧逻辑的 `after.difference(&before)` 因此为空、会把它判成「没引入新问题」而 **Applied**——
+    //    q14 的答案就此静默丢失。新指纹逻辑按具体目标区分 q14 与 q15，正确识别这是一条新引入的
+    //    阻断诊断并拒绝。
+    #[test]
+    fn cloud_edit_rejects_destroying_a_second_answer_when_a_same_code_problem_already_exists() {
+        let root = temp_root();
+        let mut ds = load_fixture();
+        // 预置一个陈旧的真实阻断：删掉 q15 的答案 ⇒ q15 缺答案（ANSWER_KEY_MISSING_SLOT）。
+        ds["answerKey"].as_object_mut().unwrap().remove("q15");
+        let item_id = seed_item(&root, &ds);
+
+        // 编辑：把 q14 原本正确的选项答案替换成 unresolved —— 销毁 q14 的答案，
+        // 在 q14 上引入一条**同 code** 的新阻断诊断（q15 的老问题依旧）。
+        let command = json!({"op": "setAnswer", "slotId": "q14", "value": {"kind": "unresolved"}});
+        let request = base_request(&item_id, "run-silent-loss", 1, command.clone());
+        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Rejected,
+            "销毁 q14 答案（同 code、不同目标）必须被拒 errors={:?}",
+            outcome.errors
+        );
+        // 必须报出 q14 的 ANSWER_KEY_MISSING_SLOT 指纹（含具体目标），而非仅裸 code。
+        let hit = outcome
+            .introduced_hard_failures
+            .iter()
+            .find(|f| f.contains("ANSWER_KEY_MISSING_SLOT") && f.contains("q14"));
+        assert!(
+            hit.is_some(),
+            "应报出 q14 的 ANSWER_KEY_MISSING_SLOT 指纹，实际 introduced_hard_failures={:?}",
+            outcome.introduced_hard_failures
+        );
+
+        // ---- 盲点证明：编辑前后 hardFailures 的 code 集合完全相同 ----
+        // 这正是旧逻辑 `after.difference(&before)` 为空、从而把这次销毁当成「没引入新问题」而
+        // Applied 放行、让 q14 答案静默丢失的充要条件。
+        let collect_codes = |doc: &Value| -> Vec<String> {
+            let mut v: Vec<String> = doc
+                .pointer("/quality/hardFailures")
+                .and_then(Value::as_array)
+                .unwrap_or(&Vec::new())
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
+            v.sort();
+            v
+        };
+        let mut pre = ds.clone();
+        refresh_quality_report(&root, &item_id, &mut pre).expect("pre recompute");
+        let mut post = ds.clone();
+        apply_patch(&mut post, &command).expect("apply patch");
+        refresh_quality_report(&root, &item_id, &mut post).expect("post recompute");
+        let pre_codes = collect_codes(&pre);
+        let post_codes = collect_codes(&post);
+        assert_eq!(
+            pre_codes, post_codes,
+            "盲点前提：编辑前后 hardFailures 的 code 集合必须完全相同（都仅含 ANSWER_KEY_MISSING_SLOT）——\
+             正是这个相等让旧的 code 集合差集为空、从而把 q14 答案的销毁判成「没引入新问题」而静默放行"
+        );
+        // 而指纹集合必须不同（q14 与 q15 是不同目标）。
+        assert_ne!(
+            blocking_diagnostic_fingerprints(&post),
+            blocking_diagnostic_fingerprints(&pre),
+            "指纹集合必须不同：q14 与 q15 是不同目标"
+        );
+
+        // canonical 不变：q14 答案仍是 golden 原始值 ["B"]，且 q15 仍缺失。
+        assert_eq!(
+            read_answer(&root, &item_id, "q14").pointer("/labels"),
+            Some(&json!(["B"])),
+            "被拒后 q14 答案不得被销毁"
+        );
+        assert!(
+            read_answer(&root, &item_id, "q15").is_null(),
+            "被拒后 q15 答案仍应缺失（与种子状态一致）"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
