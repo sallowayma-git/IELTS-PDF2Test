@@ -9,6 +9,9 @@ __pycache__/
 .env.*
 tmp/
 
+# Local scratch dumps from agent sessions (kept on disk, not in the repo)
+.scratch/
+
 # Local test PDFs should not be uploaded
 Files/*.pdf
 
