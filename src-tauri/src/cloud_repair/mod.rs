@@ -74,6 +74,12 @@ pub(crate) struct RepairRunReport {
     pub remaining_tasks: Vec<Value>,
     pub finish_note: Option<String>,
     pub last_error: Option<String>,
+    /// 本次修复 run 的标识。
+    ///
+    /// 必须随摘要一起给前端：撤销入口要用它调用 Rust 批次撤销
+    /// （`cloud_repair::tools::undo_repair`）。让前端自己拼 `cloud-repair:{batchId}`
+    /// 等于把后端内部命名规则复制到前端——命名一变，撤销就静默失效。
+    pub repair_run_id: String,
 }
 
 impl RepairRunReport {
@@ -88,6 +94,7 @@ impl RepairRunReport {
             "finishNote": self.finish_note,
             "lastError": self.last_error,
             "undoAvailable": undo_available,
+            "repairRunId": self.repair_run_id,
         })
     }
 }
@@ -948,6 +955,7 @@ where
         remaining_tasks: remaining,
         finish_note,
         last_error,
+        repair_run_id: request.repair_run_id.to_string(),
     })
 }
 

@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyRecognitionDecisions,
+  canUndoRepair,
+  describeRepairStatus,
   describeVerificationStatus,
   getRecognitionDecision,
+  undoCloudRepair,
   type DecisionBatchOutcomeV1,
   type RecognitionDecisionItemV1,
   type RecognitionDecisionViewV1
@@ -123,6 +126,9 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
   // 操作回执（「已采用 N 项」等）是用户刚做完动作的反馈，不能因为面板「安静」就吞掉。
   const collapsed = quiet && !notice;
 
+  // 整轮修复撤销的忙碌键。与逐项的 groupKey 共用一个状态位，避免两个撤销并发写同一份稿。
+  const REPAIR_UNDO_KEY = "cloud-repair-undo";
+
   async function submit(groupKey: string, items: RecognitionDecisionItemV1[], action: "accept" | "reject" | "undo") {
     if (!view || busyGroup) return;
     const key = `${view.batchId}:${groupKey}:${action}`;
@@ -180,6 +186,34 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
     return submit(item.decisionId, [item], "undo");
   }
 
+  /**
+   * 撤销**整轮**云端自动修复。
+   *
+   * 与上面的逐项撤销是两件事，不能混用：
+   *  - 逐项撤销走 `apply_recognition_decisions` 的 `undo[]`，回滚的是**一条建议**；
+   *  - 整轮撤销走 `undo_cloud_repair`（Rust 批次撤销），回滚的是**这一轮修复写下的
+   *    所有修改**，依据是 journal 里的 `repairRunId`。
+   *
+   * 绝不能拿前端本地 undoStack 来做这件事：本地栈只覆盖用户自己的编辑，用它回滚
+   * 云端写入会与批次 journal 错位，出现「界面上值回去了、后端仍认为修改在位」。
+   */
+  async function undoRepair() {
+    if (!view?.repair?.repairRunId || busyGroup) return;
+    setBusyGroup(REPAIR_UNDO_KEY);
+    setNotice(undefined);
+    try {
+      await undoCloudRepair(view.itemId, view.repair.repairRunId, view.currentEditVersion);
+      setNotice("已撤销本轮自动修复，权威稿已改回修复前的值。");
+      // 撤销改了权威稿、递增版本 → 外层必须重新加载。
+      onApplied();
+      await load();
+    } catch (error) {
+      setNotice(toUserFacingError(error, "撤销没有成功，请重试。").userMessage);
+    } finally {
+      setBusyGroup(undefined);
+    }
+  }
+
   return (
     <aside
       className="workspace-recognition"
@@ -221,6 +255,25 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
             })}
             {collapsed && !hasAnyChainRun(view) ? ` ${emptyStateMessage(view)}` : null}
           </p>
+
+          {/* 云端自主修复这一行**只在真的有修复记录时**出现：没有记录（旧批次、无云导入）
+              不是「已修复」，但也不值得占一行位置。文案由 `describeRepairStatus` 决定，
+              它保证「没有记录」不会被说成完成、`completed` 也会把剩余条数一并说出来。 */}
+          {view.repair ? (
+            <p className="workspace-recognition-repair" data-testid="workspace-recognition-repair">
+              <span>{describeRepairStatus(view.repair)}</span>
+              {canUndoRepair(view.repair) ? (
+                <button
+                  className="ghost small"
+                  disabled={busyGroup === REPAIR_UNDO_KEY}
+                  onClick={() => void undoRepair()}
+                  data-testid="workspace-recognition-repair-undo"
+                >
+                  撤销本次自动修复
+                </button>
+              ) : null}
+            </p>
+          ) : null}
 
           {quiet ? null : (
             <ul className="workspace-recognition-summary" data-testid="workspace-recognition-summary">

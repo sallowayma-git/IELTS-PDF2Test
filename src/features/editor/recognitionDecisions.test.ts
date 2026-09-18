@@ -53,7 +53,10 @@ function view(items: RecognitionDecisionItemV1[], partial: Partial<RecognitionDe
     adjudicationStatus: "succeeded",
     summary: { agreed: 0, autoFixed: 0, needsReview: 0, unverifiable: 0 },
     items,
-    ...partial
+    ...partial,
+    // `Partial` 会让 `repair` 变成 `undefined`，而视图契约要求「没有修复记录」是显式的
+    // `null`。补一道归一，免得测试用 `undefined` 表达这个意思。
+    repair: partial.repair ?? null
   };
 }
 

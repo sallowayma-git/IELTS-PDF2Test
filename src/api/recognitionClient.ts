@@ -66,6 +66,61 @@ export interface RecognitionDecisionSummaryV1 {
   unverifiable: number;
 }
 
+/**
+ * 云端自主修复的状态。取值与后端 `cloud_repair::REPAIR_STATUS_*` 一一对应
+ * （`src-tauri/src/cloud_repair/mod.rs`）。
+ *
+ * `running` 目前只在批次行被中途更新时才会出现，先按契约保留：它代表「云端正在
+ * 自动修复」，此时**不能**把中间差异计入用户待办——那些差异正是它正在处理的东西。
+ */
+export type CloudRepairStatusV1 =
+  | "running"
+  | "completed"
+  | "needs_attention"
+  | "cancelled"
+  | "budget_exhausted"
+  | "unavailable";
+
+/** 修复后仍需要用户处理的单项（后端 `RepairRunReport::remaining_tasks`）。 */
+export interface CloudRepairTaskV1 {
+  userTaskId: string;
+  targetIds?: string[];
+  questionNumbers?: number[];
+  message?: string | null;
+  action?: string;
+  blocking?: boolean;
+}
+
+/**
+ * 云端自主修复摘要（后端 `recognition_batches_v1.repair_json`）。
+ *
+ * **`null` 表示「没有修复记录」，不是「已修复」**：旧批次、或本次无云导入都没有它。
+ * 界面必须把它说成「未进行云端修复」，绝不能显示成完成。
+ *
+ * 「是否真的完成」也不由这里的 `status` 单独决定：`completed` 只说明修复循环自己认为
+ * 收工了，最终判据始终是**当前稿重算出的剩余问题**（`items` / 剩余任务）。摘要的作用是
+ * 让用户看见「跑到哪一步、还剩什么、能不能撤销」。
+ */
+export interface CloudRepairSummaryV1 {
+  status: CloudRepairStatusV1 | string;
+  /** 修复循环结束时的 canonical 编辑版本（诊断用，不参与完成判定）。 */
+  editVersion?: number;
+  /** 本次自动写入并被接受的修改数（0 表示没改到东西）。 */
+  appliedCount?: number;
+  /** 模型回合数。 */
+  rounds?: number;
+  /** 修复后仍需要用户处理的问题（后端重算，不是模型自报清单）。 */
+  remainingTasks?: CloudRepairTaskV1[];
+  finishNote?: string | null;
+  lastError?: string | null;
+  /** 是否存在可撤销的本轮自动修改（`appliedCount > 0`）。 */
+  undoAvailable?: boolean;
+  /** 撤销入口要用的 run 标识（`undoCloudRepair` 的原样入参）。 */
+  repairRunId?: string | null;
+  /** 摘要损坏时的降级标记（后端 `reasonCode=repair_json_corrupt`）。 */
+  reasonCode?: string | null;
+}
+
 export interface RecognitionDecisionViewV1 {
   schemaVersion: string;
   itemId: string;
@@ -99,6 +154,8 @@ export interface RecognitionDecisionViewV1 {
   adjudicationReasonCode?: string | null;
   summary: RecognitionDecisionSummaryV1;
   items: RecognitionDecisionItemV1[];
+  /** 云端自主修复摘要。`null` = 没有修复记录（旧批次 / 无云导入），不是「已修复」。 */
+  repair: CloudRepairSummaryV1 | null;
 }
 
 /**
@@ -135,6 +192,11 @@ export interface RecognitionDecisionRawV1 {
   /** 实现形状：需要用户处理的项 / 已自动应用的项。 */
   actionable?: RecognitionDecisionItemV1[];
   autoApplied?: RecognitionDecisionItemV1[];
+  /**
+   * 云端自主修复摘要。**旧批次没有这个字段**，缺失时归一为 `null`（= 没有修复记录），
+   * 不能当成完成。
+   */
+  repair?: CloudRepairSummaryV1 | null;
 }
 
 const CHAIN_STATE_TO_STATUS: Record<string, string> = {
@@ -204,8 +266,15 @@ export function normalizeDecisionView(raw: RecognitionDecisionRawV1): Recognitio
       needsReview: raw.summary?.needsReview ?? (Array.isArray(raw.actionable) ? raw.actionable.length : 0),
       unverifiable: raw.summary?.unverifiable ?? 0
     },
-    items
+    items,
+    // 缺失 / 非对象一律归一为 `null`（「没有修复记录」）。绝不在缺失时编一个
+    // `{status:"completed"}`——那会把一次无云导入显示成「云端已修好」。
+    repair: isRepairSummary(raw.repair) ? raw.repair : null
   };
+}
+
+function isRepairSummary(value: unknown): value is CloudRepairSummaryV1 {
+  return typeof value === "object" && value !== null && typeof (value as { status?: unknown }).status === "string";
 }
 
 /**
@@ -281,6 +350,59 @@ export interface DecisionBatchOutcomeV1 {
 export async function getRecognitionDecision(itemId: string): Promise<RecognitionDecisionViewV1> {
   const raw = await command<RecognitionDecisionRawV1>("get_recognition_decision", { itemId });
   return normalizeDecisionView(raw);
+}
+
+/**
+ * 修复状态行：**只有**用户需要知道的这几句。
+ *
+ * 三条纪律：
+ *  1. `null`（没有修复记录）说成「未进行云端修复」，**绝不**说成完成——旧批次、无云导入
+ *     都会走到这里。
+ *  2. `completed` 只说「修复循环收工了」，不等于「整份题稿没问题」：`remainingTasks`
+ *     非空时照样要把剩余条数说出来，否则用户会以为没别的事了。
+ *  3. `budget_exhausted` / `unavailable` 是**降级**，不是失败：编辑照常，只是云端没帮上。
+ */
+export function describeRepairStatus(repair: CloudRepairSummaryV1 | null | undefined): string {
+  if (!repair) return "未进行云端修复";
+  const remaining = repair.remainingTasks?.length ?? 0;
+  switch (repair.status) {
+    case "running":
+      return "云端正在自动修复…";
+    case "completed":
+      // 修复循环收工但仍有剩余：把剩余说出来，不能只说「已修复」。
+      return remaining > 0 ? `云端已自动修复，还有 ${remaining} 处待处理` : "云端已自动修复";
+    case "needs_attention":
+      return remaining > 0 ? `云端已自动修复，还有 ${remaining} 处需要你确认` : "云端已自动修复，还有内容需要你确认";
+    case "budget_exhausted":
+      return "云端修复达到本轮上限，剩余问题需要你处理";
+    case "cancelled":
+      return "云端修复已取消";
+    case "unavailable":
+      return "云端修复未能完成，不影响继续编辑";
+    default:
+      return "云端修复状态未知";
+  }
+}
+
+/** 本轮自动修复是否可以撤销：只有真的写入过修改才有可撤销的东西。 */
+export function canUndoRepair(repair: CloudRepairSummaryV1 | null | undefined): boolean {
+  return Boolean(repair?.undoAvailable && repair.repairRunId);
+}
+
+/**
+ * 撤销整轮云端自动修复。
+ *
+ * 走 Rust 批次撤销（后端 `cloud_repair::tools::undo_repair`），**不是**前端本地
+ * undoStack：本地栈只覆盖用户自己的编辑，用它回滚云端写入会与批次 journal 错位。
+ *
+ * `repairRunId` 必须原样取自 `view.repair.repairRunId`——不要自己拼字符串。
+ */
+export async function undoCloudRepair(
+  itemId: string,
+  repairRunId: string,
+  baseVersion: number
+): Promise<unknown> {
+  return command("undo_cloud_repair", { itemId, repairRunId, baseVersion });
 }
 
 /**

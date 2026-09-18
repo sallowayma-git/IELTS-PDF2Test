@@ -965,6 +965,29 @@ async fn list_library_items(include_deleted: Option<bool>, app: AppHandle) -> Co
 
 // ── 识别闭环：统一建议读取与人工决策（reconcile 的薄壳）──────────────
 
+/// 撤销整轮云端自动修复。
+///
+/// 走 Rust 批次撤销（`cloud_repair::tools::undo_repair`）：按 `repairRunId` 找到本次
+/// 自动修复写下的 journal 记录并回滚权威稿，**前端不得挪用本地 undoStack**——本地栈
+/// 只覆盖用户自己的编辑，回滚一次云端修复会与它错位。
+///
+/// `repairRunId` 由 `get_recognition_decision` 返回的 `repair.repairRunId` 提供，
+/// 不让前端自己拼字符串（那会把后端命名规则复制到前端）。
+#[tauri::command]
+async fn undo_cloud_repair(
+    item_id: String,
+    repair_run_id: String,
+    base_version: i64,
+    app: AppHandle,
+) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        cloud_repair::tools::undo_repair(&root, &item_id, &repair_run_id, base_version)
+    })
+    .await
+    .map_err(|error| format!("cloud_repair_undo_join:{error}"))?
+}
+
 /// 读取条目最新批次的识别建议（各阶段状态 + 待处理项 + 已自动修正记录）。
 #[tauri::command]
 async fn get_recognition_decision(item_id: String, app: AppHandle) -> CommandResult<Value> {
@@ -1589,6 +1612,7 @@ pub fn run() {
             list_library_items,
             get_recognition_decision,
             apply_recognition_decisions,
+            undo_cloud_repair,
             import_files,
             publish_items,
             open_source_file,

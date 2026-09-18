@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { describeVerificationStatus, normalizeDecisionView } from "./recognitionClient";
+import {
+  canUndoRepair,
+  describeRepairStatus,
+  describeVerificationStatus,
+  normalizeDecisionView
+} from "./recognitionClient";
 
 // `command` 必须被 mock 掉，否则单测会去碰真实 Tauri IPC。
 // 用 vi.hoisted 是因为 vi.mock 的工厂会被提升到 import 之前。
@@ -321,5 +326,88 @@ describe("applyRecognitionDecisions — IPC 参数包装（真实 E2E 才发现�
     expect(result.stale).toEqual(["d9"]);
     expect(result.failed.map((f) => f.decisionId)).toEqual(["d8"]);
     expect(result.failed[0].code).toBe("APPLY_REJECTED");
+  });
+});
+
+// ── 云端自主修复摘要（`repair`）────────────────────────────────────────────
+//
+// 这一组锁的是「没有修复记录 ≠ 已修复」这条底线。旧批次与无云导入都没有这个字段，
+// 一旦被归一成 `{status:"completed"}`，界面会把一次没跑过云端的导入显示成「已修好」。
+
+describe("repair — 没有记录绝不被说成完成", () => {
+  it("缺失 / 非法形状一律归一成 null（= 没有修复记录）", () => {
+    expect(normalizeDecisionView({ itemId: "item-1" }).repair).toBeNull();
+    expect(normalizeDecisionView({ itemId: "item-1", repair: null }).repair).toBeNull();
+    // 形状不对（没有 status）也算「没有记录」，不能当成一个半成品状态去渲染。
+    expect(
+      normalizeDecisionView({ itemId: "item-1", repair: { appliedCount: 3 } as never }).repair
+    ).toBeNull();
+  });
+
+  it("有记录时原样带出，包括撤销要用的 repairRunId", () => {
+    const view = normalizeDecisionView({
+      itemId: "item-1",
+      repair: {
+        status: "needs_attention",
+        appliedCount: 2,
+        undoAvailable: true,
+        repairRunId: "cloud-repair:batch-1",
+        remainingTasks: [{ userTaskId: "u1", blocking: true }]
+      }
+    });
+    expect(view.repair?.status).toBe("needs_attention");
+    expect(view.repair?.repairRunId).toBe("cloud-repair:batch-1");
+  });
+
+  it("`null` 说成「未进行云端修复」，绝不说成完成", () => {
+    expect(describeRepairStatus(null)).toBe("未进行云端修复");
+    expect(describeRepairStatus(undefined)).toBe("未进行云端修复");
+  });
+
+  it("completed 也会把剩余条数说出来——收工不等于整份稿没问题", () => {
+    expect(describeRepairStatus({ status: "completed" })).toBe("云端已自动修复");
+    expect(
+      describeRepairStatus({
+        status: "completed",
+        remainingTasks: [{ userTaskId: "u1" }, { userTaskId: "u2" }]
+      })
+    ).toBe("云端已自动修复，还有 2 处待处理");
+    expect(
+      describeRepairStatus({ status: "needs_attention", remainingTasks: [{ userTaskId: "u1" }] })
+    ).toBe("云端已自动修复，还有 1 处需要你确认");
+  });
+
+  it("降级状态是「不影响继续编辑」，不是失败", () => {
+    expect(describeRepairStatus({ status: "budget_exhausted" })).toBe(
+      "云端修复达到本轮上限，剩余问题需要你处理"
+    );
+    expect(describeRepairStatus({ status: "unavailable" })).toBe(
+      "云端修复未能完成，不影响继续编辑"
+    );
+    expect(describeRepairStatus({ status: "cancelled" })).toBe("云端修复已取消");
+    // 未知状态不能猜成完成。
+    expect(describeRepairStatus({ status: "something_new" })).toBe("云端修复状态未知");
+  });
+
+  it("撤销入口只在「真的写过修改且有 runId」时可用", () => {
+    expect(canUndoRepair(null)).toBe(false);
+    expect(canUndoRepair({ status: "completed", appliedCount: 0, undoAvailable: false })).toBe(false);
+    // 有可撤销标记但没有 runId：撤销无从下手（后端按 runId 定位 journal），不能放行。
+    expect(canUndoRepair({ status: "completed", undoAvailable: true })).toBe(false);
+    expect(
+      canUndoRepair({ status: "completed", undoAvailable: true, repairRunId: "cloud-repair:b1" })
+    ).toBe(true);
+  });
+
+  it("整轮撤销走 undo_cloud_repair，且原样传 runId（不让前端拼字符串）", async () => {
+    commandMock.mockReset();
+    commandMock.mockResolvedValue({ status: "undone" });
+    const { undoCloudRepair } = await import("./recognitionClient");
+    await undoCloudRepair("item-1", "cloud-repair:batch-1", 7);
+    expect(commandMock).toHaveBeenCalledWith("undo_cloud_repair", {
+      itemId: "item-1",
+      repairRunId: "cloud-repair:batch-1",
+      baseVersion: 7
+    });
   });
 });
