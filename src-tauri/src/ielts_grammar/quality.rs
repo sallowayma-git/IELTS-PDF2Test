@@ -3720,10 +3720,18 @@ fn issue_id_slug(fact: &str) -> String {
 /// §6.8 / §6.11: the local recognition graph's hard closures, carried on the
 /// document as `recognitionBlockers`.
 ///
-/// `build_authoring_v2_shadow` derives the graph from the physical facts and records
-/// its verdict here, so the main chain consumes the recognition result instead of
-/// leaving it as a write-only artifact. This function decides whether that verdict
-/// is allowed to block publication; see `recognition_blockers_gate_enabled`.
+/// **逐目标重新判断，不重发冻结裁决。** `recognitionBlockers` 是导入那一刻、本地识别
+/// 针对冻结原文给出的判决。云端修复随后可能已经真的补齐了那个题组的题面 / 选项库 /
+/// 缺答——继续把旧裁决原样当阻塞重发，会让已经修好的问题永远挂在用户待办里（用户被
+/// 叫去做一件系统已经做完的事），「修复完成」也就永远达不成。
+///
+/// 但也不能反过来一概清空：来源覆盖类阻塞（显著源区域未被解释、图区需 OCR、视觉资产
+/// 未能物化）说的是**原文本身**没被解释干净——改稿子改不掉它，只有重新看原文才能确认。
+/// 这类一律保留。
+///
+/// 判据严格单向：只有能**仅凭当前 canonical 证明条件已满足**时才移除该条；证明不了就
+/// 保留。未知 code 一律保留（「不认识」不等于「已修好」）。模型也不能靠 `resolveIssue`
+/// 抹掉它们——`cloud_repair::tools::MODEL_ALLOWED_OPS` 有意不含该命令。
 fn validate_recognition_blockers(
     authoring: &Value,
     gate_enabled: bool,
@@ -3733,26 +3741,348 @@ fn validate_recognition_blockers(
     if !gate_enabled {
         return;
     }
-    let Some(codes) = authoring
+    for (code, target) in recognition_blocker_entries(authoring) {
+        if blocker_condition_satisfied_on_current_draft(authoring, &code, &target) {
+            continue;
+        }
+        let (target_type, target_id) = blocker_issue_target(authoring, &target);
+        // `details.blockerCode` 让评审面板能区分「识别阻塞」与「质量校验给出的同名事实」：
+        // 同一个 code（例如 PROMPT_EMPTY）可能既由识别图给出、又由本文件的逐组校验给出，
+        // 两者的事实与处置不同，合并待办时必须分得开。
+        let mut blocker_issue = issue(
+            &code,
+            "blocking",
+            &format!("本地识别未能在原文中确认「{target}」的完整题面结构，发布前需人工核对。"),
+            target_type,
+            &target_id,
+            Vec::new(),
+            vec!["assign_role", "edit_text"],
+        );
+        blocker_issue["details"] = json!({
+            "blockerCode": code,
+            "blockerTarget": target,
+        });
+        push_issue(issues, hard_failures, blocker_issue);
+    }
+}
+
+/// 把 `recognitionBlockers` / `recognitionBlockerTargets` 摊平成 `(code, target)`。
+///
+/// 优先用带目标的版本：它能把阻塞指到具体题组 / 题号上，用户才知道该去核哪一处。
+/// 没有配目标的 code **不能因此被丢掉**——挂到 `document` 上，与旧行为一致（旧实现把
+/// 所有 code 都当文档级阻塞）。
+fn recognition_blocker_entries(authoring: &Value) -> Vec<(String, String)> {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    if let Some(targets) = authoring
+        .get("recognitionBlockerTargets")
+        .and_then(Value::as_array)
+    {
+        for item in targets {
+            let (Some(code), Some(target)) = (
+                item.get("code").and_then(Value::as_str),
+                item.get("target").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if seen.insert((code.to_string(), target.to_string())) {
+                entries.push((code.to_string(), target.to_string()));
+            }
+        }
+    }
+    let covered: BTreeSet<String> = entries.iter().map(|(code, _)| code.clone()).collect();
+    if let Some(codes) = authoring
         .get("recognitionBlockers")
         .and_then(Value::as_array)
-    else {
-        return;
+    {
+        for code in codes.iter().filter_map(Value::as_str) {
+            if covered.contains(code) {
+                continue;
+            }
+            if seen.insert((code.to_string(), "document".to_string())) {
+                entries.push((code.to_string(), "document".to_string()));
+            }
+        }
+    }
+    entries
+}
+
+/// blocker 的目标 → 质量报告的 `(targetType, targetId)`。
+///
+/// 能解析成 canonical 里的对象就用真实对象（`slot` / `task`），评审面板才指得到具体
+/// 位置；解析不出来（旧文档没有 `recognitionBlockerTargets`，或目标只存在于物理文档里）
+/// 就退回文档级——**绝不因为指不到位置就把阻塞丢掉**。
+fn blocker_issue_target(authoring: &Value, target: &str) -> (&'static str, String) {
+    if let Some(slot_id) = slot_id_for_blocker_target(authoring, target) {
+        return ("slot", slot_id);
+    }
+    let is_task = authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .is_some_and(|groups| {
+            groups
+                .iter()
+                .any(|group| group.get("taskId").and_then(Value::as_str) == Some(target))
+        });
+    if is_task {
+        return ("task", target.to_string());
+    }
+    ("document", "recognition".to_string())
+}
+
+/// 只有能**仅凭当前 canonical 证明**该 blocker 的内容条件已满足时才返回 `true`。
+///
+/// 来源覆盖类（`SIGNIFICANT_REGION_UNASSIGNED`、`DIAGRAM_QUESTION_REGION_OCR_REQUIRED`、
+/// `VISUAL_FALLBACK_ASSET_NOT_MATERIALIZED`…）与未知 code 一律落到 `_ => false`：它们的
+/// 判据不在稿子里，只能靠重新看原文确认，不能因为「稿子看起来没问题」就放行。
+fn blocker_condition_satisfied_on_current_draft(
+    authoring: &Value,
+    code: &str,
+    target: &str,
+) -> bool {
+    match code {
+        // 题面为空：目标题组 / 槽位现在有了非空题面。
+        PROMPT_EMPTY => blocker_prompt_present(authoring, target),
+        // 声明的题号没有对应题块：现在每个声明题号都能在 `answerSlots` 里找到。
+        crate::recognition::direct_canonical::QUESTION_BLOCK_MISSING => {
+            blocker_declared_questions_all_have_slots(authoring, target)
+        }
+        // 多选题作答基数没能解析：目标题组现在既有选项库、又有明确的作答基数。
+        crate::recognition::direct_canonical::MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED => {
+            blocker_option_bank_and_cardinality_resolved(authoring, target)
+        }
+        // 缺答：目标槽位现在有答案（`unresolved` 不算）。
+        ANSWER_KEY_MISSING_SLOT => blocker_target_slots_all_answered(authoring, target),
+        _ => false,
+    }
+}
+
+fn blocker_prompt_present(authoring: &Value, target: &str) -> bool {
+    if let Some(group) = task_group_by_blocker_target(authoring, target) {
+        let mut text = Vec::new();
+        for key in ["instructions", "stimulus"] {
+            if let Some(nodes) = group.get(key).and_then(Value::as_array) {
+                collect_instruction_node_text(nodes, &mut text);
+            }
+        }
+        for response_group in group
+            .get("responseGroups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(nodes) = response_group.get("prompt").and_then(Value::as_array) {
+                collect_instruction_node_text(nodes, &mut text);
+            }
+        }
+        return !text.is_empty();
+    }
+    // 槽位题面 = 它所在宿主节点的文本。
+    let Some(slot) = slot_by_blocker_target(authoring, target) else {
+        return false;
     };
-    for code in codes.iter().filter_map(Value::as_str) {
-        push_issue(
-            issues,
-            hard_failures,
-            issue(
-                code,
-                "blocking",
-                "本地识别未能确认完整题面结构，发布前需人工核对。",
-                "document",
-                "recognition",
-                Vec::new(),
-                vec!["assign_role", "edit_text"],
-            ),
-        );
+    let Some(host_id) = slot.get("hostNodeId").and_then(Value::as_str) else {
+        return false;
+    };
+    node_text_present(authoring, host_id)
+}
+
+fn blocker_declared_questions_all_have_slots(authoring: &Value, target: &str) -> bool {
+    let Some(group) = task_group_by_blocker_target(authoring, target) else {
+        return false;
+    };
+    let declared = declared_question_numbers(group);
+    // 声明本身读不出来 ⇒ 无法证明「题块齐了」，保留阻塞。
+    if declared.is_empty() {
+        return false;
+    }
+    declared
+        .iter()
+        .all(|number| slot_id_for_question_number(authoring, *number).is_some())
+}
+
+fn blocker_option_bank_and_cardinality_resolved(authoring: &Value, target: &str) -> bool {
+    let Some(group) = task_group_by_blocker_target(authoring, target) else {
+        return false;
+    };
+    let has_bank = group
+        .get("optionBank")
+        .and_then(|bank| bank.get("options"))
+        .and_then(Value::as_array)
+        .is_some_and(|options| !options.is_empty());
+    if !has_bank {
+        return false;
+    }
+    group
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|response_group| {
+            response_group
+                .get("cardinality")
+                .and_then(Value::as_object)
+                .is_some_and(|cardinality| {
+                    let exact = cardinality.get("exact").and_then(Value::as_u64);
+                    let min = cardinality.get("min").and_then(Value::as_u64);
+                    let max = cardinality.get("max").and_then(Value::as_u64);
+                    exact.is_some() || (min.is_some() && max.is_some())
+                })
+        })
+}
+
+fn blocker_target_slots_all_answered(authoring: &Value, target: &str) -> bool {
+    let Some(slot_id) = slot_id_for_blocker_target(authoring, target) else {
+        return false;
+    };
+    authoring
+        .get("answerKey")
+        .and_then(Value::as_object)
+        .and_then(|key| key.get(&slot_id))
+        .is_some_and(answer_present)
+}
+
+/// `AnswerValueV2` 是否真的承载了一个答案。`{"kind":"unresolved"}` 与空 labels/values
+/// 都不算——否则「把答案标成未解」就能冒充修复。
+fn answer_present(answer: &Value) -> bool {
+    let non_empty = |items: Option<&Vec<Value>>| {
+        items.is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item.as_str().is_some_and(|item| !item.trim().is_empty()))
+        })
+    };
+    match answer.get("kind").and_then(Value::as_str) {
+        Some("option") => non_empty(answer.get("labels").and_then(Value::as_array)),
+        Some("text") => non_empty(answer.get("values").and_then(Value::as_array)),
+        _ => false,
+    }
+}
+
+/// 题号 → 题组。`target` 既可以是 `taskId`，也可以是 `q{number}`（题号所属的题组）。
+fn task_group_by_blocker_target<'a>(authoring: &'a Value, target: &str) -> Option<&'a Value> {
+    let groups = authoring.get("taskGroups").and_then(Value::as_array)?;
+    if let Some(group) = groups
+        .iter()
+        .find(|group| group.get("taskId").and_then(Value::as_str) == Some(target))
+    {
+        return Some(group);
+    }
+    let number: u32 = target.strip_prefix('q')?.parse().ok()?;
+    groups
+        .iter()
+        .find(|group| group_owns_question_number(authoring, group, number))
+}
+
+fn group_owns_question_number(authoring: &Value, group: &Value, number: u32) -> bool {
+    group
+        .get("responseGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|response_group| {
+            response_group
+                .get("slotIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter_map(Value::as_str)
+        .any(|slot_id| slot_question_number(authoring, slot_id) == Some(number))
+}
+
+fn slot_by_blocker_target<'a>(authoring: &'a Value, target: &str) -> Option<&'a Value> {
+    let slot_id = slot_id_for_blocker_target(authoring, target)?;
+    authoring
+        .get("answerSlots")
+        .and_then(Value::as_object)?
+        .get(&slot_id)
+}
+
+/// `q{number}` → canonical 里的真实 `slotId`。非 `q{n}` 形式、或没有对应槽位 ⇒ `None`。
+fn slot_id_for_blocker_target(authoring: &Value, target: &str) -> Option<String> {
+    let number: u32 = target.strip_prefix('q')?.parse().ok()?;
+    slot_id_for_question_number(authoring, number)
+}
+
+fn slot_id_for_question_number(authoring: &Value, number: u32) -> Option<String> {
+    authoring
+        .get("answerSlots")
+        .and_then(Value::as_object)?
+        .iter()
+        .find(|(_, slot)| {
+            slot.get("questionNumber").and_then(Value::as_u64) == Some(number as u64)
+        })
+        .map(|(slot_id, _)| slot_id.clone())
+}
+
+fn slot_question_number(authoring: &Value, slot_id: &str) -> Option<u32> {
+    authoring
+        .get("answerSlots")
+        .and_then(Value::as_object)?
+        .get(slot_id)?
+        .get("questionNumber")
+        .and_then(Value::as_u64)
+        .map(|number| number as u32)
+}
+
+/// 题组声明的题号：优先 `instructionSignature.expectedQuestionNumbers`，退回
+/// `displayRange`。两者都读不出来 ⇒ 空（调用方据此保留阻塞）。
+fn declared_question_numbers(group: &Value) -> Vec<u32> {
+    if let Some(numbers) = group
+        .get("instructionSignature")
+        .and_then(|signature| signature.get("expectedQuestionNumbers"))
+        .and_then(Value::as_array)
+    {
+        let numbers: Vec<u32> = numbers
+            .iter()
+            .filter_map(Value::as_u64)
+            .map(|number| number as u32)
+            .collect();
+        if !numbers.is_empty() {
+            return numbers;
+        }
+    }
+    let Some(range) = group
+        .get("displayRange")
+        .and_then(|range| serde_json::from_value::<QuestionNumberExpressionV2>(range.clone()).ok())
+    else {
+        return Vec::new();
+    };
+    match range {
+        QuestionNumberExpressionV2::Range { start, end } => (start..=end).collect(),
+        QuestionNumberExpressionV2::Set { values } => values,
+        QuestionNumberExpressionV2::Mixed { values } => values
+            .into_iter()
+            .flat_map(|value| match value {
+                crate::schema::ielts_authoring_v2::QuestionNumberValueV2::Number(number) => {
+                    vec![number]
+                }
+                crate::schema::ielts_authoring_v2::QuestionNumberValueV2::Range { start, end } => {
+                    (start..=end).collect()
+                }
+            })
+            .collect(),
+    }
+}
+
+/// 整份稿里按内容节点 `id` 找节点，返回它的文本是否非空。
+///
+/// 只认 `id` 键：题组用 `taskId`、响应组用 `responseGroupId`、槽位用 `slotId`、资产用
+/// `assetId`，都不会被误命中。
+fn node_text_present(value: &Value, node_id: &str) -> bool {
+    match value {
+        Value::Object(object) => {
+            if object.get("id").and_then(Value::as_str) == Some(node_id) {
+                return object
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| !text.trim().is_empty());
+            }
+            object.values().any(|child| node_text_present(child, node_id))
+        }
+        Value::Array(items) => items.iter().any(|item| node_text_present(item, node_id)),
+        _ => false,
     }
 }
 
@@ -3845,6 +4175,11 @@ fn round(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // 这两个码定义在识别侧（`direct_canonical`），不在 `issue_codes` 词表里；测试要按
+    // 真实码构造阻塞，不能就地复制字面量（否则词表改名时测试会静默失配）。
+    use crate::recognition::direct_canonical::{
+        MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED, QUESTION_BLOCK_MISSING,
+    };
 
     fn early_approaches() -> Value {
         serde_json::from_str(include_str!(
@@ -4700,6 +5035,201 @@ mod tests {
         silent.as_object_mut().unwrap().remove("recognitionBlockers");
         let report = evaluate_quality_with_gate(&silent, Some(&physical), true);
         assert_eq!(report["state"], "ready", "{report:#}");
+    }
+
+    /// 找一条**识别阻塞**（而不是同名的质量事实）。
+    ///
+    /// 必须按 `details.blockerCode` 判：同一个 code（如 `PROMPT_EMPTY`）既可能由识别图
+    /// 给出、又可能由本文件的逐组校验给出，只看 code + targetId 会把后者误当成前者，
+    /// 让测试在实现被删掉之后仍然通过。
+    fn blocker_issue_for(report: &Value, code: &str, target_id: &str) -> bool {
+        report
+            .get("issues")
+            .and_then(Value::as_array)
+            .is_some_and(|issues| {
+                issues.iter().any(|issue| {
+                    issue
+                        .pointer("/details/blockerCode")
+                        .and_then(Value::as_str)
+                        == Some(code)
+                        && issue.get("targetId").and_then(Value::as_str) == Some(target_id)
+                })
+            })
+    }
+
+    /// 目标真的被修好之后，旧阻塞必须消失——否则「云端自主修复」永远收敛不了，
+    /// 用户会被叫去做一件系统已经做完的事。
+    ///
+    /// 两个方向都要钉：修好 ⇒ 移除；再次弄坏 ⇒ 阻塞回来（证明移除是因为条件真的满足，
+    /// 而不是被无条件清空）。
+    #[test]
+    fn recognition_blocker_is_dropped_once_the_repaired_target_is_really_fixed() {
+        let mut authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+        let task_id = authoring["taskGroups"][0]["taskId"]
+            .as_str()
+            .expect("fixture group has a taskId")
+            .to_string();
+        authoring["recognitionBlockers"] = json!([PROMPT_EMPTY]);
+        authoring["recognitionBlockerTargets"] =
+            json!([{ "code": PROMPT_EMPTY, "target": task_id }]);
+
+        // 题组现在有题面 ⇒ 条件已满足 ⇒ 不再作为识别阻塞，且指向真实题组。
+        let fixed = evaluate_quality_with_gate(&authoring, Some(&physical), true);
+        assert!(
+            !blocker_issue_for(&fixed, PROMPT_EMPTY, &task_id),
+            "已修好的目标不该继续挂识别阻塞: {fixed:#}"
+        );
+
+        // 把题面清空 ⇒ 条件重新成立 ⇒ 阻塞回来。
+        let mut broken = authoring.clone();
+        broken["taskGroups"][0]["instructions"] = json!([]);
+        broken["taskGroups"][0]["responseGroups"][0]["prompt"] = json!([]);
+        let report = evaluate_quality_with_gate(&broken, Some(&physical), true);
+        assert!(
+            blocker_issue_for(&report, PROMPT_EMPTY, &task_id),
+            "题面为空时阻塞必须回来: {report:#}"
+        );
+        assert!(
+            report["hardFailures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|code| code.as_str() == Some(PROMPT_EMPTY)),
+            "{report:#}"
+        );
+    }
+
+    /// 多选题作答基数：题组既有选项库、又有明确基数 ⇒ 条件已满足。
+    #[test]
+    fn recognition_blocker_for_multiple_choice_cardinality_is_dropped_when_resolved() {
+        let mut authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+        let task_id = authoring["taskGroups"][0]["taskId"]
+            .as_str()
+            .expect("fixture group has a taskId")
+            .to_string();
+        authoring["recognitionBlockers"] = json!([MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED]);
+        authoring["recognitionBlockerTargets"] =
+            json!([{ "code": MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED, "target": task_id }]);
+
+        let fixed = evaluate_quality_with_gate(&authoring, Some(&physical), true);
+        assert!(
+            !blocker_issue_for(&fixed, MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED, &task_id),
+            "基数已解析后不该继续挂阻塞: {fixed:#}"
+        );
+
+        // 基数被清掉 ⇒ 条件重新成立。
+        let mut broken = authoring.clone();
+        broken["taskGroups"][0]["responseGroups"][0]["cardinality"] = json!({});
+        let report = evaluate_quality_with_gate(&broken, Some(&physical), true);
+        assert!(
+            blocker_issue_for(&report, MULTIPLE_CHOICE_CARDINALITY_UNRESOLVED, &task_id),
+            "基数缺失时必须保留阻塞: {report:#}"
+        );
+    }
+
+    /// 来源覆盖类与未知 code **不能**因为「稿子看起来没问题」被放行。
+    ///
+    /// 这类阻塞说的是原文没被解释干净——改稿子改不掉它，只有重新看原文才能确认。
+    /// 未知 code 同理：不认识 ≠ 已修好。
+    #[test]
+    fn recognition_blocker_keeps_source_coverage_and_unknown_codes() {
+        let mut authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+        authoring["recognitionBlockers"] = json!([SIGNIFICANT_REGION_UNASSIGNED, "SOME_NEW_BLOCKER"]);
+
+        let report = evaluate_quality_with_gate(&authoring, Some(&physical), true);
+        assert!(
+            blocker_issue_for(&report, SIGNIFICANT_REGION_UNASSIGNED, "recognition"),
+            "来源覆盖阻塞必须保留: {report:#}"
+        );
+        assert!(
+            blocker_issue_for(&report, "SOME_NEW_BLOCKER", "recognition"),
+            "未知 code 必须保留（不认识 ≠ 已修好）: {report:#}"
+        );
+    }
+
+    /// 目标解析不出来时退回文档级：绝不因为「指不到具体位置」就把阻塞丢掉。
+    ///
+    /// 同时锁住旧批次（没有 `recognitionBlockerTargets`）的兼容行为——旧行为就是
+    /// 把每个 code 都当文档级阻塞报出来。
+    #[test]
+    fn recognition_blocker_falls_back_to_document_level_when_target_is_unresolvable() {
+        let mut authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+        authoring["recognitionBlockers"] = json!([QUESTION_BLOCK_MISSING]);
+        authoring["recognitionBlockerTargets"] =
+            json!([{ "code": QUESTION_BLOCK_MISSING, "target": "question-block-1" }]);
+
+        let report = evaluate_quality_with_gate(&authoring, Some(&physical), true);
+        assert!(
+            blocker_issue_for(&report, QUESTION_BLOCK_MISSING, "recognition"),
+            "指不到 canonical 对象时退回文档级: {report:#}"
+        );
+
+        // 旧批次：完全没有 recognitionBlockerTargets。
+        let mut legacy = early_approaches();
+        legacy["recognitionBlockers"] = json!([QUESTION_BLOCK_MISSING]);
+        let legacy_report = evaluate_quality_with_gate(&legacy, Some(&physical), true);
+        assert!(
+            blocker_issue_for(&legacy_report, QUESTION_BLOCK_MISSING, "recognition"),
+            "旧批次仍须按文档级报出: {legacy_report:#}"
+        );
+    }
+
+    /// 槽位级阻塞：真的补上答案才移除；把答案标成 `unresolved` 不算补上。
+    #[test]
+    fn recognition_blocker_for_a_slot_is_dropped_only_when_a_real_answer_exists() {
+        let mut authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+        authoring["recognitionBlockers"] = json!([ANSWER_KEY_MISSING_SLOT]);
+        authoring["recognitionBlockerTargets"] =
+            json!([{ "code": ANSWER_KEY_MISSING_SLOT, "target": "q14" }]);
+
+        // fixture 里 q14 有真答案 ⇒ 已满足，且目标解析到真实槽位。
+        let fixed = evaluate_quality_with_gate(&authoring, Some(&physical), true);
+        assert!(
+            !blocker_issue_for(&fixed, ANSWER_KEY_MISSING_SLOT, "q14"),
+            "有真答案后不该继续挂缺答阻塞: {fixed:#}"
+        );
+
+        // 标成 `unresolved`：明确未解，阻塞必须保留——否则「把答案改成未解」就能冒充修复。
+        let mut unresolved = authoring.clone();
+        unresolved["answerKey"]["q14"] = json!({ "kind": "unresolved" });
+        let report = evaluate_quality_with_gate(&unresolved, Some(&physical), true);
+        assert!(
+            blocker_issue_for(&report, ANSWER_KEY_MISSING_SLOT, "q14"),
+            "`unresolved` 不算有答案: {report:#}"
+        );
+    }
+
+    /// `q{n}` 目标能解析到题组：声明题号都有槽位 ⇒ 移除；缺一个 ⇒ 保留。
+    #[test]
+    fn recognition_blocker_for_declared_questions_is_dropped_when_slots_exist() {
+        let mut authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+        authoring["recognitionBlockers"] = json!([QUESTION_BLOCK_MISSING]);
+        authoring["recognitionBlockerTargets"] =
+            json!([{ "code": QUESTION_BLOCK_MISSING, "target": "q14" }]);
+
+        let report = evaluate_quality_with_gate(&authoring, Some(&physical), true);
+        assert!(
+            !blocker_issue_for(&report, QUESTION_BLOCK_MISSING, "q14"),
+            "声明题号都有槽位时不该继续挂阻塞: {report:#}"
+        );
+
+        // 删掉一个声明题号对应的槽位 ⇒ 条件重新成立。
+        let mut missing = authoring.clone();
+        missing["answerSlots"]
+            .as_object_mut()
+            .unwrap()
+            .remove("q15");
+        let broken = evaluate_quality_with_gate(&missing, Some(&physical), true);
+        assert!(
+            blocker_issue_for(&broken, QUESTION_BLOCK_MISSING, "q14"),
+            "有声明题号缺槽位时必须保留阻塞: {broken:#}"
+        );
     }
 
     #[test]

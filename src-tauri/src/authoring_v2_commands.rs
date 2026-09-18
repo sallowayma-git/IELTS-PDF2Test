@@ -382,6 +382,76 @@ pub(crate) fn validate_authoring_v2_publish_readiness(
     }))
 }
 
+/// 本批命令里**人明确处理过**的问题目标（`resolveIssue`）。
+///
+/// 用于从「受影响目标」里扣除：人在同一次保存里既改了内容、又亲手确认了某个问题，
+/// 那条确认是他对**当前**内容的判断，不该被他自己的编辑顺手清掉。只有他没确认过的
+/// 目标才按「旧判断已过期」重置。
+///
+/// 在**施加过本批命令之后**的稿件上调用：`resolveIssue` 已把 resolution 写进
+/// `quality.issues[]`，因此按 `issueId` 就能取回它对应的 `targetId`。
+pub(crate) fn explicitly_handled_issue_targets(
+    authoring: &Value,
+    commands: &[Value],
+) -> BTreeSet<String> {
+    let issues = authoring
+        .pointer("/quality/issues")
+        .and_then(Value::as_array);
+    let mut handled = BTreeSet::new();
+    for command in commands {
+        if command.get("op").and_then(Value::as_str) != Some("resolveIssue") {
+            continue;
+        }
+        let Some(issue_id) = command.get("issueId").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(target_id) = issues
+            .into_iter()
+            .flatten()
+            .find(|issue| issue.get("issueId").and_then(Value::as_str) == Some(issue_id))
+            .and_then(|issue| issue.get("targetId"))
+            .and_then(Value::as_str)
+        {
+            handled.insert(target_id.to_string());
+        }
+    }
+    handled
+}
+
+/// 一条 blocking issue 是否**仍未处理**。
+///
+/// 这是发布门禁的唯一判据，三处共用：预检 [`check_publish_preflight`]、实际导出
+/// （`nas_package_v2::publish_items_core` 在读权威稿前先跑预检）、以及云端修复的终检
+/// （`cloud_repair::remaining_tasks` 重算剩余用户任务）。抽出来的理由是这三处曾经各自
+/// 内联同一段谓词——只要有一处被改动，就会出现「预检说可以发布、修复循环却认为还剩问题」
+/// 这类同稿不同判。
+///
+/// 只看 `details.resolution`：它是**人**通过 `resolveIssue` 写下的。模型写不了
+/// （`cloud_repair::tools::MODEL_ALLOWED_OPS` 有意不含该命令），所以这里不会变成
+/// 模型自称「已修复」的通道。
+pub(crate) fn blocking_issue_unresolved(issue: &Value) -> bool {
+    issue.get("severity").and_then(Value::as_str) == Some("blocking")
+        && !matches!(
+            issue
+                .pointer("/details/resolution")
+                .and_then(Value::as_str),
+            Some("resolved") | Some("ignored")
+        )
+}
+
+/// 当前稿上仍未处理的阻断性问题。判据见 [`blocking_issue_unresolved`]。
+pub(crate) fn unresolved_blocking_issues(authoring: &Value) -> Vec<Value> {
+    authoring
+        .get("quality")
+        .and_then(|quality| quality.get("issues"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|issue| blocking_issue_unresolved(issue))
+        .cloned()
+        .collect()
+}
+
 /// M1 typed preflight（计划 §13.3/§13.4）：只检查**当前** canonical DS 与当前 blocker。
 /// 与 [`validate_authoring_v2_publish_readiness`] 的差别（均为有意移除）：
 /// - 不扫描历史 authoring/pipeline JSON 的 fallback/partial 字符串；
@@ -453,20 +523,7 @@ pub(crate) fn check_publish_preflight(
             "action": "open_workspace"
         }));
     }
-    let unresolved_blockers = quality
-        .get("issues")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|issue| {
-            issue.get("severity").and_then(Value::as_str) == Some("blocking")
-                && !matches!(
-                    issue.pointer("/details/resolution").and_then(Value::as_str),
-                    Some("resolved") | Some("ignored")
-                )
-        })
-        .cloned()
-        .collect::<Vec<_>>();
+    let unresolved_blockers = unresolved_blocking_issues(authoring_value);
     for issue in unresolved_blockers.iter().take(20) {
         blockers.push(json!({
             "code": "ISSUE_UNRESOLVED",
@@ -980,11 +1037,30 @@ pub(crate) fn refresh_quality_report(
     job_id: &str,
     authoring: &mut Value,
 ) -> CommandResult<()> {
+    refresh_quality_report_for_targets(root, job_id, authoring, &BTreeSet::new())
+}
+
+/// 同上，但把 `affected_targets` 上**已经过期**的人工 resolution 重置掉。
+///
+/// 为什么需要这一层：`preserve_issue_resolutions` 是按 `issueId` 把旧 resolution 带过来
+/// 的，而 `issueId` 只是「事实」的指纹。云端修复改了某个目标的**内容**之后，只要那条
+/// 事实的指纹恰好没变（文案固定、`details` 没覆盖到被改的部分），旧 resolution 就会被
+/// 原样继承——用户从没看过新内容，系统却已经替他把问题标成「已解决」。这等于把「有人
+/// 处理过旧内容」冒充成「新内容也没问题」，也是让「修复完成」变得不可信的一条捷径。
+///
+/// 因此：**本次受影响的目标**上的旧 resolution 一律不继承（重置为未处理，重新评价）；
+/// 没被本次改动碰过的目标照旧继承——有效的人工处理不该因为别处改了一笔就全部作废。
+pub(crate) fn refresh_quality_report_for_targets(
+    root: &Path,
+    job_id: &str,
+    authoring: &mut Value,
+    affected_targets: &BTreeSet<String>,
+) -> CommandResult<()> {
     let previous_quality = authoring.get("quality").cloned();
     let physical_shadow = read_json_opt(&job_dir(root, job_id).join(DOCUMENT_V2_SHADOW_FILE))?
         .filter(|shadow| physical_shadow_matches_authoring(shadow, authoring));
     let mut quality = evaluate_quality(authoring, physical_shadow.as_ref());
-    preserve_issue_resolutions(&mut quality, previous_quality.as_ref());
+    preserve_issue_resolutions(&mut quality, previous_quality.as_ref(), affected_targets);
     authoring
         .as_object_mut()
         .ok_or_else(|| "AUTHORING_SCHEMA_INVALID:authoring must be an object".to_string())?
@@ -1015,7 +1091,11 @@ fn physical_shadow_matches_authoring(shadow: &Value, authoring: &Value) -> bool 
         && physical_source_ids.any(|source_id| authoring_source_ids.contains(source_id))
 }
 
-fn preserve_issue_resolutions(quality: &mut Value, previous_quality: Option<&Value>) {
+fn preserve_issue_resolutions(
+    quality: &mut Value,
+    previous_quality: Option<&Value>,
+    affected_targets: &BTreeSet<String>,
+) {
     let previous_details = previous_quality
         .and_then(|value| value.get("issues"))
         .and_then(Value::as_array)
@@ -1044,6 +1124,15 @@ fn preserve_issue_resolutions(quality: &mut Value, previous_quality: Option<&Val
         return;
     };
     for issue in issues {
+        // 本次受影响的目标：内容变了，人当时对旧内容作出的判断不再成立，**不继承**。
+        // 重置成「未处理」后重新评价——宁可多让用户看一眼，也不替他把新内容判定为已解决。
+        if issue
+            .get("targetId")
+            .and_then(Value::as_str)
+            .is_some_and(|target_id| affected_targets.contains(target_id))
+        {
+            continue;
+        }
         let Some(issue_id) = issue.get("issueId").and_then(Value::as_str) else {
             continue;
         };
@@ -2702,13 +2791,15 @@ fn parse_number_array(value: Option<&Value>) -> CommandResult<Vec<u64>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_patch, expand_question_expression, export_authoring_v2_core,
-        materialize_authoring_assets, physical_shadow_matches_authoring,
+        apply_patch, explicitly_handled_issue_targets, expand_question_expression,
+        export_authoring_v2_core, materialize_authoring_assets, physical_shadow_matches_authoring,
         preserve_issue_resolutions, resolve_authoring_asset_preview_core,
-        validate_authoring_v2_publish_readiness, AUTHORING_V2_SHADOW_FILE,
+        unresolved_blocking_issues, validate_authoring_v2_publish_readiness,
+        AUTHORING_V2_SHADOW_FILE,
     };
     use crate::schema::common::{AssetDescriptorV2, AssetExtractionModeV2, AssetKindV2};
     use serde_json::{json, Value};
+    use std::collections::BTreeSet;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -3243,7 +3334,7 @@ mod tests {
         let mut quality = json!({
             "issues": [{"issueId": "issue-1", "details": {"source": "recomputed"}}]
         });
-        preserve_issue_resolutions(&mut quality, authoring.get("quality"));
+        preserve_issue_resolutions(&mut quality, authoring.get("quality"), &BTreeSet::new());
         assert_eq!(quality["issues"][0]["details"]["resolution"], "ignored");
         assert_eq!(quality["issues"][0]["details"]["note"], "reviewed");
     }
@@ -3324,9 +3415,111 @@ mod tests {
         // （它内部会自行 `.get("issues")`），这里必须传 `Some(&previous)` 而不是
         // `previous.get("issues")`。后者是数组，在其上 `.get("issues")` 恒为 None，
         // 会导致什么都继承不到（曾使本测试误报：拿到的 resolution 是 Null）。
-        preserve_issue_resolutions(&mut quality, Some(&previous));
+        preserve_issue_resolutions(&mut quality, Some(&previous), &BTreeSet::new());
         assert_eq!(quality["issues"][0]["details"]["resolution"], "ignored");
         assert_eq!(quality["issues"][1]["details"]["resolution"], "resolved");
+    }
+
+    /// 本次改动碰过的目标：旧 resolution 必须重置；没碰过的目标照旧继承。
+    ///
+    /// 这条锁的是「拿旧内容的处理冒充新内容没问题」这条捷径：只要 issueId 恰好没变，
+    /// 按 issueId 继承就会把人对**改动前**内容的判断带到**改动后**的稿子上。受影响
+    /// 目标必须按未处理重来，而其他有效的人工处理不能被连坐清掉。
+    #[test]
+    fn affected_targets_lose_their_stale_resolutions_while_others_keep_theirs() {
+        let previous = json!({
+            "issues": [
+                {"issueId":"issue-touched","targetId":"task-1",
+                 "details":{"resolution":"resolved","note":"看过了"}},
+                {"issueId":"issue-untouched","targetId":"task-2",
+                 "details":{"resolution":"ignored","note":"有意保留"}}
+            ]
+        });
+        let mut quality = json!({
+            "issues": [
+                {"issueId":"issue-touched","targetId":"task-1","details":{}},
+                {"issueId":"issue-untouched","targetId":"task-2","details":{}}
+            ]
+        });
+
+        let affected: BTreeSet<String> = ["task-1".to_string()].into_iter().collect();
+        preserve_issue_resolutions(&mut quality, Some(&previous), &affected);
+
+        // 受影响目标：重置（不继承 resolution，也不继承 note）。
+        assert!(quality["issues"][0]["details"].get("resolution").is_none(),
+            "受影响目标的旧 resolution 必须重置: {quality:#}");
+        assert!(quality["issues"][0]["details"].get("note").is_none(),
+            "受影响目标的旧 note 也必须一并重置: {quality:#}");
+        // 未受影响目标：有效的人工处理保留。
+        assert_eq!(quality["issues"][1]["details"]["resolution"], "ignored");
+        assert_eq!(quality["issues"][1]["details"]["note"], "有意保留");
+    }
+
+    /// 人在本批里亲手确认过的目标要被扣掉：他自己的确认不能被自己的编辑顺手清掉。
+    ///
+    /// 判据只看 `op == "resolveIssue"` 且该 `issueId` 在当前稿的质量块里能找到目标。
+    /// 找不到（例如引用了不存在的 issueId）就什么都不产出——不能凭空造出一个"处理过"
+    /// 的目标，那会让某个目标的过期 resolution 逃过重置。
+    #[test]
+    fn explicitly_handled_targets_come_from_the_batch_own_resolutions() {
+        let authoring = json!({
+            "quality": {"issues": [
+                {"issueId":"i1","targetId":"task-1","severity":"blocking",
+                 "details":{"resolution":"resolved"}},
+                {"issueId":"i2","targetId":"task-2","severity":"blocking","details":{}}
+            ]}
+        });
+        let commands = json!([
+            {"op":"resolveIssue","issueId":"i1","resolution":"resolved"},
+            {"op":"replaceText","nodeId":"task-1-instructions-text","from":0,"to":1,"text":"x"},
+            {"op":"resolveIssue","issueId":"nope","resolution":"ignored"},
+            {"op":"setAnswer","slotId":"q1","value":{"kind":"unresolved"}}
+        ]);
+        let handled = explicitly_handled_issue_targets(&authoring, commands.as_array().unwrap());
+        assert_eq!(
+            handled,
+            ["task-1".to_string()].into_iter().collect::<BTreeSet<_>>(),
+            "只有本批明确 resolveIssue 过的目标才算"
+        );
+    }
+
+    /// 「仍未处理」的唯一判据：只有 blocking 且没有 resolved/ignored 才算。
+    ///
+    /// 三处（预检 / 导出 / 云端修复终检）共用它，所以它的边界必须钉死：非阻断的
+    /// warning/info 不能算作剩余任务（否则用户会被一条提示拦住），而 `resolved` /
+    /// `ignored` 之外的任何取值（含缺失）都算未处理（fail-closed）。
+    #[test]
+    fn unresolved_blocking_issues_uses_one_predicate_for_every_consumer() {
+        let authoring = json!({
+            "quality": {
+                "issues": [
+                    {"issueId":"a","severity":"blocking","code":"X","targetId":"t1","details":{}},
+                    {"issueId":"b","severity":"blocking","code":"X","targetId":"t2",
+                     "details":{"resolution":"resolved"}},
+                    {"issueId":"c","severity":"blocking","code":"X","targetId":"t3",
+                     "details":{"resolution":"ignored"}},
+                    {"issueId":"d","severity":"warning","code":"X","targetId":"t4","details":{}},
+                    {"issueId":"e","severity":"info","code":"X","targetId":"t5","details":{}},
+                    // 未知 resolution 取值：不认识 ≠ 已处理。
+                    {"issueId":"f","severity":"blocking","code":"X","targetId":"t6",
+                     "details":{"resolution":"maybe"}}
+                ]
+            }
+        });
+        let unresolved = unresolved_blocking_issues(&authoring);
+        let ids: Vec<&str> = unresolved
+            .iter()
+            .filter_map(|issue| issue.get("issueId").and_then(Value::as_str))
+            .collect();
+        assert_eq!(ids, vec!["a", "f"], "只有未处理的 blocking 才算剩余问题");
+    }
+
+    /// 当前稿没有 quality 块（或它不是对象）时不能 panic，也不能凭空造出剩余问题。
+    #[test]
+    fn unresolved_blocking_issues_tolerates_a_missing_quality_block() {
+        assert!(unresolved_blocking_issues(&json!({})).is_empty());
+        assert!(unresolved_blocking_issues(&json!({"quality": null})).is_empty());
+        assert!(unresolved_blocking_issues(&json!({"quality": {"issues": null}})).is_empty());
     }
 
     /// 一个用于 `upsertTaskGroupBundle` 测试的最小规范文档：已有一个 task-1，

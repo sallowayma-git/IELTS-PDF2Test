@@ -807,10 +807,14 @@ fn remaining_tasks(
         }
     }
 
-    for issue in quality_issues(&canonical) {
-        if issue.get("severity").and_then(Value::as_str) != Some("blocking") {
-            continue;
-        }
+    // 当前稿上仍未处理的阻断性问题：**判据与发布门禁同一份**
+    // （`authoring_v2_commands::blocking_issue_unresolved`）。这里曾内联同一段谓词，
+    // 一旦发布门禁改了判据、这里没跟上，就会出现「修复循环说还剩问题、预检却说能发布」
+    // 的同稿不同判——用户被留在两套说法中间。
+    //
+    // 也不能用「校验器没报错」来消除内容疑问：`unresolved` 只统计 blocking issue，
+    // 模型自己报的未解疑问留在 `candidate_differences` 那一支里，两者都要保留。
+    for issue in crate::authoring_v2_commands::unresolved_blocking_issues(&canonical) {
         let target_id = issue
             .get("targetId")
             .and_then(Value::as_str)

@@ -21,7 +21,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::authoring_v2_commands::{apply_patch, refresh_quality_report, validate_authoring};
+use crate::authoring_v2_commands::{
+    apply_patch, refresh_quality_report, refresh_quality_report_for_targets, validate_authoring,
+};
 use crate::library::repository::{
     apply_editor_commands_tx_with, get_canonical_ds, human_protected_targets,
     open_library_connection, undo_cloud_repair_run, ApplyEditorCommandsInput, EditFootprint,
@@ -379,7 +381,11 @@ pub(crate) fn apply_cloud_edits(
         &|ds| {
             // 校验分层：schema 解析 → 质量重算（内部含 ID / 引用闭合）→ 只拒绝
             // **本次新增**的硬失败。原稿本来就有的问题不阻止本次有效修复。
-            refresh_quality_report(root, &request.item_id, ds)?;
+            //
+            // 质量重算带上本次编辑的影响范围（`footprint.targets`）：这些目标上的旧
+            // resolution 是人对**改动前**内容作出的判断，内容变了就不能继续算数，
+            // 必须重置后重新评价（详见 `refresh_quality_report_for_targets`）。
+            refresh_quality_report_for_targets(root, &request.item_id, ds, &footprint.targets)?;
             validate_authoring(ds)?;
             let after = blocking_diagnostic_fingerprints(ds);
             let new_ones: Vec<String> = after.difference(&before_diagnostics).cloned().collect();

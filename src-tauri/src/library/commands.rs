@@ -15,9 +15,12 @@ use serde_json::{json, Value};
 use super::migration::migrate_single_item;
 use super::repository::{
     apply_editor_commands_tx, get_canonical_ds, get_item, list_items, open_library_connection,
-    ApplyEditorCommandsInput,
+    ApplyEditorCommandsInput, EditFootprint,
 };
-use crate::authoring_v2_commands::{apply_patch, refresh_quality_report, validate_authoring};
+use crate::authoring_v2_commands::{
+    apply_patch, explicitly_handled_issue_targets, refresh_quality_report_for_targets,
+    validate_authoring,
+};
 use crate::CommandResult;
 
 pub(crate) fn get_workspace_item_core(root: &Path, item_id: &str) -> CommandResult<Value> {
@@ -64,8 +67,30 @@ pub(crate) fn apply_editor_commands_core(
     input: ApplyEditorCommandsInput,
 ) -> CommandResult<Value> {
     let mut conn = open_library_connection(root)?;
+    // 本次保存的**影响范围**：在事务之外先按「改动前的稿件 + 本批命令」算出来。
+    //
+    // 为什么用改动前的稿件：`EditFootprint` 要沿祖先链找受影响对象，而改动后那些
+    // 对象的身份可能已经变了（甚至被删掉）。改动前算出来的范围是保守且可复现的。
+    // 与事务之间若有人抢先保存，CAS 会拒绝本次写入，所以这份范围不会用在过期的稿上。
+    //
+    // 为什么要带上它：质量重算要**重置这些目标上已过期的 resolution**——内容变了，
+    // 人对旧内容作出的「已解决」判断不再成立。人在本批里亲手 `resolveIssue` 过的
+    // 目标要扣掉（见 `explicitly_handled_issue_targets`），否则他自己的确认会被
+    // 自己的编辑顺手清掉。
+    let affected_targets = match get_canonical_ds(&conn, &input.item_id)? {
+        Some((before, _)) => {
+            let mut affected = EditFootprint::merge(&before, &input.commands).targets;
+            // 人在本批里亲手 `resolveIssue` 过的目标要扣掉：那是他对**当前**内容的
+            // 判断，不能被他自己的编辑顺手清掉。
+            for target in explicitly_handled_issue_targets(&before, &input.commands) {
+                affected.remove(&target);
+            }
+            affected
+        }
+        None => std::collections::BTreeSet::new(),
+    };
     let result = apply_editor_commands_tx(&mut conn, &input, &apply_patch, &|ds| {
-        refresh_quality_report(root, &input.item_id, ds)?;
+        refresh_quality_report_for_targets(root, &input.item_id, ds, &affected_targets)?;
         validate_authoring(ds)
     })?;
 
