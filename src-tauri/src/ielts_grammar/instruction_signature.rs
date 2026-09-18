@@ -294,7 +294,32 @@ fn infer_option_alphabet(lower: &str) -> Option<String> {
     {
         return Some("A-D".to_string());
     }
-    for (start, end) in [('a', 'd'), ('a', 'e'), ('a', 'i'), ('a', 'g')] {
+    // 单字母区间。这张表要与 `authoring_pipeline.rs` 的选项库标签推导对齐——那边
+    // （`dynamic_declared_option_bank_labels`）覆盖 a-e … a-j，而这里以前只有
+    // a-d / a-e / a-i / a-g，**缺了 a-f 与 a-h**。两处回答的是同一个问题
+    // （「题干声明了哪一段字母」），认不出来的一侧会直接变成发布阻断。
+    //
+    // 真实链路验收里的一份 summary completion，题干原文是
+    //   "Complete the summary using the list of words and phrases, A-H, below.
+    //    Write the correct letter, A-H, in boxes 27-31 on your answer sheet."
+    // `normalizedText` 里确实含 `a-h`，但表里没有这一项，于是：
+    //   optionAlphabet = None → 该题组被判成「非选择型」→ 题干里又没有 word limit
+    //   → WORD_LIMIT_UNPARSED（blocking）。`quality.rs:1566` 只认 optionAlphabet
+    //   或 wordLimit，而这两个字段**界面上都没有入口**，所以那份卷子无论用户
+    //   怎么操作都发布不出去。
+    //
+    // 新加的区间**追加在末尾**，是为了让这次改动对既有输入是**纯增量**：
+    // 原来能认出来的四种仍然最先匹配，任何既有输入的返回值都不变。
+    // 方向仍然是「认不出来就不认」——只有题干真的写出该区间才返回。
+    for (start, end) in [
+        ('a', 'd'),
+        ('a', 'e'),
+        ('a', 'i'),
+        ('a', 'g'),
+        ('a', 'f'),
+        ('a', 'h'),
+        ('a', 'j'),
+    ] {
         let compact = format!("{start}-{end}");
         if lower.contains(&compact)
             || lower.contains(&format!("{} to {}", start, end))
@@ -483,6 +508,60 @@ mod tests {
         );
         assert_eq!(fishbourne.signature.task_type, TaskTypeV2::NoteCompletion);
         assert_eq!(fishbourne.signature.word_limit.unwrap().max_words, Some(2));
+    }
+
+    #[test]
+    fn word_list_summary_completion_declaring_a_to_h_is_selection_type() {
+        // 真实链路验收里那份稿子的题干原文（PDF `demanding-reading-passage-3.pdf`，
+        // 第 27–31 题）。它声明的是 A-H 词表，答案写的是**字母**，因此属于选择型
+        // completion：不该再要求 IELTS word limit。
+        //
+        // 改动前 `optionAlphabet` 是 None，题组被判成非选择型，于是报
+        // `WORD_LIMIT_UNPARSED`（blocking）——整卷发不出去，而界面上没有任何入口
+        // 能设置 `optionAlphabet` 或 `wordLimit`。这条用例钉住这个行为。
+        let result = infer_instruction_signature(
+            "Questions 27 - 31 Complete the summary using the list of words and phrases, A-H, below. \
+             Write the correct letter, A-H, in boxes 27-31 on your answer sheet.",
+            &range(),
+            Some("summary_completion"),
+            Vec::new(),
+        );
+        assert_eq!(result.signature.task_type, TaskTypeV2::SummaryCompletion);
+        assert_eq!(result.signature.option_alphabet.as_deref(), Some("A-H"));
+        assert!(
+            !result
+                .warnings
+                .iter()
+                .any(|warning| warning == "completion_word_limit_not_found"),
+            "认出了 A-H 就不该再报找不到 word limit，warnings={:?}",
+            result.warnings
+        );
+    }
+
+    #[test]
+    fn single_letter_ranges_cover_the_span_the_pipeline_already_supports() {
+        // 表驱动：既钉住新加的 a-f / a-h，也钉住原有的 a-d / a-e / a-g / a-i
+        // 没有被挤掉——`authoring_pipeline.rs` 的选项库标签推导早就覆盖
+        // a-e … a-j，这里必须与之对齐，否则两侧对同一份题干给出不同结论。
+        for (text, expected) in [
+            ("Choose the correct letter, A-D.", "A-D"),
+            ("Choose the correct letter, A-E.", "A-E"),
+            ("Choose the correct letter, A-F.", "A-F"),
+            ("Choose the correct letter, A-G.", "A-G"),
+            ("Choose the correct letter, A-H.", "A-H"),
+            ("Choose the correct letter, A-I.", "A-I"),
+            ("Choose the correct letter, A-J.", "A-J"),
+            // 空格与 en dash 两种写法都要认（PDF 常把连字符排成 en dash）。
+            ("Choose the correct letter, A to H.", "A-H"),
+            ("Choose the correct letter, A–H.", "A-H"),
+        ] {
+            let result = infer_instruction_signature(text, &range(), None, Vec::new());
+            assert_eq!(
+                result.signature.option_alphabet.as_deref(),
+                Some(expected),
+                "text={text:?}"
+            );
+        }
     }
 
     #[test]

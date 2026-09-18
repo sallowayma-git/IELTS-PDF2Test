@@ -59,6 +59,7 @@ import {
 } from "./lib/tauri-cdp-harness.mjs";
 import { computeScenarioVerdict, SCENARIO_STATUS } from "./lib/chain-verdict.mjs";
 import { deriveRepairScenario, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
+import { loadPublishedPackageWithRealProviderAsync } from "./lib/student-real-provider.mjs";
 
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
 const keep = process.argv.includes("--keep");
@@ -1001,7 +1002,50 @@ async function main() {
     };
     await session.screenshot("after-export-attempt");
     if (afterExport?.item?.status === "published" || (published ?? "").includes("发布完成")) {
-      record("export-and-student-runtime", SCENARIO_STATUS.PASSED, report.observed.exportAttempt.after);
+      // 发布成功**还不够**。链条的最后一跳是「学生端加载」，而这一跳此前只有
+      // `nas-student-contract.mjs` 那层**镜像**证据（按学生端规则重新实现了一遍校验）。
+      // 镜像证明「包符合规则」，证明不了「学生端那份代码真的能读」。这里补上真实一跳：
+      // 直接 require 学生端仓库**已编译的真实 provider**，把这个发布包当 NAS 挂上去，
+      // 跑 `getStatus()` / `listAssets()` / `getAsset()`，并核对加载出来的内容
+      // 与云端修复后的 canonical 一致（分页残留已消失、答案键齐全）。
+      const studentLoad = await loadPublishedPackageWithRealProviderAsync({
+        packageDir: nasDir,
+        examId: null,
+      }).catch((error) => ({ ok: false, cannotRun: true, reason: `真实学生端加载抛错：${error.message}`, results: [], failures: [] }));
+      report.observed.studentRealProviderLoad = {
+        ok: studentLoad.ok,
+        cannotRun: Boolean(studentLoad.cannotRun),
+        reason: studentLoad.reason ?? null,
+        examId: studentLoad.examId ?? null,
+        providerPath: studentLoad.providerPath ?? null,
+        observed: studentLoad.observed ?? null,
+        passed: studentLoad.results.filter((entry) => entry.ok).length,
+        total: studentLoad.results.length,
+        failures: studentLoad.failures.map((entry) => ({ name: entry.name, detail: entry.detail })),
+      };
+      fs.writeFileSync(
+        path.join(runDir, "student-real-provider-load.json"),
+        JSON.stringify(report.observed.studentRealProviderLoad, null, 2),
+      );
+
+      if (studentLoad.cannotRun) {
+        // 学生端仓库不在本环境里 → 如实记 not-executable，而不是把发布成功当成人端也过了。
+        notExecutable(
+          "export-and-student-runtime",
+          `发布成功，但学生端真实代码不可用：${studentLoad.reason}`,
+        );
+      } else if (!studentLoad.ok) {
+        record("export-and-student-runtime", SCENARIO_STATUS.FAILED, {
+          ...report.observed.exportAttempt.after,
+          note: "发布成功，但学生端真实代码读不了这个包",
+          studentRealProviderLoad: report.observed.studentRealProviderLoad,
+        });
+      } else {
+        record("export-and-student-runtime", SCENARIO_STATUS.PASSED, {
+          ...report.observed.exportAttempt.after,
+          studentRealProviderLoad: report.observed.studentRealProviderLoad,
+        });
+      }
     } else {
       // 发布没成。这**不一定是脚本的问题**：门禁按设计拦下不完整的卷子是正确行为。
       // 所以这里把「还剩哪些 blocking 问题」逐条取出来，写进 findings，

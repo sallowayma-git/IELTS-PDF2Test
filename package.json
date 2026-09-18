@@ -25,6 +25,8 @@
     "e2e:tauri:publish-ready": "node scripts/e2e/tauri-publish-ready.mjs",
     "e2e:tauri:direct-canonical": "node scripts/e2e/tauri-direct-canonical.mjs",
     "e2e:nas-contract": "node scripts/e2e/nas-student-contract.mjs",
+    "e2e:student-real-provider": "node scripts/e2e/student-real-provider-load.mjs",
+    "e2e:cloud-repair-chain": "node scripts/e2e/tauri-cdp-cloud-repair-chain.mjs",
     "dump:nas-fixture": "cargo test --manifest-path src-tauri/Cargo.toml dump_published_package_for_nas_contract -- --ignored --nocapture",
     "test:product-chain": "cargo test --manifest-path src-tauri/Cargo.toml product_chain -- --nocapture",
     "verify:phase0": "node scripts/phase0-golden.mjs verify",
