@@ -1,22 +1,31 @@
 /**
- * 云端修复场景的**派生**逻辑（从真实本地稿派生候选样本与修复剧本）。
+ * 云端修复场景的**期望值装载 + 场景装配**。
  *
- * 为什么必须派生，而不是写死一份样本：
- *   候选是「云端对原文件的独立识别」，它必须与**当前这份真实稿**逐字段可比。
- *   写死一份通用样本会得到成百上千条无意义差异，修复循环只能把预算烧在噪声上，
- *   验收结果也就无法回答「云端到底替用户了结了什么」。
- *   派生只改**被点名的字段**，其余整卷照抄真实稿——于是差异集合是**可枚举**的：
- *     1) 作答结构差异：候选把题面里的页脚残留去掉了，当前稿还带着 → 云端应自动改掉；
- *     2) 说明文字差异：候选把题干说明读错了，当前稿是对的 → 云端应裁定「当前稿对」。
+ * ## 为什么这份文件被重写过
  *
- * 这份派生**不修改**任何后端文件，也不改真实稿；它只产出一个候选样本与一份剧本。
- * 受控服务是真实模型的替身，剧本里所有**值**都来自真实稿本身；受控服务回不出它没读到的东西。
+ * 旧版本是「脚本派生期望值」：脚本用正则从本地稿里剥掉页脚残留，把结果同时当作
+ * （a）候选样本的内容、（b）剧本里的 `fixedPromptText`、（c）断言时比的字符串。
+ * 三者是同一个值 —— 于是「云端能依据原文件修正识别错误」这条结论**无法被证伪**：
+ * 脚本把答案写进剧本，假模型照抄，断言等于剧本里的字符串。剧本里一次 `read_source`
+ * 都没有，而网关 prompt 却写着 "so it matches the ORIGINAL FILE"。
  *
- * 边界（必须如实写在报告里）：
- *   · 候选样本是**合成**的。它证明的是「管线能把一条有出处的修改一路带到权威稿/画布/导出」，
- *     不证明「某个真实模型能读对这份 PDF」。
+ * 现在：
+ *   · 期望值只来自 `fixtures/golden/cloud-repair/*.annotation.json`（人工标注）；
+ *   · 错误必须是**本地识别真实产生的**——脚本只做核对（`before !== 标注值` 就如实
+ *     报「前提不成立」），绝不往稿子里注入错误；
+ *   · 剧本里**没有**正确题面。受控服务必须自己调用 `read_source`，从它返回的原文
+ *     文本里把题面取出来（见 `controlled-llm-service.mjs`）。
+ *
+ * ## 边界（必须如实写进报告）
+ *
+ *   · 候选样本是**合成**的：它证明「管线能把一条有出处的修改一路带到权威稿/画布/导出」，
+ *     不证明「某个真实模型能读对这份 PDF」。唯一被真正验证的是：受控服务给出的
+ *     **修改内容与证据引文**都必须来自 `read_source` 返回的原文，而不是剧本常量。
  *   · 剧本里没有任何一个答案值：这份原文件没有答案页，答案**不能**被编造出来。
  */
+
+import fs from 'node:fs';
+import path from 'node:path';
 
 /** 节点树里的全部文字（按出现顺序拼接）。 */
 export function textOfNodes(nodes) {
@@ -58,59 +67,123 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-const PAGE_FOOTER = /\s\d+\s+BLANK\s+PAGE\s*$/iu;
+export const GOLDEN_RELATIVE_PATH = 'fixtures/golden/cloud-repair/demanding-reading-passage-3.annotation.json';
 
 /**
- * 从真实稿派生「候选样本 + 修复剧本」。
+ * 读入人工标注的 golden fixture。**这是本场景唯一的期望值来源。**
  *
- * 返回 `null` 表示这份稿子不满足场景前提（例如题面里没有可辨认的页脚残留），
- * 调用方应如实记 `not-executable`，**不要**退化成一份通用样本硬跑。
+ * 校验写在最前面：缺字段就当场炸，而不是等到断言阶段才发现「期望值是 undefined」——
+ * 后者会让 `prompt === undefined` 这类比较静默失败。
  */
-export function deriveRepairScenario(draft) {
-  const groups = Array.isArray(draft?.taskGroups) ? draft.taskGroups : [];
-  if (groups.length === 0) return null;
+export function loadRepairGolden(repoRoot) {
+  const fullPath = path.join(repoRoot, GOLDEN_RELATIVE_PATH);
+  const golden = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+  const problems = [];
+  if (golden?.schemaVersion !== 'CloudRepairGoldenV1') {
+    problems.push(`schemaVersion 必须是 CloudRepairGoldenV1，实际 ${JSON.stringify(golden?.schemaVersion)}`);
+  }
+  if (!Array.isArray(golden?.recognitionErrors) || golden.recognitionErrors.length === 0) {
+    problems.push('recognitionErrors 不能为空');
+  }
+  for (const [index, entry] of (golden?.recognitionErrors ?? []).entries()) {
+    for (const field of ['localDraftContains', 'originalFileSays', 'originalFileQuote']) {
+      if (typeof entry?.[field] !== 'string' || entry[field].length === 0) {
+        problems.push(`recognitionErrors[${index}].${field} 必须是非空字符串`);
+      }
+    }
+    if (!Array.isArray(entry?.target?.slotIds) || entry.target.slotIds.length === 0) {
+      problems.push(`recognitionErrors[${index}].target.slotIds 不能为空`);
+    }
+    if (!Number.isInteger(entry?.sourcePage?.oneBased) || entry.sourcePage.oneBased < 1) {
+      problems.push(`recognitionErrors[${index}].sourcePage.oneBased 必须是 >= 1 的整数`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(`golden fixture 不合法（${fullPath}）：${problems.join('；')}`);
+  }
+  return { ...golden, path: fullPath };
+}
 
-  // ── 目标 1：题面里混进了页码/页脚（`14 BLANK PAGE`），这是真实存在的转录残留 ──
+/**
+ * 把「真实本地稿 + golden 期望值」装配成候选样本与修复剧本。
+ *
+ * 返回 `{ ok: false, reason, ... }` 表示**场景前提不成立**（本地识别没有产出被标注的那个
+ * 错误，或者真实稿里找不到承载它的作答组）。调用方应如实记 `not-executable`，
+ * **不要**退化成一份通用样本硬跑，也不要往稿子里注入一个错误。
+ */
+export function deriveRepairScenario(draft, golden) {
+  const annotated = golden?.recognitionErrors?.[0];
+  if (!annotated) return { ok: false, reason: 'golden fixture 里没有标注任何识别错误' };
+  const groups = Array.isArray(draft?.taskGroups) ? draft.taskGroups : [];
+  if (groups.length === 0) return { ok: false, reason: '真实稿里没有任何题组' };
+
+  // ── 1. 目标由**真实稿**定位：按 fixture 标注的 slotId 找承载它的作答组 ──
+  // 刻意不按「题面里有没有页脚」去搜：那是旧版的派生方式，等于用期望值的特征
+  // 去反向找目标，找到的必然是同一个东西，验证不了任何事。
+  const wantedSlots = annotated.target.slotIds;
   let fix = null;
   for (const group of groups) {
     for (const response of group.responseGroups ?? []) {
+      const slots = Array.isArray(response.slotIds) ? response.slotIds : [];
+      if (!wantedSlots.every((slot) => slots.includes(slot))) continue;
       const textNodes = collectTextNodes(response.prompt ?? []);
       if (textNodes.length !== 1) continue;
-      const text = textNodes[0].text;
-      const matched = PAGE_FOOTER.exec(text);
-      if (!matched) continue;
-      const after = text.slice(0, matched.index).trim();
-      if (!after) continue;
+      const anchor = (response.sourceAnchors ?? [])[0] ?? {};
       fix = {
         taskId: group.taskId,
         responseGroupId: response.responseGroupId,
-        questionNumbers: (response.slotIds ?? []).slice(),
-        before: text,
-        after,
-        footer: matched[0].trim(),
-        pageIndex: (response.sourceAnchors ?? [])[0]?.pageIndex ?? null,
-        sourceFileId: (response.sourceAnchors ?? [])[0]?.sourceFileId ?? null,
+        questionNumbers: slots.slice(),
+        // 改前 = 真实稿此刻的内容（读出来的）；改后 = golden 标注的原文件真值。
+        before: textNodes[0].text,
+        after: annotated.originalFileSays,
+        sourcePageOneBased: annotated.sourcePage.oneBased,
+        sourcePageZeroBased: annotated.sourcePage.zeroBased ?? null,
+        questionNumber: annotated.target.questionNumber,
+        sourceFileId: anchor.sourceFileId ?? null,
+        anchorPageIndex: anchor.pageIndex ?? null,
       };
       break;
     }
     if (fix) break;
   }
-  if (!fix) return null;
+  if (!fix) {
+    return {
+      ok: false,
+      reason: `真实稿里找不到承载 ${JSON.stringify(wantedSlots)} 的作答组`,
+    };
+  }
 
-  // ── 目标 2：让候选把某组题干说明**读错**，当前稿是对的 ──
-  // 选一个有完整说明文字的题组；候选版本只留首句，丢掉真正的作答要求。
+  // ── 2. 核对「错误是本地识别真实产生的」──
+  // 这是本场景的地基：如果本地识别没有出错，那么「云端修正了识别错误」就无从谈起，
+  // 脚本应当如实说不适用，而不是自己造一个错出来。
+  if (fix.before !== annotated.localDraftContains) {
+    return {
+      ok: false,
+      reason: '本地识别没有产出 golden fixture 标注的那个错误',
+      observed: fix.before,
+      expected: annotated.localDraftContains,
+      target: { taskId: fix.taskId, responseGroupId: fix.responseGroupId, slotIds: fix.questionNumbers },
+    };
+  }
+
+  // ── 3. 裁定目标：真实稿里的 YES/NO/NOT GIVEN 题组 ──
+  // 候选把它的题干说明只抄了首句，当前稿是完整的 → 云端应裁定「当前稿对」。
   const ruleTarget =
     groups.find((group) => (group.taskType ?? '').includes('yes_no_not_given'))
     ?? groups.find((group) => textOfNodes(group.instructions ?? []).length > 80)
     ?? groups[0];
   const ruleBefore = textOfNodes(ruleTarget.instructions ?? []);
-  if (!ruleBefore) return null;
-  const ruleCandidateText = ruleBefore.split(/(?<=[?.])\s+/u)[0] ?? ruleBefore;
-  if (ruleCandidateText === ruleBefore) return null;
   const ruleNodes = collectTextNodes(ruleTarget.instructions ?? []);
-  if (ruleNodes.length !== 1) return null;
+  if (!ruleBefore || ruleNodes.length !== 1) {
+    return { ok: false, reason: '真实稿里找不到一个可用于裁定的题组说明' };
+  }
+  const ruleCandidateText = ruleBefore.split(/(?<=[?.])\s+/u)[0] ?? ruleBefore;
+  if (ruleCandidateText === ruleBefore) {
+    return { ok: false, reason: '候选侧的说明截断后与原文相同，构不成一条差异' };
+  }
 
-  // ── 候选样本：整卷照抄真实稿，只改上面点名的两处 ──
+  // ── 4. 候选样本：整卷照抄真实稿，只改被标注的那一处 + 裁定靶子 ──
+  // 「云端对原文件的独立识别」在这里被建模为：题面 = golden 标注的原文真值。
   const candidate = {
     passage: clone(draft.passage ?? {}),
     taskGroups: clone(groups),
@@ -127,7 +200,7 @@ export function deriveRepairScenario(draft) {
   const candidateRuleGroup = candidate.taskGroups.find((group) => group.taskId === ruleTarget.taskId);
   collectTextNodes(candidateRuleGroup.instructions ?? [])[0].text = ruleCandidateText;
 
-  // ── 模型确实无法定论的疑问：从真实稿里**读出来**的不一致，不是编出来的 ──
+  // ── 5. 模型确实无法定论的疑问：从真实稿里**读出来**的不一致，不是编出来的 ──
   const unresolved = [];
   for (const group of groups) {
     const instructions = textOfNodes(group.instructions ?? []);
@@ -150,12 +223,15 @@ export function deriveRepairScenario(draft) {
   }
 
   const plan = {
-    _comment: '受控模型服务的修复剧本：所有取值都来自真实稿与真实 observation。',
-    fixTaskId: fix.taskId,
-    fixResponseGroupId: fix.responseGroupId,
-    fixedPromptText: fix.after,
-    // 证据引文就是被去掉的那段页脚文字本身——它确实是原文件里的页脚，不是题面。
-    evidenceQuote: fix.footer,
+    _comment:
+      '受控模型服务的修复剧本。**刻意不含任何期望值**：没有 fixedPromptText、没有正确题面。'
+      + '受控服务必须自己 read_source，从返回的原文文本里取出题面与引文。',
+    // 目标定位：给的是 slotId（golden 标注），受控服务在**真实稿**里自己找承载它的作答组。
+    fixSlotIds: wantedSlots.slice(),
+    questionNumber: annotated.target.questionNumber,
+    // 原文页号（1-based，与 read_source 返回的页对象一致）。
+    sourcePageOneBased: annotated.sourcePage.oneBased,
+    // 裁定：给目标与「去哪一行找依据」，引文本身必须从 read_source 的返回里读。
     rulings: [
       {
         targetType: 'task_group',
@@ -163,7 +239,9 @@ export function deriveRepairScenario(draft) {
         field: 'instructions',
         ruling: 'current_is_correct',
         reason: '原文件里这段说明包含完整的 YES / NO / NOT GIVEN 定义，当前稿与之一致，候选只抄了首句。',
-        quote: ruleCandidateText.slice(0, 60),
+        // 只是「在原文里定位到哪一行」的检索键，**不是引文内容**；
+        // 引文必须由受控服务从 read_source 的返回里逐字取出。
+        evidenceKeyword: 'NOT GIVEN',
       },
     ],
     unresolved,
@@ -171,6 +249,7 @@ export function deriveRepairScenario(draft) {
   };
 
   return {
+    ok: true,
     candidate,
     plan,
     fix,
@@ -178,6 +257,15 @@ export function deriveRepairScenario(draft) {
       taskId: ruleTarget.taskId,
       before: ruleBefore,
       candidate: ruleCandidateText,
+    },
+    golden: {
+      path: golden.path,
+      fixtureId: golden.fixtureId,
+      errorId: annotated.id,
+      errorClass: annotated.errorClass,
+      originalFileSays: annotated.originalFileSays,
+      originalFileQuote: annotated.originalFileQuote,
+      localDraftContains: annotated.localDraftContains,
     },
   };
 }

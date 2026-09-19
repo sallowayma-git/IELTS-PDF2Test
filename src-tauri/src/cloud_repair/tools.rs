@@ -1107,4 +1107,68 @@ mod cloud_repair_write_entry_tests {
         assert_eq!(answer.pointer("/labels"), Some(&json!(["B"])), "版本冲突时答案不得改变");
         let _ = std::fs::remove_dir_all(&root);
     }
+    // 8. 复核任务书里的一条怀疑：基线用 `refresh_quality_report`（全量），事务内用
+    //    `refresh_quality_report_for_targets`（只刷受影响目标）——两边口径不同，会不会
+    //    让一次合法修复被 `CLOUD_EDIT_INTRODUCED_HARD_FAILURES` 误拒？
+    //
+    // 结论：**不会**，这条怀疑不成立。两个函数是同一个实现——`refresh_quality_report`
+    // 就是 `refresh_quality_report_for_targets(..., &BTreeSet::new())`，两边都调
+    // `evaluate_quality` 做**全量重算**，差别只在「哪些目标上的人工 resolution 被继承」。
+    // 而比较用的 `blocking_diagnostic_fingerprints` 只看 severity / code / 目标 / 锚点，
+    // **不读 resolution**，所以继承与否根本不改变被比较的集合。
+    //
+    // 这条用例把等价关系钉住：以后若有人给 `_for_targets` 加上「只重算受影响目标」的
+    // 优化（那才会真的引入误拒），这里会立刻变红。
+    #[test]
+    fn the_baseline_and_the_in_transaction_quality_pass_agree_on_blocking_diagnostics() {
+        let root = temp_root();
+        let mut ds = load_fixture();
+        // 造一个「真实但陈旧」的阻断，落在与本次编辑**无关**的目标上（q15 缺答案）。
+        ds["answerKey"].as_object_mut().unwrap().remove("q15");
+        // 再给一条人工 resolution，确保「继承 resolution」这条唯一差异真的被触发。
+        if let Some(issues) = ds.pointer_mut("/quality/issues").and_then(Value::as_array_mut) {
+            for issue in issues.iter_mut() {
+                if let Some(details) = issue.get_mut("details").and_then(Value::as_object_mut) {
+                    details.insert("resolution".to_string(), json!("resolved"));
+                }
+            }
+        }
+        let item_id = seed_item(&root, &ds);
+
+        // 本次只改 q14：合法修复，不该被 q15 的老问题挡住。
+        let request = base_request(&item_id, "run-quality-parity", 1, set_answer_command("q14", &["A"]));
+        let outcome = apply_cloud_edits(&root, &request).expect("apply_cloud_edits");
+        assert_eq!(
+            outcome.status,
+            CloudEditStatus::Applied,
+            "无关目标上的老阻断不得顶掉本次合法修复 errors={:?}",
+            outcome.errors
+        );
+        assert!(outcome.introduced_hard_failures.is_empty(), "本次没有引入新硬失败");
+
+        // 直接对比两种口径：同一份稿子上必须给出**同一组**阻断指纹。
+        let conn = open_library_connection(&root).expect("打开库连接");
+        let (current, _) = get_canonical_ds(&conn, &item_id).expect("读 canonical").expect("稿件已播");
+        drop(conn);
+
+        let mut full = current.clone();
+        crate::authoring_v2_commands::refresh_quality_report(&root, &item_id, &mut full)
+            .expect("全量刷新");
+        let mut none = current.clone();
+        crate::authoring_v2_commands::refresh_quality_report_for_targets(
+            &root,
+            &item_id,
+            &mut none,
+            &std::collections::BTreeSet::new(),
+        )
+        .expect("空受影响集刷新");
+
+        assert_eq!(
+            blocking_diagnostic_fingerprints(&full),
+            blocking_diagnostic_fingerprints(&none),
+            "两种口径必须给出同一组阻断指纹；不同就说明基线比对的前提不成立"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
 }

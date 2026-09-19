@@ -2246,3 +2246,136 @@ fn two_different_document_level_issues_are_not_collapsed_into_one() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── read_source 必须真的给出原文文本（否则「照原文件改」不可证伪）────────────────
+//
+// 这一组守的是「云端凭什么说自己改对了」：如果 `read_source` 只回页图，模型就无法
+// 逐字引用原文，它给出的引文也就无从核对——「照着原文件改的」退化成一句自述。
+
+/// `read_source` 要给 PDF 页附上**原文件抽取出来的文本**，且不碰页上其它字段。
+///
+/// 复现：以前 PDF 分支只回 `{pageIndex, images, width, height}`，note 却写着
+/// 「下面的页文本就是抽取出来的文本层」——承诺与内容不符。模型只能凭图片印象转述，
+/// 引文随便编也无人能证伪。
+#[test]
+fn read_source_pages_carry_the_text_layer_extracted_from_the_original_file() {
+    let root = temp_root();
+    ensure_app_dirs(&root).expect("ensure_app_dirs");
+    let dir = crate::util::job_dir(&root, ITEM_ID);
+    std::fs::create_dir_all(&dir).expect("job dir");
+    crate::util::write_json(
+        &dir.join("document-ir.json"),
+        &json!({"pages":[
+            {"pageIndex":0,"lines":[
+                {"text":"Early approaches to organisational design."},
+                {"text":"Q1 Choose the correct letter."}
+            ]},
+            {"pageIndex":1,"lines":[{"text":"BLANK PAGE"}]}
+        ]}),
+    )
+    .expect("document-ir");
+
+    let texts = source_page_texts(&root, ITEM_ID);
+    // DocumentIR 的 pageIndex 是 0-based，返回的 key 统一成 1-based（见函数文档）。
+    assert_eq!(
+        texts.get(&1).map(String::as_str),
+        Some("Early approaches to organisational design.\nQ1 Choose the correct letter."),
+        "逐页文本必须按页号归位"
+    );
+    assert_eq!(texts.get(&2).map(String::as_str), Some("BLANK PAGE"));
+
+    // `read_source` 返回的页对象来自 `pdf-images.json`，页码是 1-based。
+    //
+    // 这里**走真实分支函数**（`pdf_read_source_response`），而不是直接调
+    // `attach_page_texts`。旧写法只证明助手能拼文本，证明不了 PDF 分支**真的把文本层
+    // 接上了**：把那一行调用删掉（退回「PDF 只回页图」），旧写法照样全绿——变异检查
+    // 就是这么抓出来的。走分支函数后，同一处删除会立刻让下面的断言变红。
+    let evidence = json!({
+        "kind": "pdf",
+        "sourceFileId": "early-approaches-pdf",
+        "pages": [
+            {"pageIndex":1,"images":[{"fileName":"page-001-rendered.png"}],"width":2000},
+            {"pageIndex":2,"images":[{"fileName":"page-002-rendered.png"}],"width":2000},
+            {"pageIndex":3,"images":[],"width":2000}
+        ]
+    });
+    let response = pdf_read_source_response(&evidence, None, None, &texts);
+    assert_eq!(response["kind"], "pdf");
+    assert_eq!(response["sourceFileId"], "early-approaches-pdf");
+    assert_eq!(
+        response["pagesWithText"], 2,
+        "两页抽到了文本层，第三页没有——计数必须如实"
+    );
+    let attached = response["pages"].as_array().expect("pages");
+    assert_eq!(
+        attached[0]["text"],
+        "Early approaches to organisational design.\nQ1 Choose the correct letter."
+    );
+    assert_eq!(attached[1]["text"], "BLANK PAGE");
+    // 抽不出文本的页**不编造**：干脆不出现 text 字段，而不是补一个空串
+    // （空串会让模型以为「这一页真的没有字」）。
+    assert!(
+        attached[2].get("text").is_none(),
+        "抽不出文本的页不能凭空补一个空文本"
+    );
+    // 原有字段必须保留：页图是模型打开原文件的入口。
+    assert_eq!(attached[0]["images"][0]["fileName"], "page-001-rendered.png");
+    assert_eq!(attached[0]["width"], 2000);
+    // note 必须跟着事实走：抽到文本才敢说「下面就是文本层」。
+    let note = response["note"].as_str().unwrap_or_default();
+    assert!(
+        note.contains("text layer extracted"),
+        "抽到文本层时 note 必须说明可以逐字引用，实际：{note}"
+    );
+
+    // 反向对照：一页都抽不出文本时，note 必须**改口**，不能继续承诺有文本层——
+    // 否则模型会以为自己读到了原文，从而编造引文。
+    let no_text = pdf_read_source_response(&evidence, None, None, &BTreeMap::new());
+    assert_eq!(no_text["pagesWithText"], 0);
+    let note = no_text["note"].as_str().unwrap_or_default();
+    assert!(
+        note.contains("No text layer could be extracted"),
+        "抽不出文本时 note 必须如实说明，实际：{note}"
+    );
+
+    // 页范围过滤仍然生效：模型可以只要某一页。
+    let only_second = pdf_read_source_response(&evidence, Some(2), Some(2), &texts);
+    let filtered = only_second["pages"].as_array().expect("pages");
+    assert_eq!(filtered.len(), 1, "pageIndex=2 只应返回第 2 页");
+    assert_eq!(filtered[0]["pageIndex"], 2);
+    assert_eq!(only_second["pagesWithText"], 1);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 没有规范抽取产物时退回 `DocumentIRV2` 比对报告里的 V1 文本；两者都没有就如实为空。
+#[test]
+fn source_page_texts_falls_back_to_the_v1_extraction_and_never_invents_text() {
+    let root = temp_root();
+    ensure_app_dirs(&root).expect("ensure_app_dirs");
+    let dir = crate::util::job_dir(&root, ITEM_ID);
+    std::fs::create_dir_all(&dir).expect("job dir");
+
+    // 对照组：既没有 `document-ir.json`、也没有比对报告 → 空，而不是编造一段文本。
+    assert!(
+        source_page_texts(&root, ITEM_ID).is_empty(),
+        "没有抽取产物时必须如实为空"
+    );
+
+    crate::util::write_json(
+        &dir.join("document-ir-v2.shadow.compare.json"),
+        &json!({"schemaVersion":"DocumentIRV2CompareReportV1","pages":[
+            {"pageIndex":3,"v1Text":"40 The writer recommends that to be effective, social history must"},
+            {"pageIndex":4,"v1Text":"BLANK PAGE"}
+        ]}),
+    )
+    .expect("compare report");
+
+    let texts = source_page_texts(&root, ITEM_ID);
+    // 比对报告的 pageIndex 也是 0-based（3、4）→ 统一成 1-based（4、5）。
+    assert_eq!(
+        texts.get(&4).map(String::as_str),
+        Some("40 The writer recommends that to be effective, social history must")
+    );
+    assert_eq!(texts.get(&5).map(String::as_str), Some("BLANK PAGE"));
+    let _ = std::fs::remove_dir_all(&root);
+}

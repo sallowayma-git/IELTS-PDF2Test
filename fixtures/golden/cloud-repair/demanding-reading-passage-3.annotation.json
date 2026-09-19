@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "CloudRepairGoldenV1",
+  "fixtureId": "demanding-reading-passage-3",
+  "source": {
+    "path": "fixtures/parser/demanding-reading-passage-3.pdf",
+    "sha256": "f13bd65cb5f5c76a178ff87fa212df30f79852bdb103249af9eb5804a4ccfe18",
+    "format": "pdf",
+    "pageCount": 5
+  },
+  "annotation": {
+    "kind": "human",
+    "note": "人工逐页核对原文件后写下的真值。这份文件是云端修复验收链**唯一**的期望值来源：验收脚本不得从本地稿派生期望值，也不得把期望值交给受控服务（否则「云端改对了」只是把脚本自己的答案抄了一遍）。"
+  },
+  "recognitionErrors": [
+    {
+      "id": "footer-merged-into-q40-stem",
+      "errorClass": "footer_merged_into_prompt",
+      "target": {
+        "slotIds": ["q40"],
+        "questionNumber": 40,
+        "field": "prompt"
+      },
+      "sourcePage": {
+        "oneBased": 4,
+        "zeroBased": 3,
+        "note": "read_source 返回的页号是 1-based（来自 cache/vision/pdf-images.json）；权威稿锚点与 DocumentIR 的 pageIndex 是 0-based。实测同一页：pdf-images pageIndex=4、DocumentIR/compare pageIndex=3、锚点 nodeIds 前缀 p004-。"
+      },
+      "localDraftContains": "The writer recommends that to be effective, social history must 14 BLANK PAGE",
+      "originalFileSays": "The writer recommends that to be effective, social history must",
+      "originalFileQuote": "40 The writer recommends that to be effective, social history must",
+      "explanation": "原文件第 4 页的题干止于 must。`14` 是页码、`BLANK PAGE` 是第 5 页的页脚；本地识别把下一页的页脚并进了这一页的题干。这是**本地识别真实产生的**错误（不是脚本注入的）：见 authoring-ir.json 的 groups[2].questions[4].prompt。"
+    }
+  ],
+  "expectedAnswers": {
+    "q36": null,
+    "q37": null,
+    "q38": null,
+    "q39": null,
+    "q40": null
+  },
+  "answerKeyAbsence": {
+    "slots": ["q36", "q37", "q38", "q39", "q40"],
+    "reason": "原文件没有答案页。云端不得编造答案，这 5 题的答案只能由用户提供——这是「剩余任务里有 14 条缺答案」的真实来源。"
+  },
+  "expectedOptionAlphabet": {
+    "taskId": "group-3",
+    "range": "A-D",
+    "from": "题干说明：Choose the correct letter, A, B, C or D"
+  }
+}

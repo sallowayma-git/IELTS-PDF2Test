@@ -40,6 +40,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -58,7 +59,7 @@ import {
   writeReport,
 } from "./lib/tauri-cdp-harness.mjs";
 import { computeScenarioVerdict, SCENARIO_STATUS } from "./lib/chain-verdict.mjs";
-import { deriveRepairScenario, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
+import { deriveRepairScenario, loadRepairGolden, textOfNodes } from "./lib/cloud-repair-scenario.mjs";
 import { loadPublishedPackageWithRealProviderAsync } from "./lib/student-real-provider.mjs";
 
 const exePath = path.join(repoRoot, "src-tauri", "target", "debug", "ielts-author-studio.exe");
@@ -108,7 +109,7 @@ const report = {
     servicePort,
   },
   service: { started: false, health: null, modes: [], requestLines: [] },
-  scenario: { derived: false, differences: [], fix: null, rule: null, unresolved: [] },
+  scenario: { derived: false, differences: [], fix: null, rule: null, unresolved: [], golden: null },
   observed: {
     localDraft: null,
     firstCycle: null,
@@ -443,6 +444,12 @@ function repairToolCalls(jobId) {
           commands: (call?.arguments?.commands ?? []).map((command) => command?.op ?? null),
           rulings: (call?.arguments?.rulings ?? []).map((ruling) => `${ruling?.targetType}:${ruling?.targetId}:${ruling?.field}=${ruling?.ruling}`),
           unresolved: (call?.arguments?.unresolved ?? []).length,
+          // 引文：本轮的验收要拿它去原文里对。**不记下来就无法证伪**——
+          // 「模型引用了原文」这句话必须能落到具体字符串上。
+          evidence: [
+            ...(call?.arguments?.evidence ?? []),
+            ...(call?.arguments?.rulings ?? []).flatMap((ruling) => ruling?.evidence ?? []),
+          ].map((item) => ({ pageIndex: item?.pageIndex ?? null, quote: item?.quote ?? null })),
         };
       } catch {
         return { stamp: entry.stamp, error: "unparsable" };
@@ -494,6 +501,86 @@ function promptTextOf(ds, responseGroupId) {
 /** 权威稿里的答案键（用于「用户补答案」这一段的断言）。 */
 function answerOf(ds, slotId) {
   return (ds?.answerKey ?? {})[slotId] ?? null;
+}
+
+/** 文件 sha256。golden fixture 绑定的原文件必须与本次输入是同一份，否则标注不成立。 */
+function sha256OfFile(filePath) {
+  try {
+    return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 读作业目录里**解析器层**抽取出来的逐页原文文本。
+ *
+ * 与后端 `source_page_texts` 读同一批产物、同样的页号归一（DocumentIR 是 0-based，
+ * 归一成 1-based）。这里是**独立**读一遍：模型说它引用了原文，验收侧就自己去看
+ * 原文里到底有没有这句话——两边都读同一份 artifact，但走的是两条代码路径。
+ */
+function sourcePageTextsFromJob(jobId) {
+  const dir = path.join(appDataDir, "jobs", String(jobId ?? ""));
+  const out = new Map();
+  const readPage = (page, pick) => {
+    const index = Number(page?.pageIndex);
+    if (!Number.isInteger(index) || index < 0) return;
+    const text = pick(page);
+    if (typeof text === "string" && text.trim()) out.set(index + 1, text.trim());
+  };
+  const documentIr = path.join(dir, "document-ir.json");
+  if (fs.existsSync(documentIr)) {
+    const parsed = JSON.parse(fs.readFileSync(documentIr, "utf8"));
+    for (const page of parsed?.pages ?? []) {
+      readPage(page, (entry) => {
+        if (Array.isArray(entry?.lines)) {
+          return entry.lines.map((line) => line?.text ?? "").filter((line) => line.trim()).join("\n");
+        }
+        if (Array.isArray(entry?.spans)) return entry.spans.map((span) => span?.text ?? "").join("");
+        return "";
+      });
+    }
+  }
+  if (out.size === 0) {
+    const compare = path.join(dir, "document-ir-v2.shadow.compare.json");
+    if (fs.existsSync(compare)) {
+      const parsed = JSON.parse(fs.readFileSync(compare, "utf8"));
+      for (const page of parsed?.pages ?? []) {
+        readPage(page, (entry) => entry?.v1Text ?? entry?.v2Text ?? "");
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 本地稿的**真实形状**：题组/题面数量、空题面与占位题面各多少、blocking 代码。
+ *
+ * 单独抽出来是因为它要在**多条**退出路径上写进报告。以前它只写在「派生失败」那一个
+ * 分支里，于是 DOCX 那一遍（golden 哈希对不上，更早退出）的报告里看不到稿子形状，
+ * 读者只看到「哈希不一致」，很容易误以为是脚本配置问题——而真正的原因是本地识别
+ * 一个题面都没产出。诊断信息只挂在一条路径上，就等于其他路径上没有诊断。
+ */
+function draftShapeOf(ds) {
+  const groups = ds?.taskGroups ?? [];
+  const placeholder = /^\s*\[[^\]]*pending review[^\]]*\]\s*$/iu;
+  const promptTexts = [];
+  for (const group of groups) {
+    for (const response of group.responseGroups ?? []) {
+      promptTexts.push(textOfNodes(response.prompt ?? []));
+    }
+  }
+  return {
+    taskGroups: groups.length,
+    responseGroups: promptTexts.length,
+    placeholderPrompts: promptTexts.filter((text) => placeholder.test(text)).length,
+    emptyPrompts: promptTexts.filter((text) => !text).length,
+    qualityState: ds?.quality?.state ?? null,
+    blockingCodes: [
+      ...new Set((ds?.quality?.issues ?? []).filter((issue) => issue?.severity === "blocking").map((issue) => issue.code)),
+    ],
+    samplePrompt: promptTexts[0] ?? null,
+  };
 }
 
 function diffCanonical(before, after) {
@@ -610,53 +697,92 @@ async function main() {
     return;
   }
 
-  // ---- 2. 从**真实稿**派生候选样本与修复剧本 ----
-  const derived = deriveRepairScenario(prepassDraft.ds);
-  if (!derived) {
-    // 前提不成立时，必须把**这份稿子的真实形状**写进报告：只说「没有页脚残留」
-    // 会让读者以为是脚本挑剔，而实测 DOCX 那一遍是 13 个题面全是占位符
-    // `[prompt pending review]`——那是本地识别本身的问题，不是脚本的前提问题。
-    const groups = prepassDraft.ds.taskGroups ?? [];
-    const placeholder = /^\s*\[[^\]]*pending review[^\]]*\]\s*$/iu;
-    const promptTexts = [];
-    for (const group of groups) {
-      for (const response of group.responseGroups ?? []) {
-        promptTexts.push(textOfNodes(response.prompt ?? []));
-      }
-    }
-    const placeholderCount = promptTexts.filter((text) => placeholder.test(text)).length;
-    const emptyCount = promptTexts.filter((text) => !text).length;
-    const blockingCodes = [
-      ...new Set((prepassDraft.ds.quality?.issues ?? []).filter((issue) => issue?.severity === "blocking").map((issue) => issue.code)),
+  // 稿子的真实形状**无条件**写进报告：它是后面多条退出路径共用的诊断依据。
+  report.observed.prepassDraftShape = {
+    ...draftShapeOf(prepassDraft.ds),
+    // 说明这份形状是从**哪一层**读到的。实测 DOCX 这一遍：产品读取路径
+    // （`get_workspace_item`）读到的是 `[prompt pending review]` 占位符，而库里
+    // canonical 的同一位置存的是**空串**——两者都表示「题面没有内容」，结论不变，
+    // 但读者必须知道读的是哪一层，否则会把「占位符 13」和「空串 13」当成两个事实。
+    readPath: "get_workspace_item.ds",
+  };
+
+  // ---- 2. 期望值来自人工标注的 golden fixture；真实稿只用来**核对** ----
+  //
+  // 这一步以前是「脚本从本地稿派生期望值」：脚本自己剥掉页脚残留，把结果同时当作
+  // 候选内容、剧本里的 `fixedPromptText`、以及断言时比的字符串。三者是同一个值，
+  // 于是「云端能依据原文件修正识别错误」无法被证伪——脚本把答案递给假模型，假模型照抄。
+  const golden = loadRepairGolden(repoRoot);
+  report.scenario.golden = {
+    path: path.relative(repoRoot, golden.path),
+    fixtureId: golden.fixtureId,
+    sourceSha256: golden.source.sha256,
+    errorId: golden.recognitionErrors[0].id,
+    errorClass: golden.recognitionErrors[0].errorClass,
+  };
+  // fixture 绑定的是**具体一份原文件**：哈希对不上就说明标注与文件不是同一份，
+  // 这时任何结论都不成立。
+  const actualFixtureSha = sha256OfFile(fixturePath);
+  if (actualFixtureSha !== golden.source.sha256) {
+    const shape = report.observed.prepassDraftShape;
+    const problems = [
+      `golden fixture 绑定的原文件哈希与本次输入不一致：fixture=${golden.source.sha256} 实际=${actualFixtureSha}`,
     ];
-    report.observed.prepassDraftShape = {
-      taskGroups: groups.length,
-      responseGroups: promptTexts.length,
-      placeholderPrompts: placeholderCount,
-      emptyPrompts: emptyCount,
-      qualityState: prepassDraft.ds.quality?.state ?? null,
-      blockingCodes,
-      samplePrompt: promptTexts[0] ?? null,
+    // 哈希对不上只是「这份输入没有标注」。若这份输入的初稿本身也不可用，必须一并说出来：
+    // 否则读者会以为「补一份标注就能验收」，而实际上补了也跑不动。
+    if (shape.placeholderPrompts > 0 || shape.emptyPrompts > 0) {
+      problems.push(
+        `而且这份输入的本地初稿本身不可用：${shape.responseGroups} 个题面里 ${shape.placeholderPrompts} 个是占位符、`
+          + `${shape.emptyPrompts} 个是空的（blocking ${JSON.stringify(shape.blockingCodes)}）。`
+          + "这是导入阶段的产品退化，先把初稿修好，才谈得上这份输入能不能验收。",
+      );
+    }
+    record("derive-scenario-from-real-draft", SCENARIO_STATUS.FAILED, {
+      problems,
+      fixture: fixturePath,
+      prepassDraftShape: shape,
+    });
+    writeFinalReport();
+    return;
+  }
+
+  const derived = deriveRepairScenario(prepassDraft.ds, golden);
+  if (!derived?.ok) {
+    // 前提不成立时，必须把**这份稿子的真实形状**写进报告：只说「没有页脚残留」
+    // 会让读者以为是脚本挑剔，而实测 DOCX 那一遍是 **13 个题面全是空的**——
+    // 那是本地识别本身的问题，不是脚本的前提问题。
+    // （形状在第 1 步之后就已无条件算好，这里直接取用，不再重算一份。）
+    const shape = report.observed.prepassDraftShape;
+    const placeholderCount = shape.placeholderPrompts;
+    const emptyCount = shape.emptyPrompts;
+    report.observed.goldenMismatch = {
+      reason: derived?.reason ?? "派生函数没有给出理由",
+      observed: derived?.observed ?? null,
+      expected: derived?.expected ?? null,
+      target: derived?.target ?? null,
     };
     // 分类必须诚实，这是本轮改掉的一处「用 not-executable 掩盖产品退化」：
     //   · 题面是**占位符 / 空**（本地识别产出的题面是退化的）→ FAILED。
     //     那是产品缺陷，不是「本次没法验」。以前记 not-executable（退出码 5），
     //     报告读起来像环境问题，真正的退化被藏起来了。
-    //   · 题面都是真实文字、只是没有页脚残留 → 这份夹具确实不覆盖本场景 →
-    //     这才是 not-executable（前提不成立）。
+    //   · 题面都是真实文字、只是**没有出现 golden 标注的那个错误** → 这份样本确实
+    //     不覆盖本场景 → 这才是 not-executable（前提不成立）。
+    //     注意：这时**不能**自己造一个错误出来。错误必须由本地识别真实产生；
+    //     造一个错再「修好」，证明的只是脚本会写字。
     if (placeholderCount > 0 || emptyCount > 0) {
       record("derive-scenario-from-real-draft", SCENARIO_STATUS.FAILED, {
         problems: [
-          `本地识别产出的题面是退化的：${promptTexts.length} 个题面里 ${placeholderCount} 个是占位符、`
-            + `${emptyCount} 个是空的（例如 ${JSON.stringify(promptTexts[0] ?? null)}）`,
-          `blocking 代码 ${JSON.stringify(blockingCodes)}`,
+          `本地识别产出的题面是退化的：${shape.responseGroups} 个题面里 ${placeholderCount} 个是占位符、`
+            + `${emptyCount} 个是空的（例如 ${JSON.stringify(shape.samplePrompt)}）`,
+          `blocking 代码 ${JSON.stringify(shape.blockingCodes)}`,
         ],
         prepassDraftShape: report.observed.prepassDraftShape,
       });
     } else {
       notExecutable(
         "derive-scenario-from-real-draft",
-        "这份稿子里没有可辨认的题面页脚残留，场景前提不成立。",
+        `本地识别没有产出 golden fixture 标注的那个错误，场景前提不成立：${derived?.reason ?? ""}`
+          + `（标注期望 ${JSON.stringify(derived?.expected ?? null)}，实测 ${JSON.stringify(derived?.observed ?? null)}）`,
       );
     }
     writeFinalReport();
@@ -680,12 +806,22 @@ async function main() {
   if (typeof derived.fix?.before !== "string" || derived.fix.before === derived.fix.after) {
     deriveProblems.push(`派生出的题面修改不是一处真实差异：before=${JSON.stringify(derived.fix?.before)} after=${JSON.stringify(derived.fix?.after)}`);
   }
+  // 剧本里**不能**出现期望值：一旦出现，受控服务就不必读原文件，链条立刻退回自证。
+  // 这条断言是「拆掉自证结构」最直接的守卫——它防的是以后有人图省事把答案塞回剧本。
+  if (JSON.stringify(derived.plan).includes(derived.golden.originalFileSays)) {
+    deriveProblems.push("剧本里出现了期望值（正确题面）：受控服务就不再需要读原文件，链条退回自证");
+  }
   if (deriveProblems.length === 0) {
     record("derive-scenario-from-real-draft", SCENARIO_STATUS.PASSED, {
       candidate: candidatePath,
       plan: planPath,
       differences: report.scenario.differences,
       fix: { responseGroupId: derived.fix.responseGroupId, before: derived.fix.before, after: derived.fix.after },
+      // 期望值的来源写清楚：断言时比的字符串来自 fixture，而不是脚本自己算的。
+      golden: derived.golden,
+      // 本地识别**真实产生**了这个错误（不是脚本注入的）。
+      localErrorIsReal: derived.fix.before === derived.golden.localDraftContains,
+      planCarriesNoExpectedText: !JSON.stringify(derived.plan).includes(derived.golden.originalFileSays),
     });
   } else {
     record("derive-scenario-from-real-draft", SCENARIO_STATUS.FAILED, { problems: deriveProblems });
@@ -898,28 +1034,128 @@ async function main() {
   }
   }
 
+  // ---- 10b. 断言：这次「云端改对了」不是自证 ----
+  //
+  // 这是本轮拆掉自证结构之后新增的一条，也是整条链最要紧的一条。
+  //
+  // 旧链条：脚本派生差异 → 写进剧本 → 假模型照剧本改 → 断言等于剧本里的字符串。
+  // 三者是同一个值，于是「云端能依据原文件修正识别错误」**无法被证伪**；剧本里一次
+  // `read_source` 都没有，而网关 prompt 却写着 "so it matches the ORIGINAL FILE"。
+  //
+  // 现在要证明的是：受控服务的**修改内容与证据引文**都只能从 `read_source` 的返回里
+  // 得到（剧本里没有这些值），而且引文能在原文里逐字找到。
+  {
+    const annotated = golden.recognitionErrors[0];
+    const toolCalls = report.modelTraces.toolCalls ?? [];
+    const sourceRounds = toolCalls.filter((call) => call.tool === "read_source");
+    const quotes = toolCalls.flatMap((call) => call.evidence ?? []);
+    const pageTexts = sourcePageTextsFromJob(itemId);
+    const expectedPageText = pageTexts.get(Number(annotated.sourcePage.oneBased)) ?? null;
+    const problems = [];
+
+    // (0) 回合本身必须存在：没有 read_source，后面两条都无从谈起。
+    if (sourceRounds.length === 0) {
+      problems.push("整条修复回合里没有一次 read_source：改对了也只是照剧本抄的，证明不了「依据原文件」");
+    }
+    if (!expectedPageText) {
+      problems.push(`作业目录里读不到第 ${annotated.sourcePage.oneBased} 页的原文文本，无法核对引文`);
+    }
+    // (1) 期望值来自人工标注的 fixture —— 与脚本派生彻底脱钩。
+    if (promptAfter !== annotated.originalFileSays) {
+      problems.push(
+        `改后题面与 golden 标注的原文件真值不一致：期望 ${JSON.stringify(annotated.originalFileSays)}，实际 ${JSON.stringify(promptAfter)}`,
+      );
+    }
+    // (2) fixture 的标注必须与**真实原文件**对得上：原文里那一行确实是「题号 + 真值」。
+    //     对不上说明标注写错了（或文件换了），这时上面的比较没有意义。
+    const expectedLine = `${annotated.target.questionNumber} ${annotated.originalFileSays}`;
+    if (expectedPageText && !expectedPageText.includes(expectedLine)) {
+      problems.push(`原文第 ${annotated.sourcePage.oneBased} 页里找不到「${expectedLine}」，golden 标注与真实原文件不一致`);
+    }
+    if (expectedPageText && !expectedPageText.includes(annotated.originalFileQuote)) {
+      problems.push(`golden 自带的引文在原文里找不到：${JSON.stringify(annotated.originalFileQuote)}`);
+    }
+    // (3) 引文必须能被证伪：模型给出的每一条引文都要在原文里逐字找到。
+    if (quotes.length === 0) {
+      problems.push("模型一条引文都没给：修改没有任何出处");
+    }
+    for (const quote of quotes) {
+      const text = String(quote?.quote ?? "").trim();
+      if (!text) {
+        problems.push("模型给出了一条空引文");
+        continue;
+      }
+      // 引文要落在**它自己声明的那一页**上，而不是脚本挑定的那一页。
+      // 旧写法把每条引文都拿去和第 4 页比：模型一条来自第 3 页（说明文字）的合法引文
+      // 会被判成「找不到」，反过来把第 3 页的引文谎报成第 4 页也能过。按声明页码逐条
+      // 核对，两个方向都堵住。
+      const pageIndex = Number(quote?.pageIndex);
+      const pageText = Number.isInteger(pageIndex) ? pageTexts.get(pageIndex) ?? null : null;
+      if (!pageText) {
+        problems.push(`模型引文声明了第 ${quote?.pageIndex} 页，但作业目录里读不到该页原文`);
+        continue;
+      }
+      if (!pageText.includes(text)) {
+        problems.push(`模型的引文在第 ${pageIndex} 页原文里找不到：${JSON.stringify(text)}`);
+      }
+    }
+    // 反向对照：检查本身必须能说「不」。若连一句显然不存在的话都能在原文里"找到"，
+    // 上面那圈检查就是恒真，等于没查。
+    const fabricated = "this sentence was never printed in the original file";
+    for (const [pageIndex, pageText] of pageTexts) {
+      if (pageText.includes(fabricated)) {
+        problems.push(`反向对照失效：虚构引文竟然能在第 ${pageIndex} 页原文里找到，说明引文检查是恒真的`);
+      }
+    }
+
+    report.observed.sourceGroundedCorrection = {
+      readSourceRounds: sourceRounds.length,
+      quotes: quotes.map((quote) => ({ pageIndex: quote?.pageIndex ?? null, quote: quote.quote })),
+      sourcePageOneBased: annotated.sourcePage.oneBased,
+      sourcePageTextLength: expectedPageText?.length ?? 0,
+      pagesAvailable: [...pageTexts.keys()].sort((a, b) => a - b),
+      expectedPrompt: annotated.originalFileSays,
+      actualPrompt: promptAfter,
+    };
+    if (problems.length === 0) {
+      record("correction-and-evidence-come-from-the-original-file", SCENARIO_STATUS.PASSED, {
+        readSourceRounds: sourceRounds.length,
+        quotes: report.observed.sourceGroundedCorrection.quotes,
+        promptAfter,
+      });
+    } else {
+      record("correction-and-evidence-come-from-the-original-file", SCENARIO_STATUS.FAILED, {
+        problems,
+        ...report.observed.sourceGroundedCorrection,
+      });
+    }
+  }
+
   // ---- 11. 断言：模型是**照着真实反馈**改的 ----
   const rounds = report.modelTraces.toolCalls;
   const feedbackProblems = [];
-  if (rounds.length < 4) feedbackProblems.push(`至少应有 4 轮工具调用，实际 ${rounds.length}`);
+  if (rounds.length < 5) feedbackProblems.push(`至少应有 5 轮工具调用，实际 ${rounds.length}`);
   if (rounds[0]?.tool !== "read_draft") feedbackProblems.push(`第 1 轮应为 read_draft，实际 ${rounds[0]?.tool}`);
-  if (rounds[1]?.tool !== "apply_edits" || rounds[1]?.baseVersion != null) {
-    feedbackProblems.push(`第 2 轮应为不带 baseVersion 的 apply_edits，实际 ${rounds[1]?.tool}/${rounds[1]?.baseVersion}`);
+  // 第 2 轮必须是 read_source：少了它，「照真实反馈改」就退化成照剧本改。
+  // （read_source 是后加的，下面所有轮次序号都跟着后移一位。）
+  if (rounds[1]?.tool !== "read_source") feedbackProblems.push(`第 2 轮应为 read_source，实际 ${rounds[1]?.tool}`);
+  if (rounds[2]?.tool !== "apply_edits" || rounds[2]?.baseVersion != null) {
+    feedbackProblems.push(`第 3 轮应为不带 baseVersion 的 apply_edits，实际 ${rounds[2]?.tool}/${rounds[2]?.baseVersion}`);
   }
-  if (rounds[2]?.tool !== "apply_edits" || rounds[2]?.baseVersion == null) {
-    feedbackProblems.push(`第 3 轮应带 baseVersion 重交，实际 ${rounds[2]?.tool}/${rounds[2]?.baseVersion}`);
+  if (rounds[3]?.tool !== "apply_edits" || rounds[3]?.baseVersion == null) {
+    feedbackProblems.push(`第 4 轮应带 baseVersion 重交，实际 ${rounds[3]?.tool}/${rounds[3]?.baseVersion}`);
   }
   const readDraftRound = report.modelTraces.llm.repairRounds[0];
-  if (readDraftRound && rounds[2]?.baseVersion !== readDraftRound.editVersion) {
-    feedbackProblems.push(`第 3 轮的 baseVersion(${rounds[2]?.baseVersion}) 必须等于第 1 轮真实读到的 editVersion(${readDraftRound.editVersion})`);
+  if (readDraftRound && rounds[3]?.baseVersion !== readDraftRound.editVersion) {
+    feedbackProblems.push(`第 4 轮的 baseVersion(${rounds[3]?.baseVersion}) 必须等于第 1 轮真实读到的 editVersion(${readDraftRound.editVersion})`);
   }
-  if (rounds[3]?.tool !== "record_ruling") feedbackProblems.push(`第 4 轮应为 record_ruling，实际 ${rounds[3]?.tool}`);
+  if (rounds[4]?.tool !== "record_ruling") feedbackProblems.push(`第 5 轮应为 record_ruling，实际 ${rounds[4]?.tool}`);
   if ((rounds.at(-1)?.tool ?? null) !== "finish") feedbackProblems.push(`最后一轮应为 finish，实际 ${rounds.at(-1)?.tool}`);
   if ((rounds.at(-1)?.unresolved ?? 0) < 1) feedbackProblems.push("finish 必须留下至少一条未解疑问");
   if (feedbackProblems.length === 0) {
     record("model-corrected-itself-from-real-feedback", SCENARIO_STATUS.PASSED, {
       rounds: rounds.map((round) => round.tool),
-      baseVersion: rounds[2]?.baseVersion,
+      baseVersion: rounds[3]?.baseVersion,
       readDraftEditVersion: readDraftRound?.editVersion ?? null,
     });
   } else {

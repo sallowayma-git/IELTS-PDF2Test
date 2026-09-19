@@ -347,14 +347,17 @@ function anchorLocation(target) {
 /**
  * 修复回合的剧本。
  *
- * 五轮，每一步都只用**上一轮真实 observation 里读到的东西**：
- *   1. `read_draft`      —— 拿到 editVersion 与整卷结构（含来源依据）
- *   2. `apply_edits`     —— **故意漏掉 baseVersion**：真实模型最常见的第一次失手。
- *                           后端回 `CLOUD_EDIT_BASE_VERSION_MISSING`，这一轮什么也没写。
- *   3. `apply_edits`     —— 用第 1 轮真实读到的 editVersion 重交，并把来源依据原样带回。
- *                           这一批**真的落库**，是本场景「云端自动修改」的唯一来源。
- *   4. `record_ruling`   —— 对剩余差异里「当前稿对、候选错」的那些作出裁定，不写内容。
- *   5. `finish`          —— 把**确实无法定论**的疑问交出去（它们会变成用户可见的剩余任务）。
+ * 六轮，每一步都只用**上一轮真实 observation 里读到的东西**：
+ *   1. `read_draft`    —— 拿到 editVersion 与整卷结构（含来源依据）。
+ *   2. `read_source`   —— **读原文件**。这一轮是本场景的关键：正确题面与证据引文
+ *                         都必须从它返回的原文文本里取，剧本里**没有**这些值。
+ *   3. `apply_edits`   —— **故意漏掉 baseVersion**：真实模型最常见的第一次失手。
+ *                         后端回 `CLOUD_EDIT_BASE_VERSION_MISSING`，这一轮什么也没写。
+ *   4. `apply_edits`   —— 用第 1 轮真实读到的 editVersion 重交，内容与引文都来自第 2 轮。
+ *                         这一批**真的落库**，是本场景「云端自动修改」的唯一来源。
+ *   5. `record_ruling` —— 对「当前稿对、候选错」的差异作出裁定。引文同样取自第 2 轮，
+ *                         找不到原文依据就**不裁定**（不编引文）。
+ *   6. `finish`        —— 把**确实无法定论**的疑问交出去（它们会变成用户可见的剩余任务）。
  *
  * 剧本拿不到目标（样本/结构对不上）时**不编造**：直接 `finish` 并如实说明，让这一轮
  * 以「什么都没改」结束。宁可报告为空，也不要制造一条假的成功。
@@ -375,70 +378,76 @@ function repairStepReply(text) {
   if (round === 1) {
     return { callId: 'c1', tool: 'read_draft', arguments: {} };
   }
+  // 第 2 轮：读**原文件**。不带页范围 → 后端返回全部页（含解析器层原文文本）。
+  // 这一步以前根本不存在，于是「云端是照着原文件改的」在证据上无从检验。
+  if (round === 2) {
+    return { callId: 'c2', tool: 'read_source', arguments: {} };
+  }
 
-  // ── 目标定位（只用真实读到的结构）──
-  const fixTaskId = plan.fixTaskId;
-  const fixResponseGroupId = plan.fixResponseGroupId;
-  const fixGroup = (draft?.taskGroups ?? []).find((group) => group?.taskId === fixTaskId);
-  const fixResponseGroup = (fixGroup?.responseGroups ?? []).find(
-    (group) => group?.responseGroupId === fixResponseGroupId,
-  );
-  const fixLocation = anchorLocation(fixResponseGroup);
-  const rewritten = fixResponseGroup
-    ? replaceFirstText(fixResponseGroup.prompt, plan.fixedPromptText)
-    : { nodes: null, done: false };
+  // ── 从第 2 轮的真实返回里取原文；取不到就不往下走 ──
+  const source = lastSourceObservation(observations);
+  const pageText = pageTextOf(source, plan.sourcePageOneBased);
+  const derived = stemFromSourcePage(pageText, plan.questionNumber);
+
+  // ── 目标定位：只用**真实读到的结构** + 剧本给的 slotId ──
+  const target = locateFixTarget(draft, plan.fixSlotIds);
+  const location = anchorLocation(target?.response);
+  const rewritten = target && derived ? replaceFirstText(target.response.prompt, derived.stem) : { nodes: null, done: false };
 
   // 结构改写是**整块替换**：来源依据必须原样带回，否则「这段文字出自哪一页」就没了，
-  // 质量门禁会逐个点名拒绝（`PROVENANCE_MISSING`）。依据只能从第 1 轮的真实返回里取。
+  // 质量门禁会逐个点名拒绝（`PROVENANCE_MISSING`）。
+  // 页码用模型**真正读到的**那一页（`read_source` 的页号，1-based）——权威稿锚点的
+  // `pageIndex` 是 0-based，直接拿来当证据页码会指向上一页。
   const fixCommands = () => [
     {
       op: 'setResponseGroup',
-      taskId: fixTaskId,
-      responseGroup: { ...fixResponseGroup, prompt: rewritten.nodes },
+      taskId: target.group.taskId,
+      responseGroup: { ...target.response, prompt: rewritten.nodes },
     },
   ];
   const fixEvidence = () => [
     {
-      sourceFileId: fixLocation?.sourceFileId ?? context.sourceFileId,
-      pageIndex: fixLocation?.pageIndex ?? 1,
-      quote: plan.evidenceQuote ?? 'BLANK PAGE',
+      sourceFileId: location?.sourceFileId ?? context.sourceFileId,
+      pageIndex: Number(plan.sourcePageOneBased),
+      // 引文就是原文里那一行本身 —— 逐字取自 `read_source` 的返回，不是常量。
+      quote: derived.quote,
     },
   ];
 
-  if (round === 2) {
-    if (!fixResponseGroup || !rewritten.done || !fixLocation) {
-      return giveUp('受控服务在真实稿里找不到剧本指定的作答结构，本轮不做任何修改');
+  if (round === 3) {
+    if (!target || !derived || !rewritten.done || !location) {
+      return giveUp('受控服务在真实稿/原文件里找不到剧本指定的作答结构，本轮不做任何修改');
     }
     // 有意**不带** `baseVersion`：这一轮一定被拒，用来证明「被拒之后是照着真实错误改的」。
     return {
-      callId: 'c2',
+      callId: 'c3',
       tool: 'apply_edits',
       arguments: { commands: fixCommands() },
     };
   }
 
-  if (round === 3) {
-    if (!fixResponseGroup || !rewritten.done || !fixLocation) {
-      return giveUp('受控服务在真实稿里找不到剧本指定的作答结构，本轮不做任何修改');
+  if (round === 4) {
+    if (!target || !derived || !rewritten.done || !location) {
+      return giveUp('受控服务在真实稿/原文件里找不到剧本指定的作答结构，本轮不做任何修改');
     }
-    // `baseVersion` 只能来自第 1 轮 `read_draft` 的真实返回；第 2 轮被拒的错误文本也
-    // 在这里被读到（下一轮报告据此断言「它是照着真实反馈改的」）。
+    // `baseVersion` 只能来自第 1 轮 `read_draft` 的真实返回；第 3 轮被拒的错误文本也
+    // 在这里被读到（报告据此断言「它是照着真实反馈改的」）。
     const version = draft?.editVersion;
     if (typeof version !== 'number') {
       return giveUp('受控服务没有读到真实 editVersion，不能提交编辑');
     }
-    const rejected = observationErrors(observations[1]);
+    const rejected = observations.flatMap((observation) => observationErrors(observation));
     if (!rejected.some((line) => line.includes('CLOUD_EDIT_BASE_VERSION_MISSING'))) {
-      return giveUp('第 2 轮没有被 baseVersion 规则拒绝，剧本前提不成立');
+      return giveUp('第 3 轮没有被 baseVersion 规则拒绝，剧本前提不成立');
     }
     return {
-      callId: 'c3',
+      callId: 'c4',
       tool: 'apply_edits',
       arguments: { baseVersion: version, commands: fixCommands(), evidence: fixEvidence() },
     };
   }
 
-  if (round === 4) {
+  if (round === 5) {
     const differences = Array.isArray(context.differences) ? context.differences : [];
     const wanted = Array.isArray(plan.rulings) ? plan.rulings : [];
     const rulings = [];
@@ -450,11 +459,14 @@ function repairStepReply(text) {
           && difference?.field === entry.field,
       );
       if (!listed) continue;
-      const target =
+      // 引文必须在原文里**真的存在**：找不到就不裁定。裁定没有出处等于编造。
+      const grounded = sourceLineContaining(source, entry.evidenceKeyword);
+      if (!grounded) continue;
+      const rulingTarget =
         entry.targetType === 'task_group'
           ? (draft?.taskGroups ?? []).find((group) => group?.taskId === entry.targetId)
           : null;
-      const location = anchorLocation(target) ?? fixLocation;
+      const rulingLocation = anchorLocation(rulingTarget) ?? location;
       rulings.push({
         targetType: entry.targetType,
         targetId: entry.targetId,
@@ -463,22 +475,23 @@ function repairStepReply(text) {
         reason: entry.reason ?? '原文件与当前稿一致，候选读错了。',
         evidence: [
           {
-            sourceFileId: location?.sourceFileId ?? context.sourceFileId,
-            pageIndex: location?.pageIndex ?? 1,
-            quote: entry.quote ?? 'Questions',
+            sourceFileId: rulingLocation?.sourceFileId ?? context.sourceFileId,
+            pageIndex: grounded.pageIndex ?? 1,
+            quote: grounded.line,
           },
         ],
       });
     }
     if (rulings.length === 0) {
-      // 差异已经被改掉或本来就不存在：不硬造裁定（后端也会拒），直接进入收尾。
+      // 差异已经被改掉、本来就不存在，或找不到原文依据：不硬造裁定（后端也会拒），
+      // 直接进入收尾。
       return {
-        callId: 'c4',
+        callId: 'c5',
         tool: 'finish',
-        arguments: { note: '没有需要裁定的差异', unresolved: unresolvedFrom(plan, context) },
+        arguments: { note: '没有可依据原文裁定的差异', unresolved: unresolvedFrom(plan, context) },
       };
     }
-    return { callId: 'c4', tool: 'record_ruling', arguments: { rulings } };
+    return { callId: 'c5', tool: 'record_ruling', arguments: { rulings } };
   }
 
   return {
@@ -490,6 +503,72 @@ function repairStepReply(text) {
     },
   };
 }
+
+/** 观察结果里最后一次 `read_source` 的真实返回（含逐页原文文本）。 */
+function lastSourceObservation(observations) {
+  for (let index = (observations ?? []).length - 1; index >= 0; index -= 1) {
+    const result = observations[index]?.result;
+    if (result && typeof result === 'object' && Array.isArray(result.pages)) return result;
+  }
+  return null;
+}
+
+/** `read_source` 返回里某一页的原文文本（页号是 1-based，与返回的页对象一致）。 */
+function pageTextOf(source, pageOneBased) {
+  const pages = Array.isArray(source?.pages) ? source.pages : [];
+  const page = pages.find((entry) => Number(entry?.pageIndex) === Number(pageOneBased));
+  const text = typeof page?.text === 'string' ? page.text.trim() : '';
+  return text || null;
+}
+
+/**
+ * 从原文页文本里取出某题的**题干**：以题号开头的那一行，去掉题号。
+ *
+ * 这是本场景的核心：正确题面**只能**这样得到——从 `read_source` 返回的原文里读出来。
+ * 剧本里没有它，脚本派生也没有它。
+ */
+function stemFromSourcePage(pageText, questionNumber) {
+  if (typeof pageText !== 'string' || !pageText) return null;
+  const number = Number(questionNumber);
+  if (!Number.isInteger(number) || number <= 0) return null;
+  const lines = pageText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const prefix = new RegExp(`^${number}\\s+`);
+  for (const line of lines) {
+    const matched = prefix.exec(line);
+    if (!matched) continue;
+    const stem = line.slice(matched[0].length).trim();
+    if (stem) return { stem, quote: line };
+  }
+  return null;
+}
+
+/** 在 `read_source` 返回的**全部页**里找一行包含关键词的原文。 */
+function sourceLineContaining(source, keyword) {
+  const needle = String(keyword ?? '').trim();
+  if (!needle) return null;
+  for (const page of Array.isArray(source?.pages) ? source.pages : []) {
+    const text = typeof page?.text === 'string' ? page.text : '';
+    for (const line of text.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
+      if (line.includes(needle)) return { line, pageIndex: Number(page?.pageIndex) || null };
+    }
+  }
+  return null;
+}
+
+/** 在真实稿里按 slotId 定位承载它的作答组（目标来自真实读取，不是剧本常量）。 */
+function locateFixTarget(draft, slotIds) {
+  const wanted = Array.isArray(slotIds) ? slotIds : [];
+  if (wanted.length === 0) return null;
+  for (const group of draft?.taskGroups ?? []) {
+    for (const response of group?.responseGroups ?? []) {
+      const slots = Array.isArray(response?.slotIds) ? response.slotIds : [];
+      if (!wanted.every((slot) => slots.includes(slot))) continue;
+      return { group, response };
+    }
+  }
+  return null;
+}
+
 
 /** `finish.unresolved`：模型**确实无法定论**的疑问，会变成用户可见的剩余任务。 */
 function unresolvedFrom(plan, context) {

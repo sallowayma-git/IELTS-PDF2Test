@@ -873,6 +873,162 @@ pub(crate) fn read_draft_section(
     })
 }
 
+/// 原文件**逐页纯文本**（解析器层，不是语义识别结论）。
+///
+/// 为什么要单独抽出来：`read_source` 的 note 一直写着「下面的页文本就是抽取出来的文本层」，
+/// 但 PDF 分支实际只回页图——而模型本来就已经拿到了整份 PDF，这次调用没带来任何新信息。
+/// 更要紧的是：模型无法**引用**原文的句子，只能凭图片印象转述，于是「云端是照着原文件
+/// 改的」这句话在证据上不可证伪（引文可以随口编）。
+///
+/// 只读**解析器层**产物，按优先级：
+///   1. `document-ir.json` 的逐页 lines/spans（规范抽取）；
+///   2. `document-ir-v2.shadow.compare.json` 的 `v1Text`（V1 仍是权威抽取文本）。
+///
+/// **绝不**读 `authoring-ir.json`：那是语义识别结论，正是要被纠正的东西，
+/// 拿它当「原文证据」就是自我印证（本地抽错了、云端照着错的一起错）。
+///
+/// # 页号约定（实测，别改错）
+///
+/// 返回的 key 一律是 **1-based**，因为要 join 的是 `read_source` 自己的页对象，
+/// 而它来自 `cache/vision/pdf-images.json`——那份产物的页码是 1-based
+/// （`page-004-rendered.png` 对应 `pageIndex: 4`）。
+/// 但 `DocumentIR` / `DocumentIRV2` 比对报告的 `pageIndex` 是 **0-based**：
+/// 实测同一页在 pdf-images 里是 `pageIndex: 4`、在比对报告里是 `pageIndex: 3`，
+/// 而权威稿锚点给出的也是 0-based 的 `pageIndex: 3`（节点 id 前缀 `p004-`）。
+/// 两者相差 1，这里统一到 1-based，否则模型会引到隔壁页的句子——
+/// 那比不给文本更糟：它看起来有出处，出处却是错的。
+fn source_page_texts(root: &Path, job_id: &str) -> BTreeMap<u64, String> {
+    let dir = crate::util::job_dir(root, job_id);
+    let mut out: BTreeMap<u64, String> = BTreeMap::new();
+
+    if let Ok(Some(ir)) = crate::util::read_json_opt(&dir.join("document-ir.json")) {
+        for page in ir.get("pages").and_then(Value::as_array).into_iter().flatten() {
+            let Some(index) = page.get("pageIndex").and_then(Value::as_u64) else {
+                continue;
+            };
+            let mut text = String::new();
+            if let Some(lines) = page.get("lines").and_then(Value::as_array) {
+                for line in lines {
+                    if let Some(value) = line.get("text").and_then(Value::as_str) {
+                        if !value.trim().is_empty() {
+                            text.push_str(value);
+                            text.push('\n');
+                        }
+                    }
+                }
+            } else if let Some(spans) = page.get("spans").and_then(Value::as_array) {
+                for span in spans {
+                    if let Some(value) = span.get("text").and_then(Value::as_str) {
+                        text.push_str(value);
+                    }
+                }
+                text.push('\n');
+            }
+            if !text.trim().is_empty() {
+                out.insert(index + 1, text.trim_end().to_string());
+            }
+        }
+    }
+    if !out.is_empty() {
+        return out;
+    }
+
+    if let Ok(Some(report)) =
+        crate::util::read_json_opt(&dir.join("document-ir-v2.shadow.compare.json"))
+    {
+        for page in report
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(index) = page.get("pageIndex").and_then(Value::as_u64) else {
+                continue;
+            };
+            let text = page
+                .get("v1Text")
+                .and_then(Value::as_str)
+                .or_else(|| page.get("v2Text").and_then(Value::as_str))
+                .unwrap_or("");
+            if !text.trim().is_empty() {
+                out.insert(index + 1, text.trim_end().to_string());
+            }
+        }
+    }
+    out
+}
+
+/// 把逐页原文文本贴到 `read_source` 要返回的页对象上。
+///
+/// **保持页对象原有字段不变**（页图、尺寸、渲染信息都还要用），只增补 `text`。
+/// 抽成纯函数是为了能直接测「哪一页拿到哪段文本」——那正是最容易写错、也最难在
+/// 端到端里定位的一步（页号 0-based / 1-based 混淆时，模型会引到隔壁页的句子）。
+fn attach_page_texts(pages: &[Value], page_texts: &BTreeMap<u64, String>) -> Vec<Value> {
+    pages
+        .iter()
+        .map(|page| {
+            let mut page = page.clone();
+            let index = page
+                .get("pageIndex")
+                .and_then(Value::as_u64)
+                .or_else(|| page.get("page").and_then(Value::as_u64));
+            if let Some(text) = index.and_then(|index| page_texts.get(&index)) {
+                page["text"] = json!(text);
+            }
+            page
+        })
+        .collect()
+}
+
+/// `read_source` 的 PDF 分支：把原文件页与抽取出来的文本层拼成返回体。
+///
+/// 单独成函数是为了**能被真实驱动**。以前这段逻辑内联在 `read_source_evidence` 里，
+/// 而后者要先跑 PDF 视觉抽取（Python sidecar），单测跑不起来，于是测试只能直接调
+/// `attach_page_texts`——助手函数是被测到了，「PDF 分支到底有没有真的接上文本层」
+/// 却没人管：把 `attach_page_texts` 的调用删掉（退回「只回页图」），测试照样全绿。
+/// 变异检查就是这样把它抓出来的。
+pub(crate) fn pdf_read_source_response(
+    evidence: &Value,
+    page_from: Option<u64>,
+    page_to: Option<u64>,
+    page_texts: &BTreeMap<u64, String>,
+) -> Value {
+    let selected: Vec<Value> = evidence
+        .get("pages")
+        .and_then(Value::as_array)
+        .map(|pages| {
+            pages
+                .iter()
+                .filter(|page| {
+                    let Some(from) = page_from else { return true };
+                    let index = page
+                        .get("pageIndex")
+                        .and_then(Value::as_u64)
+                        .or_else(|| page.get("page").and_then(Value::as_u64))
+                        .unwrap_or(0);
+                    index >= from && index <= page_to.unwrap_or(from)
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let pages = attach_page_texts(&selected, page_texts);
+    let quoted_pages = pages.iter().filter(|page| page.get("text").is_some()).count();
+    json!({
+        "kind": "pdf",
+        "sourceFileId": evidence.get("sourceFileId").cloned().unwrap_or(Value::Null),
+        // 如实说明这次到底给了什么：抽不出文本层时不能继续声称「下面就是文本层」，
+        // 否则模型会以为自己读到了原文，从而编造引文。
+        "note": if quoted_pages > 0 {
+            "The original PDF is attached to this conversation. Each returned page also carries the text layer extracted from the original file — cite it verbatim when you justify an edit."
+        } else {
+            "The original PDF is attached to this conversation. No text layer could be extracted for these pages; read the attached file itself."
+        },
+        "pagesWithText": quoted_pages,
+        "pages": pages,
+    })
+}
+
 /// `read_source`：读取原文件证据。
 ///
 /// **不接受任意路径**：来源固定由后端按 job 解析，模型只能选页范围或给一段引文。
@@ -895,31 +1051,15 @@ pub(crate) fn read_source_evidence(
 
     let kind = evidence.get("kind").and_then(Value::as_str).unwrap_or("");
     if kind == "pdf" {
-        let pages: Vec<Value> = evidence
-            .get("pages")
-            .and_then(Value::as_array)
-            .map(|pages| {
-                pages
-                    .iter()
-                    .filter(|page| {
-                        let Some(from) = page_from else { return true };
-                        let index = page
-                            .get("pageIndex")
-                            .and_then(Value::as_u64)
-                            .or_else(|| page.get("page").and_then(Value::as_u64))
-                            .unwrap_or(0);
-                        index >= from && index <= page_to.unwrap_or(from)
-                    })
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
-        return Ok(json!({
-            "kind": "pdf",
-            "sourceFileId": evidence.get("sourceFileId").cloned().unwrap_or(Value::Null),
-            "note": "The original PDF is attached to this conversation; the page text below is the extracted text layer.",
-            "pages": pages,
-        }));
+        // 原文文本一并带上：模型才能**逐字引用**它引以为据的那句话，
+        // 而不是只能凭页图转述（见 `source_page_texts` 的说明）。
+        let page_texts = source_page_texts(root, job_id);
+        return Ok(pdf_read_source_response(
+            &evidence,
+            page_from,
+            page_to,
+            &page_texts,
+        ));
     }
 
     let text = evidence.get("text").and_then(Value::as_str).unwrap_or("");
