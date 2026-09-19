@@ -163,18 +163,20 @@ pub(crate) fn run_preview_e2e_core(root: &Path, job_id: &str) -> CommandResult<V
         .get("passed")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let readiness_passed = if static_report_passed {
+    let publish_readiness = if static_report_passed {
         if let Some(ir) = authoring.as_ref() {
-            publish_readiness_gate(root, job_id, ir, static_report.clone())?
-                .get("passed")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
+            Some(publish_readiness_gate(root, job_id, ir, static_report.clone())?)
         } else {
-            false
+            None
         }
     } else {
-        false
+        None
     };
+    let readiness_passed = publish_readiness
+        .as_ref()
+        .and_then(|report| report.get("passed"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let mut report = diagnostic_report;
     // #14：本路径读的是 `authoring-ir.json` 文件，而预检读 canonical ⇒ 记下两者是否
     // 同一份稿（只检出，不阻塞，见 `authoring_validation::version_alignment`）。
@@ -194,6 +196,14 @@ pub(crate) fn run_preview_e2e_core(root: &Path, job_id: &str) -> CommandResult<V
                 "readinessPassed": readiness_passed,
                 "previewDiagnosticsBinding": false,
             }),
+        );
+        // Readiness adds product-facing blockers (human verification, source review, authoring
+        // review) after the static runtime report has been built.  Keep that exact report under a
+        // separate field so a user can inspect why readiness failed without making diagnostics
+        // binding or changing the long-standing `issues`/`layers` consumers.
+        object.insert(
+            "publishReadiness".to_string(),
+            publish_readiness.unwrap_or(Value::Null),
         );
         if diagnostic_ran {
             object.insert(

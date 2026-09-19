@@ -824,6 +824,117 @@ mod tests {
             .unwrap_or(0)
     }
 
+    fn verdict_semantics(verdict: &Value) -> Value {
+        json!({
+            "status": verdict.get("status"),
+            "ready": verdict.get("ready"),
+            "reasons": verdict.get("reasons")
+        })
+    }
+
+    #[test]
+    fn publish_verdict_is_equivalent_across_preflight_two_legacy_exports_and_publish() {
+        let root = std::env::temp_dir().join(format!(
+            "publish-verdict-equivalence-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        crate::util::ensure_app_dirs(&root).unwrap();
+        let job_id = "early-approaches-architecture-proof";
+        crate::util::ensure_job_dirs(&crate::util::job_dir(&root, job_id)).unwrap();
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json");
+        let mut ready: Value = crate::util::read_json(&fixture_path).unwrap();
+        // The standalone golden intentionally records a missing physical shadow.  For this
+        // equivalence test the manuscript itself is made ready so all four entrances exercise
+        // the verdict rather than the fixture's unrelated coverage note.
+        ready["quality"]["state"] = json!("ready");
+        ready["quality"]["sourceCoverage"] = json!(1.0);
+        ready["quality"]["hardFailures"] = json!([]);
+        ready["quality"]["issues"] = json!([]);
+        ready["audit"]["humanVerified"] = json!(true);
+
+        let preflight = crate::authoring_v2_commands::check_publish_preflight(
+            &root,
+            job_id,
+            7,
+            &ready,
+        )
+        .get("publishVerdict")
+        .cloned()
+        .expect("preflight must expose the shared verdict");
+        // These are the exact helper calls used by reading-assets and reading-js respectively.
+        // They are invoked separately here to pin both export entrances to the same semantics.
+        let assets = crate::export_pack::legacy_export_verdict(&root, job_id, &ready).to_value();
+        let javascript = crate::export_pack::legacy_export_verdict(&root, job_id, &ready).to_value();
+        let publish = publish_verdict(
+            &root,
+            job_id,
+            &ready,
+            Some(7),
+            PublishScope::CanonicalDirect,
+        )
+        .to_value();
+        let ready_entries = [&preflight, &assets, &javascript, &publish];
+        for entry in ready_entries {
+            assert_eq!(
+                verdict_semantics(entry),
+                verdict_semantics(&preflight),
+                "all ready entrances must share one semantic verdict: {entry}"
+            );
+        }
+        assert_eq!(preflight["status"], json!("ready"));
+
+        // Counterexample for the blocked branch: an unresolved answer must stop every entrance,
+        // not just the UI preflight.
+        let mut blocked = ready.clone();
+        blocked["answerKey"]["q14"] = json!({"kind": "unresolved"});
+        let blocked_preflight = crate::authoring_v2_commands::check_publish_preflight(
+            &root,
+            job_id,
+            8,
+            &blocked,
+        )
+        .get("publishVerdict")
+        .cloned()
+        .expect("blocked preflight must expose the shared verdict");
+        let blocked_assets = crate::export_pack::legacy_export_verdict(&root, job_id, &blocked).to_value();
+        let blocked_javascript = crate::export_pack::legacy_export_verdict(&root, job_id, &blocked).to_value();
+        let blocked_publish = publish_verdict(
+            &root,
+            job_id,
+            &blocked,
+            Some(8),
+            PublishScope::CanonicalDirect,
+        )
+        .to_value();
+        let blocked_entries = [
+            &blocked_preflight,
+            &blocked_assets,
+            &blocked_javascript,
+            &blocked_publish,
+        ];
+        for entry in blocked_entries {
+            assert_eq!(entry["status"], json!("blocked"), "{entry}");
+            assert_eq!(entry["ready"], json!(false), "{entry}");
+            assert!(
+                entry["reasons"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|reason| reason["code"] == json!("ANSWER_MISSING")),
+                "each entrance must expose the unresolved answer blocker: {entry}"
+            );
+            assert_eq!(
+                verdict_semantics(entry),
+                verdict_semantics(&blocked_preflight),
+                "blocked entrances must share one semantic verdict: {entry}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// 反例 ②（#14）：预检读 canonical（DB 权威稿），而预览 / 遗留导出读
     /// `authoring-ir.json` **文件**；DB 编辑从不重写该文件 ⇒ 两条路径校验的**不是同一份稿**，
     /// 而全程没有任何版本检查（NOTES §5.4 (c)）。

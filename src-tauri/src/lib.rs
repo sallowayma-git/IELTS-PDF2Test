@@ -5454,6 +5454,41 @@ Answers
     }
 
     #[test]
+    fn preview_e2e_persists_publish_readiness_issues_separately_from_static_report() {
+        let root = temp_test_root();
+        let (job, mut ir) = make_publishable_fixture(&root);
+        // Static runtime validation still passes here.  The publish-readiness layer adds a
+        // separate human-verification blocker, which must remain queryable after the command
+        // returns instead of existing only in the temporary value used for readiness_passed.
+        ir["audit"]["humanVerified"] = json!(false);
+        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
+
+        let returned = run_preview_e2e_core(&root, &job.job_id).unwrap();
+        let saved_report: Value =
+            read_json(&job_dir(&root, &job.job_id).join("validation-report.json")).unwrap();
+        assert_eq!(returned, saved_report);
+        assert_eq!(
+            saved_report
+                .pointer("/publishBasis/readinessPassed")
+                .and_then(Value::as_bool),
+            Some(false),
+            "human verification must still block publish readiness"
+        );
+        let readiness_issues = saved_report
+            .pointer("/publishReadiness/issues")
+            .and_then(Value::as_array)
+            .expect("publish-readiness reasons must be persisted in the report");
+        assert!(
+            readiness_issues.iter().any(|issue| {
+                issue.get("path").and_then(Value::as_str) == Some("$.audit.humanVerified")
+            }),
+            "the report must preserve the exact readiness blocker: {readiness_issues:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn umbrella_question_range_detection_keeps_opening_instructions_distinct() {
         assert!(is_dynamic_umbrella_question_range(
             "Questions 14-26 are based on Reading Passage 2 below."
