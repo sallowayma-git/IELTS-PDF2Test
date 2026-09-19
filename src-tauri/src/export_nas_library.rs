@@ -1,7 +1,8 @@
 use crate::{
+    authoring_validation::{apply_publish_verdict, PublishScope, PublishVerdict},
     cleanup::{cleanup_transient_job_artifacts, minimize_process_artifacts_after_authoring},
     export_artifacts::{build_manifest, build_wrapper, safe_exam_id},
-    export_pack::ExportValidationOptions,
+    export_pack::{legacy_export_verdict, legacy_gate_error, ExportValidationOptions},
     job_store::update_job,
     reading_source::reading_source,
     runtime_validation::{publish_readiness_gate, validate_for_runtime_gate},
@@ -59,8 +60,13 @@ struct NasDirectWriteResult {
     files: Vec<WrittenSourceFile>,
     manifest_js: String,
     manifest_asset_count: usize,
-    validation_overridden: bool,
-    ignored_issues: Vec<Value>,
+    /// 每卷的发布结论，与 `files` 同序。
+    ///
+    /// 修前这里是 `validation_overridden: bool` + `ignored_issues: Vec<Value>`：
+    /// 布尔只能表达"绕过过没有"，而 `ignored_issues` 只记 `severity == "error"`
+    /// 的项（被 force 放行的 warning 一条都不留），且批量路径用 `|=` 把整批污染。
+    /// 现在换成结论本身：产物里能查到"这一卷当时是凭什么判断可以发的"。
+    verdicts: Vec<PublishVerdict>,
 }
 
 #[derive(Debug, Clone)]
@@ -1096,34 +1102,42 @@ fn write_selected_nas_direct_files(
     job_ids: &[String],
     reading_exams_dir: &Path,
     require_static_runtime_gate: bool,
-    options: ExportValidationOptions,
 ) -> CommandResult<NasDirectWriteResult> {
+    // 稿件来自 `authoring-ir.json`（派生文件）⇒ 范围恒为 FullDerived。
+    // 范围由来源决定，不由请求体决定 —— `options` 参数因此已从这里删掉。
+    let scope = PublishScope::FullDerived;
     let mut files = Vec::with_capacity(job_ids.len());
+    let mut verdicts = Vec::with_capacity(job_ids.len());
     let mut seen_exam_ids = HashSet::new();
-    let mut validation_overridden = false;
-    let mut ignored_issues = Vec::new();
 
     for job_id in job_ids {
         validate_path_segment("job_id", job_id)?;
         let ir: Value = read_json(&job_dir(root, job_id).join("authoring-ir.json"))?;
         let report = validate_for_runtime_gate(root, job_id, &ir, require_static_runtime_gate)?;
-        let report = publish_readiness_gate(root, job_id, &ir, report)?;
+        let mut report = publish_readiness_gate(root, job_id, &ir, report)?;
+        // 判据只来自 `publish_verdict`；`report.passed` 由结论派生，
+        // 产物与结论因此不可能互相矛盾。
+        let verdict = legacy_export_verdict(root, job_id, &ir);
+        apply_publish_verdict(&mut report, &verdict, scope);
+        // #14：本路径读文件、预检读 canonical ⇒ 记下两者是否同一份稿（只检出，不阻塞）。
+        crate::authoring_validation::record_version_alignment(&mut report, root, job_id, &ir);
         write_json(
             &job_dir(root, job_id).join("validation-report.json"),
             &report,
         )?;
-        validation_overridden |= options.validation_overridden(&report);
-        ignored_issues.extend(options.ignored_issues(job_id, &report));
-        if options.should_block(&report) {
+        if !verdict.is_ready() {
             let _ = minimize_process_artifacts_after_authoring(
                 root,
                 job_id,
                 "nas_js_direct_export_publish_gate_failed",
             )?;
+            // 与 export_pack 同一套错误串：`Undetermined`（判据没能执行）与
+            // `Blocked`（查过了，不能发）用不同错误码 —— 混在一起会让人去改内容，
+            // 而其实该修的是环境。
             return Err(format!(
-                "nas_export_validation_failed:{}:{}",
-                job_id,
-                serde_json::to_string(&report).unwrap_or_default()
+                "{}:{}",
+                legacy_gate_error("nas_export_validation_failed", &report, &verdict),
+                job_id
             ));
         }
 
@@ -1143,6 +1157,7 @@ fn write_selected_nas_direct_files(
             wrapper_js: wrapper,
             source,
         });
+        verdicts.push(verdict);
     }
 
     let (manifest_js, manifest_asset_count) =
@@ -1151,8 +1166,7 @@ fn write_selected_nas_direct_files(
         files,
         manifest_js,
         manifest_asset_count,
-        validation_overridden,
-        ignored_issues,
+        verdicts,
     })
 }
 
@@ -1448,7 +1462,10 @@ pub(crate) fn export_nas_library_core(
     input: &Value,
     require_static_runtime_gate: bool,
 ) -> CommandResult<Value> {
-    let options = ExportValidationOptions::from_input(input)?;
+    // 只用来拒绝非 strict 的 policy：force 能力已从后端入口删除。
+    // 刻意保留这一步（而不是删掉整句）—— 传 `validationPolicy: "force"` 必须
+    // **明确报错**，不能静默按 strict 处理（静默降级会让调用方以为绕过生效了）。
+    ExportValidationOptions::from_input(input)?;
     let job_ids = input
         .get("jobIds")
         .and_then(Value::as_array)
@@ -1479,17 +1496,20 @@ pub(crate) fn export_nas_library_core(
         &job_ids,
         &reading_exams_dir,
         require_static_runtime_gate,
-        options,
     )?;
     let NasDirectWriteResult {
         files: written_sources,
         manifest_js,
         manifest_asset_count,
-        validation_overridden,
-        ignored_issues,
+        verdicts,
     } = write_result;
     let asset_count = written_sources.len();
-    let ignored_issue_count = ignored_issues.len() as u64;
+    // 走到这里 = 批内每一卷都是 Ready（任一不是就已在上面返回 Err），
+    // 但结论本身要逐卷留下，见 `NasDirectWriteResult::verdicts`。
+    let publish_verdicts = verdicts
+        .iter()
+        .map(PublishVerdict::to_value)
+        .collect::<Vec<_>>();
     let report = json!({
         "status": "ok",
         "version": version.clone(),
@@ -1500,9 +1520,13 @@ pub(crate) fn export_nas_library_core(
             "manifestFileCount": 1,
             "manifestAssetCount": manifest_asset_count,
             "assetCount": asset_count,
-            "validationPolicy": options.policy_name(),
-            "validationOverridden": validation_overridden,
-            "ignoredIssueCount": ignored_issue_count
+            // force 能力已删除。这四个字段保留只为不破坏既有产物 schema，
+            // 取值只可能是「未绕过」；判据在 `publishVerdicts` 里。
+            "validationPolicy": "strict",
+            "validationOverridden": false,
+            "ignoredIssueCount": 0u64,
+            "ignoredIssues": Vec::<Value>::new(),
+            "publishVerdicts": publish_verdicts.clone()
         },
         "errors": []
     });
@@ -1521,10 +1545,11 @@ pub(crate) fn export_nas_library_core(
                 "runtime": "nas-js-direct",
                 "version": version,
                 "outputDir": library_root.to_string_lossy(),
-                "validationPolicy": options.policy_name(),
-                "validationOverridden": validation_overridden,
-                "ignoredIssueCount": ignored_issue_count,
-                "ignoredIssues": ignored_issues.clone(),
+                "validationPolicy": "strict",
+                "validationOverridden": false,
+                "ignoredIssueCount": 0u64,
+                "ignoredIssues": Vec::<Value>::new(),
+                "publishVerdicts": publish_verdicts.clone(),
                 "exportedAt": Utc::now().to_rfc3339()
             }),
         )?);
@@ -1550,10 +1575,11 @@ pub(crate) fn export_nas_library_core(
         "version": version.clone(),
         "files": files,
         "report": report,
-        "validationPolicy": options.policy_name(),
-        "validationOverridden": validation_overridden,
-        "ignoredIssueCount": ignored_issue_count,
-        "ignoredIssues": ignored_issues.clone(),
+        "validationPolicy": "strict",
+        "validationOverridden": false,
+        "ignoredIssueCount": 0u64,
+        "ignoredIssues": Vec::<Value>::new(),
+        "publishVerdicts": publish_verdicts.clone(),
         "exportSummary": {
             "type": "nas-library",
             "runtime": "nas-js-direct",
@@ -1563,10 +1589,11 @@ pub(crate) fn export_nas_library_core(
             "readingExamsDir": reading_exams_dir.to_string_lossy(),
             "assetCount": asset_count,
             "manifestAssetCount": manifest_asset_count,
-            "validationPolicy": options.policy_name(),
-            "validationOverridden": validation_overridden,
-            "ignoredIssueCount": ignored_issue_count,
-            "ignoredIssues": ignored_issues,
+            "validationPolicy": "strict",
+            "validationOverridden": false,
+            "ignoredIssueCount": 0u64,
+            "ignoredIssues": Vec::<Value>::new(),
+            "publishVerdicts": publish_verdicts,
             "exportedAt": Utc::now().to_rfc3339()
         },
         "cleanup": cleanup

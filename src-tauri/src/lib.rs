@@ -5386,48 +5386,69 @@ Answers
         let _ = fs::remove_dir_all(root);
     }
 
+    // ── #12：预览 E2E 的两份 report 收敛为一份（NOTES §3.4）──────────────────
+    //
+    // 这条测试修前是 `preview_e2e_diagnostic_failure_does_not_block_static_export_ready`，
+    // 它**复刻**了 `run_preview_e2e_core` 的内部逻辑：自己造一份 diagnostic_report 写盘、
+    // 自己算 readiness、自己调 `apply_preview_e2e_job_state`。所以它测不到被测函数本身
+    // —— 恰恰是最容易错的两点（产物与状态不同源、诊断失败被算进 `passed`）它一个都碰不到。
+    // 现在改成**调用真函数**，并把 E8-26 的原意（诊断失败不降级）一并钉住。
     #[test]
-    fn preview_e2e_diagnostic_failure_does_not_block_static_export_ready() {
+    fn preview_e2e_records_one_report_and_keeps_diagnostics_non_binding() {
         let root = temp_test_root();
         let (job, ir) = make_publishable_fixture(&root);
-        let static_report = validate_for_runtime_gate(&root, &job.job_id, &ir, false).unwrap();
-        let diagnostic_report = json!({
-            "jobId": job.job_id,
-            "passed": false,
-            "layers": [{"layer": "RuntimePreview", "passed": false, "issueCount": 1, "errorCount": 1, "warningCount": 0}],
-            "issues": [{
-                "issueId": "issue-diagnostic",
-                "severity": "error",
-                "layer": "RuntimePreview",
-                "path": "runtime.execution",
-                "message": "Preview E2E diagnostic unavailable"
-            }],
-            "runtime": {"mode": "fallback", "fallbackReason": "real_runtime_unavailable"}
-        });
-        write_json(
-            &job_dir(&root, &job.job_id).join("validation-report.json"),
-            &diagnostic_report,
-        )
-        .unwrap();
-        let readiness_passed =
-            publish_readiness_gate(&root, &job.job_id, &ir, static_report.clone())
-                .unwrap()
-                .get("passed")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
 
-        apply_preview_e2e_job_state(&root, &job.job_id, &static_report, readiness_passed).unwrap();
-
-        let saved = load_job(&root, &job.job_id).unwrap();
-        assert_eq!(saved.status, JobStatus::ExportReady);
+        let returned = run_preview_e2e_core(&root, &job.job_id).unwrap();
         let saved_report: Value =
             read_json(&job_dir(&root, &job.job_id).join("validation-report.json")).unwrap();
+
+        // (1) 只有一份报告：返回值就是落盘的那一份，不存在"两份各说各话"。
+        assert_eq!(returned, saved_report, "返回值与落盘产物必须是同一份结论");
+
+        // (2) `passed` 只表达**发布判据**，与 job 状态同源。
+        //     反例：诊断不可用时 `merge_sidecar_validation` 会按合并后的 issues 把
+        //     `passed` 重算成 false —— 修前那个 false 直接落了盘，而 job 状态却是
+        //     ExportReady，同一件事在产物和状态里是两个答案。
+        let static_report = validate_for_runtime_gate(&root, &job.job_id, &ir, false).unwrap();
+        assert_eq!(
+            saved_report.get("passed"),
+            static_report.get("passed"),
+            "落盘的 passed 必须与发布判据一致，不得被诊断结果改写"
+        );
+
+        // (3) E8-26 仍然成立：诊断失败可见，但不把 static 已就绪的 job 降级。
+        let saved = load_job(&root, &job.job_id).unwrap();
+        assert_eq!(saved.status, JobStatus::ExportReady);
+
+        // (4) 诊断结论在同一份产物里，且明确标为非绑定（而不是与 `passed` 抢同一个字段）。
         assert_eq!(
             saved_report
-                .pointer("/runtime/mode")
-                .and_then(Value::as_str),
-            Some("fallback")
+                .pointer("/publishBasis/previewDiagnosticsBinding")
+                .and_then(Value::as_bool),
+            Some(false)
         );
+        let diagnostics = saved_report
+            .get("previewDiagnostics")
+            .expect("诊断跑过就必须在同一份产物里留下结论");
+        assert_eq!(
+            diagnostics.get("binding").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert!(diagnostics
+            .get("passed")
+            .and_then(Value::as_bool)
+            .is_some());
+
+        // (5) 既有消费者读的字段位置没变（`issues` / `layers` / `runtime`）。
+        assert!(saved_report
+            .get("issues")
+            .and_then(Value::as_array)
+            .is_some());
+        assert!(saved_report
+            .get("layers")
+            .and_then(Value::as_array)
+            .is_some());
+        assert!(saved_report.get("runtime").is_some());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -7704,76 +7725,27 @@ Answers
         let _ = fs::remove_dir_all(root);
     }
 
+    // ── 下面三条是**改写**，不是删除 ────────────────────────────────────────
+    // 修前它们断言的是「force 能关掉发布门禁、留下 override 记录、且仍绕不过
+    // unsafe examId」。那是**产品决策**：force 是被有意做出来的能力（前端契约
+    // `src/api/tauriCommands.ts` 里就写着 `"strict" | "force"`），不是死代码。
+    // 本轮把该能力整体删除，因此这三条必须整体改写为新口径（用户指定）：
+    //   1. force 必须**明确被拒**，不得静默降级成 strict；
+    //   2. strict / 不传 policy 仍然照常工作；
+    //   3. unsafe-exam-id 这条不变量必须仍然成立。
     #[test]
-    fn force_export_bypasses_publish_validation_and_records_override() {
-        let root = temp_test_root();
-        let (job, mut ir) = make_publishable_fixture(&root);
-        ir.pointer_mut("/audit/humanVerified")
-            .map(|value| *value = json!(false));
-        write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
-        let out_dir = root.join("forced-export");
-        let options = ExportValidationOptions::from_policy(Some("force")).unwrap();
-
-        let result = export_reading_assets_with_options_core(
-            &root,
-            &job.job_id,
-            out_dir.to_string_lossy().as_ref(),
-            true,
-            options,
-        )
-        .unwrap();
-
+    fn force_policy_is_rejected_explicitly_not_downgraded() {
+        // 1) 直接构造：`force` 报错，且错误码稳定可匹配。
         assert_eq!(
-            result.get("validationPolicy").and_then(Value::as_str),
-            Some("force")
+            ExportValidationOptions::from_policy(Some("force")).unwrap_err(),
+            "invalid_validation_policy:force"
         );
-        assert_eq!(
-            result.get("validationOverridden").and_then(Value::as_bool),
-            Some(true)
-        );
-        assert!(result
-            .get("ignoredIssueCount")
-            .and_then(Value::as_u64)
-            .is_some_and(|count| count > 0));
-        let ignored_issues = result
-            .get("ignoredIssues")
-            .and_then(Value::as_array)
-            .expect("force export ignored issues");
-        assert!(ignored_issues.iter().any(|issue| {
-            issue.get("jobId").and_then(Value::as_str) == Some(job.job_id.as_str())
-                && issue.get("severity").and_then(Value::as_str) == Some("error")
-                && issue.get("path").and_then(Value::as_str) == Some("$.audit.humanVerified")
-                && issue.get("issueId").and_then(Value::as_str).is_some()
-                && issue.get("message").and_then(Value::as_str).is_some()
-        }));
-        assert_eq!(
-            result
-                .pointer("/exportSummary/validationOverridden")
-                .and_then(Value::as_bool),
-            Some(true)
-        );
-        let report: Value = read_json(&out_dir.join("validation-report.json")).unwrap();
-        assert_eq!(report.get("passed").and_then(Value::as_bool), Some(false));
-        assert!(report
-            .get("issues")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .any(
-                |issue| issue.get("path").and_then(Value::as_str) == Some("$.audit.humanVerified")
-            ));
-        let project: Value =
-            read_json(&job_dir(&root, &job.job_id).join("authoring-project.json")).unwrap();
-        assert!(project
-            .pointer("/exportSummary/ignoredIssues")
-            .and_then(Value::as_array)
-            .is_some_and(|issues| !issues.is_empty()));
+        // 缺省 / strict 仍然可用 —— 否则就是把发布门锁死了，那是另一个产品。
+        assert!(ExportValidationOptions::from_policy(None).is_ok());
+        assert!(ExportValidationOptions::from_policy(Some("strict")).is_ok());
 
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn force_policy_is_honored_by_js_and_nas_exports() {
+        // 2) 走 IPC 入参的两条导出：即便稿本来就是可发布的，传 force 也必须在
+        //    **做任何写入之前**失败（明确报错，而不是"按 strict 跑一遍"）。
         let root = temp_test_root();
         let (js_job, mut js_ir) = make_publishable_fixture(&root);
         let (nas_job, mut nas_ir) = make_publishable_fixture(&root);
@@ -7785,7 +7757,7 @@ Answers
             write_json(&job_dir(&root, job_id).join("authoring-ir.json"), ir).unwrap();
         }
 
-        let js_result = export_reading_js_core(
+        let js_error = export_reading_js_core(
             &root,
             &json!({
                 "jobIds": [js_job.job_id],
@@ -7794,8 +7766,8 @@ Answers
             }),
             true,
         )
-        .unwrap();
-        let nas_result = export_nas_library_core(
+        .unwrap_err();
+        let nas_error = export_nas_library_core(
             &root,
             &json!({
                 "jobIds": [nas_job.job_id],
@@ -7804,46 +7776,87 @@ Answers
             }),
             true,
         )
-        .unwrap();
-        for result in [&js_result, &nas_result] {
-            assert_eq!(
-                result.get("validationPolicy").and_then(Value::as_str),
-                Some("force")
-            );
-            assert_eq!(
-                result.get("validationOverridden").and_then(Value::as_bool),
-                Some(true)
-            );
-            assert!(result
-                .get("ignoredIssues")
-                .and_then(Value::as_array)
-                .is_some_and(|issues| !issues.is_empty()));
-        }
+        .unwrap_err();
+        assert_eq!(js_error, "invalid_validation_policy:force");
+        assert_eq!(nas_error, "invalid_validation_policy:force");
+        // 明确报错 ⇒ 输出目录压根没被创建（不是"跑到一半再回滚"）。
+        assert!(!root.join("forced-js").exists());
+        assert!(!root.join("forced-nas").exists());
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn force_export_does_not_bypass_unsafe_exam_id() {
+    fn strict_export_still_works_after_force_removal() {
+        // force 删掉之后，strict（缺省）这条路必须一点没变：稿合规 ⇒ 导出成功，
+        // 且产物里那几个兼容字段仍是既有的 strict / false / 0。
+        let root = temp_test_root();
+        let (job, _ir) = make_publishable_fixture(&root);
+        let out_dir = root.join("strict-export");
+        let result = export_reading_assets_with_options_core(
+            &root,
+            &job.job_id,
+            out_dir.to_string_lossy().as_ref(),
+            true,
+            ExportValidationOptions::strict(),
+        )
+        .unwrap();
+        assert_eq!(
+            result.get("validationPolicy").and_then(Value::as_str),
+            Some("strict")
+        );
+        assert_eq!(
+            result.get("validationOverridden").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            result.get("ignoredIssueCount").and_then(Value::as_u64),
+            Some(0)
+        );
+        // 判据本身也留在产物里，可查。
+        assert_eq!(
+            result
+                .pointer("/publishVerdict/status")
+                .and_then(Value::as_str),
+            Some("ready")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unsafe_exam_id_invariant_survives_force_removal() {
+        // 修前这条测的是「force 也绕不过 unsafe examId」。force 删除后不变量本身
+        // 必须仍然成立，且有两条独立的保证：
+        //   (1) strict 路径下，稿内容全部合规、只有 examId 不安全 ⇒ 仍被路径校验挡住；
+        //   (2) force 连门都进不去 ⇒ 不存在"先绕过门禁、再看路径"的窗口。
         let root = temp_test_root();
         let (job, mut ir) = make_publishable_fixture(&root);
         ir["exam"]["examId"] = json!("../unsafe-exam");
-        ir["audit"]["humanVerified"] = json!(false);
+        // 刻意**不**把 humanVerified 设成 false：要让 strict 能过发布门禁，
+        // 这样被挡住的才确定是「路径不安全」，而不是「稿不合格」。
         write_json(&job_dir(&root, &job.job_id).join("authoring-ir.json"), &ir).unwrap();
-        let out_dir = root.join("unsafe-forced-export");
-        let options = ExportValidationOptions::from_policy(Some("force")).unwrap();
+        let out_dir = root.join("unsafe-export");
 
         let error = export_reading_assets_with_options_core(
             &root,
             &job.job_id,
             out_dir.to_string_lossy().as_ref(),
             true,
-            options,
+            ExportValidationOptions::strict(),
         )
         .unwrap_err();
-
         assert!(error.contains("invalid_exam_id_path_segment"));
         assert!(!out_dir.exists());
+
+        assert_eq!(
+            ExportValidationOptions::from_policy(Some("force")).unwrap_err(),
+            "invalid_validation_policy:force"
+        );
+        assert_eq!(
+            ExportValidationOptions::from_policy(Some("Force")).unwrap_err(),
+            "invalid_validation_policy:Force"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
