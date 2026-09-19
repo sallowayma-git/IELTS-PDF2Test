@@ -77,6 +77,11 @@ describe("每条剩余任务都有真能做完的动作", () => {
     expect(entry.actions.map((action) => action.id)).toEqual(["open-source"]);
   });
 
+  it("阻断且没有题面目标时也必须给「打开原文件核对」", () => {
+    const entry = toRepairTaskView(task({ blocking: true, targetIds: [], action: "review_source" }));
+    expect(entry.actions.map((action) => action.id)).toEqual(["open-source"]);
+  });
+
   it("没有目标也不看原文件时**不给按钮**——点了不动比没有按钮更糟", () => {
     const entry = toRepairTaskView(task({ targetIds: [], action: "review_difference" }));
     expect(entry.actions).toEqual([]);
