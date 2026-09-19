@@ -23,6 +23,7 @@ use crate::schema::IeltsAuthoringIRV2;
 use crate::CommandResult;
 use chrono::Utc;
 use fs2::FileExt;
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -204,7 +205,12 @@ fn validate_v2_export_binding(
     // M1：DB 直通发布（manifest.authoringSource == "canonical_ds"）以 typed preflight
     // 复核证明（只查当前稿）；legacy 路径维持原门禁。证明绑定逐字节一致的语义不变。
     let proof = if manifest.get("authoringSource").and_then(Value::as_str) == Some("canonical_ds") {
-        crate::authoring_v2_commands::check_publish_preflight(job_id, revision, &authoring_value)
+        crate::authoring_v2_commands::check_publish_preflight(
+            root,
+            job_id,
+            revision,
+            &authoring_value,
+        )
     } else {
         validate_authoring_v2_publish_readiness(root, job_id, revision, &authoring_value)?
     };
@@ -409,15 +415,96 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         }
     } else {
         let _ = fs::remove_dir_all(&backup_dir);
-        for (id, _, version) in snapshots {
-            // A later edit remains unpublished; metadata failure cannot undo a committed NAS manifest.
-            if let Err(error) = conn.execute("UPDATE library_items_v2 SET status = 'published' WHERE id = ?1 AND current_edit_version = ?2", rusqlite::params![id, version]) {
-                eprintln!("[publish] status update: {error}");
-            }
+        // ── 提交后的状态 CAS：**三种结果必须分开处理** ──────────────────────
+        // 修前这里只处理了第一种，另两种被静默吞掉，于是 publish 对调用方返回 `Ok`
+        // （表现为"发布成功"），而库里那条目的 `status` 根本没被标成 `published` ——
+        // 同一个事实在返回值和数据库里是两个答案。
+        //
+        //   * `Err`   —— 真数据库错误。不升级为回滚：清单已替换、资源已就位，
+        //                回滚会留下「新清单 + 无资源」的坏包（既有注释记录的决策）；
+        //                但**同样不得静默**。
+        //   * CAS 未匹配 —— 快照之后该条目又被编辑过（`current_edit_version` 前进），
+        //                即发布出去的**不是**当前编辑版本。这是确凿的版本漂移。
+        //   * 正常。
+        //
+        // 判据用**读回校验**而不是 `execute` 的受影响行数：行数是"匹配到"还是
+        // "真的改了"属于驱动层语义（SQLite 对 UPDATE 计匹配行，但这个前提不该
+        // 成为发布判据的一部分）。直接查 `status` + `current_edit_version`，
+        // 后置条件成立与否一目了然。
+        let status_drift = commit_published_status(&conn, &snapshots)?;
+        if !status_drift.is_empty() {
+            let _ = fs::remove_file(&paths.lock_metadata_path);
+            // `manifest_committed` 前缀是给调用方看的：包**已经**对学生可见，
+            // 所以这既不是"什么都没发生"，也不是干净的失败，而是"发了但与库不一致"。
+            return Err(format!(
+                "PUBLISH_BATCH_STATUS_DRIFT:manifest_committed:{}",
+                serde_json::to_string(&status_drift).unwrap_or_default()
+            ));
         }
     }
     let _ = fs::remove_file(&paths.lock_metadata_path);
     result
+}
+
+/// 提交后的状态 CAS：把已发布的条目标成 `status = 'published'`，且**版本必须仍是
+/// 发布时冻结的那一版**。返回**未能确认**的条目（空表示全部确认）。
+///
+/// 三种结果必须分开处理，修前这里只处理了第一种：
+///
+/// - `Err`（真数据库错误）：不升级为回滚 —— 清单已替换、资源已就位，回滚会留下
+///   「新清单 + 无资源」的坏包（既有注释记录的决策）；但同样**不得静默**。
+/// - **CAS 未匹配**：快照之后该条目又被编辑过（`current_edit_version` 前进），
+///   即发布出去的**不是**当前编辑版本。这是确凿的版本漂移，修前被完全忽略，
+///   于是 `publish` 对调用方返回 `Ok`（表现为"发布成功"），而库里那条目的
+///   `status` 根本没被改 —— 同一个事实在返回值和数据库里是两个答案。
+/// - 正常。
+///
+/// 判据用**读回校验**而不是 `execute` 的受影响行数：行数是"匹配到"还是"真的改了"
+/// 属于驱动层语义，不该成为发布判据的一部分。直接查 `status` + `current_edit_version`，
+/// 后置条件成立与否一目了然。
+fn commit_published_status(
+    conn: &rusqlite::Connection,
+    snapshots: &[(String, Value, i64)],
+) -> CommandResult<Vec<Value>> {
+    let mut status_drift: Vec<Value> = Vec::new();
+    for (id, _, version) in snapshots {
+        if let Err(error) = conn.execute(
+            "UPDATE library_items_v2 SET status = 'published' WHERE id = ?1 AND current_edit_version = ?2",
+            rusqlite::params![id, version],
+        ) {
+            status_drift.push(json!({
+                "itemId": id,
+                "publishedEditVersion": version,
+                "reason": "status_update_failed",
+                "error": error.to_string(),
+            }));
+            continue;
+        }
+        let observed: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT status, current_edit_version FROM library_items_v2 WHERE id = ?1",
+                rusqlite::params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| format!("PUBLISH_BATCH_STATUS_READ:{id}:{error}"))?;
+        match observed {
+            Some((status, current)) if status == "published" && current == *version => {}
+            Some((status, current)) => status_drift.push(json!({
+                "itemId": id,
+                "publishedEditVersion": version,
+                "currentEditVersion": current,
+                "currentStatus": status,
+                "reason": "post_publish_state_not_confirmed",
+            })),
+            None => status_drift.push(json!({
+                "itemId": id,
+                "publishedEditVersion": version,
+                "reason": "item_missing_after_manifest_commit",
+            })),
+        }
+    }
+    Ok(status_drift)
 }
 
 pub(crate) fn publish_nas_package_v2_core(root: &Path, input: Value) -> CommandResult<Value> {
@@ -1829,6 +1916,76 @@ mod tests {
         let root = std::env::temp_dir().join(format!("ielts-phase6-package-{suffix}"));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    /// 反例（#13）：快照冻结的是版本 1，提交后库里已经是版本 2。
+    ///
+    /// 修前 `publish_items_core` 里那段是
+    /// `if let Err(error) = conn.execute("UPDATE … WHERE id=?1 AND current_edit_version=?2") { eprintln!(…) }`。
+    /// `execute` 返回 `Ok(0)`（CAS 未匹配）**不是** `Err`，于是这一格被静默放过，
+    /// 函数继续返回 `Ok`（表现为"发布成功"），而库里那条目的 `status` 从来没被改成
+    /// `published` —— 同一个事实在返回值和数据库里是两个答案。
+    #[test]
+    fn post_publish_status_cas_reports_edit_version_drift_instead_of_swallowing_it() {
+        let root = temp_root();
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        conn.execute(
+            "INSERT INTO library_items_v2 (id, modality, title, status, current_edit_version, canonical_ds_json, source_asset_id, created_at, updated_at, deleted_at)
+             VALUES (?1, 'reading', ?2, 'ready', ?3, NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)",
+            rusqlite::params!["item-drifted", "Drifted item", 2i64],
+        )
+        .unwrap();
+
+        // 冻结版本 = 1（快照时看到的），库里现在是 2（期间被编辑过）。
+        let drift =
+            commit_published_status(&conn, &[("item-drifted".to_string(), json!(null), 1)])
+                .unwrap();
+
+        assert_eq!(
+            drift.len(),
+            1,
+            "CAS 未匹配必须被报出来，不能当作成功：{drift:?}"
+        );
+        assert_eq!(
+            drift[0].get("itemId").and_then(Value::as_str),
+            Some("item-drifted")
+        );
+        assert_eq!(
+            drift[0].get("publishedEditVersion").and_then(Value::as_i64),
+            Some(1)
+        );
+        assert_eq!(
+            drift[0].get("currentEditVersion").and_then(Value::as_i64),
+            Some(2)
+        );
+        assert_eq!(
+            drift[0].get("reason").and_then(Value::as_str),
+            Some("post_publish_state_not_confirmed")
+        );
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM library_items_v2 WHERE id = ?1",
+                rusqlite::params!["item-drifted"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "ready", "CAS 未匹配时不得把条目标成已发布");
+
+        // 反向：版本一致时不得误报，否则每次正常发布都会被判"漂移"。
+        let confirmed =
+            commit_published_status(&conn, &[("item-drifted".to_string(), json!(null), 2)])
+                .unwrap();
+        assert!(confirmed.is_empty(), "版本一致时必须确认成功：{confirmed:?}");
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM library_items_v2 WHERE id = ?1",
+                rusqlite::params!["item-drifted"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "published");
+
+        let _ = fs::remove_dir_all(root);
     }
 
     fn test_export_bundle(root: &Path) -> (PathBuf, ReadingExamSourceV2) {

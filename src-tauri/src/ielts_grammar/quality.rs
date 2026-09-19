@@ -35,6 +35,100 @@ pub(crate) fn evaluate_quality(authoring: &Value, physical_shadow: Option<&Value
     )
 }
 
+/// 质量就绪度的**唯一**三态。
+///
+/// 与 `schema::quality_report_v2::ReadinessStateV2` 同形，但它是**判据类型**而不是
+/// 序列化契约：这样发布判据不必依赖一个可以被人改写的存储字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QualityReadiness {
+    Ready,
+    ReviewRequired,
+    Blocked,
+}
+
+impl QualityReadiness {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::ReviewRequired => "review_required",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+/// 就绪度规则的**唯一实现**。阈值集中在这里，改一次就改全部。
+///
+/// - `hardFailures` 非空 ⇒ `Blocked`
+/// - `documentScore < 0.95`、任一分组 `taskScore < 0.92`、`sourceCoverage < 0.995`、
+///   或存在未处理的 blocking issue ⇒ `ReviewRequired`
+/// - 否则 `Ready`
+pub(crate) fn readiness_from_facts(
+    hard_failures: &[String],
+    document_score: f64,
+    has_low_task_score: bool,
+    source_coverage: f64,
+    unresolved_blocking_issue_count: usize,
+) -> QualityReadiness {
+    if !hard_failures.is_empty() {
+        return QualityReadiness::Blocked;
+    }
+    if document_score < 0.95
+        || has_low_task_score
+        || source_coverage < 0.995
+        || unresolved_blocking_issue_count > 0
+    {
+        return QualityReadiness::ReviewRequired;
+    }
+    QualityReadiness::Ready
+}
+
+fn severity_label(severity: &crate::schema::quality_report_v2::ReviewSeverityV2) -> &'static str {
+    use crate::schema::quality_report_v2::ReviewSeverityV2;
+    match severity {
+        ReviewSeverityV2::Blocking => "blocking",
+        ReviewSeverityV2::Warning => "warning",
+        ReviewSeverityV2::Info => "info",
+    }
+}
+
+/// 从当前稿的原始事实重新得到就绪度，套用**同一条**规则。
+///
+/// 刻意**不读** `quality.state`：存储值可能陈旧，也可能被手改成 `ready`。
+/// 判据必须由当前稿重新算出。
+///
+/// `Err` 表示**无法判定**（quality 块缺失，或不是合法的 `QualityReportV2`）。
+/// 调用方必须把它当成"没能判定"，**不得**当成通过 —— 这正是修前缺的那一态。
+pub(crate) fn quality_readiness(authoring: &Value) -> Result<QualityReadiness, String> {
+    use crate::schema::quality_report_v2::QualityReportV2;
+    let quality = authoring
+        .get("quality")
+        .cloned()
+        .ok_or("AUTHORING_SCHEMA_INVALID:quality_missing")?;
+    let report: QualityReportV2 = serde_json::from_value(quality)
+        .map_err(|error| format!("AUTHORING_SCHEMA_INVALID:quality:{error}"))?;
+    let unresolved_blocking_issue_count = report
+        .issues
+        .iter()
+        .filter(|issue| {
+            let details = issue
+                .details
+                .as_ref()
+                .map(|details| Value::Object(details.clone().into_iter().collect()));
+            crate::authoring_validation::blocking_issue_unresolved_parts(
+                severity_label(&issue.severity),
+                details.as_ref(),
+            )
+        })
+        .count();
+    Ok(readiness_from_facts(
+        &report.hard_failures,
+        report.document_score,
+        report.task_scores.values().any(|score| *score < 0.92),
+        report.source_coverage,
+        unresolved_blocking_issue_count,
+    ))
+}
+
 /// `evaluate_quality` with the §6.8/§6.11 recognition gate passed explicitly.
 ///
 /// The staging decision is an environment flag in production, but tests must not
@@ -210,8 +304,6 @@ pub(crate) fn evaluate_quality_with_gate(
     } else {
         task_scores.values().sum::<f64>() / task_scores.len() as f64
     };
-    let has_blocking = !hard_failures.is_empty();
-    let has_low_task_score = task_scores.values().any(|score| *score < 0.92);
     // Only UNRESOLVED, BLOCKING issues hold readiness back. This mirrors the export gate's own
     // `unresolved_blockers` predicate exactly (authoring_v2_commands: severity == Blocking and no
     // resolution in {resolved, ignored}).
@@ -220,28 +312,22 @@ pub(crate) fn evaluate_quality_with_gate(
     // good documents: a single `info` note made an otherwise-perfect paper unpublishable, and
     // resolving or ignoring an issue changed nothing -- so `preserve_issue_resolutions` went to the
     // trouble of carrying resolutions forward across every save that nothing ever read.
-    let unresolved_blocking_issues = issues
+    //
+    // 谓词本身只有一份实现（`authoring_validation::blocking_issue_unresolved`），
+    // 规则本身也只有一份实现（下面的 `readiness_from_facts`）——
+    // `state` 与发布判据（`authoring_validation::publish_verdict`）都从这里取。
+    let unresolved_blocking_issue_count = issues
         .iter()
-        .filter(|issue| {
-            issue.get("severity").and_then(Value::as_str) == Some("blocking")
-                && issue
-                    .get("details")
-                    .and_then(|details| details.get("resolution"))
-                    .and_then(Value::as_str)
-                    .is_none_or(|resolution| !matches!(resolution, "resolved" | "ignored"))
-        })
+        .filter(|issue| crate::authoring_validation::blocking_issue_unresolved(issue))
         .count();
-    let state = if has_blocking {
-        "blocked"
-    } else if document_score < 0.95
-        || has_low_task_score
-        || source_coverage < 0.995
-        || unresolved_blocking_issues > 0
-    {
-        "review_required"
-    } else {
-        "ready"
-    };
+    let state = readiness_from_facts(
+        &hard_failures,
+        document_score,
+        task_scores.values().any(|score| *score < 0.92),
+        source_coverage,
+        unresolved_blocking_issue_count,
+    )
+    .as_str();
     json!({
         "schemaVersion": "QualityReportV2",
         "state": state,

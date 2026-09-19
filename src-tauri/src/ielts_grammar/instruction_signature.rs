@@ -308,18 +308,8 @@ fn infer_option_alphabet(lower: &str) -> Option<String> {
     //   或 wordLimit，而这两个字段**界面上都没有入口**，所以那份卷子无论用户
     //   怎么操作都发布不出去。
     //
-    // 新加的区间**追加在末尾**，是为了让这次改动对既有输入是**纯增量**：
-    // 原来能认出来的四种仍然最先匹配，任何既有输入的返回值都不变。
     // 方向仍然是「认不出来就不认」——只有题干真的写出该区间才返回。
-    for (start, end) in [
-        ('a', 'd'),
-        ('a', 'e'),
-        ('a', 'i'),
-        ('a', 'g'),
-        ('a', 'f'),
-        ('a', 'h'),
-        ('a', 'j'),
-    ] {
+    let alphabet_for = |start: char, end: char| -> Option<String> {
         let compact = format!("{start}-{end}");
         if lower.contains(&compact)
             || lower.contains(&format!("{} to {}", start, end))
@@ -331,9 +321,35 @@ fn infer_option_alphabet(lower: &str) -> Option<String> {
                 end.to_ascii_uppercase()
             ));
         }
+        None
+    };
+
+    // ① **原有**四种区间：保持在 `paragraphs`/`sections` 分支**之前**，
+    //    与改动前逐字相同 ⇒ 任何既有输入的返回值都不变。
+    //
+    //    为什么这很重要（为什么不能把它们一起挪到分支之后）：真实 IELTS 高频写法
+    //      "The reading passage has seven paragraphs, A-G. Write the correct letter A-G."
+    //    同时含 `paragraphs` 与 `A-G`。若区间判在分支之后，它就会返回
+    //    `paragraph_letters`；而 `expected_option_labels` 对没有 `-` 的名字返回
+    //    `None` ⇒ 约束消失 ⇒ 真实的标签错配不再被 `OPTION_ALPHABET_MISMATCH` 拦下。
+    //    那是**静默移除一条既有阻塞检查**，与本轮的目标相反。
+    for (start, end) in [('a', 'd'), ('a', 'e'), ('a', 'i'), ('a', 'g')] {
+        if let Some(alphabet) = alphabet_for(start, end) {
+            return Some(alphabet);
+        }
     }
     if lower.contains("paragraphs") || lower.contains("sections") {
         return Some("paragraph_letters".to_string());
+    }
+    // ② **本轮新增**的三种区间（a-f / a-h / a-j）放在分支**之后**。
+    //    这样"新增严格只影响原本返回 `None` 的输入"：含 `paragraphs`/`sections` 的
+    //    题干仍然走 `paragraph_letters`（它同样是 `Some`、非 null ⇒ 仍被判为选择型，
+    //    `WORD_LIMIT_UNPARSED` 不会误报），也不会因此新增 `OPTION_ALPHABET_MISMATCH`
+    //    约束。两条目标因此不冲突。
+    for (start, end) in [('a', 'f'), ('a', 'h'), ('a', 'j')] {
+        if let Some(alphabet) = alphabet_for(start, end) {
+            return Some(alphabet);
+        }
     }
     None
 }
@@ -423,14 +439,103 @@ mod tests {
 
     #[test]
     fn which_paragraph_and_section_are_strong_matching_information_cues() {
-        for text in [
-            "Questions 5-8 Which paragraph contains the following information? Write A-G.",
-            "Questions 14-19 Which section contains the following information? Write A-F.",
+        // `option_alphabet` 断言是**补上的**：这条用例原来只看 task_type / confidence /
+        // warnings，所以 `option_alphabet` 的行为怎么变它都是绿的 —— 正是这次
+        // 「a-f / a-h / a-j 增补是否改了既有输入」的问题被藏住的原因。
+        //
+        // 现在两句都是**单数** `paragraph` / `section`（不是复数），因此都走不到
+        // `paragraph_letters` 那个分支，仍然由字母区间作答：
+        //   A-G ∈ 原有四种；A-F ∈ 本轮新增三种。
+        for (text, expected_alphabet) in [
+            (
+                "Questions 5-8 Which paragraph contains the following information? Write A-G.",
+                "A-G",
+            ),
+            (
+                "Questions 14-19 Which section contains the following information? Write A-F.",
+                "A-F",
+            ),
         ] {
             let result = infer_instruction_signature(text, &range(), None, Vec::new());
             assert_eq!(result.signature.task_type, TaskTypeV2::MatchingInformation);
             assert!(result.signature.confidence >= 0.9, "{result:?}");
             assert!(result.warnings.is_empty(), "{result:?}");
+            assert_eq!(
+                result.signature.option_alphabet.as_deref(),
+                Some(expected_alphabet),
+                "text={text:?}"
+            );
+        }
+    }
+
+    /// 拆表的**分界点**：`paragraphs`（复数）与字母区间同时出现时，谁说话。
+    ///
+    /// 这条是 `single_letter_ranges_cover_the_span_the_pipeline_already_supports`
+    /// 的对照用例 —— 那条里所有题干都不含 `paragraphs`/`sections`，所以它证明不了
+    /// 「分支与区间循环的相对顺序」。这里把两种情形并排放：
+    ///
+    /// | 题干 | 期望 | 理由 |
+    /// |---|---|---|
+    /// | `…seven paragraphs, A-G…` | `Some("A-G")` | a-g 属**原有**四种，判在分支之前 ⇒ 与改动前逐字相同 |
+    /// | `…six paragraphs, A-F…` | `Some("paragraph_letters")` | a-f 属**新增**三种，判在分支之后 ⇒ 不改变既有行为 |
+    ///
+    /// 若把整张表挪到分支之后，第一行会变成 `paragraph_letters` ⇒
+    /// `expected_option_labels` 拿不到字母集 ⇒ 既有的 `OPTION_ALPHABET_MISMATCH`
+    /// 检查被**静默移除**。这条用例就是用来钉住这一点的。
+    #[test]
+    fn paragraph_letter_cues_take_precedence_only_for_the_newly_added_ranges() {
+        let established = infer_instruction_signature(
+            "The reading passage has seven paragraphs, A-G. Write the correct letter A-G.",
+            &range(),
+            None,
+            Vec::new(),
+        );
+        assert_eq!(
+            established.signature.option_alphabet.as_deref(),
+            Some("A-G"),
+            "原有区间必须仍判在 paragraph_letters 分支之前"
+        );
+
+        let newly_added = infer_instruction_signature(
+            "The reading passage has six paragraphs, A-F. Write the correct letter A-F.",
+            &range(),
+            None,
+            Vec::new(),
+        );
+        assert_eq!(
+            newly_added.signature.option_alphabet.as_deref(),
+            Some("paragraph_letters"),
+            "新增区间不得抢在 paragraph_letters 分支之前"
+        );
+        // `paragraph_letters` 仍是 `Some`/非 null ⇒ 依旧算选择型，`WORD_LIMIT_UNPARSED` 不误报。
+        assert!(newly_added.signature.option_alphabet.is_some());
+    }
+
+    /// a-j 的 `to` / en-dash 变体（表格用例只覆盖了 a-h 的两种写法）。
+    #[test]
+    fn newly_added_ranges_accept_space_and_en_dash_spellings() {
+        for text in [
+            "Choose the correct letter, A to J.",
+            "Choose the correct letter, A–J.",
+            "Choose the correct letter, A-J.",
+        ] {
+            let result = infer_instruction_signature(text, &range(), None, Vec::new());
+            assert_eq!(
+                result.signature.option_alphabet.as_deref(),
+                Some("A-J"),
+                "text={text:?}"
+            );
+        }
+        for text in [
+            "Choose the correct letter, A to F.",
+            "Choose the correct letter, A–F.",
+        ] {
+            let result = infer_instruction_signature(text, &range(), None, Vec::new());
+            assert_eq!(
+                result.signature.option_alphabet.as_deref(),
+                Some("A-F"),
+                "text={text:?}"
+            );
         }
     }
 

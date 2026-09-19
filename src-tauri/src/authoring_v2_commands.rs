@@ -100,7 +100,12 @@ pub(crate) fn get_publish_preflight_core(root: &Path, job_id: &str) -> CommandRe
             "warnings": []
         }));
     };
-    Ok(check_publish_preflight(job_id, version.max(0) as u64, &authoring_value))
+    Ok(check_publish_preflight(
+        root,
+        job_id,
+        version.max(0) as u64,
+        &authoring_value,
+    ))
 }
 
 pub(crate) fn resolve_authoring_asset_preview_core(
@@ -418,39 +423,19 @@ pub(crate) fn explicitly_handled_issue_targets(
     handled
 }
 
-/// 一条 blocking issue 是否**仍未处理**。
+/// 一条 blocking issue 是否**仍未处理** —— 发布判据里唯一的那份谓词。
 ///
-/// 这是发布门禁的唯一判据，三处共用：预检 [`check_publish_preflight`]、实际导出
-/// （`nas_package_v2::publish_items_core` 在读权威稿前先跑预检）、以及云端修复的终检
-/// （`cloud_repair::remaining_tasks` 重算剩余用户任务）。抽出来的理由是这三处曾经各自
-/// 内联同一段谓词——只要有一处被改动，就会出现「预检说可以发布、修复循环却认为还剩问题」
-/// 这类同稿不同判。
+/// 实现已下沉到 [`crate::authoring_validation`]（`blocking_issue_unresolved` /
+/// `unresolved_blocking_issues`），此处**同名重导出**。保留这个路径而不是去改所有
+/// 调用方，是因为 `cloud_repair::remaining_tasks` 等消费者引用的是
+/// `crate::authoring_v2_commands::…`：重导出让"实现只有一份"与"引用路径不裂开"
+/// 同时成立。曾经这三处各自内联同一段谓词 —— 只要有一处被改动，就会出现
+/// 「预检说可以发布、修复循环却认为还剩问题」这类同稿不同判。
 ///
-/// 只看 `details.resolution`：它是**人**通过 `resolveIssue` 写下的。模型写不了
-/// （`cloud_repair::tools::MODEL_ALLOWED_OPS` 有意不含该命令），所以这里不会变成
-/// 模型自称「已修复」的通道。
-pub(crate) fn blocking_issue_unresolved(issue: &Value) -> bool {
-    issue.get("severity").and_then(Value::as_str) == Some("blocking")
-        && !matches!(
-            issue
-                .pointer("/details/resolution")
-                .and_then(Value::as_str),
-            Some("resolved") | Some("ignored")
-        )
-}
-
-/// 当前稿上仍未处理的阻断性问题。判据见 [`blocking_issue_unresolved`]。
-pub(crate) fn unresolved_blocking_issues(authoring: &Value) -> Vec<Value> {
-    authoring
-        .get("quality")
-        .and_then(|quality| quality.get("issues"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|issue| blocking_issue_unresolved(issue))
-        .cloned()
-        .collect()
-}
+/// 只重导出 `unresolved_blocking_issues`：谓词本身（`blocking_issue_unresolved`）
+/// 的消费者都直接走 `crate::authoring_validation::…`，在这里再挂一个没人走的
+/// 别名只会长出一条无用的公开面。
+pub(crate) use crate::authoring_validation::unresolved_blocking_issues;
 
 /// M1 typed preflight（计划 §13.3/§13.4）：只检查**当前** canonical DS 与当前 blocker。
 /// 与 [`validate_authoring_v2_publish_readiness`] 的差别（均为有意移除）：
@@ -459,6 +444,7 @@ pub(crate) fn unresolved_blocking_issues(authoring: &Value) -> Vec<Value> {
 /// - 不依赖 SourceReviewV1 文件状态。
 /// 资源闭包由 publisher 的 staging/probe 与资产 hash 绑定继续保证（§13.5 原子发布保留）。
 pub(crate) fn check_publish_preflight(
+    root: &Path,
     job_id: &str,
     edit_version: u64,
     authoring_value: &Value,
@@ -541,17 +527,53 @@ pub(crate) fn check_publish_preflight(
         );
     }
 
+    // `passed` 不再由这份展示用清单自己算：结论只来自 `publish_verdict`。
+    // 清单仍然负责把"为什么"写给用户看，但它**不是**判据。
+    let verdict = crate::authoring_validation::publish_verdict(
+        root,
+        job_id,
+        authoring_value,
+        Some(edit_version.min(i64::MAX as u64) as i64),
+        crate::authoring_validation::PublishScope::CanonicalDirect,
+    );
+    if !verdict.is_ready() {
+        for reason in verdict.reasons() {
+            if blockers
+                .iter()
+                .any(|item| item.get("code").and_then(Value::as_str) == Some(reason.code))
+            {
+                continue;
+            }
+            blockers.push(json!({
+                "code": reason.code,
+                "targetId": reason.target,
+                "userMessage": reason.message,
+                "action": "open_workspace",
+                "layer": reason.layer
+            }));
+        }
+        if blockers.is_empty() {
+            blockers.push(json!({
+                "code": "PUBLISH_VERDICT_BLOCKED",
+                "targetId": Value::Null,
+                "userMessage": "这道题暂时不能发布。",
+                "action": "open_workspace"
+            }));
+        }
+    }
+
     json!({
         "schemaVersion": "PublishCheckResultV1",
         "jobId": job_id,
         "editVersion": edit_version,
-        "passed": blockers.is_empty(),
+        "passed": verdict.is_ready(),
         "blockers": blockers,
-        "warnings": warnings
+        "warnings": warnings,
+        "publishVerdict": verdict.to_value()
     })
 }
 
-fn collect_publish_gate_markers(
+pub(crate) fn collect_publish_gate_markers(
     value: &Value,
     path: &str,
     ai_fallbacks: &mut Vec<String>,
@@ -729,32 +751,50 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
     refresh_quality_report(root, &input.job_id, &mut authoring_value)?;
     let authoring: IeltsAuthoringIRV2 = serde_json::from_value(authoring_value.clone())
         .map_err(|error| format!("AUTHORING_SCHEMA_INVALID:{error}"))?;
-    let quality_state = match &authoring.quality.state {
-        crate::schema::quality_report_v2::ReadinessStateV2::Ready => "ready",
-        crate::schema::quality_report_v2::ReadinessStateV2::ReviewRequired => "review_required",
-        crate::schema::quality_report_v2::ReadinessStateV2::Blocked => "blocked",
+    // 发布结论只来自 `publish_verdict`（唯一判据入口）。
+    //
+    // 修前这里自己算了一遍 `quality_state`，又分别走 preflight（db_direct）与
+    // readiness（legacy），三处判据各说各话：预检说可以发布、导出却据另一处拒绝，
+    // 或反过来。现在判据只有一份，`scope` 由**来源**决定（canonical 直通 / 文件派生），
+    // 不是调用方可调的开关。
+    let scope = if db_direct {
+        crate::authoring_validation::PublishScope::CanonicalDirect
+    } else {
+        crate::authoring_validation::PublishScope::FullDerived
     };
-    if quality_state != "ready" {
+    let verdict = crate::authoring_validation::publish_verdict(
+        root,
+        &input.job_id,
+        &authoring_value,
+        input
+            .edit_version
+            .map(|value| value.min(i64::MAX as u64) as i64),
+        scope,
+    );
+    if !verdict.is_ready() {
         return Err(format!(
-            "authoring_v2_export_blocked:quality_state={quality_state}"
+            "authoring_v2_export_blocked:{}:{}",
+            verdict.status(),
+            serde_json::to_string(&verdict.to_value()).unwrap_or_default()
         ));
     }
+    // proof / preflight 仍然产出（给 UI 与审计看"为什么"），但它们**不再参与判据**。
+    // `validate_authoring_v2_publish_readiness` 里唯一不在 verdict 内的检查是
+    // 「请求的 revision 是否仍是当前 revision」—— 那是请求属性，不是稿件属性。
     let publish_proof: Value = if db_direct {
-        let check = check_publish_preflight(&input.job_id, revision, &authoring_value);
-        if !check
-            .get("passed")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            return Err(format!(
-                "publish_check_failed:{}",
-                serde_json::to_string(&check).unwrap_or_default()
-            ));
-        }
-        check
+        check_publish_preflight(root, &input.job_id, revision, &authoring_value)
     } else {
         validate_authoring_v2_publish_readiness(root, &input.job_id, revision, &authoring_value)?
     };
+    // `reviewRequired` 也由**同一份**就绪度规则决定（`quality_readiness`，
+    // 与 `QualityReportV2.state` 和 `publish_verdict` 共用实现）。走到这里
+    // verdict 必然是 `Ready`，而 `Ready` 蕴含 `QualityReadiness::Ready`，所以
+    // 正常情况恒为 false；仍然如实算而不是写死常量，是为了让这个字段的含义
+    // 只由那条规则定义。
+    let review_required = !matches!(
+        crate::ielts_grammar::quality::quality_readiness(&authoring_value),
+        Ok(crate::ielts_grammar::quality::QualityReadiness::Ready)
+    );
     let runtime = compile_reading_source_v2(&authoring).map_err(|issues| {
         format!(
             "authoring_v2_export_compile_blocked:{}",
@@ -833,7 +873,7 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
             })).collect::<Vec<_>>(),
             "v1FilesRemainReadable": true,
             "pdfPerQuestionLlmRepair": false,
-            "reviewRequired": quality_state != "ready",
+            "reviewRequired": review_required,
             "publishProof": publish_proof
         });
         write_canonical_json_atomic(&manifest_path, &manifest_value)?;
@@ -3240,10 +3280,18 @@ mod tests {
             }),
         )
         .expect_err("review_required authoring must not pass strict export");
-        assert_eq!(
-            error,
-            "authoring_v2_export_blocked:quality_state=review_required"
+        // 修前这里断言的是精确串 `authoring_v2_export_blocked:quality_state=review_required`。
+        // 该串现在由 `publish_verdict` 统一产出（多判据合一，见 NOTES §7.4），一次给出
+        // 全部阻断项而不只是第一个命中的那条。所以断言改为钉**判据本身**：
+        // 必须报 `QUALITY_NOT_READY` 且带上具体 state。
+        // 刻意不钉整串格式：钉格式会让每次收敛判据都要改测试，而且判据真丢了也照样绿。
+        assert!(
+            error.starts_with("authoring_v2_export_blocked:blocked:"),
+            "必须是 blocked 结论：{error}"
         );
+        assert!(error.contains("QUALITY_NOT_READY"), "{error}");
+        assert!(error.contains("quality_state=review_required"), "{error}");
+        // 关键实体断言不变：判据没过就一个产物都不许落地。
         assert!(!export_dir.exists());
         let _ = fs::remove_dir_all(root);
     }
