@@ -97,7 +97,7 @@ export interface JsExportResult {
     [key: string]: unknown;
   }>;
 }
-export type ValidationPolicy = "strict" | "force";
+export type ValidationPolicy = "strict";
 
 export interface ExportReadingJsInput {
   jobIds: string[];

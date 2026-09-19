@@ -2390,36 +2390,30 @@ function minimizeDevProcessArtifacts(store: Store, jobId: string): void {
   delete store.pipelineReports[jobId];
 }
 
-function normalizeValidationPolicy(value: unknown): ValidationPolicy {
-  return value === "force" ? "force" : "strict";
+export function normalizeValidationPolicy(value: unknown): ValidationPolicy {
+  if (value === undefined || value === "strict") return "strict";
+  throw new Error(`invalid_validation_policy:${String(value)}`);
 }
 
 function blockingIssueCount(report: ValidationReport): number {
   return report.issues.filter((issue) => issue.severity === "error").length;
 }
 
-function enforceValidationPolicy(report: ValidationReport, policy: ValidationPolicy, prefix: string, jobId?: string): number {
+function enforceValidationPolicy(report: ValidationReport, prefix: string, jobId?: string): number {
   const blockingCount = blockingIssueCount(report);
-  if (policy === "strict" && blockingCount > 0) {
+  if (blockingCount > 0) {
     const suffix = jobId ? `:${jobId}` : "";
     throw new Error(`${prefix}${suffix}:${report.issues.map((issue) => issue.message).join(";")}`);
   }
   return blockingCount;
 }
 
-function ignoredValidationIssues(report: ValidationReport, policy: ValidationPolicy, jobId: string): IgnoredValidationIssue[] {
-  if (policy !== "force") return [];
-  return report.issues
-    .filter((issue) => issue.severity === "error")
-    .map((issue) => ({ ...issue, jobId }));
-}
-
-function validationExportMeta(policy: ValidationPolicy, ignoredIssues: IgnoredValidationIssue[]) {
+function validationExportMeta() {
   return {
-    validationPolicy: policy,
-    validationOverridden: policy === "force" && ignoredIssues.length > 0,
-    ignoredIssueCount: ignoredIssues.length,
-    ignoredIssues
+    validationPolicy: "strict" as const,
+    validationOverridden: false,
+    ignoredIssueCount: 0,
+    ignoredIssues: [] as IgnoredValidationIssue[]
   };
 }
 
@@ -3414,7 +3408,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
 
     case "export_reading_assets": {
       const jobId = args.jobId as string;
-      const validationPolicy = normalizeValidationPolicy(args.validationPolicy);
+      normalizeValidationPolicy(args.validationPolicy);
       const ir = store.authoring[jobId];
       if (!ir) throw new Error("authoring_ir_missing");
       const source = toReadingExamSource(ir);
@@ -3432,12 +3426,12 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
       const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
       const readiness = publishReadinessReport(store, jobId, ir, report);
       store.validation[jobId] = readiness;
-      const ignoredIssueCount = blockingIssueCount(readiness);
-      if (validationPolicy === "strict" && ignoredIssueCount > 0) {
+      const blockingCount = blockingIssueCount(readiness);
+      if (blockingCount > 0) {
         save(store);
-        enforceValidationPolicy(readiness, validationPolicy, "export_validation_failed");
+        enforceValidationPolicy(readiness, "export_validation_failed");
       }
-      const validationMeta = validationExportMeta(validationPolicy, ignoredValidationIssues(readiness, validationPolicy, jobId));
+      const validationMeta = validationExportMeta();
       const result: ExportResult = {
         examId: source.examId,
         files: [
@@ -3459,8 +3453,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "export_reading_js": {
       const input = args.input as ExportReadingJsInput;
       if (!input?.jobIds?.length) throw new Error("js_export_requires_at_least_one_job");
-      const validationPolicy = normalizeValidationPolicy(input.validationPolicy);
-      const ignoredIssues: IgnoredValidationIssue[] = [];
+      normalizeValidationPolicy(input.validationPolicy);
       const sources = input.jobIds.map((jobId) => {
         const ir = store.authoring[jobId];
         if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
@@ -3479,11 +3472,10 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
         const readiness = publishReadinessReport(store, jobId, ir, report);
         store.validation[jobId] = readiness;
-        enforceValidationPolicy(readiness, validationPolicy, "js_export_validation_failed", jobId);
-        ignoredIssues.push(...ignoredValidationIssues(readiness, validationPolicy, jobId));
+        enforceValidationPolicy(readiness, "js_export_validation_failed", jobId);
         return source;
       });
-      const validationMeta = validationExportMeta(validationPolicy, ignoredIssues);
+      const validationMeta = validationExportMeta();
       const files = sources.map((source) => ({ name: `${source.examId}.js`, content: buildWrapper(source) }));
       const manifest = { name: "manifest.js", content: buildManifest(sources) };
       const result: JsExportResult = {
@@ -3517,8 +3509,7 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
     case "export_nas_library": {
       const input = args.input as ExportNasLibraryInput;
       if (!input?.jobIds?.length) throw new Error("nas_export_requires_at_least_one_job");
-      const validationPolicy = normalizeValidationPolicy(input.validationPolicy);
-      const ignoredIssues: IgnoredValidationIssue[] = [];
+      normalizeValidationPolicy(input.validationPolicy);
       const sources = input.jobIds.map((jobId) => {
         const ir = store.authoring[jobId];
         if (!ir) throw new Error(`authoring_ir_missing:${jobId}`);
@@ -3537,11 +3528,10 @@ export async function devFallbackInvoke<T>(command: string, args: Record<string,
         const report = mergeValidationReports(validateIr(jobId, ir), runtimePreviewReport(jobId, assets, source));
         const readiness = publishReadinessReport(store, jobId, ir, report);
         store.validation[jobId] = readiness;
-        enforceValidationPolicy(readiness, validationPolicy, "nas_export_validation_failed", jobId);
-        ignoredIssues.push(...ignoredValidationIssues(readiness, validationPolicy, jobId));
+        enforceValidationPolicy(readiness, "nas_export_validation_failed", jobId);
         return source;
       });
-      const validationMeta = validationExportMeta(validationPolicy, ignoredIssues);
+      const validationMeta = validationExportMeta();
       const version = input.version || now().replace(/[:TZ]/g, "-").slice(0, 19);
       const libraryRoot = input.exportDir ?? "local://exports/nas-library";
       const readingExamsDir = libraryRoot;

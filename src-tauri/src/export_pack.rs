@@ -30,8 +30,8 @@ use std::{
 /// 其它值一律**明确报错**。刻意不做「非 strict 就静默按 strict 处理」——
 /// 静默降级会让调用方以为绕过生效了，比报错更坏。
 ///
-/// 前端契约（`src/api/tauriCommands.ts` 的 `"strict" | "force"`）不在本轮范围内，
-/// 由主线另行安排；**后端入口从这一版起已关闭**。
+/// 前端契约与 dev fallback 也只保留 `"strict"`；后端入口与前端入口因此不会再出现
+/// 一边接受 force、一边返回 `invalid_validation_policy:force` 的分裂契约。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ExportValidationOptions;
 

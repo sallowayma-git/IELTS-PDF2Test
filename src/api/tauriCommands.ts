@@ -30,6 +30,7 @@ import type {
   SourceFileRole,
   SourceReview,
   SplitCandidates,
+  ValidationPolicy,
   ValidationReport,
   WritingJob,
   CreateWritingJobInput,
@@ -289,7 +290,7 @@ export async function runCloudReview(jobId: string, input?: { profileId?: string
   return command("run_cloud_review", { jobId, input });
 }
 
-export async function exportReadingAssets(jobId: string, exportDir = "local://exports", validationPolicy: "strict" | "force" = "strict"): Promise<ExportResult> {
+export async function exportReadingAssets(jobId: string, exportDir = "local://exports", validationPolicy: ValidationPolicy = "strict"): Promise<ExportResult> {
   return command("export_reading_assets", { jobId, exportDir, validationPolicy });
 }
 
