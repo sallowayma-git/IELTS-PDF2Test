@@ -554,3 +554,22 @@ rendered=32                     # 修之前是 46
 - 任务 5 的根因（R10 遗留）；
 - 后端待确认：契约 §3.2 宣称的 `source`（原文件核验）独立链，在无云时不可达；
   `BLOCKER_LIST_TRUNCATED` 文案与截断条件仍不符；无持久化「已撤销」状态。
+
+## 2026-09-19 本轮收口记录
+
+- 合并：`aa443d5`；合并后基线 Rust 850/0/11、Vitest 309/0；real-PDF harness 仍受缺失 private corpus 的环境条件影响。
+- 产品修复：DOCX response prompt 投影、blocking 无目标动作、retry 新 batch/人工保护、force strict、CAS `Ok(0)`、PublishVerdict 等价性、readiness issue 落盘均已实现或验证。
+- 待最终阶段：全量 Rust/Vitest/PDF harness 重跑，核对状态后清理 `feat-publish-chain` worktree/branch。
+
+## 2026-09-19 本轮最终验收
+
+- 合并提交 `aa443d5` 已落在 `main`；`feat-publish-chain` worktree 与分支已清理，恢复单一工作区。
+- 合并后最终 Rust：`856 passed / 0 failed / 11 ignored`；Vitest：`19 files / 311 passed / 0 failed`；TypeScript `tsc --noEmit` 通过。
+- `verify:phase5:real-pdf` 的 Rust exact test 明确 `SKIP`（缺 8 个 private-real PDF），外层 Node 因无 `report.json` 退出 1；与合并前环境红一致。
+- 真实 `complex-reading.docx` 已覆盖导入→V2→canonical→批次→云端修复 HTTP 网关，题面无 placeholder，云端请求携带 DOCX `sourceText`。
+
+## 2026-09-19 收口纠正：提交与指定 CDP 链
+
+- 功能代码已按归属提交：`9838398`（DOCX）、`9945be5`（重新识别）、`59c1a78`（blocking 前端反例）、`9e83292`（force）、`557f24b`（CAS）、`d9081c7`（PublishVerdict/readiness 测试与持久化）。
+- `node scripts/e2e/tauri-cdp-cloud-repair-chain.mjs` 使用仓库内 `fixtures/parser/demanding-reading-passage-3.pdf`，在刷新 dist 与 Tauri debug exe 后 **13/13 场景通过，退出码 0**。此前把该链报告成 private-real 缺失是错误归因；private-real 缺失属于另一条 `verify:phase5:real-pdf` 脚本。
+- 用同一条 CDP 链指定 `fixtures/parser/complex-reading.docx`：真实 UI 导入通过，`placeholderPrompts=0`，但在 `derive-scenario-from-real-draft` 因 PDF golden hash（`f13bd65c...`）与 DOCX hash（`717918f5...`）不匹配而停止；该运行的真实 V2 质量报告同时为 `blocked`，含 `SLOT_HOST_MISSING` 与 `RUNTIME_COMPILER_FAILED`。因此不能把 DOCX 宣称为已经走完云端修复→预览→导出。

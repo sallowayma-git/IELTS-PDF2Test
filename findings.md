@@ -3373,7 +3373,48 @@ cloud_usable
 没有能力把「不同的输入」送进去**——它依赖 `retry_processing` 造新批次，
 而重试的语义恰恰是「同一输入再算一次」。
 
+## 2026-09-19 本轮收口补记
+
+- 合并提交：`aa443d5`；合并后基线 Rust 850 passed / 0 failed / 11 ignored，Vitest 309 passed / 0 failed；real-PDF harness 因 private corpus 缺失外层报红，Rust 内层明确 skip，非合并回归。
+- DOCX 真实 fixture 的题面丢失落点在 `ielts_grammar/mod.rs:1013-1066` 的 V2 response 投影：结构题无条件吞掉已有 prompt_text；改为仅在 prompt_text 为空时抑制 detached qN。product-chain 反例已验证 complex-reading DOCX 两个 response group 均有真实文本、无 pending placeholder。
+- blocking 无目标已有后端反例 `cloud_repair/tests.rs:2330`，动作由后端变为 `review_source`，前端给出“打开原文件核对”；本轮补了 blocking/no-target 前端断言。
+- 重试通过独立 attempt/batch 身份进入现有 reconcile/cloud-repair 写入边界；真实链路反例覆盖人工 q14 保持、q15 新改进落库、q14 进入剩余任务。
+- CAS 的 `Ok(0)` 反例与修复已落在 `library/repository.rs:1153-1190`；force 前端仅保留 strict，并对 force 明确报错。
+- E8-26 的发布判定未改变；修复的是 readiness blocker 可观察性，预览报告新增 `publishReadiness`。option_alphabet 样本统计仍为 58 groups / 4 false positives / 0 true mistakes，不改顺序。
+
 **给后端的最小交接**：要验按钮流程，需要一条能**改变云端候选**的路径
 （换夹具使其与样本目标一致，或提供强制重核验/换样本的入口），
 而不是继续依赖 `retry_processing`。这也解释了 §13.3 里那个「按钮可见却没有补丁」
 的表面矛盾——补丁不是被丢掉的，而是**从头到尾没有任何一条候选走到会产出补丁的那一步**。
+
+## 2026-09-19 最终验证补记
+
+- 全量测试没有合并回归：Rust `856/0/11`、Vitest `311/0`；真实 PDF harness 的唯一失败是缺私有 corpus，内层 exact test 未执行而是 skip。
+- 当前仓库的 `fixtures/parser/complex-reading.docx` 实际是 5 题、2 个 response group；修后两组 prompt 均有真实文本且无 `[prompt pending review]`。另一个 13 题的 demanding-reading fixture 是 passage-only，缺少题目/答案表，不能作为同一输入问题的反例。
+- option alphabet 真实样本统计保持：`58 groups / 4 false positives / 0 true mistakes`，因此没有改循环顺序。
+- 单一工作区状态已恢复：`main` 指向 `aa443d5`，发布分支/worktree 已移除；用户原有 `.workbuddy` 改动保留。
+
+## 2026-09-19 提交后 CDP 复核纠正
+
+### 指定 PDF harness
+
+首次直接运行因前端 `dist` stale-build 被前置检查拒绝；使用仓库既有 `npm run build:app` 刷新前端和 debug exe 后，原命令
+`node scripts/e2e/tauri-cdp-cloud-repair-chain.mjs` 使用 `fixtures/parser/demanding-reading-passage-3.pdf` 获得：
+
+- `prepass-import-for-scenario-derivation` passed
+- `derive-scenario-from-real-draft` passed
+- 其余真实导入、云端候选、修复、画布刷新、保存/重开、预览、导出和学生 runtime 场景全部 passed
+- 总计 **13/13 passed，exit 0**
+
+因此此前把这条链归因于 `fixtures/golden/private-real/` 缺失是错误的。private-real 缺失只影响另一条
+`npm run verify:phase5:real-pdf` 脚本。
+
+### DOCX 结论必须收窄
+
+同一条脚本指定 `--pdf fixtures/parser/complex-reading.docx` 后：
+
+- 真实 Tauri UI 导入 passed；报告记录 `taskGroups=2`、`responseGroups=2`、`placeholderPrompts=0`。
+- `derive-scenario-from-real-draft` failed，原因是脚本加载的 golden `demanding-reading-passage-3.annotation.json` 固定 source hash `f13bd65c...`，而 DOCX 实际 hash 为 `717918f5...`；脚本因此没有继续到 UI 云端修复/预览/导出。
+- 同次运行落盘的 `authoring-ir-v2.shadow.json` 显示质量状态 `blocked`，硬阻断为 `SLOT_HOST_MISSING` 与 `RUNTIME_COMPILER_FAILED`。后者包含 `RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION` 和 `RUNTIME_RESPONSE_ANSWER_KIND_MISMATCH`。
+
+准确结论：本轮已证明 DOCX 题面不再被投影成 placeholder，并且服务层能把同一 DOCX 送到云端修复网关；本轮没有证明用户可以用当前 DOCX 走完产品级“导入→云端修复→预览→导出”，当前 fixture 仍被质量门禁阻断，完整 CDP 链还被 PDF-only golden 绑定阻断。

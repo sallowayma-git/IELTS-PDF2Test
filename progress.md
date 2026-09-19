@@ -1462,3 +1462,21 @@ PDF/DOCX 完整链→学生端     → 未运行
 
 **未完成项继续保留**：撤销残留（`build_view` 的 AutoFixed + Undone）、无云本地核验与受控候选场景、
 A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
+
+## 2026-09-19 本轮执行结果
+
+- 已完成分支合并与合并后基线验证；后续产品修复均保留“先反例、后修复、再 focused test”的证据。
+- DOCX、retry、CAS、force、PublishVerdict、E8 readiness observability 已各有 focused red/green 或等价性证据；full Rust/Vitest 与 PDF harness 待最终工作树清理后重跑。
+
+## 2026-09-19 最终工作结果
+
+- 全量 Rust：`856 passed / 0 failed / 11 ignored`；Vitest：`19 files / 311 passed / 0 failed`；`npm run check` 通过。
+- DOCX 回归最终按结构证据收口：真实 table/flow layout 才保留源题面；无结构证据的 incomplete-table 与 sentence-completion 反例仍保持空 prompt。
+- retry 已验证新 attempt/batch、人工编辑保护与新识别改进分别落库；blocking 无目标已验证 `review_source` 与前端打开原文件动作。
+- 合并后的发布 worktree `F:\workspace\PDF2Test-publish` 与 `feat-publish-chain` 已删除。
+
+## 2026-09-19 最终收口纠正
+
+- 代码已落盘为 6 个功能提交：`9838398`, `9945be5`, `59c1a78`, `9e83292`, `557f24b`, `d9081c7`。
+- 指定 PDF CDP harness 的真实结果不是 private corpus 缺失：刷新构建后 `tauri-cdp-cloud-repair-chain.mjs` 对 `demanding-reading-passage-3.pdf` **13/13 passed, exit 0**。
+- DOCX 产品链单独复跑结果：导入成功且 `placeholderPrompts=0`；随后因 harness 使用 PDF golden 绑定而在场景派生处失败，且该 DOCX 的 V2 质量状态为 `blocked`（`SLOT_HOST_MISSING`, `RUNTIME_COMPILER_FAILED`）。服务层 DOCX 云端网关反例通过，但不能据此声称当前 DOCX 已完成预览/导出闭环。
