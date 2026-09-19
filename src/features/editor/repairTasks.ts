@@ -109,20 +109,60 @@ export function repairBlockerCount(view: RecognitionDecisionViewV1 | undefined):
 }
 
 /**
+ * 后端是否明确说「这一轮修复正常收工」。
+ *
+ * **只有它能为「完成」背书。** 判据是修复状态本身，不是「剩余任务有几条」：
+ * `budget_exhausted` / `unavailable` / `cancelled` 都可能恰好没有剩余任务（例如取消得早、
+ * 或剩余清单算不出来），但那是「没跑完」，不是「修好了」。把空清单读成完成，
+ * 用户就会在云端其实没干完的时候被告知「没有需要你处理的问题」。
+ */
+export function repairSettled(view: RecognitionDecisionViewV1 | undefined): boolean {
+  return view?.repair?.status === "completed";
+}
+
+/**
  * 面板顶部那一行：把「云端做了什么」和「你还剩什么」说成一句话。
  *
  * 为什么不能直接用 `describeRepairStatus`：那句话说的是**修复循环的状态**，
  * 而这里要回答的是「我现在还要不要做事」。两者都有用，但不能互相顶替——
  * 「修复已完成」+「还剩 3 处」是最容易让用户误判的组合。
+ *
+ * 措辞由**后端状态**决定，剩余条数只补在它后面。以前这里只看 `remainingTasks.length`，
+ * 于是「预算耗尽」「云端不可用」「已取消」只要恰好没有剩余任务，就会输出
+ * 「已完成，没有需要你处理的问题」——一句彻头彻尾的假话。
  */
 export function repairHeadline(view: RecognitionDecisionViewV1 | undefined): string {
+  const repair = view?.repair;
+  if (!repair) return "未进行云端修复。";
   if (repairInFlight(view)) return "云端正在自动修复，先不用管；完成后这里会列出剩余问题。";
   const tasks = repairTasks(view);
-  if (!tasks.length) return "云端自动修复已完成，没有需要你处理的问题。";
   const blockers = tasks.filter((task) => task.blocking).length;
-  return blockers > 0
-    ? `云端自动修复已完成，还有 ${tasks.length} 处需要你处理（其中 ${blockers} 处不处理不能导出）。`
-    : `云端自动修复已完成，还有 ${tasks.length} 处建议你确认。`;
+  // 剩余部分在所有非 running 状态里措辞一致：条数 + 其中几处阻断。
+  const left = tasks.length
+    ? blockers > 0
+      ? `还有 ${tasks.length} 处需要你处理（其中 ${blockers} 处不处理不能导出）。`
+      : `还有 ${tasks.length} 处建议你确认。`
+    : "";
+  switch (repair.status) {
+    case "completed":
+      return tasks.length ? `云端自动修复已完成，${left}` : "云端自动修复已完成，没有需要你处理的问题。";
+    case "needs_attention":
+      // 后端说「还需要你确认」：即使清单为空也不能说完成（两者不一致时以状态为准）。
+      return left ? `云端自动修复需要你确认，${left}` : "云端自动修复需要你确认一些内容。";
+    case "budget_exhausted":
+      return left
+        ? `云端修复达到本轮上限，${left}`
+        : "云端修复达到本轮上限，未能核完整份稿件；建议再跑一次或人工核对。";
+    case "cancelled":
+      return left ? `云端修复已取消，${left}` : "云端修复已取消，未能核完整份稿件。";
+    case "unavailable":
+      return left
+        ? `云端修复未能完成，${left}`
+        : "云端修复未能完成，未能核完整份稿件；不影响继续编辑。";
+    default:
+      // 不认识的 status 一律不宣布完成。
+      return left ? `云端修复状态未知，${left}` : "云端修复状态未知，无法确认这次修复的结果。";
+  }
 }
 
 /**
@@ -130,15 +170,16 @@ export function repairHeadline(view: RecognitionDecisionViewV1 | undefined): str
  *
  * 与旧的 `isRecognitionQuiet` 判据不同，这里**不看修复之前算出来的建议计数**：
  * 那些建议正是云端刚刚处理过的东西，拿它们决定面板收不收起，会出现「面板收成一行，
- * 同时还有三条剩余任务挂着」的矛盾。判据只有两件事：
- *   - 修复还在进行 → 不安静（用户需要看到它在跑，且此时没有剩余清单）；
- *   - 还有剩余任务 → 不安静。
- * 修复完成且没有剩余 → 安静，收敛成一行。
+ * 同时还有三条剩余任务挂着」的矛盾。
+ *
+ * 收起的条件是两个**都要**成立：后端明确说这一轮正常收工（`completed`），**且**
+ * 没有剩余任务。只看后者会把「预算耗尽 / 云端不可用 / 已取消 + 恰好没剩余」也收成
+ * 一行，用户于是看不到云端其实没干完。
  *
  * 不适用（旧批次）时返回 `false`，让调用方走旧判据。
  */
 export function isRepairPanelQuiet(view: RecognitionDecisionViewV1 | undefined): boolean {
   if (!usesRepairTaskList(view)) return false;
   if (repairInFlight(view)) return false;
-  return repairTasks(view).length === 0;
+  return repairSettled(view) && repairTasks(view).length === 0;
 }

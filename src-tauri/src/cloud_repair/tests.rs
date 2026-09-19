@@ -1823,3 +1823,426 @@ fn cloud_repair_cannot_invent_an_ungrounded_task_group_and_says_so() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── 本轮修复的回归：终态保证、状态不误报、指纹覆盖依据、跨源去重 ────────────────
+//
+// 这一组每一条都对应一个**具体的用户可见后果**，并且都先写清楚「怎么复现」。
+// 断言的是产品语义（批次行会不会停在 running、用户会不会被告知假的完成、
+// 一条差异会不会被旧裁定永久压住、同一件事会不会被说三遍）。
+
+/// 循环内部任何失败都必须**转成终态报告**返回，绝不能把 `running` 留在批次行里。
+///
+/// 复现：`run_repair_loop` 一开工就把批次行写成 `running`（见 `report_progress`），
+/// 而循环体里有多处可以提前返回。返回 Err 时调用方拿不到报告，也就没人把 `running`
+/// 改掉 —— 批次行永久停在 running，而同一时刻 job 行已经是 failed。前端读的是批次行
+/// （`repair_json` 是读取权威），于是用户永远看到「云端正在自动修复」，两个界面互相矛盾。
+#[test]
+fn every_exit_path_returns_a_terminal_report_and_never_leaves_running() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "A");
+
+    let seen: std::cell::RefCell<Vec<RepairProgress>> = std::cell::RefCell::new(Vec::new());
+    let sink = |progress: RepairProgress| seen.borrow_mut().push(progress);
+    let not_cancelled = || false;
+    let mut request = request(&root, &not_cancelled, 3);
+    request.progress = Some(&sink);
+
+    // 注入一个「第一回合就返回 Err」的模型调用：以前这条路径会让循环直接返回 Err。
+    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+        Err("llm_http_500:upstream".to_string())
+    })
+    .expect("循环内部失败必须转成报告，不能返回 Err");
+
+    assert_ne!(report.status, REPAIR_STATUS_RUNNING, "报告绝不能是 running");
+    assert_eq!(report.status, REPAIR_STATUS_UNAVAILABLE);
+    // 开工确实写了 running —— 这正是「必须有人写终态」的原因。
+    assert_eq!(seen.borrow()[0].status, REPAIR_STATUS_RUNNING);
+    // 循环之外的失败（join 失败 / 开工前丢 lease）走兜底摘要，同样必须是终态。
+    let fallback = unavailable_summary(&root, ITEM_ID, BATCH_ID, "join failed");
+    assert_eq!(fallback["status"], REPAIR_STATUS_UNAVAILABLE);
+    assert_ne!(fallback["status"], REPAIR_STATUS_RUNNING);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `budget_exhausted` 的判据必须是「模型**真的**调用过 finish」，不是「finish 里没写 note」。
+///
+/// 复现：`note` 是可选字段。旧判据把「模型正常收工但没写 note」误报成预算耗尽，
+/// 用户于是看到「达到本轮上限，剩余问题需要你处理」，而云端其实已经把该做的做完了。
+#[test]
+fn a_model_that_finishes_without_a_note_is_not_reported_as_budget_exhausted() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    // 候选与当前稿一致：没有差异、没有阻断问题 → 正常收工就是真的完成。
+    store_candidate(&root, "B");
+
+    let not_cancelled = || false;
+    // 预算恰好 1 回合，模型在第 1 回合就 finish，且**不写 note**。
+    let request = request(&root, &not_cancelled, 1);
+    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+        Ok(json!({"callId": "f1", "tool": "finish", "arguments": {}}))
+    })
+    .expect("修复循环必须返回结果");
+
+    assert!(report.finish_note.is_none(), "这条用例的前提是「没写 note」");
+    assert_ne!(
+        report.status, REPAIR_STATUS_BUDGET_EXHAUSTED,
+        "模型正常收工不得被误报成预算耗尽"
+    );
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 中途一次可恢复的往返（工具名不认识 → 错误回给模型 → 模型改对）不该在**成功**的运行上
+/// 留下一条 `lastError`。
+///
+/// 复现：旧代码把解析失败写进 `last_error` 且从不清理。于是一次「中途被拒一次、随后正常
+/// 收工」的修复会带着非空 lastError 返回，界面把它当失败显示，用户以为云端出错了。
+#[test]
+fn a_recovered_tool_error_does_not_leave_a_last_error_on_a_successful_run() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "B");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let mut calls = 0u32;
+    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Ok(match calls {
+            // 第 1 回合交了个不认识的工具：错误回给模型（observations 里有），
+            // 那是可恢复的往返，不是终态失败。
+            1 => json!({"callId": "bad", "tool": "not_a_tool", "arguments": {}}),
+            _ => json!({"callId": "f1", "tool": "finish", "arguments": {"note": "收工"}}),
+        })
+    })
+    .expect("修复循环必须返回结果");
+
+    assert_eq!(calls, 2, "第一次被拒之后必须有机会改对");
+    assert!(
+        report.last_error.is_none(),
+        "中途一次可恢复的往返不该留下终态错误：{:?}",
+        report.last_error
+    );
+    assert_ne!(report.status, REPAIR_STATUS_UNAVAILABLE);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 「云端替用户了结了多少争议」只数**此刻仍然有效**的裁定：重复的算一条，
+/// 历史 / 已失效的一条都不算。
+///
+/// 复现：旧代码 `adjudicated_count = rulings.len()`。那份列表是 append-only 的累积记录，
+/// 于是同一个差异被反复裁定会重复计数，上一批留下的旧裁定也算进去，重跑一次数字还会变大。
+#[test]
+fn adjudicated_count_only_counts_rulings_that_still_hold() {
+    let canonical = golden_authoring();
+    // 「候选整组缺失」的极简候选：必然产生 task_group 差异。
+    let candidate = json!({
+        "taskGroups": [], "answerSlots": {}, "answerKey": {}, "assets": []
+    });
+    let differences = candidate_differences(&canonical, &candidate);
+    assert!(!differences.is_empty(), "夹具必须先真的产生差异");
+    let first = differences[0].clone();
+    let target_type = first["targetType"].as_str().unwrap_or_default().to_string();
+    let target_id = first["targetId"].as_str().unwrap_or_default().to_string();
+    let field = first["field"].as_str().unwrap_or_default().to_string();
+    let (canonical_digest, candidate_digest, context_digest) = difference_digests(&first);
+    let ruling = |canonical_digest: &str, candidate_digest: &str, context_digest: &str| {
+        json!({
+            "targetType": target_type,
+            "targetId": target_id,
+            "field": field,
+            "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+            "canonicalDigest": canonical_digest,
+            "candidateDigest": candidate_digest,
+            "contextDigest": context_digest,
+        })
+    };
+
+    // 没有任何裁定 → 0。
+    assert_eq!(effective_adjudicated_count(&canonical, &candidate, &[]), 0);
+    // 同一条差异被裁定两次（模型反复裁定）→ 只算一条。
+    let duplicated = vec![
+        ruling(&canonical_digest, &candidate_digest, &context_digest),
+        ruling(&canonical_digest, &candidate_digest, &context_digest),
+    ];
+    assert_eq!(
+        effective_adjudicated_count(&canonical, &candidate, &duplicated),
+        1,
+        "同一条差异重复裁定只能算一条"
+    );
+    // 指纹对不上的历史 / 已失效裁定 → 一条都不算。
+    let stale = vec![ruling("stale", "stale", "stale")];
+    assert_eq!(
+        effective_adjudicated_count(&canonical, &candidate, &stale),
+        0,
+        "已失效的裁定不能计入「了结了多少争议」"
+    );
+}
+
+/// 裁定必须绑定**它依赖的内容**，而不只是差异两侧的字面值。
+///
+/// 复现（旧裁定压制变质差异）：模型对一条 `task_group` 差异裁定「当前稿对」。这条差异的
+/// 两侧指纹取自 `group_index_entry` —— 一个只含 taskId / 题型 / 题号 / slotIds / 说明 /
+/// 选项库 id 的**摘要**。随后该组的 stimulus / 题面 / 选项文本 / 答案被改写，摘要一个字
+/// 没变、差异两侧也没变，旧代码于是继续 `continue`，这条已经变质的内容永远不进用户清单。
+#[test]
+fn a_ruling_stops_holding_once_the_content_it_depended_on_changes() {
+    let canonical = golden_authoring();
+    let task_id = canonical["taskGroups"][0]["taskId"]
+        .as_str()
+        .expect("golden 必须有一个题组")
+        .to_string();
+    // 候选完全没有这个题组 → 一条 (task_group, taskId, task_group) 差异。
+    let candidate = json!({
+        "taskGroups": [], "answerSlots": {}, "answerKey": {}, "assets": []
+    });
+    let before_diff = candidate_differences(&canonical, &candidate)
+        .into_iter()
+        .find(|difference| difference["field"] == "task_group")
+        .expect("必须有一条整组差异");
+    let (canonical_digest, candidate_digest, context_digest) = difference_digests(&before_diff);
+    let rulings = vec![json!({
+        "targetType": "task_group",
+        "targetId": task_id,
+        "field": "task_group",
+        "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+        "canonicalDigest": canonical_digest,
+        "candidateDigest": candidate_digest,
+        "contextDigest": context_digest,
+    })];
+    assert!(
+        fresh_ruling_for_difference(&rulings, &before_diff).is_some(),
+        "对照组：内容没变时裁定必须有效"
+    );
+
+    // 改写该组内容：加一段 stimulus。差异两侧一个字都没变（差异还是「候选缺这个组」）。
+    let mut changed = canonical.clone();
+    changed["taskGroups"][0]["stimulus"] = json!([{
+        "type": "paragraph",
+        "id": "rewritten-stimulus",
+        "sourceAnchors": [],
+        "provenanceStatus": "source",
+        "children": [{
+            "type": "text",
+            "id": "rewritten-stimulus-text",
+            "sourceAnchors": [],
+            "provenanceStatus": "source",
+            "text": "REWRITTEN BY THE USER"
+        }]
+    }]);
+    let after_diff = candidate_differences(&changed, &candidate)
+        .into_iter()
+        .find(|difference| difference["field"] == "task_group")
+        .expect("整组差异必须还在");
+
+    // 旧判据（`group_index_entry` 摘要）逐字未变 —— 这正是旧代码会继续压住差异的原因。
+    assert_eq!(
+        group_index_entry(&canonical["taskGroups"][0]),
+        group_index_entry(&changed["taskGroups"][0]),
+        "摘要里本来就不含 stimulus，所以它不可能发现这次改动"
+    );
+    // 但裁定依赖的内容变了 → 必须失效重评。
+    assert!(
+        fresh_ruling_for_difference(&rulings, &after_diff).is_none(),
+        "依据被改写之后，旧裁定不得继续压制这条差异"
+    );
+}
+
+/// 裁定只绑差异两侧、不绑依据的另一种形状：答案的**依据**是选项库。
+///
+/// 复现：模型基于「选项库把 B 映射到某个词」裁定答案 B 对。随后选项库被改，答案值一个字
+/// 没变，差异两侧也就没变 —— 旧代码继续认这条裁定有效，而它的依据已经没了。
+#[test]
+fn a_ruling_grounded_in_the_option_bank_dies_when_the_option_bank_changes() {
+    let canonical = golden_authoring();
+    // 候选把 q14 的答案改成 A → 一条 (slot, q14, answer) 差异。
+    let mut candidate = canonical.clone();
+    candidate["answerKey"]["q14"] =
+        json!({"kind": "option", "labels": ["A"], "assignment": "unordered_set"});
+
+    let before_diff = candidate_differences(&canonical, &candidate)
+        .into_iter()
+        .find(|difference| difference["targetType"] == "slot" && difference["field"] == "answer")
+        .expect("必须有一条答案差异");
+    let (canonical_digest, candidate_digest, context_digest) = difference_digests(&before_diff);
+    let rulings = vec![json!({
+        "targetType": "slot",
+        "targetId": "q14",
+        "field": "answer",
+        "ruling": crate::schema::cloud_repair_v1::CLOUD_RULING_CURRENT_IS_CORRECT,
+        "canonicalDigest": canonical_digest,
+        "candidateDigest": candidate_digest,
+        "contextDigest": context_digest,
+    })];
+    assert!(
+        fresh_ruling_for_difference(&rulings, &before_diff).is_some(),
+        "对照组：裁定此刻有效"
+    );
+
+    // 只改选项库文本；答案与差异两侧都不动。
+    let mut changed = canonical.clone();
+    changed["taskGroups"][0]["optionBank"]["options"][0]["content"][0]["text"] =
+        json!("a completely different factor");
+    let after_diff = candidate_differences(&changed, &candidate)
+        .into_iter()
+        .find(|difference| difference["targetType"] == "slot" && difference["field"] == "answer")
+        .expect("答案差异必须还在");
+
+    assert_eq!(
+        after_diff["canonical"], before_diff["canonical"],
+        "答案本身没变（这正是旧代码认为裁定仍有效的原因）"
+    );
+    assert!(
+        fresh_ruling_for_difference(&rulings, &after_diff).is_none(),
+        "选项库（裁定的依据）变了，基于它的裁定必须失效"
+    );
+}
+
+/// 阻断任务必须带一条**真能做完**的动作，不允许出现「阻断但零动作」的任务。
+///
+/// 复现：`targetId` 缺失时旧代码落成空串，前端把它过滤掉 → 一条 blocking 却没有任何
+/// 按钮的任务：用户看到「不处理不能导出」，却无处可去。
+#[test]
+fn a_blocking_task_always_carries_a_real_action() {
+    let root = temp_root();
+    let mut canonical = golden_authoring();
+    // 一条**文档级**阻断问题：没有 targetId（真实形状：这类问题常常只带锚点），
+    // 题面上没有可改的地方。
+    canonical["quality"]["issues"] = json!([{
+        "issueId": "doc-level-blocker",
+        "code": "SLOT_ID_MISMATCH",
+        "severity": "blocking",
+        "message": "题面里的空位编号与答案槽对不上",
+        "targetType": "document",
+        "targetId": null
+    }]);
+    seed_item(&root, &canonical);
+    store_candidate(&root, "B");
+
+    let tasks = remaining_tasks(&root, ITEM_ID, ITEM_ID, BATCH_ID, &[], &[]).expect("重算剩余任务");
+    let blocking: Vec<&Value> = tasks
+        .iter()
+        .filter(|task| task["blocking"] == json!(true))
+        .collect();
+    assert!(
+        !blocking.is_empty(),
+        "夹具必须先真的产生一条阻断任务：{tasks:?}"
+    );
+    for task in blocking {
+        let target_ids = task["targetIds"].as_array().cloned().unwrap_or_default();
+        let action = task["action"].as_str().unwrap_or("");
+        assert!(
+            !target_ids.is_empty() || action == "review_source",
+            "阻断任务必须能定位到目标、或有一条真能推进它的兜底动作：{task:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 同一目标、同一动作的四源并集必须只留一条，且保留最严重的级别。
+///
+/// 复现：去重键以前各带来源前缀（`quality:` / `cloud-diff:` / …），跨源去重从不发生。
+/// 「q14 缺答案」会同时产出 `quality:ANSWER_KEY_MISSING_SLOT:q14`（blocking）与
+/// `cloud-diff:slot:q14:answer`（非 blocking），用户看到两件其实是同一件的事。
+#[test]
+fn one_missing_answer_is_reported_once_at_the_most_severe_level() {
+    let root = temp_root();
+    let mut canonical = golden_authoring();
+    canonical["quality"]["issues"] = json!([{
+        "issueId": "missing-q14-answer",
+        "code": "ANSWER_KEY_MISSING_SLOT",
+        "severity": "blocking",
+        "message": "第 14 题没有答案",
+        "targetType": "slot",
+        "targetId": "q14"
+    }]);
+    seed_item(&root, &canonical);
+    // 候选把 q14 改成 A → 另有一条 `cloud-diff:slot:q14:answer`（非阻断）。
+    store_candidate(&root, "A");
+
+    let tasks = remaining_tasks(&root, ITEM_ID, ITEM_ID, BATCH_ID, &[], &[]).expect("重算剩余任务");
+    let for_q14: Vec<&Value> = tasks
+        .iter()
+        .filter(|task| {
+            task["targetIds"]
+                .as_array()
+                .map(|ids| ids.iter().any(|id| id == "q14"))
+                .unwrap_or(false)
+        })
+        .collect();
+    assert_eq!(for_q14.len(), 1, "同一目标同一动作只能留一条：{tasks:?}");
+    assert_eq!(for_q14[0]["blocking"], json!(true), "必须保留最严重的那条");
+    assert_eq!(
+        for_q14[0]["userTaskId"], "quality:ANSWER_KEY_MISSING_SLOT:q14",
+        "保留的应当是阻断的那条"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 不同的修复动作**不许**合并：同一个目标上的「缺答案」与「结构不完整」是两件事，
+/// 用户照做其中一件修不好另一件。
+#[test]
+fn different_repairs_on_the_same_target_are_not_merged() {
+    let root = temp_root();
+    let mut canonical = golden_authoring();
+    canonical["quality"]["issues"] = json!([
+        {"issueId": "missing-q14-answer", "code": "ANSWER_KEY_MISSING_SLOT", "severity": "blocking",
+         "message": "第 14 题没有答案", "targetType": "slot", "targetId": "q14"},
+        {"issueId": "broken-q14-structure", "code": "SLOT_STRUCTURE_INCOMPLETE", "severity": "blocking",
+         "message": "第 14 题所在的作答区结构不完整", "targetType": "slot", "targetId": "q14"}
+    ]);
+    seed_item(&root, &canonical);
+    // 候选与当前稿一致：只留两条质量问题，不掺差异。
+    store_candidate(&root, "B");
+
+    let tasks = remaining_tasks(&root, ITEM_ID, ITEM_ID, BATCH_ID, &[], &[]).expect("重算剩余任务");
+    let for_q14 = tasks
+        .iter()
+        .filter(|task| {
+            task["targetIds"]
+                .as_array()
+                .map(|ids| ids.iter().any(|id| id == "q14"))
+                .unwrap_or(false)
+        })
+        .count();
+    assert_eq!(for_q14, 2, "两种不同的修理必须各留一条：{tasks:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 两条**不同**的文档级问题不能因为「都没有 targetId」就折叠成一条。
+///
+/// 复现：`quality:{code}:{targetId}` 在 targetId 为空时把两条不同的文档级问题折叠成一条，
+/// 第二条的 message 被静默丢掉，用户以为只有一条。
+#[test]
+fn two_different_document_level_issues_are_not_collapsed_into_one() {
+    let root = temp_root();
+    let mut canonical = golden_authoring();
+    canonical["quality"]["issues"] = json!([
+        {"issueId": "doc-issue-a", "code": "SIGNIFICANT_REGION_UNASSIGNED", "severity": "blocking",
+         "message": "原文件第 2 页有一段没被任何题组接住", "targetId": null},
+        {"issueId": "doc-issue-b", "code": "SIGNIFICANT_REGION_UNASSIGNED", "severity": "blocking",
+         "message": "原文件第 3 页有一段没被任何题组接住", "targetId": null}
+    ]);
+    seed_item(&root, &canonical);
+    store_candidate(&root, "B");
+
+    let tasks = remaining_tasks(&root, ITEM_ID, ITEM_ID, BATCH_ID, &[], &[]).expect("重算剩余任务");
+    assert_eq!(tasks.len(), 2, "两条不同的文档级问题必须各留一条：{tasks:?}");
+    let messages: Vec<String> = tasks
+        .iter()
+        .filter_map(|task| task["message"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        messages.iter().any(|message| message.contains("第 2 页")),
+        "第一条的 message 不能被丢掉：{messages:?}"
+    );
+    assert!(
+        messages.iter().any(|message| message.contains("第 3 页")),
+        "第二条的 message 不能被丢掉：{messages:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

@@ -808,7 +808,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                                     .map(|guard| guard.contains(&probe_job_id))
                                     .unwrap_or(false)
                             };
-                            let repair_run_id = format!("cloud-repair:{batch_id}");
+                            let repair_run_id = crate::cloud_repair::repair_run_id_for(&batch_id);
                             // 进度出口：写进**批次行**（前端读取权威）并推一次事件。
                             //
                             // 为什么连事件一起发：内容变了而界面不知道，是这条链上最容易
@@ -895,7 +895,21 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
                         // 修复循环本身失败：已提交的有效修改保留，状态如实记录。
                         repair_status =
                             Some(crate::cloud_repair::REPAIR_STATUS_UNAVAILABLE.to_string());
-                        repair_error = Some(error);
+                        repair_error = Some(error.clone());
+                        // **终态必须落盘**。循环一开工就把批次行写成了 `running`，而这里
+                        // 拿到 Err 的两种情形（`run_blocking` 的 join 失败 = 任务 panic，
+                        // 或 `announced.is_none()` = 开工前就丢了 lease）都发生在循环之外，
+                        // 循环自己没机会写终态。以前这里只设 `repair_status`，
+                        // `repair_summary` 保持 None，下面那次 `write_batch_repair` 整块被
+                        // 跳过 —— 批次行于是**永久停在 running**，而同一时刻 job 行已经是
+                        // failed。前端读的是批次行（`repair_json` 是读取权威），用户永远
+                        // 看到「云端正在自动修复」，与任务行互相矛盾。
+                        repair_summary = Some(crate::cloud_repair::unavailable_summary(
+                            &root,
+                            &job_id,
+                            &batch_id,
+                            &error,
+                        ));
                     }
                 }
                 drop(cloud_permit);
@@ -944,11 +958,10 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     }
     // 云端**真的跑过**就以修复状态为准：本地周期看不见云端，会把 cloud_status 标成
     // `not_run`（= 本次没有云端参与），拿它描述一次真实的云端修复（成功或失败）都是谎报。
-    if let Some(mapped) = cloud_status_for_job(launch_cloud, repair_status.as_deref()) {
+    if let Some(mapped) = cloud_status_for_job(launch_cloud, repair_status.as_deref(), repair_applied) {
         cloud_status = mapped;
     }
     let actionable_final = actionable.max(repair_remaining);
-    let _ = repair_applied;
 
     let advance_result = advance(
         &app,
@@ -1001,14 +1014,28 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
 /// 返回 `None` 表示「保留本地周期给出的值」——只在云端**从未启动**时发生（无云导入，
 /// 本地周期如实报 `not_run`）。云端启动了却拿不到结果（取消 / lease 丢失 / 冻结失败
 /// 主动放弃）时返回 `failed`：那是「跑了但没拿到结果」，不是「没参与」。
-fn cloud_status_for_job(launch_cloud: bool, repair_status: Option<&str>) -> Option<String> {
+fn cloud_status_for_job(
+    launch_cloud: bool,
+    repair_status: Option<&str>,
+    repair_applied: i64,
+) -> Option<String> {
     if let Some(status) = repair_status {
         return Some(
             match status {
                 crate::cloud_repair::REPAIR_STATUS_COMPLETED => "succeeded",
                 crate::cloud_repair::REPAIR_STATUS_NEEDS_ATTENTION
                 | crate::cloud_repair::REPAIR_STATUS_BUDGET_EXHAUSTED => "partial",
-                crate::cloud_repair::REPAIR_STATUS_CANCELLED => "not_run",
+                // 取消。**只有一处修改都没落地**时才能说「本次没有云端参与」：
+                // 取消发生在循环的第 N 轮，前面几轮可能已经改过权威稿（`appliedCount > 0`），
+                // 稿子已经不是用户取消前看到的样子了。把这种情况报成 `not_run`，等于
+                // 对用户说「这次云端没动手，稿子没变」——而它变了。
+                crate::cloud_repair::REPAIR_STATUS_CANCELLED => {
+                    if repair_applied > 0 {
+                        "partial"
+                    } else {
+                        "not_run"
+                    }
+                }
                 _ => "failed",
             }
             .to_string(),
@@ -2114,22 +2141,26 @@ mod tests {
             REPAIR_STATUS_NEEDS_ATTENTION, REPAIR_STATUS_RUNNING, REPAIR_STATUS_UNAVAILABLE,
         };
 
-        // 云端跑过 → 以修复状态为准（第 2 个参数此时无关紧要，取两种都验一遍）。
+        // 云端跑过 → 以修复状态为准（第 3 个参数 = 已落地修改数）。
         let cases = [
-            (REPAIR_STATUS_COMPLETED, "succeeded"),
-            (REPAIR_STATUS_NEEDS_ATTENTION, "partial"),
-            (REPAIR_STATUS_BUDGET_EXHAUSTED, "partial"),
-            (REPAIR_STATUS_CANCELLED, "not_run"),
-            (REPAIR_STATUS_UNAVAILABLE, "failed"),
+            (REPAIR_STATUS_COMPLETED, 0, "succeeded"),
+            (REPAIR_STATUS_NEEDS_ATTENTION, 0, "partial"),
+            (REPAIR_STATUS_BUDGET_EXHAUSTED, 0, "partial"),
+            // 取消且**一处都没改** → 确实「本次没有云端参与」。
+            (REPAIR_STATUS_CANCELLED, 0, "not_run"),
+            // 取消但**已经改过稿** → 不能再说「没参与」：权威稿已经不是用户取消前
+            // 看到的那份了。报 not_run 会让用户以为稿子没变。
+            (REPAIR_STATUS_CANCELLED, 3, "partial"),
+            (REPAIR_STATUS_UNAVAILABLE, 0, "failed"),
             // 运行中 / 未知值：不认识的不能报成功。
-            (REPAIR_STATUS_RUNNING, "failed"),
-            ("something_new", "failed"),
+            (REPAIR_STATUS_RUNNING, 0, "failed"),
+            ("something_new", 0, "failed"),
         ];
-        for (repair_status, expected) in cases {
+        for (repair_status, applied, expected) in cases {
             assert_eq!(
-                cloud_status_for_job(true, Some(repair_status)).as_deref(),
+                cloud_status_for_job(true, Some(repair_status), applied).as_deref(),
                 Some(expected),
-                "repair_status={repair_status}"
+                "repair_status={repair_status} applied={applied}"
             );
         }
     }
@@ -2144,15 +2175,15 @@ mod tests {
     fn cloud_status_never_reports_not_run_for_a_launched_but_resultless_cloud() {
         // 起了云端但没拿到修复状态 → failed。
         assert_eq!(
-            cloud_status_for_job(true, None).as_deref(),
+            cloud_status_for_job(true, None, 0).as_deref(),
             Some("failed")
         );
         // 压根没起云端 → None，保留本地周期如实给出的 not_run。
-        assert_eq!(cloud_status_for_job(false, None), None);
+        assert_eq!(cloud_status_for_job(false, None, 0), None);
         // 对照：没起云端时即便有人误传了状态，也以状态为准（状态来自真实修复循环，
         // 比「有没有起云端」更可信）。
         assert_eq!(
-            cloud_status_for_job(false, Some("completed")).as_deref(),
+            cloud_status_for_job(false, Some("completed"), 0).as_deref(),
             Some("succeeded")
         );
     }
@@ -2179,7 +2210,7 @@ mod tests {
         assert_eq!(repair_error, "cloud_authoring_candidate_llm_http_500");
 
         // 主链：再据此改写任务行状态（本地周期这次给出的是 not_run）。
-        let cloud_status = cloud_status_for_job(true, Some(repair_status.as_str()))
+        let cloud_status = cloud_status_for_job(true, Some(repair_status.as_str()), 0)
             .expect("云端跑过就必须由修复状态决定任务行状态");
         assert_eq!(cloud_status, "failed");
         assert_ne!(cloud_status, "not_run");

@@ -159,7 +159,26 @@ export async function loadPublishedPackageWithRealProviderAsync({
   }
   info("provider-module", providerPath);
 
-  const provider = new NasJsDirectReadingAssetProvider(buildRuntimeConfig(resolvedPackage, appVersion));
+  // 构造失败 = 「读不了这个包」（模块在、但用不起来），**不是**环境不满足。
+  // 以前这里没有 try/catch，构造一崩就整个抛出，调用方只能一律当成环境问题。
+  let provider;
+  try {
+    provider = new NasJsDirectReadingAssetProvider(buildRuntimeConfig(resolvedPackage, appVersion));
+  } catch (error) {
+    check("provider-constructs", false, error.message);
+    return {
+      ok: false,
+      cannotRun: false,
+      reason: null,
+      examId,
+      providerPath,
+      packageDir: resolvedPackage,
+      appVersion,
+      results,
+      failures: results.filter((entry) => !entry.ok),
+      observed: {},
+    };
+  }
 
   let status = null;
   try {
@@ -259,13 +278,18 @@ export async function loadPublishedPackageWithRealProviderAsync({
 
   // 反向对照：真实 provider 会按 `minimumRuntimeVersion` 过滤掉版本不达标的资产。
   // 这一条用来证明上面跑的是**真实代码**，而不是被 stub 掉的成功路径。
-  const lowProvider = new NasJsDirectReadingAssetProvider(buildRuntimeConfig(resolvedPackage, "0.1.0"));
-  const lowAssets = await lowProvider.listAssets().catch(() => []);
-  check(
-    "negative-control-low-runtime-version-filters-asset",
-    lowAssets.length === 0,
-    `assets=${lowAssets.length}`,
-  );
+  // 崩了要算**失败**（读不了这个包），不能让它抛出去被当成环境问题。
+  try {
+    const lowProvider = new NasJsDirectReadingAssetProvider(buildRuntimeConfig(resolvedPackage, "0.1.0"));
+    const lowAssets = await lowProvider.listAssets().catch(() => []);
+    check(
+      "negative-control-low-runtime-version-filters-asset",
+      lowAssets.length === 0,
+      `assets=${lowAssets.length}`,
+    );
+  } catch (error) {
+    check("negative-control-low-runtime-version-filters-asset", false, `反向对照崩了：${error.message}`);
+  }
 
   const failures = results.filter((entry) => !entry.ok);
   return {

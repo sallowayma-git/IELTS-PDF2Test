@@ -80,6 +80,14 @@ pub(crate) struct RepairProgress {
     pub status: &'static str,
     pub round: u32,
     pub applied_count: usize,
+    /// 已经落盘、且**此刻仍然有效**的裁定条数。
+    ///
+    /// 以前这里硬编码 0，理由是「进行中不重算剩余任务」。那个理由对剩余任务是成立的，
+    /// 对裁定条数不成立：裁定是**已经发生的事实**（模型已经看过原文、已经下过判断），
+    /// 它不需要等循环结束才成立。硬编码 0 的后果是用户在十分钟的修复里，看到的一直是
+    /// 「已了结 0 处差异」，循环结束时那个数字突然跳到真实值——一个纯粹由上报方式
+    /// 造出来的假象。
+    pub adjudicated_count: usize,
     pub edit_version: i64,
 }
 
@@ -96,7 +104,7 @@ impl RepairProgress {
             "rounds": self.round,
             // 进行中：剩余任务尚未重算，**不能**拿中间差异充数。
             "remainingTasks": [],
-            "adjudicatedCount": 0,
+            "adjudicatedCount": self.adjudicated_count,
             "finishNote": Value::Null,
             "lastError": Value::Null,
             // 进行中**不**提供撤销入口：循环还在写，此时撤销会与 journal 错位。
@@ -342,23 +350,103 @@ fn canonical_json(value: &Value) -> String {
     }
 }
 
-/// 一条差异两侧的内容指纹 `(当前稿一侧, 候选一侧)`。
-fn difference_digests(difference: &Value) -> (String, String) {
+/// 裁定**所依赖的内容**的指纹（只看当前 canonical 一侧）。
+///
+/// 为什么光有「差异两侧的内容指纹」不够：裁定说的是「基于当前稿的某个状态，候选读错了」。
+/// 差异两侧逐字没变、但**当前稿里裁定所依据的那部分内容**变了，这条裁定就已经变质，
+/// 继续拿它压住差异等于用旧结论回答新问题。两个真实形状：
+///
+///   · 裁定「答案 B 对」，依据是选项库把 B 映射到某个词；随后**选项库被改**——
+///     答案值一个字没变，`canonicalDigest` 也就没变，但裁定的依据已经没了。
+///   · 裁定「这一组保持现状」（`task_group` 级差异）。那一类差异的指纹取自
+///     [`group_index_entry`]——一个给模型看的**摘要**，只含 taskId / 题型 / 题号 /
+///     slotIds / 说明文字 / 选项库 id。随后该组的 stimulus、题面、选项文本、答案
+///     全被改写，摘要里一个字都没变，裁定照样「有效」。
+///
+/// 所以指纹按**目标**取该目标所依赖的完整内容，而不是取摘要。范围刻意取到「承载它的
+/// 那个题组」，因为答案/选项/题面在语义上是互相定义的（改了选项库，答案的含义就变了）。
+fn target_context_fingerprint(canonical: &Value, target_type: &str, target_id: &str) -> String {
+    let groups = canonical.get("taskGroups").and_then(Value::as_array);
+    let group_containing = |predicate: &dyn Fn(&Value) -> bool| -> Value {
+        groups
+            .into_iter()
+            .flatten()
+            .find(|group| predicate(group))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    match target_type {
+        "slot" => {
+            let slot = canonical.pointer(&format!("/answerSlots/{target_id}"));
+            let answer = canonical.pointer(&format!("/answerKey/{target_id}"));
+            let owning = group_containing(&|group: &Value| {
+                group
+                    .get("responseGroups")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|response| {
+                        response
+                            .get("slotIds")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .any(|id| id.as_str() == Some(target_id))
+                    })
+            });
+            canonical_json(&json!({
+                "slot": slot.cloned().unwrap_or(Value::Null),
+                "answer": answer.cloned().unwrap_or(Value::Null),
+                "group": owning,
+            }))
+        }
+        "response_group" => {
+            let owning = group_containing(&|group: &Value| {
+                group
+                    .get("responseGroups")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|response| {
+                        response.get("responseGroupId").and_then(Value::as_str) == Some(target_id)
+                    })
+            });
+            canonical_json(&owning)
+        }
+        // `task_group` 与其余：**整组内容**。刻意比 `group_index_entry` 宽——
+        // 索引摘要是给模型看的概览，不是裁定的依据。
+        _ => {
+            let group = group_containing(&|group: &Value| {
+                group.get("taskId").and_then(Value::as_str) == Some(target_id)
+            });
+            canonical_json(&group)
+        }
+    }
+}
+
+/// 一条差异的**完整**前提指纹 `(当前稿一侧, 候选一侧, 裁定依据)`。
+fn difference_digests(difference: &Value) -> (String, String, String) {
     (
         canonical_json(difference.get("canonical").unwrap_or(&Value::Null)),
         canonical_json(difference.get("candidate").unwrap_or(&Value::Null)),
+        difference
+            .get("contextDigest")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
     )
 }
 
 /// 从裁定记录里找出**对这条差异仍然有效**的那一条。
 ///
-/// 有效性 = 身份一致 **且** 两侧内容指纹都没变。任一侧变了，裁定当时的前提就不存在了：
-/// 一次基于旧内容的「我确认当前稿是对的」不能永久掩盖后来才出现的问题。
+/// 有效性 = 身份一致 **且** 两侧内容指纹与**依据内容指纹**都没变。任一项变了，裁定
+/// 当时的前提就不存在了：一次基于旧内容的「我确认当前稿是对的」不能永久掩盖后来才
+/// 出现的问题，也不能在依据被改写后继续生效。
 ///
 /// 同一条差异有多份裁定时取**最后**一份（最新的判断覆盖旧的）。
 fn fresh_ruling_for_difference<'a>(rulings: &'a [Value], difference: &Value) -> Option<&'a Value> {
     let (target_type, target_id, field) = difference_key(difference);
-    let (canonical_digest, candidate_digest) = difference_digests(difference);
+    let (canonical_digest, candidate_digest, context_digest) = difference_digests(difference);
     rulings.iter().rev().find(|ruling| {
         ruling.get("targetType").and_then(Value::as_str) == Some(target_type.as_str())
             && ruling.get("targetId").and_then(Value::as_str) == Some(target_id.as_str())
@@ -367,6 +455,10 @@ fn fresh_ruling_for_difference<'a>(rulings: &'a [Value], difference: &Value) -> 
                 == Some(canonical_digest.as_str())
             && ruling.get("candidateDigest").and_then(Value::as_str)
                 == Some(candidate_digest.as_str())
+            // 旧裁定（本条改动之前落盘的）没有这个字段 → 取空串 → 与真实指纹不等 →
+            // 自然失效重评。宁可多问一次，也不能拿一条依据不明的旧结论压住差异。
+            && ruling.get("contextDigest").and_then(Value::as_str).unwrap_or_default()
+                == context_digest.as_str()
     })
 }
 
@@ -391,8 +483,117 @@ fn describe_difference(difference: &Value) -> String {
     format!("{where_}的{label}与云端识别结果不一致")
 }
 
-/// 机械比对：当前 canonical 与云端完整候选之间**还剩哪些实质差异**。
+/// 当下**仍然有效**的裁定条数（「云端替用户了结了多少争议」的唯一可核对数字）。
 ///
+/// 为什么不能用 `rulings.len()`：那份列表是 append-only 的累积记录，里面同时躺着
+/// 历史的（上一批留下的）、重复的（模型对同一条差异反复裁定）、以及**已经失效的**
+/// （差异两侧内容变了，指纹对不上）。把它们算成「云端替用户了结了多少争议」是虚报：
+/// 用户会看到一个比实际大得多、且会随重跑次数单调增长的数字。
+///
+/// 这里只数「此刻仍然存在于候选差异里、且裁定仍然有效」的差异，并按身份去重。
+///
+/// 边界（刻意如此）：被模型**改掉**（而非裁定掉）的差异不再出现在候选差异里，因此
+/// 不计入这里——它已经计入 `appliedCount`（「已自动修正 N 处」）。两个数字不重叠。
+fn effective_adjudicated_count(canonical: &Value, candidate: &Value, rulings: &[Value]) -> usize {
+    candidate_differences(canonical, candidate)
+        .iter()
+        .filter(|difference| fresh_ruling_for_difference(rulings, difference).is_some())
+        .map(difference_key)
+        .collect::<BTreeSet<_>>()
+        .len()
+}
+
+/// 从库里读当前 canonical + 候选，算有效裁定条数。读不到就返回 0（不谎报）。
+fn adjudicated_count_now(
+    root: &Path,
+    item_id: &str,
+    job_id: &str,
+    batch_id: &str,
+    rulings: &[Value],
+) -> usize {
+    let Ok(conn) = open_library_connection(root) else {
+        return 0;
+    };
+    let Ok(Some((canonical, _))) = get_canonical_ds(&conn, item_id) else {
+        return 0;
+    };
+    drop(conn);
+    let Ok(Some(candidate)) = store::read_cloud_authoring_candidate(root, job_id, batch_id) else {
+        return 0;
+    };
+    let Ok(candidate_value) = serde_json::to_value(&candidate.authoring) else {
+        return 0;
+    };
+    effective_adjudicated_count(&canonical, &candidate_value, rulings)
+}
+
+/// 修复 run 的标识。**唯一**的产生处：循环内部与调度器兜底必须给出同一个值，
+/// 否则撤销入口会拿着一个后端认不出的 id 去调用。
+pub(crate) fn repair_run_id_for(batch_id: &str) -> String {
+    format!("cloud-repair:{batch_id}")
+}
+
+/// 修复循环**没能**给出报告时的终态摘要（供调度器在拿到 Err 时兜底落盘）。
+///
+/// 为什么调度器也要能做这件事：循环内部的失败一律转成了报告（见 `run_repair_loop`），
+/// 但有两类失败发生在循环**之外**，只会得到一个 Err：
+///   · `run_blocking` 的 join 失败（任务 panic / 阻塞线程被取消）；
+///   · `announced.is_none()`（开工前 lease 就丢了）。
+/// 那时批次行里留着的还是循环写过的 `running`——不兜底就会永久停在那里。
+pub(crate) fn unavailable_summary(
+    root: &Path,
+    item_id: &str,
+    batch_id: &str,
+    error: &str,
+) -> Value {
+    let edit_version = open_library_connection(root)
+        .ok()
+        .and_then(|conn| get_canonical_ds(&conn, item_id).ok().flatten())
+        .map(|(_, version)| version)
+        .unwrap_or(0);
+    json!({
+        "status": REPAIR_STATUS_UNAVAILABLE,
+        "editVersion": edit_version,
+        "appliedCount": 0,
+        "rounds": 0,
+        "remainingTasks": [],
+        "adjudicatedCount": 0,
+        "finishNote": Value::Null,
+        "lastError": error,
+        "undoAvailable": false,
+        "repairRunId": repair_run_id_for(batch_id),
+    })
+}
+
+/// 循环内部失败时的终态报告。
+///
+/// 为什么不让 `run_repair_loop` 直接返回 Err：循环**一开工就把批次行写成了 `running`**，
+/// 而它有若干条可以提前返回的路径。那些路径一旦触发，调用方拿不到报告，也就没有任何
+/// 人把 `running` 改掉——批次行会永久停在 running，而同一时刻 job 行已经是 failed。
+/// 两个界面互相矛盾，用户永远看到「云端正在自动修复」。
+///
+/// 所以：循环内部的可恢复失败**一律**转成这份 `unavailable` 报告返回。Err 只留给
+/// 「连报告都构造不出来」的情况（例如初始上下文建不出来且读不到版本），由调用方兜底。
+fn failure_report(request: &RepairRunRequest<'_>, error: String) -> RepairRunReport {
+    RepairRunReport {
+        status: REPAIR_STATUS_UNAVAILABLE,
+        rounds: 0,
+        edit_version: current_canonical(request)
+            .ok()
+            .flatten()
+            .map(|(_, version)| version)
+            .unwrap_or(0),
+        applied_count: 0,
+        observations: Vec::new(),
+        remaining_tasks: Vec::new(),
+        adjudicated_count: 0,
+        finish_note: None,
+        last_error: Some(error),
+        repair_run_id: request.repair_run_id.to_string(),
+    }
+}
+
+/// 机械比对：当前 canonical 与云端完整候选之间**还剩哪些实质差异**。///
 /// 这是给修复模型看的上下文，也是「剩余问题」重算的输入。只做确定性比较，不调用模型。
 pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec<Value> {
     let mut out = Vec::new();
@@ -511,6 +712,18 @@ pub(crate) fn candidate_differences(canonical: &Value, candidate: &Value) -> Vec
                 "canonical": group_index_entry(current_group),
                 "candidate": Value::Null,
             }));
+        }
+    }
+
+    // 每条差异都带上「裁定所依赖的内容」的指纹。裁定只在**依据**也没变时才算数，
+    // 否则一条基于旧选项库/旧题面的结论会继续压住已经变质的内容（见
+    // `target_context_fingerprint`）。放在这里统一算，是因为只有这一层同时看得到
+    // 当前稿与差异的身份。
+    for difference in out.iter_mut() {
+        let (target_type, target_id, _) = difference_key(difference);
+        let digest = target_context_fingerprint(canonical, &target_type, &target_id);
+        if let Some(object) = difference.as_object_mut() {
+            object.insert("contextDigest".to_string(), json!(digest));
         }
     }
     out
@@ -964,7 +1177,7 @@ fn execute_tool(
                     ));
                     continue;
                 };
-                let (canonical_digest, candidate_digest) = difference_digests(difference);
+                let (canonical_digest, candidate_digest, context_digest) = difference_digests(difference);
                 recorded.push(json!({
                     "targetType": target_type,
                     "targetId": target_id,
@@ -975,6 +1188,9 @@ fn execute_tool(
                     // 绑定裁定当时看到的这一对内容；任一侧后来变了，这条裁定作废重评。
                     "canonicalDigest": canonical_digest,
                     "candidateDigest": candidate_digest,
+                    // 再绑定**裁定所依赖的内容**（承载它的题组 / 作答区）。只绑差异两侧
+                    // 是不够的：答案值没变但选项库被改，裁定的依据就已经没了。
+                    "contextDigest": context_digest,
                     "recordedAtRound": round,
                 }));
             }
@@ -1022,6 +1238,128 @@ fn current_canonical(root_and_item: &RepairRunRequest<'_>) -> CommandResult<Opti
     get_canonical_ds(&conn, root_and_item.item_id)
 }
 
+/// 一条剩余任务的**用户动作身份**：`(真实目标, 修理的种类)`。
+///
+/// 为什么不能用 `userTaskId` 去重：那个 id 带来源前缀（`quality:` / `cloud-diff:` /
+/// `cloud-question:` / `cloud-coverage:`），于是同一个目标、同一件要做的事，会因为从
+/// 不同来源冒出来而各占一条。最典型的一条：q15 缺答案会同时产出
+///   `quality:ANSWER_KEY_MISSING_SLOT:q15`（blocking）
+///   `cloud-diff:slot:q15:answer`（非 blocking）
+/// 用户看到的是「必须补答案」加一条「答案和云端不一致」——同一件事说两遍，其中一条
+/// 还被说轻了。模型再提一句就变三条。
+///
+/// 为什么不能拿 `action` 字符串当身份：`fix_blocking_issue` 把「缺答案」和「结构不完整」
+/// 盖成同一个动作，按它合并会把两件**不同**的修理并成一条，用户照做也修不好其中一件。
+/// 所以身份里放的是**修理的种类**（`repairFamily`），不是动作的类别。
+fn repair_key(task: &Value) -> (String, String) {
+    let family = task
+        .get("repairFamily")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let target = task
+        .get("targetIds")
+        .and_then(Value::as_array)
+        .and_then(|ids| ids.first())
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        // 没有具体目标的任务（文档级问题、来源覆盖缺口、没给 targetId 的疑问）：
+        // 拿 `userTaskId` 当身份。它是唯一的，因此这类任务**不会**被合并——
+        // 这正是要的：两条不同的文档级问题不是同一件事，不能因为都没有目标就并成一条。
+        .unwrap_or_else(|| {
+            task.get("userTaskId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        });
+    (target, family)
+}
+
+/// 质量问题代码 → 修理种类。
+///
+/// 只有「补答案」这一族需要跨源归并（`cloud-diff:slot:…:answer` 说的是同一件事）。
+/// 其余代码**各自成一族**——这样「缺答案」与「结构不完整」永远不会被并成一条。
+fn repair_family_for_issue_code(code: &str) -> String {
+    match code {
+        "ANSWER_KEY_MISSING_SLOT" | "ANSWER_MISSING" | "ANSWER_KEY_UNRESOLVED" => {
+            "answer".to_string()
+        }
+        other => format!("issue:{other}"),
+    }
+}
+
+/// 差异字段 → 修理种类。与质量侧共用 `answer` 这一族，其余各成一族。
+fn repair_family_for_difference_field(field: &str) -> String {
+    match field {
+        "answer" => "answer".to_string(),
+        other => format!("difference:{other}"),
+    }
+}
+
+/// 把一条任务并入清单：按 [`repair_key`] 去重，同一件事只留**最严重**的那条。
+fn push_repair_task(
+    tasks: &mut Vec<Value>,
+    by_key: &mut BTreeMap<(String, String), usize>,
+    task: Value,
+) {
+    let key = repair_key(&task);
+    match by_key.get(&key) {
+        Some(&index) => {
+            let existing_blocking = tasks[index]
+                .get("blocking")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let incoming_blocking = task
+                .get("blocking")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            // 同一件事被两个来源说了两遍，其中一条说轻了。留严重的那条。
+            if incoming_blocking && !existing_blocking {
+                tasks[index] = task;
+            }
+        }
+        None => {
+            by_key.insert(key, tasks.len());
+            tasks.push(task);
+        }
+    }
+}
+
+/// 一条阻断任务的可定位目标。
+///
+/// `targetId` 缺失时以前直接落成空串，前端把它过滤掉，于是出现一条**阻断但零动作**
+/// 的任务：用户看到「不处理不能导出」，却没有任何可以按的东西。阻断任务必须能被处理，
+/// 所以这里按三级取目标：
+///   1. `targetId` 本身；
+///   2. 问题的 `sourceAnchors` 里第一个**内容节点 id**——那是一个真实存在的题面节点，
+///      定位得到（实测 `SLOT_ID_MISMATCH` 这类文档级问题常常只带锚点、不带 targetId）；
+///   3. 都没有 → 空，由调用方给出兜底动作（`review_source`）。
+fn blocking_target_ids(issue: &Value) -> Vec<String> {
+    let direct = issue
+        .get("targetId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(target_id) = direct {
+        return vec![target_id.to_string()];
+    }
+    let anchored = issue
+        .get("sourceAnchors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|anchor| anchor.get("nodeIds").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .find(|value| !value.is_empty());
+    match anchored {
+        Some(node_id) => vec![node_id.to_string()],
+        None => Vec::new(),
+    }
+}
+
 /// 按**当前 canonical** 重算剩余必须由用户处理的问题。
 ///
 /// 关键纪律：不能再去比较「冻结的本地稿」——那会把已经被云端修好的项目重新复活。
@@ -1059,8 +1397,9 @@ fn remaining_tasks(
     drop(conn);
 
     let candidate = store::read_cloud_authoring_candidate(root, job_id, batch_id)?;
-    let mut tasks = Vec::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut tasks: Vec<Value> = Vec::new();
+    // 去重键 → 已在 `tasks` 里的下标。**跨源**去重（见 `repair_key`）。
+    let mut by_key: BTreeMap<(String, String), usize> = BTreeMap::new();
 
     // ── 1) 当前稿的真实质量问题 ────────────────────────────────────────────
     //
@@ -1070,27 +1409,37 @@ fn remaining_tasks(
     //
     // 这一路**不看裁定**：模型不能通过 `record_ruling` 消除结构错误。
     for issue in crate::authoring_v2_commands::unresolved_blocking_issues(&canonical) {
-        let target_id = issue
-            .get("targetId")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let task_id = format!(
-            "quality:{}:{}",
-            issue.get("code").and_then(Value::as_str).unwrap_or(""),
-            target_id
+        let code = issue.get("code").and_then(Value::as_str).unwrap_or("");
+        let target_ids = blocking_target_ids(&issue);
+        // 身份不能是 `(code, 空目标)`：两条**不同**的文档级问题会因此折叠成一条，
+        // 第二条的 message 被静默丢掉（用户只看到其中一条，还以为只有一条）。
+        // `issueId` 是「事实」的指纹（`quality.rs::issue`）：同一事实重算稳定，
+        // 不同事实必然不同——正好用来兜底。
+        let identity = match target_ids.first() {
+            Some(target_id) => target_id.clone(),
+            None => issue
+                .get("issueId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        };
+        let task_id = format!("quality:{code}:{identity}");
+        push_repair_task(
+            &mut tasks,
+            &mut by_key,
+            json!({
+                "userTaskId": task_id,
+                "targetIds": target_ids,
+                "questionNumbers": [],
+                "message": issue.get("message").cloned().unwrap_or(Value::Null),
+                // 阻断任务必须有真能做完的动作。有目标时前端给「定位/去题面修改」；
+                // 没有目标（纯数据级缺陷，题面上无处可改）时给 `review_source`，
+                // 前端据此渲染「打开原文件核对」——那是唯一真能推进它的动作。
+                "action": if target_ids.is_empty() { "review_source" } else { "fix_blocking_issue" },
+                "blocking": true,
+                "repairFamily": repair_family_for_issue_code(code),
+            }),
         );
-        if !seen.insert(task_id.clone()) {
-            continue;
-        }
-        tasks.push(json!({
-            "userTaskId": task_id,
-            "targetIds": [target_id],
-            "questionNumbers": [],
-            "message": issue.get("message").cloned().unwrap_or(Value::Null),
-            "action": "fix_blocking_issue",
-            "blocking": true,
-        }));
     }
 
     // ── 2) 尚未裁定的内容差异 ─────────────────────────────────────────────
@@ -1110,34 +1459,38 @@ fn remaining_tasks(
                     // 已裁定「原文件不足以定论」：仍然要人看，但**带上模型的结论与出处**，
                     // 而不是让用户从零开始重新判断一遍。
                     Some(ruling) => {
-                        if !seen.insert(task_id.clone()) {
-                            continue;
-                        }
-                        tasks.push(json!({
-                            "userTaskId": task_id,
-                            "targetIds": [target_id],
-                            "message": format!(
-                                "{}；云端已查过原文件但无法定论：{}",
-                                describe_difference(&difference),
-                                ruling.get("reason").and_then(Value::as_str).unwrap_or("未说明理由")
-                            ),
-                            "action": "review_difference",
-                            "blocking": false,
-                            "evidence": ruling.get("evidence").cloned().unwrap_or_else(|| json!([])),
-                        }));
+                        push_repair_task(
+                            &mut tasks,
+                            &mut by_key,
+                            json!({
+                                "userTaskId": task_id,
+                                "targetIds": [target_id],
+                                "message": format!(
+                                    "{}；云端已查过原文件但无法定论：{}",
+                                    describe_difference(&difference),
+                                    ruling.get("reason").and_then(Value::as_str).unwrap_or("未说明理由")
+                                ),
+                                "action": "review_difference",
+                                "blocking": false,
+                                "evidence": ruling.get("evidence").cloned().unwrap_or_else(|| json!([])),
+                                "repairFamily": repair_family_for_difference_field(&field),
+                            }),
+                        );
                     }
                     // 没裁定过，或裁定已被内容变化作废：这才是真正需要用户看的差异。
                     None => {
-                        if !seen.insert(task_id.clone()) {
-                            continue;
-                        }
-                        tasks.push(json!({
-                            "userTaskId": task_id,
-                            "targetIds": [target_id],
-                            "message": describe_difference(&difference),
-                            "action": "review_difference",
-                            "blocking": false,
-                        }));
+                        push_repair_task(
+                            &mut tasks,
+                            &mut by_key,
+                            json!({
+                                "userTaskId": task_id,
+                                "targetIds": [target_id],
+                                "message": describe_difference(&difference),
+                                "action": "review_difference",
+                                "blocking": false,
+                                "repairFamily": repair_family_for_difference_field(&field),
+                            }),
+                        );
                     }
                 }
             }
@@ -1158,9 +1511,6 @@ fn remaining_tasks(
             true => format!("cloud-question:{index}"),
             false => format!("cloud-question:{target_id}:{index}"),
         };
-        if !seen.insert(task_id.clone()) {
-            continue;
-        }
         let message = question
             .get("message")
             .or_else(|| question.get("question"))
@@ -1168,15 +1518,23 @@ fn remaining_tasks(
             .and_then(Value::as_str)
             .unwrap_or("云端在校核时留下了未能确认的疑问")
             .to_string();
-        tasks.push(json!({
-            "userTaskId": task_id,
-            "targetIds": if target_id.is_empty() { json!([]) } else { json!([target_id]) },
-            "message": format!("云端未能确认：{message}"),
-            // 有具体目标就定位到题面，没有就是文档级疑问，打开原文件抽屉核对。
-            "action": if target_id.is_empty() { "review_source" } else { "review_difference" },
-            "blocking": false,
-            "evidence": question.get("evidence").cloned().unwrap_or_else(|| json!([])),
-        }));
+        push_repair_task(
+            &mut tasks,
+            &mut by_key,
+            json!({
+                "userTaskId": task_id,
+                "targetIds": if target_id.is_empty() { json!([]) } else { json!([target_id]) },
+                "message": format!("云端未能确认：{message}"),
+                // 有具体目标就定位到题面，没有就是文档级疑问，打开原文件抽屉核对。
+                "action": if target_id.is_empty() { "review_source" } else { "review_difference" },
+                "blocking": false,
+                "evidence": question.get("evidence").cloned().unwrap_or_else(|| json!([])),
+                // 疑问**各自成族**（带序号）：两条疑问即便指向同一个目标，也是模型报的
+                // 两件不同的事，合并会把其中一条的 message 静默吃掉。宁可多一条，
+                // 也不能丢掉模型明确交出来的疑问——那正是上一轮修过的缺陷。
+                "repairFamily": format!("question:{index}"),
+            }),
+        );
     }
 
     // ── 4) 来源覆盖缺口 ───────────────────────────────────────────────────
@@ -1187,32 +1545,45 @@ fn remaining_tasks(
     if let Some(candidate) = candidate.as_ref() {
         for (index, region) in candidate.unresolved_regions.iter().enumerate() {
             let task_id = format!("cloud-coverage:{}:{}:{index}", region.source_file_id, region.page_index);
-            if !seen.insert(task_id.clone()) {
-                continue;
-            }
-            tasks.push(json!({
-                "userTaskId": task_id,
-                "targetIds": [],
-                "message": format!(
-                    "原文件第 {} 页云端未能读全（{}）：{}",
-                    region.page_index, region.reason, region.detail
-                ),
-                "action": "review_source",
-                "blocking": false,
-            }));
+            push_repair_task(
+                &mut tasks,
+                &mut by_key,
+                json!({
+                    "userTaskId": task_id,
+                    "targetIds": [],
+                    "message": format!(
+                        "原文件第 {} 页云端未能读全（{}）：{}",
+                        region.page_index, region.reason, region.detail
+                    ),
+                    "action": "review_source",
+                    "blocking": false,
+                    "repairFamily": format!("coverage:{index}"),
+                }),
+            );
         }
         for (index, note) in candidate.source_coverage_notes.iter().enumerate() {
             let task_id = format!("cloud-coverage-note:{index}");
-            if !seen.insert(task_id.clone()) {
-                continue;
-            }
-            tasks.push(json!({
-                "userTaskId": task_id,
-                "targetIds": [],
-                "message": note.clone(),
-                "action": "review_source",
-                "blocking": false,
-            }));
+            push_repair_task(
+                &mut tasks,
+                &mut by_key,
+                json!({
+                    "userTaskId": task_id,
+                    "targetIds": [],
+                    "message": note.clone(),
+                    "action": "review_source",
+                    "blocking": false,
+                    "repairFamily": format!("coverage-note:{index}"),
+                }),
+            );
+        }
+    }
+
+    // `repairFamily` 是**内部**去重键，不进契约：前端只认 `userTaskId` / `targetIds` /
+    // `action` / `blocking` / `message` / `evidence`。留着它等于把一条随时会改的实现细节
+    // 暴露给前端，迟早有人开始依赖它。
+    for task in tasks.iter_mut() {
+        if let Some(object) = task.as_object_mut() {
+            object.remove("repairFamily");
         }
     }
 
@@ -1226,6 +1597,11 @@ fn remaining_tasks(
 ///
 /// 有限轮次 + 总超时 + 取消 + 运行归属：模型永远跑不完也没关系——循环退出后
 /// 一律由后端按当前 canonical 重算剩余问题。
+///
+/// **终态保证**：这个函数只要返回，就一定带回一份**终态**报告（completed /
+/// needs_attention / cancelled / budget_exhausted / unavailable），不会留下 `running`。
+/// 理由见 [`failure_report`]：循环开工就把批次行写成 running，任何提前返回都会让
+/// 批次行永久停在 running，而 job 行已经是 failed——两个界面互相矛盾。
 pub(crate) fn run_repair_loop<F>(
     request: &RepairRunRequest<'_>,
     mut step: F,
@@ -1233,33 +1609,70 @@ pub(crate) fn run_repair_loop<F>(
 where
     F: FnMut(&Value, &[Value]) -> CommandResult<Value>,
 {
-    let mut context = build_repair_context(request.root, request.item_id, request.job_id, request.batch_id)?;
+    // 上下文建不出来就什么也做不了。但**仍然要返回报告**（而不是 Err）：调用方据此
+    // 才能把终态写进批次行。这是唯一在写 `running` 之前就返回的路径。
+    let mut context = match build_repair_context(
+        request.root,
+        request.item_id,
+        request.job_id,
+        request.batch_id,
+    ) {
+        Ok(context) => context,
+        Err(error) => return Ok(failure_report(request, error)),
+    };
     let mut observations: Vec<Value> = Vec::new();
     let mut applied_count = 0usize;
     let mut rounds = 0u32;
     let mut finish_note: Option<String> = None;
     let mut last_error: Option<String> = None;
     let mut status = REPAIR_STATUS_COMPLETED;
+    // 模型**真的**调用过 `finish`。预算耗尽的判据必须是它，不能拿 `finish_note.is_none()`
+    // 顶替：`note` 是可选字段，模型正常收工但没写 note，会被误报成「预算耗尽」。
+    let mut finished = false;
     let mut repeats: BTreeMap<String, u32> = BTreeMap::new();
     // 已落盘的裁定先读回来：重试 / 重启后再跑一次修复，不该让用户第二次回答同一个问题。
     // 读回来的裁定是否仍然有效由**内容指纹**决定（见 `fresh_ruling_for_difference`），
     // 所以这里不需要额外判断「是不是同一轮」。
-    let mut rulings: Vec<Value> = store::read_repair_rulings(request.root, request.job_id, request.batch_id)?
-        .and_then(|value| value.get("rulings").and_then(Value::as_array).cloned())
-        .unwrap_or_default();
+    let mut rulings: Vec<Value> = match store::read_repair_rulings(
+        request.root,
+        request.job_id,
+        request.batch_id,
+    ) {
+        Ok(rulings) => rulings
+            .and_then(|value| value.get("rulings").and_then(Value::as_array).cloned())
+            .unwrap_or_default(),
+        Err(error) => {
+            // 读不回旧裁定不该让整次修复失败——但必须如实记下来：这次可能重复问了
+            // 用户一个上次已经回答过的问题。
+            last_error = Some(error);
+            Vec::new()
+        }
+    };
     let mut model_questions: Vec<Value> = Vec::new();
 
     // 开工就先落一次 `running`：修复循环最长十分钟，用户在它结束之前就该能看到
     // 「云端正在自动修复」，而不是对着上一次的旧状态猜。
+    let start_version = current_canonical(request)
+        .ok()
+        .flatten()
+        .map(|(_, version)| version)
+        .unwrap_or(0);
     report_progress(
         request,
         RepairProgress {
             status: REPAIR_STATUS_RUNNING,
             round: 0,
             applied_count: 0,
-            edit_version: current_canonical(request)?
-                .map(|(_, version)| version)
-                .unwrap_or(0),
+            // 读回来的旧裁定**已经**是事实，不用等循环跑完才算。按当前差异筛一遍，
+            // 只算此刻仍然有效的那些（见 `effective_adjudicated_count`）。
+            adjudicated_count: adjudicated_count_now(
+                request.root,
+                request.item_id,
+                request.job_id,
+                request.batch_id,
+                &rulings,
+            ),
+            edit_version: start_version,
         },
     );
 
@@ -1285,13 +1698,19 @@ where
             Ok(call) => call,
             Err(error) => {
                 // 解析失败也算一个回合：把具体错误回给模型，让它改对再交。
+                //
+                // **不写进 `last_error`**：这是一次可恢复的往返（错误已经回给模型，
+                // 它下一轮可能就改对了），而 `last_error` 描述的是**终态**失败原因。
+                // 以前写进去且从不清理，于是一次「中途被拒一次、随后正常收工」的修复，
+                // 会带着一条非空的 lastError 返回——界面把它当失败显示，用户以为
+                // 云端出错了，实际这次修复是成功的。具体错误在 observations 里，
+                // 诊断看得到，不丢信息。
                 observations.push(json!({
                     "schemaVersion": "CloudRepairToolResultV1",
                     "callId": raw.get("callId").cloned().unwrap_or(Value::Null),
                     "status": "rejected",
                     "errors": [error],
                 }));
-                last_error = Some(error);
                 continue;
             }
         };
@@ -1328,25 +1747,51 @@ where
         if let Some(count) = applied {
             applied_count += count;
             // 写成功之后必须重读上下文：版本变了，模型手里的 baseVersion 已过期。
-            context = build_repair_context(request.root, request.item_id, request.job_id, request.batch_id)?;
-            repeats.clear();
-            // 每落下一批有效修改立刻上报：调用方据此把新版本与已修数量写进产品状态、
-            // 并发出事件让画布跟上。**不等循环结束**——否则用户看到的是「改了但界面没变」。
-            report_progress(
-                request,
-                RepairProgress {
-                    status: REPAIR_STATUS_RUNNING,
-                    round: rounds,
-                    applied_count,
-                    edit_version: context
-                        .get("editVersion")
-                        .and_then(Value::as_i64)
-                        .unwrap_or(0),
-                },
-            );
+            match build_repair_context(
+                request.root,
+                request.item_id,
+                request.job_id,
+                request.batch_id,
+            ) {
+                Ok(next) => {
+                    context = next;
+                    repeats.clear();
+                    // 每落下一批有效修改立刻上报：调用方据此把新版本与已修数量写进产品
+                    // 状态、并发出事件让画布跟上。**不等循环结束**——否则用户看到的是
+                    // 「改了但界面没变」。
+                    report_progress(
+                        request,
+                        RepairProgress {
+                            status: REPAIR_STATUS_RUNNING,
+                            round: rounds,
+                            applied_count,
+                            adjudicated_count: adjudicated_count_now(
+                                request.root,
+                                request.item_id,
+                                request.job_id,
+                                request.batch_id,
+                                &rulings,
+                            ),
+                            edit_version: context
+                                .get("editVersion")
+                                .and_then(Value::as_i64)
+                                .unwrap_or(0),
+                        },
+                    );
+                }
+                Err(error) => {
+                    // 修改**已经落库**，只是读不回新上下文。不能提前 return：
+                    // 那样批次行会停在 running，而已落地的修改也没有任何摘要描述。
+                    // 记下错误、降级为 unavailable，继续走下面的收尾（重算剩余问题）。
+                    last_error = Some(error);
+                    status = REPAIR_STATUS_UNAVAILABLE;
+                    break;
+                }
+            }
         }
         observations.push(serde_json::to_value(&result).unwrap_or(Value::Null));
         if is_finish {
+            finished = true;
             finish_note = call
                 .arguments
                 .get("note")
@@ -1368,32 +1813,56 @@ where
             break;
         }
     }
-    if rounds >= request.max_rounds && status == REPAIR_STATUS_COMPLETED && finish_note.is_none() {
+    // 预算耗尽 = 轮次用满**且模型没有收工**。判据是 `finished`，不是 `finish_note.is_none()`
+    // ——后者会把「正常 finish 但没写 note」误判成预算耗尽（`note` 是可选字段）。
+    if rounds >= request.max_rounds && status == REPAIR_STATUS_COMPLETED && !finished {
         status = REPAIR_STATUS_BUDGET_EXHAUSTED;
     }
 
     // 裁定落盘。**即使这一轮没跑完也要写**：模型已经作出的判断是用户不必再回答的东西，
     // 不能因为预算耗尽就把它们一起丢掉。
-    store::write_repair_rulings(
+    //
+    // 写失败同样不能提前 return：裁定是「报告」，已经落地的修改不因它失败而回滚，
+    // 但终态必须如实降级（否则用户会以为裁定都存住了）。
+    if let Err(error) = store::write_repair_rulings(
         request.root,
         request.job_id,
         request.batch_id,
         &json!({ "rulings": rulings }),
-    )?;
+    ) {
+        last_error = Some(error);
+        if status == REPAIR_STATUS_COMPLETED {
+            status = REPAIR_STATUS_UNAVAILABLE;
+        }
+    }
 
     // 最终完成状态由**后端**判定：模型说"都修好了"不算数。
-    let remaining = remaining_tasks(
+    let remaining = match remaining_tasks(
         request.root,
         request.item_id,
         request.job_id,
         request.batch_id,
         &rulings,
         &model_questions,
-    )?;
+    ) {
+        Ok(tasks) => tasks,
+        Err(error) => {
+            // 算不出剩余任务时**不能**返回空清单当「没问题」：空清单在前端等于
+            // 「没有需要你处理的事」。降级为 unavailable，让前端按**状态**判断，
+            // 而不是按清单长度判断（见 `repairHeadline`）。
+            last_error = Some(error);
+            if status == REPAIR_STATUS_COMPLETED {
+                status = REPAIR_STATUS_UNAVAILABLE;
+            }
+            Vec::new()
+        }
+    };
     if status == REPAIR_STATUS_COMPLETED && !remaining.is_empty() {
         status = REPAIR_STATUS_NEEDS_ATTENTION;
     }
-    let edit_version = current_canonical(request)?
+    let edit_version = current_canonical(request)
+        .ok()
+        .flatten()
         .map(|(_, version)| version)
         .unwrap_or(0);
 
@@ -1404,9 +1873,23 @@ where
         applied_count,
         observations,
         remaining_tasks: remaining,
-        adjudicated_count: rulings.len(),
+        // 只数**此刻仍然有效**的裁定，不是 `rulings.len()`（那份是 append-only 的
+        // 累积记录，含历史 / 重复 / 已失效的条目，见 `effective_adjudicated_count`）。
+        adjudicated_count: adjudicated_count_now(
+            request.root,
+            request.item_id,
+            request.job_id,
+            request.batch_id,
+            &rulings,
+        ),
         finish_note,
-        last_error,
+        // 正常收工的运行不该带一条非空的 `lastError`：那会让界面把一次成功的修复
+        // 显示成失败。`last_error` 只描述**终态**失败原因。
+        last_error: if status == REPAIR_STATUS_COMPLETED {
+            None
+        } else {
+            last_error
+        },
         repair_run_id: request.repair_run_id.to_string(),
     })
 }

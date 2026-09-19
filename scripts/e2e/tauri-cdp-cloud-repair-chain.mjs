@@ -136,6 +136,56 @@ function notExecutable(name, reason) {
   record(name, SCENARIO_STATUS.NOT_EXECUTABLE, { reason });
 }
 
+/**
+ * **断言失败**（产品缺陷 / 证据不成立），与环境不满足（`CannotRunError`）区分开。
+ *
+ * 为什么要单独一个类型：链条里有些失败是**核心功能失败**（本地稿不落盘、修复循环
+ * 不进入终态、用户补答案被拒），它们以前一律 `throw new CannotRunError`，被降级成
+ * 「环境不满足」、退出码 3。那等于说「这次不算数」——而修复循环超时恰恰是本轮要验的
+ * 核心功能。这里让它们走 FAILED（退出码 1）。
+ */
+class ChainFailure extends Error {
+  constructor(message, detail) {
+    super(message);
+    this.name = "ChainFailure";
+    this.detail = detail ?? null;
+  }
+}
+
+/**
+ * 报告收尾：把场景列表算成 verdict、写盘、设退出码。
+ *
+ * 抽出来是因为有三个出口（正常结束、前提不成立提前结束、核心失败提前结束），
+ * 而它们以前各写一份——最后那个 `catch` 分支**根本没算 verdict**，于是报告里的
+ * `verdict` 字段与 `process.exitCode` 是两套口径（报告说 failed、退出码说 3）。
+ * 只留一份实现，这种分叉就不可能再出现。
+ */
+function writeFinalReport() {
+  report.finishedAt = new Date().toISOString();
+  try {
+    fs.writeFileSync(path.join(runDir, "controlled-service.log"), report.service.log?.() ?? "");
+    report.service.log = undefined;
+  } catch {
+    // 服务日志写不出来不影响判定
+  }
+  const verdict = computeScenarioVerdict({ scenarios: report.scenarios });
+  report.verdict = verdict.verdict;
+  report.exitCode = verdict.exitCode;
+  report.scenarioFacts = {
+    passed: verdict.passed,
+    failed: verdict.failed,
+    notExecutable: verdict.notExecutable,
+    unknown: verdict.unknown,
+    total: verdict.total,
+    reason: verdict.reason,
+  };
+  writeReport(runDir, report);
+  console.log(`[cloud-repair-chain] scenarios: ${report.scenarios.map((s) => `${s.name}:${s.status}`).join(" | ")}`);
+  console.log(`[cloud-repair-chain] verdict: ${verdict.verdict} (${verdict.reason})`);
+  process.exitCode = verdict.exitCode;
+  return verdict;
+}
+
 async function call(command, args = {}) {
   const wrapped = command === "apply_recognition_decisions" || command === "apply_editor_commands";
   const r = await session.invoke(command, wrapped ? { input: args } : args);
@@ -400,14 +450,35 @@ function repairToolCalls(jobId) {
     });
 }
 
-function dumpDb(outPath, label) {
+/**
+ * 取一份权威稿快照。
+ *
+ * `required`（默认）为真时，取不到就**让场景失败**。这不是洁癖：旧写法失败返回 `null`，
+ * 于是下游的 `versionAfter > versionBefore` 变成 `2 > null` → `2 > 0` → **恒真**，
+ * 「dumpDb 失败」反而把断言染绿。诊断性探针（重试缺陷复现）显式传
+ * `{ required: false }`，因为它失败与否不该改变链条判定。
+ */
+function dumpDb(outPath, label, { required = true } = {}) {
   const result = spawnSync(PYTHON, [path.join(repoRoot, "scripts", "e2e", "lib", "dump-authoring-db.py"), dbPath, outPath, itemId ?? ""], {
     cwd: repoRoot,
     encoding: "utf8",
   });
   report[`db${label}`] = { path: outPath, status: result.status, stdout: String(result.stdout ?? "").trim(), stderr: String(result.stderr ?? "").trim() };
-  if (result.status !== 0) return null;
-  return JSON.parse(fs.readFileSync(outPath, "utf8"));
+  if (result.status !== 0) {
+    if (required) {
+      throw new ChainFailure(
+        `取权威稿快照失败（${label}）：dump-authoring-db.py 退出码 ${result.status}`,
+        report[`db${label}`],
+      );
+    }
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(outPath, "utf8"));
+  } catch (error) {
+    if (required) throw new ChainFailure(`权威稿快照不是合法 JSON（${label}）：${error.message}`);
+    return null;
+  }
 }
 
 /** 权威稿里某个作答组的题面文字（从数据库里读，不是从界面读）。 */
@@ -505,13 +576,39 @@ async function main() {
   itemId = await importThroughUi();
   report.identity.prepassItemId = itemId;
   const prepassDraft = await waitForLocalDraft(itemId, 180000);
-  if (!prepassDraft) throw new CannotRunError("预跑一遍的本地稿在超时前没有落盘");
-  record("prepass-import-for-scenario-derivation", SCENARIO_STATUS.PASSED, {
-    itemId,
-    taskGroups: (prepassDraft.ds.taskGroups ?? []).length,
-    answerSlots: Object.keys(prepassDraft.ds.answerSlots ?? {}).length,
-    qualityState: prepassDraft.ds.quality?.state ?? null,
-  });
+  if (!prepassDraft) {
+    // 本地稿不落盘是**产品失败**（本地识别是这条链的第一环），不是「环境不满足」。
+    // 以前这里 throw CannotRunError，退出码 3，报告读起来像「这次没跑成」。
+    record("prepass-import-for-scenario-derivation", SCENARIO_STATUS.FAILED, {
+      problems: ["预跑一遍的本地稿在 180 秒内没有落盘"],
+    });
+    writeFinalReport();
+    return;
+  }
+  const prepassGroups = prepassDraft.ds.taskGroups ?? [];
+  const prepassSlots = Object.keys(prepassDraft.ds.answerSlots ?? {}).length;
+  // 这一条以前只是「记了个事实」：把稿子形状写进报告，两个分支都是 PASSED。
+  // 它的名字声明的是一个**前提**，那就必须有前提的断言：本地识别至少要产出
+  // 一个题组和一个答案槽，否则「从真实稿派生场景」这件事根本无从谈起。
+  const prepassProblems = [];
+  if (prepassGroups.length === 0) prepassProblems.push("本地稿没有任何题组");
+  if (prepassSlots === 0) prepassProblems.push("本地稿没有任何答案槽");
+  if (prepassProblems.length === 0) {
+    record("prepass-import-for-scenario-derivation", SCENARIO_STATUS.PASSED, {
+      itemId,
+      taskGroups: prepassGroups.length,
+      answerSlots: prepassSlots,
+      qualityState: prepassDraft.ds.quality?.state ?? null,
+    });
+  } else {
+    record("prepass-import-for-scenario-derivation", SCENARIO_STATUS.FAILED, {
+      problems: prepassProblems,
+      itemId,
+      qualityState: prepassDraft.ds.quality?.state ?? null,
+    });
+    writeFinalReport();
+    return;
+  }
 
   // ---- 2. 从**真实稿**派生候选样本与修复剧本 ----
   const derived = deriveRepairScenario(prepassDraft.ds);
@@ -528,6 +625,7 @@ async function main() {
       }
     }
     const placeholderCount = promptTexts.filter((text) => placeholder.test(text)).length;
+    const emptyCount = promptTexts.filter((text) => !text).length;
     const blockingCodes = [
       ...new Set((prepassDraft.ds.quality?.issues ?? []).filter((issue) => issue?.severity === "blocking").map((issue) => issue.code)),
     ];
@@ -535,36 +633,33 @@ async function main() {
       taskGroups: groups.length,
       responseGroups: promptTexts.length,
       placeholderPrompts: placeholderCount,
-      emptyPrompts: promptTexts.filter((text) => !text).length,
+      emptyPrompts: emptyCount,
       qualityState: prepassDraft.ds.quality?.state ?? null,
       blockingCodes,
       samplePrompt: promptTexts[0] ?? null,
     };
-    notExecutable(
-      "derive-scenario-from-real-draft",
-      placeholderCount > 0
-        ? `这份稿子的本地初稿是退化的：${promptTexts.length} 个题面里有 ${placeholderCount} 个是占位符 `
-          + `（例如 ${JSON.stringify(promptTexts[0] ?? null)}），blocking 代码 ${JSON.stringify(blockingCodes)}。`
-          + "没有任何可枚举的真实内容差异可供云端修复，硬造一份候选只会得到假结论。"
-        : "这份稿子里没有可辨认的题面页脚残留，场景前提不成立。",
-    );
-    report.finishedAt = new Date().toISOString();
-    fs.writeFileSync(path.join(runDir, "controlled-service.log"), report.service.log?.() ?? "");
-    report.service.log = undefined;
-    const verdict = computeScenarioVerdict({ scenarios: report.scenarios });
-    report.verdict = verdict.verdict;
-    report.exitCode = verdict.exitCode;
-    report.scenarioFacts = {
-      passed: verdict.passed,
-      failed: verdict.failed,
-      notExecutable: verdict.notExecutable,
-      unknown: verdict.unknown,
-      total: verdict.total,
-      reason: verdict.reason,
-    };
-    writeReport(runDir, report);
-    console.log(`[cloud-repair-chain] verdict: ${verdict.verdict} (${verdict.reason})`);
-    process.exitCode = verdict.exitCode;
+    // 分类必须诚实，这是本轮改掉的一处「用 not-executable 掩盖产品退化」：
+    //   · 题面是**占位符 / 空**（本地识别产出的题面是退化的）→ FAILED。
+    //     那是产品缺陷，不是「本次没法验」。以前记 not-executable（退出码 5），
+    //     报告读起来像环境问题，真正的退化被藏起来了。
+    //   · 题面都是真实文字、只是没有页脚残留 → 这份夹具确实不覆盖本场景 →
+    //     这才是 not-executable（前提不成立）。
+    if (placeholderCount > 0 || emptyCount > 0) {
+      record("derive-scenario-from-real-draft", SCENARIO_STATUS.FAILED, {
+        problems: [
+          `本地识别产出的题面是退化的：${promptTexts.length} 个题面里 ${placeholderCount} 个是占位符、`
+            + `${emptyCount} 个是空的（例如 ${JSON.stringify(promptTexts[0] ?? null)}）`,
+          `blocking 代码 ${JSON.stringify(blockingCodes)}`,
+        ],
+        prepassDraftShape: report.observed.prepassDraftShape,
+      });
+    } else {
+      notExecutable(
+        "derive-scenario-from-real-draft",
+        "这份稿子里没有可辨认的题面页脚残留，场景前提不成立。",
+      );
+    }
+    writeFinalReport();
     return;
   }
   fs.writeFileSync(candidatePath, JSON.stringify(derived.candidate, null, 2));
@@ -577,15 +672,49 @@ async function main() {
     `task_group:${derived.rule.taskId}:instructions`,
     `response_group:${derived.fix.responseGroupId}:prompt`,
   ];
-  record("derive-scenario-from-real-draft", SCENARIO_STATUS.PASSED, {
-    candidate: candidatePath,
-    plan: planPath,
-    differences: report.scenario.differences,
-  });
+  // 这一条以前只记「派生成功了、文件写哪儿了」。它真正的断言是：派生出来的修复
+  // **必须是一处真实的内容差异**（改前 ≠ 改后），否则后面的「云端改对了」就没有靶子。
+  const deriveProblems = [];
+  if (!derived.fix?.responseGroupId) deriveProblems.push("派生结果里没有作答组 id");
+  if (!derived.rule?.taskId) deriveProblems.push("派生结果里没有题组 id");
+  if (typeof derived.fix?.before !== "string" || derived.fix.before === derived.fix.after) {
+    deriveProblems.push(`派生出的题面修改不是一处真实差异：before=${JSON.stringify(derived.fix?.before)} after=${JSON.stringify(derived.fix?.after)}`);
+  }
+  if (deriveProblems.length === 0) {
+    record("derive-scenario-from-real-draft", SCENARIO_STATUS.PASSED, {
+      candidate: candidatePath,
+      plan: planPath,
+      differences: report.scenario.differences,
+      fix: { responseGroupId: derived.fix.responseGroupId, before: derived.fix.before, after: derived.fix.after },
+    });
+  } else {
+    record("derive-scenario-from-real-draft", SCENARIO_STATUS.FAILED, { problems: deriveProblems });
+    writeFinalReport();
+    return;
+  }
 
   // ---- 3. 重启受控服务（这次带样本与剧本）----
   await restartService({ candidate: candidatePath, plan: planPath });
-  record("controlled-service-restarted-with-scenario", SCENARIO_STATUS.PASSED, { port: servicePort });
+  // 「重启成功」的实质断言：服务真的活着，**而且**样本与剧本真的被它读进去了。
+  // 以前只记了端口号，两个分支都 PASSED——重启失败也照样绿。
+  const health1 = await waitForService();
+  const scenarioProblems = [];
+  if (!health1) scenarioProblems.push("重启后的受控服务 /health 不可达");
+  // `/health` 回的是 `{ candidate, plan }` —— 载入的样本 / 剧本路径（未载入为 null）。
+  if (health1 && !health1.candidate) scenarioProblems.push("受控服务没有载入候选样本");
+  if (health1 && !health1.plan) scenarioProblems.push("受控服务没有载入修复剧本");
+  if (scenarioProblems.length === 0) {
+    record("controlled-service-restarted-with-scenario", SCENARIO_STATUS.PASSED, {
+      port: servicePort,
+      mode: health1.mode,
+      candidate: health1.candidate,
+      plan: health1.plan,
+    });
+  } else {
+    record("controlled-service-restarted-with-scenario", SCENARIO_STATUS.FAILED, { problems: scenarioProblems, health: health1 });
+    writeFinalReport();
+    return;
+  }
 
   // ---- 4. 被断言的那一遍：完整导入链 ----
   //
@@ -640,7 +769,25 @@ async function main() {
           qualityState: draft.quality?.state ?? null,
           blockingIssues: (draft.quality?.issues ?? []).filter((issue) => issue?.severity === "blocking").length,
         };
-        record("local-draft-visible-before-cloud", SCENARIO_STATUS.PASSED, report.observed.localDraft);
+        // 这一条以前只是「记了个事实」（两个分支都 PASSED）。它的名字声明的是一个
+        // **时序主张**：本地稿在云端写入之前就可见。那就必须有真的断言。
+        const localProblems = [];
+        if (versionBefore == null) localProblems.push("基线快照里读不到 editVersion");
+        if (baselineTooLate) {
+          localProblems.push("基线取晚了：dump 到的题面已经是修复后的内容，无法证明本地稿先于云端写入可见");
+        } else if (derived.fix.before != null && promptBefore !== derived.fix.before) {
+          localProblems.push(
+            `基线题面既不是改前的 ${JSON.stringify(derived.fix.before)}，也不是改后的 ${JSON.stringify(derived.fix.after)}：${JSON.stringify(promptBefore)}`,
+          );
+        }
+        if (localProblems.length === 0) {
+          record("local-draft-visible-before-cloud", SCENARIO_STATUS.PASSED, report.observed.localDraft);
+        } else {
+          record("local-draft-visible-before-cloud", SCENARIO_STATUS.FAILED, {
+            problems: localProblems,
+            ...report.observed.localDraft,
+          });
+        }
       }
     }
     // (b) 进度采样：**从本地稿出现那一刻就开始**。等界面开完再采样，
@@ -668,8 +815,28 @@ async function main() {
     }
     await sleep(600);
   }
-  if (!draft) throw new CannotRunError("本地稿在超时前没有落盘");
-  if (!finalRepair) throw new CannotRunError("修复循环在超时前没有进入终态");
+  if (!draft) {
+    // 本地稿不落盘 = 产品失败（本地识别是这条链的第一环）。以前这里 throw
+    // CannotRunError，退出码 3，报告读起来像「环境不满足」。
+    record("local-draft-visible-before-cloud", SCENARIO_STATUS.FAILED, {
+      problems: ["900 秒内没有读到本地初稿（taskGroups > 0）"],
+    });
+    record("cloud-fixed-content-on-its-own", SCENARIO_STATUS.FAILED, {
+      problems: ["没有本地稿，无法比较云端写入前后的权威稿"],
+    });
+    writeFinalReport();
+    return;
+  }
+  if (!finalRepair) {
+    // 修复循环在超时前没有进入终态 = **核心功能失败**，不是「环境不满足」。
+    // 修复循环进入终态正是本轮要验的东西，把它降级成退出码 3 等于说「这次不算数」。
+    record("cloud-fixed-content-on-its-own", SCENARIO_STATUS.FAILED, {
+      problems: ["修复循环在 900 秒内没有进入终态（repair.status 一直是 running 或从未出现）"],
+      repairProgressSeen: report.observed.repairProgressSeen,
+    });
+    writeFinalReport();
+    return;
+  }
   report.observed.repairFinal = finalRepair;
 
   // ---- 6. 数据库 after + 差异 ----
@@ -695,7 +862,13 @@ async function main() {
   } else {
   const problems = [];
   if (!(finalRepair.appliedCount >= 1)) problems.push(`appliedCount 应 >= 1，实际 ${finalRepair.appliedCount}`);
-  if (!(versionAfter > versionBefore)) problems.push(`编辑版本应推进，实际 ${versionBefore} -> ${versionAfter}`);
+  // 版本必须**两个都读到了**才谈得上「推进」。显式拒绝 null：`2 > null` 在 JS 里是 true
+  // （null 被转成 0），把「快照缺失」读成「版本推进了」。
+  if (versionBefore == null || versionAfter == null) {
+    problems.push(`编辑版本读不到（before=${versionBefore} after=${versionAfter}），无法判定是否推进`);
+  } else if (!(versionAfter > versionBefore)) {
+    problems.push(`编辑版本应推进，实际 ${versionBefore} -> ${versionAfter}`);
+  }
   if (promptBefore === promptAfter) problems.push("题面文字没有被改动");
   if (promptAfter !== derived.fix.after) problems.push(`题面文字应为 ${JSON.stringify(derived.fix.after)}，实际 ${JSON.stringify(promptAfter)}`);
   if (/BLANK PAGE/iu.test(promptAfter ?? "")) problems.push("改后的题面里仍有页脚残留");
@@ -850,14 +1023,39 @@ async function main() {
       message: String(task.message ?? "").slice(0, 200),
     })),
   };
-  if (answersMissing.length > 0) {
+  // 这一条以前两个分支都 PASSED，等于什么都没断言。它的名字声明的是「剩下的每一件
+  // 事都有一个**真实**原因」，那就必须逐条去核那个原因是不是真的：
+  //   · 每条阻断任务都要有非空 action（零动作的阻断任务用户没法处理）；
+  //   · 每条「缺答案」都要对应一个**当前稿里确实是 unresolved** 的答案槽
+  //     （证明原因不是标签造出来的，而是稿子的真实状态）。
+  const reasonProblems = [];
+  const unactionable = blocking.filter((task) => !(typeof task.action === "string" && task.action.length > 0));
+  if (unactionable.length > 0) {
+    reasonProblems.push(`${unactionable.length} 条阻断任务没有可执行动作：${JSON.stringify(unactionable.map((t) => t.userTaskId))}`);
+  }
+  const canonicalAfter = dbAfter?.item?.canonical ?? null;
+  const unexplainedMissing = answersMissing.filter((task) => {
+    const slotId = (task.targetIds ?? [])[0] ?? null;
+    const answer = slotId ? answerOf(canonicalAfter, slotId) : null;
+    return answer?.kind !== "unresolved";
+  });
+  if (unexplainedMissing.length > 0) {
+    reasonProblems.push(
+      `${unexplainedMissing.length} 条「缺答案」任务对应的槽在权威稿里并不是 unresolved：`
+        + JSON.stringify(unexplainedMissing.map((t) => ({ id: t.userTaskId, slot: (t.targetIds ?? [])[0] ?? null }))),
+    );
+  }
+  if (reasonProblems.length === 0) {
     record("remaining-work-has-a-real-reason", SCENARIO_STATUS.PASSED, {
-      reason: "原文件没有答案页；云端不得编造答案，所以这些题只能由用户提供答案",
       answerKeyMissing: answersMissing.length,
+      blocking: blocking.length,
       total: remaining.length,
+      note: answersMissing.length > 0
+        ? "每条缺答案都对应权威稿里真实的 unresolved 槽；原文件没有答案页，云端不得编造答案"
+        : "本次没有「缺答案」类剩余任务",
     });
   } else {
-    record("remaining-work-has-a-real-reason", SCENARIO_STATUS.PASSED, { note: "本次没有「缺答案」类剩余任务", total: remaining.length });
+    record("remaining-work-has-a-real-reason", SCENARIO_STATUS.FAILED, { problems: reasonProblems, breakdown: report.remainingBreakdown });
   }
 
   // ---- 16. 编辑保存 → 重开 ----
@@ -970,8 +1168,15 @@ async function main() {
       };
       await sleep(1500);
       // 补答案这一步必须真的成功，否则后面的发布结论会被一个输入错误污染。
+      // 但它是**产品失败**（用户点得动的操作被拒绝），不是「环境不满足」——
+      // 以前 throw CannotRunError 会把它降级成退出码 3。
       if (!filled?.ok) {
-        throw new CannotRunError(`用户补答案被拒绝：${filled?.error}`);
+        record("export-and-student-runtime", SCENARIO_STATUS.FAILED, {
+          problems: [`用户补答案被拒绝：${filled?.error}`],
+          userAnswerFill: report.observed.userAnswerFill,
+        });
+        writeFinalReport();
+        return;
       }
     }
 
@@ -1011,7 +1216,24 @@ async function main() {
       const studentLoad = await loadPublishedPackageWithRealProviderAsync({
         packageDir: nasDir,
         examId: null,
-      }).catch((error) => ({ ok: false, cannotRun: true, reason: `真实学生端加载抛错：${error.message}`, results: [], failures: [] }));
+      }).catch((error) => {
+        // 抛错要**分类**，不能一律当「环境不满足」：
+        //   · 学生端模块根本加载不了（仓库不在 / 没编译）→ 环境不满足，not-executable；
+        //   · 模块加载了、读这个包时崩了 → 那是「读不了这个包」，是**失败**。
+        // 以前 `cannotRun: true` 一刀切，把「学生端读不了我们发布的包」这个真实产品
+        // 缺陷伪装成「这台机器上没有学生端」。
+        const message = String(error?.message ?? error);
+        const environment = /Cannot find module|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|ENOENT/u.test(message);
+        return {
+          ok: false,
+          cannotRun: environment,
+          reason: environment
+            ? `学生端真实代码不可用：${message}`
+            : `学生端真实代码读不了这个发布包：${message}`,
+          results: [],
+          failures: [],
+        };
+      });
       report.observed.studentRealProviderLoad = {
         ok: studentLoad.ok,
         cannotRun: Boolean(studentLoad.cannotRun),
@@ -1123,11 +1345,12 @@ async function main() {
     if (!target) return { ran: false, reason: "没有预跑条目" };
     try {
       const retry = await call("retry_processing", { itemId: target });
-      const immediate = dumpDb(path.join(runDir, "db-retry-probe-immediate.json"), "RetryProbeImmediate");
+      // 探针用快照：取不到就如实记「没跑到」，**不**让链条失败（它只是诊断）。
+      const immediate = dumpDb(path.join(runDir, "db-retry-probe-immediate.json"), "RetryProbeImmediate", { required: false });
       const before = (immediate?.processingJobs ?? []).find((job) => job.library_item_id === target) ?? null;
       // 给工作线程一点时间真的去跑，再看它落到哪里——只看 retry 的返回值会误判成成功。
       await sleep(12000);
-      const settled = dumpDb(path.join(runDir, "db-retry-probe.json"), "RetryProbe");
+      const settled = dumpDb(path.join(runDir, "db-retry-probe.json"), "RetryProbe", { required: false });
       const after = (settled?.processingJobs ?? []).find((job) => job.library_item_id === target) ?? null;
       return {
         ran: true,
@@ -1161,25 +1384,8 @@ async function main() {
   console.log(`[cloud-repair-chain] finding defect-retry-cannot-rerun: ${report.findings.at(-1).kind}`);
 
   // ---- 18. 报告 ----
-  report.finishedAt = new Date().toISOString();
   report.modelTracesAfter = { toolCalls: repairToolCalls(itemId), llm: llmTraces(itemId) };
-  fs.writeFileSync(path.join(runDir, "controlled-service.log"), report.service.log?.() ?? "");
-  report.service.log = undefined;
-  const verdict = computeScenarioVerdict({ scenarios: report.scenarios });
-  report.verdict = verdict.verdict;
-  report.exitCode = verdict.exitCode;
-  report.scenarioFacts = {
-    passed: verdict.passed,
-    failed: verdict.failed,
-    notExecutable: verdict.notExecutable,
-    unknown: verdict.unknown,
-    total: verdict.total,
-    reason: verdict.reason,
-  };
-  writeReport(runDir, report);
-  console.log(`[cloud-repair-chain] scenarios: ${report.scenarios.map((s) => `${s.name}:${s.status}`).join(" | ")}`);
-  console.log(`[cloud-repair-chain] verdict: ${verdict.verdict} (${verdict.reason})`);
-  process.exitCode = verdict.exitCode;
+  writeFinalReport();
 }
 
 /** `get_workspace_item` 顶层就带 `editVersion`（`library_items_v2.current_edit_version`）。 */
@@ -1189,9 +1395,18 @@ function workspaceVersion(workspace) {
 
 main()
   .catch(async (error) => {
+    // 三类失败必须区分，而且**报告与退出码要用同一份判定**：
+    //   · ChainFailure    → 产品缺陷 / 证据不成立 → failed（1）
+    //   · CannotRunError  → 环境不满足           → not-executable（5）
+    //   · 其它             → 意外异常             → failed（1）
+    // 以前这里只写 report 不重算 verdict，于是报告里的 `verdict` 还是初始的
+    // "failed"、而退出码是 3 —— 两套口径。
     const cannotRun = error instanceof CannotRunError;
-    record("harness", cannotRun ? SCENARIO_STATUS.NOT_EXECUTABLE : SCENARIO_STATUS.FAILED, { message: String(error?.message ?? error) }, error);
-    report.finishedAt = new Date().toISOString();
+    record("harness", cannotRun ? SCENARIO_STATUS.NOT_EXECUTABLE : SCENARIO_STATUS.FAILED, {
+      message: String(error?.message ?? error),
+      kind: error?.name ?? "Error",
+      detail: error instanceof ChainFailure ? error.detail : undefined,
+    }, error);
     try {
       report.appOutput = session?.appOutput?.() ?? null;
     } catch {
@@ -1199,11 +1414,10 @@ main()
     }
     try {
       fs.mkdirSync(runDir, { recursive: true });
-      writeReport(runDir, report);
     } catch {
       // 忽略
     }
-    process.exitCode = cannotRun ? 3 : 1;
+    writeFinalReport();
   })
   .finally(async () => {
     try {
