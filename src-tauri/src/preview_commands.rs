@@ -92,6 +92,19 @@ pub(crate) fn run_preview_e2e_core(root: &Path, job_id: &str) -> CommandResult<V
                 unified_python_path.as_deref(),
             ) {
                 Ok(runtime_report) => {
+                    // 显式声明"这是合并"，不依赖 `merge_sidecar_validation` 的缺省。
+                    //
+                    // 这里直传侧车**原始**输出，它可能既没有 `layers` 也没有
+                    // `replaceExistingLayers`；过去"缺省即替换"的语义会让这样一份
+                    // 空输出把 Rust 自查在 ReadingExamSourceV1/DomProtocol 两层的 error
+                    // 整层删掉（`runtime_validation.rs:340` 那条路径显式置了 false，
+                    // 只有这里没置）。侧车自己显式给出的值仍然优先。
+                    let mut runtime_report = runtime_report;
+                    if let Some(object) = runtime_report.as_object_mut() {
+                        object
+                            .entry("replaceExistingLayers".to_string())
+                            .or_insert(json!(false));
+                    }
                     merge_sidecar_validation(&mut diagnostic_report, runtime_report)
                 }
                 Err(error) => merge_sidecar_validation(
