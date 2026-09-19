@@ -218,33 +218,55 @@ def snapshot(paths):
     for path in paths:
         with open(path, "rb") as handle:
             data = handle.read()
-        with open(os.path.join(SNAPSHOT_DIR, path.replace("/", "__")), "wb") as handle:
+        with open(_blob(path), "wb") as handle:
             handle.write(data)
+        # 连**修改时间**一起存：还原时要把它放回去。
+        #
+        # 不这么做的话，还原会把 mtime 顶到当前时刻，于是「后端源码比 exe 新」——
+        # 真实链路验收的构建新鲜度闸门（`build-freshness`）会因此判定 exe 过期，
+        # 拒绝开跑。内容明明逐字节相同，却要白白重建一次。2026-09-19 实测踩到。
+        with open(_mtime(path), "w", encoding="utf-8") as handle:
+            handle.write(repr(os.stat(path).st_mtime_ns))
+
+
+def _blob(path):
+    return os.path.join(SNAPSHOT_DIR, path.replace("/", "__"))
+
+
+def _mtime(path):
+    return os.path.join(SNAPSHOT_DIR, path.replace("/", "__") + ".mtime")
 
 
 def pristine_of(path):
     # 统一换行：源文件在工作区是 CRLF，而锚点里写的是 "\n"。
     # 用 universal newlines 读进来（\r\n -> \n），变异后按 LF 写回；
     # 跑完再从二进制快照还原，字节完全一致。
-    with open(os.path.join(SNAPSHOT_DIR, path.replace("/", "__")), "r", encoding="utf-8", newline=None) as handle:
+    with open(_blob(path), "r", encoding="utf-8", newline=None) as handle:
         return handle.read()
 
 
 def restore(path):
-    with open(os.path.join(SNAPSHOT_DIR, path.replace("/", "__")), "rb") as handle:
+    with open(_blob(path), "rb") as handle:
         data = handle.read()
     with open(path, "wb") as handle:
         handle.write(data)
+    # 把 mtime 也放回去，别让「还原」这件事本身把构建新鲜度搞脏。
+    with open(_mtime(path), "r", encoding="utf-8") as handle:
+        stamp = int(handle.read().strip())
+    os.utime(path, ns=(stamp, stamp))
 
 
 def unchanged_from_snapshot(paths):
     for path in paths:
         with open(path, "rb") as handle:
             current = handle.read()
-        with open(os.path.join(SNAPSHOT_DIR, path.replace("/", "__")), "rb") as handle:
+        with open(_blob(path), "rb") as handle:
             original = handle.read()
         if current != original:
             return False
+        with open(_mtime(path), "r", encoding="utf-8") as handle:
+            if os.stat(path).st_mtime_ns != int(handle.read().strip()):
+                return False
     return True
 
 
