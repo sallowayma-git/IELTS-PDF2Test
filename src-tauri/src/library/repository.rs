@@ -1159,7 +1159,7 @@ fn cas_write_canonical(
     status: &str,
     now: &str,
 ) -> CommandResult<()> {
-    transaction
+    let updated = transaction
         .execute(
             "UPDATE library_items_v2
              SET canonical_ds_json = ?2, current_edit_version = ?3, updated_at = ?4, status = ?6
@@ -1167,6 +1167,27 @@ fn cas_write_canonical(
             params![item_id, ds.to_string(), next_version, now, expected_version, status],
         )
         .map_err(|error| format!("library_v2_tx_update:{error}"))?;
+
+    // SQLite reports a CAS miss as `Ok(0)`, not as a database error.  Treating that
+    // as success lets the caller journal/export a write that never reached the
+    // canonical document.  Read the current row only to make the conflict
+    // diagnosable; the transaction is rolled back by the caller on this error.
+    if updated == 0 {
+        let current: Option<i64> = transaction
+            .query_row(
+                "SELECT current_edit_version FROM library_items_v2 WHERE id = ?1",
+                [item_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("library_v2_tx_read_version:{error}"))?;
+        return Err(match current {
+            Some(current) => format!(
+                "EDIT_VERSION_CONFLICT:current={current}:base={expected_version}"
+            ),
+            None => format!("ITEM_NOT_FOUND:{item_id}"),
+        });
+    }
     Ok(())
 }
 
@@ -1546,6 +1567,46 @@ mod tests {
         assert!(error.starts_with("EDIT_VERSION_CONFLICT"), "{error}");
         let (_, version) = get_canonical_ds(&conflict_conn, "it-1").unwrap().unwrap();
         assert_eq!(version, 1, "冲突时不得推进版本");
+    }
+
+    #[test]
+    fn canonical_cas_does_not_report_success_when_expected_version_is_stale() {
+        let mut conn = memory_repo();
+        upsert_item_shell(
+            &conn,
+            &UpsertItemInput {
+                id: "it-1",
+                modality: "reading",
+                title: "t",
+                status: "ready",
+                source_asset_id: None,
+            },
+        )
+        .unwrap();
+        seed_canonical_ds(&conn, "it-1", &sample_ds("before").to_string(), "ready").unwrap();
+
+        let transaction = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        let error = cas_write_canonical(
+            &transaction,
+            "it-1",
+            99,
+            100,
+            &sample_ds("after"),
+            "ready",
+            "2026-09-19T00:00:00Z",
+        )
+        .expect_err("CAS 未匹配时不得返回成功");
+        assert!(
+            error.starts_with("EDIT_VERSION_CONFLICT"),
+            "应明确报告版本冲突，实际为：{error}"
+        );
+        transaction.rollback().unwrap();
+
+        let (ds, version) = get_canonical_ds(&conn, "it-1").unwrap().unwrap();
+        assert_eq!(ds.pointer("/exam/title").and_then(Value::as_str), Some("before"));
+        assert_eq!(version, 1, "CAS 未匹配时不得写入新稿或推进版本");
     }
 
     #[test]
