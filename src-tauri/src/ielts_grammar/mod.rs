@@ -1005,16 +1005,20 @@ fn build_responses_and_slots(
             .map(|(_, anchors)| anchors.clone())
             .unwrap_or_else(|| prompt_result.source_anchors.clone());
         // Table/flowchart completion is rendered from the recovered source
-        // structure as a whole.  Even when one or more physical rows are
-        // missing, do not synthesize a detached `qN` prompt from the question
-        // number; that loses the table/flow geometry and makes a blocked task
-        // look like a usable generic form.  The quality gate will keep the
-        // incomplete structural task blocked until the source row is repaired.
-        let suppress_structural_completion_prompt = structured_completion_slots
+        // structure as a whole.  When there is no source-backed prompt, do
+        // not synthesize a detached `qN` prompt from the question number;
+        // that loses the table/flow geometry and makes a blocked task look
+        // like a usable generic form.  But if the split evidence itself carries
+        // a real table/flow layout (for example the DOCX table fixture), keep
+        // its source-backed V1 row text in the V2 response.  A bare V1 prompt
+        // is not enough: the incomplete-table regression fixture has text too,
+        // but no structural source evidence and must remain prompt-less.
+        let has_structural_source = structural_completion_source_present(candidate, task_type);
+        let suppress_structural_completion_prompt = (structured_completion_slots
             || matches!(
                 task_type,
                 TaskTypeV2::TableCompletion | TaskTypeV2::FlowchartCompletion
-            );
+            )) && !has_structural_source;
         let embed_completion_slot_in_prompt = is_completion_task(task_type)
             && !structured_completion_slots
             && !matches!(
@@ -1125,6 +1129,38 @@ fn build_responses_and_slots(
         ));
     }
     (responses, slots, used_answers)
+}
+
+fn structural_completion_source_present(candidate: &Value, task_type: &TaskTypeV2) -> bool {
+    let layout_hint = candidate
+        .pointer("/layout/layoutHint")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let template = candidate
+        .pointer("/layout/template")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let evidence_has_layout = candidate
+        .get("sectionEvidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|evidence| {
+            evidence.get("tableRows").is_some()
+                || evidence.get("tableCols").is_some()
+                || evidence.get("flowSteps").is_some()
+        });
+    match task_type {
+        TaskTypeV2::TableCompletion => {
+            layout_hint.contains("table") || template.contains("table") || evidence_has_layout
+        }
+        TaskTypeV2::FlowchartCompletion => {
+            layout_hint.contains("flow") || template.contains("flow") || evidence_has_layout
+        }
+        _ => false,
+    }
 }
 
 fn response_value(

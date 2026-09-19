@@ -445,6 +445,42 @@ fn product_chain_docx_import_materializes_the_physical_document_ir_v2() {
         .cloned()
         .expect("session must carry the authoring document");
     first_text_node(&authoring).expect("DOCX draft must contain at least one text node");
+
+    // Regression: the real complex DOCX carries source-backed stems for both
+    // groups, including the table-completion rows.  An empty V2 response
+    // prompt here means the ingest was discarded after V1 recognition and
+    // the authoring session is not usable for cloud repair.
+    let responses = authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|group| {
+            group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 2, "complex DOCX response groups drifted");
+    let mut prompt_texts = Vec::new();
+    for response in responses {
+        let prompt = response
+            .get("prompt")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let (_, text) = first_text_node(&prompt).unwrap_or_else(|| {
+            panic!("DOCX response prompt must contain source-backed text: {response}")
+        });
+        assert!(!text.contains("pending review"), "placeholder prompt leaked: {response}");
+        assert!(!text.trim().is_empty(), "DOCX response prompt is empty: {response}");
+        prompt_texts.push(text);
+    }
+    assert!(
+        prompt_texts.iter().any(|text| text.contains("maps")),
+        "DOCX response prompts must retain the real maps row: {prompt_texts:?}"
+    );
 }
 
 #[test]

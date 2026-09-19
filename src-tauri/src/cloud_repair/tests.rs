@@ -221,13 +221,36 @@ fn has_task(tasks: &[Value], user_task_id: &str) -> bool {
         .any(|task| task["userTaskId"].as_str() == Some(user_task_id))
 }
 
+fn first_text_in_value(value: &Value) -> Option<(String, String)> {
+    if value.get("type").and_then(Value::as_str) == Some("text") {
+        let id = value.get("id").and_then(Value::as_str)?.to_string();
+        let text = value.get("text").and_then(Value::as_str)?.to_string();
+        return Some((id, text));
+    }
+    match value {
+        Value::Array(items) => items.iter().find_map(first_text_in_value),
+        Value::Object(object) => object.values().find_map(first_text_in_value),
+        _ => None,
+    }
+}
+
 fn request<'a>(root: &'a Path, cancelled: &'a dyn Fn() -> bool, max_rounds: u32) -> RepairRunRequest<'a> {
+    request_for_batch(root, BATCH_ID, "run-1", cancelled, max_rounds)
+}
+
+fn request_for_batch<'a>(
+    root: &'a Path,
+    batch_id: &'a str,
+    repair_run_id: &'a str,
+    cancelled: &'a dyn Fn() -> bool,
+    max_rounds: u32,
+) -> RepairRunRequest<'a> {
     RepairRunRequest {
         root,
         item_id: ITEM_ID,
         job_id: ITEM_ID,
-        batch_id: BATCH_ID,
-        repair_run_id: "run-1",
+        batch_id,
+        repair_run_id,
         max_rounds,
         deadline: Instant::now() + std::time::Duration::from_secs(30),
         cancelled,
@@ -943,6 +966,18 @@ fn scripted_repair_reply(body: &str, round: usize) -> String {
     .to_string()
 }
 
+/// DOCX 云端链的最小收尾剧本：不伪造编辑，只要求真实网关收到一次带原文证据的
+/// 修复请求并正常结束。题面是否真实来自 DOCX 已由导入阶段断言，这里验证同一份稿件
+/// 没有在「导入成功、云端却因类型被拒」的缝里断掉。
+fn scripted_docx_finish_reply(_body: &str, _round: usize) -> String {
+    json!({
+        "callId": "docx-finish-1",
+        "tool": "finish",
+        "arguments": {"note": "受控服务：DOCX 原文已进入云端修复回合"}
+    })
+    .to_string()
+}
+
 /// 造一份带主源文件的作业（网关要读 `uploads/<storedName>` 才能附上原文件证据）。
 fn seed_job_with_source(root: &Path) {
     use crate::job_store::{make_job, save_job};
@@ -983,6 +1018,153 @@ fn seed_job_with_source(root: &Path) {
         &json!({"pages":[{"pageIndex":0,"lines":[{"text":"Early approaches to organisational design."}]}]}),
     )
     .expect("document-ir");
+}
+
+/// 造一份真正由 `complex-reading.docx` 驱动的作业。与 PDF 夹具不同，这里不手写
+/// `document-ir.json`：导入测试必须先走真实 DOCX 解析，云端修复随后再从原始上传件
+/// 独立抽取 `sourceText`。
+fn seed_docx_job_with_source(root: &Path) {
+    use crate::job_store::{make_job, save_job};
+    use crate::util::{ensure_job_dirs, hash_file_or_path, job_dir};
+    use crate::{CreateJobInput, SourceFile, WorkflowStep};
+
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures/parser/complex-reading.docx");
+    let (sha256, size_bytes, _) = hash_file_or_path(&fixture).expect("DOCX fixture");
+    let mut job = make_job(CreateJobInput {
+        title: Some("Complex reading DOCX".to_string()),
+        category: Some("P1".to_string()),
+        frequency: Some("medium".to_string()),
+        tags: Some(vec!["controlled".to_string()]),
+        llm_profile_id: None,
+    });
+    job.job_id = ITEM_ID.to_string();
+    job.current_step = WorkflowStep::Authoring;
+    job.active_llm_profile_id = Some("controlled-repair".to_string());
+    job.source_files = vec![SourceFile {
+        file_id: "complex-reading-docx".to_string(),
+        original_name: "complex-reading.docx".to_string(),
+        stored_name: "complex-reading.docx".to_string(),
+        file_type: "docx".to_string(),
+        sha256,
+        size_bytes,
+        role: "MainQuestion".to_string(),
+        imported_at: chrono::Utc::now(),
+    }];
+    save_job(root, &job).expect("save DOCX job");
+    let dir = job_dir(root, ITEM_ID);
+    ensure_job_dirs(&dir).expect("DOCX job dirs");
+    std::fs::copy(
+        &fixture,
+        dir.join("uploads").join("complex-reading.docx"),
+    )
+    .expect("copy DOCX source");
+}
+
+/// 同一份真实 DOCX 必须从导入一路走到云端修复网关：不是只证明本地能生成稿件，
+/// 也不是只调用 `main_source_for_cloud` 的类型分支。这个测试把产品边界钉在：
+/// 导入的物理稿 / V2 会话 → 首次 canonical → 本地批次 → 云端候选 → 真实 HTTP 网关。
+#[test]
+fn real_docx_import_reaches_cloud_repair_with_original_source_evidence() {
+    use crate::auto_pipeline::{
+        finalize_cloud_authoring_candidate, run_auto_pipeline_core,
+    };
+    use crate::authoring_v2_commands::get_authoring_v2_core;
+    use crate::library::migration::ensure_initial_canonical;
+    use crate::processing::scheduler::run_local_only_recognition_cycle;
+
+    let root = temp_root();
+    crate::util::ensure_app_dirs(&root).expect("app dirs");
+    seed_docx_job_with_source(&root);
+
+    let report = run_auto_pipeline_core(
+        &root,
+        ITEM_ID,
+        Some(crate::AutoPipelineInput {
+            execution_mode: Some("localOnly".to_string()),
+            target: Some("editableDraft".to_string()),
+            allow_overwrite: Some(true),
+            ..Default::default()
+        }),
+    )
+    .expect("真实 DOCX 导入必须完成");
+    assert!(report.get("status").and_then(Value::as_str).is_some());
+
+    let session = get_authoring_v2_core(&root, ITEM_ID).expect("DOCX V2 session");
+    let imported_authoring = session
+        .get("authoring")
+        .cloned()
+        .expect("DOCX session authoring");
+    let responses = imported_authoring
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|group| {
+            group
+                .get("responseGroups")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(responses.len(), 2);
+    for response in &responses {
+        let (_, text) = first_text_in_value(response.get("prompt").unwrap())
+            .expect("DOCX prompt must contain real text before cloud repair");
+        assert!(!text.trim().is_empty());
+        assert!(!text.contains("pending review"));
+    }
+
+    assert!(ensure_initial_canonical(&root, ITEM_ID).expect("seed imported DOCX canonical"));
+    let base_edit_version = canonical_version(&root);
+    run_local_only_recognition_cycle(&root, ITEM_ID, base_edit_version)
+        .expect("DOCX local recognition batch must complete");
+    let batch_id = batch_id_for(&root, base_edit_version);
+
+    // Candidate 由刚刚导入的同一份 V2 稿件组成；云端修复仍要经过身份绑定、质量重算和
+    // 独立 candidate artifact，不能把 canonical 直接当作修复循环输入。
+    finalize_cloud_authoring_candidate(
+        &root,
+        ITEM_ID,
+        &batch_id,
+        base_edit_version,
+        &json!({"authoring": imported_authoring}),
+    )
+    .expect("DOCX candidate must enter the repair batch");
+
+    let requests = start_repair_service(&root, scripted_docx_finish_reply);
+    let not_cancelled = || false;
+    let request = request_for_batch(&root, &batch_id, "run-docx-repair", &not_cancelled, 2);
+    let repair = run_repair_loop(&request, |context, observations| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("DOCX repair must return a terminal report");
+    assert!(
+        repair.status == REPAIR_STATUS_COMPLETED
+            || repair.status == REPAIR_STATUS_NEEDS_ATTENTION,
+        "DOCX must reach the repair loop, not fail as unavailable: {repair:?}"
+    );
+    assert_eq!(repair.rounds, 1, "controlled DOCX service should finish in one round");
+    assert!(repair.last_error.is_none(), "DOCX repair transport must succeed: {repair:?}");
+
+    let seen = requests.lock().expect("requests");
+    assert_eq!(seen.len(), 1, "one real DOCX repair request expected");
+    assert!(seen[0].contains("sourceText"), "DOCX repair must send source text evidence");
+    assert!(
+        seen[0].contains("complex-reading-docx") || seen[0].contains("complex-reading.docx"),
+        "DOCX repair request must identify the original source: {}",
+        seen[0]
+    );
+    assert!(!seen[0].contains("main_source_is_not_pdf"));
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// 受控服务 → 真实网关 → 真实工具执行 → 真实权威稿。
