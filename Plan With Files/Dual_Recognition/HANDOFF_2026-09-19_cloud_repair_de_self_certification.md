@@ -204,13 +204,14 @@ DOCX 这一遍**仍然没通过**，但本轮把它从「含混的 not-executabl
 
 | 项 | 值 |
 | --- | --- |
-| PDF 运行目录 | `artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-19T10-55-24-012Z/`（13/13 passed，退出码 0） |
+| 提交 | `a55013404cab225f9d1447480755bef23b6ae3d9`，`worktreeClean = true`（工作区干净） |
+| PDF 运行目录 | `artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-19T11-27-36-792Z/`（**13/13 passed**，退出码 0） |
 | DOCX 运行目录 | `artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-19T10-58-08-740Z/`（failed，退出码 1，导入阶段退化） |
 | 夹具 | `demanding-reading-passage-3.pdf` sha256 `f13bd65cb5f5c76a178ff87fa212df30f79852bdb103249af9eb5804a4ccfe18` |
 | golden 标注 | `fixtures/golden/cloud-repair/demanding-reading-passage-3.annotation.json`（绑定上面这个哈希） |
 | `cargo test --lib` | **838 passed / 0 failed / 11 ignored** |
 | 变异检查 | **11/11** 条在旧行为下变红，源文件与快照逐字节一致 |
-| exe | sha256 前缀 `aab17ad8530b9ed5`，`buildFresh.ok = true` |
+| exe | sha256 `6c1e162851dfba00c535cf03dfe1f8d1e6392452d9e02f3504ebc801725c15ff`，`buildFresh.ok = true` |
 
 `artifacts/`、`.scratch/`、`*.log` 都在 `.gitignore` 里，是本地证据，不进版本库。
 
@@ -227,7 +228,7 @@ DOCX 这一遍**仍然没通过**，但本轮把它从「含混的 not-executabl
 | `src-tauri/src/cloud_repair/mod.rs` | 抽出 `pdf_read_source_response`，让 PDF 分支可被真实驱动 |
 | `src-tauri/src/cloud_repair/tests.rs` | `read_source` 用例改驱动分支函数，补 `pagesWithText` / `note` / 页范围断言 |
 | `src-tauri/src/cloud_repair/tools.rs` | 新增两种质量口径等价的用例 |
-| `scripts/e2e/lib/repro-check-cloud-repair-tests.py` | **新增**：变异检查工具（快照式还原，不依赖 git 状态） |
+| `scripts/e2e/lib/repro-check-cloud-repair-tests.py` | **新增**：变异检查工具（快照式还原，连 mtime 一起放回，不依赖 git 状态） |
 
 ---
 
