@@ -22,7 +22,7 @@ use super::queue::{
     STAGE_RECONCILING,
     STAGE_FAILED, STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
 };
-use crate::auto_pipeline::run_auto_pipeline_core;
+use crate::auto_pipeline::{run_auto_pipeline_core, run_auto_pipeline_core_for_retry};
 use crate::library::repository::open_library_connection;
 use crate::reconcile::{candidate, commands, store};
 use crate::{app_root, AutoPipelineInput};
@@ -357,6 +357,7 @@ async fn run_job(app: AppHandle, state: Arc<ProcessingState>, job: queue::Proces
 
 async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::ProcessingJobRow) {
     let job_id = job.id.clone();
+    let recognition_attempt = job.retry_count;
     // 认领即发一次事件（queued → running）。
     {
         let Ok(root) = app_root(&app) else { return };
@@ -448,16 +449,17 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     let root_local = root.clone();
     let job_id_local = job_id.clone();
     let local_closure = move || {
-        run_auto_pipeline_core(
-            &root_local,
-            &job_id_local,
-            Some(AutoPipelineInput {
-                confidence_threshold: Some(0.85),
-                execution_mode: Some("localOnly".to_string()),
-                target: Some("editableDraft".to_string()),
-                ..Default::default()
-            }),
-        )
+        let input = Some(AutoPipelineInput {
+            confidence_threshold: Some(0.85),
+            execution_mode: Some("localOnly".to_string()),
+            target: Some("editableDraft".to_string()),
+            ..Default::default()
+        });
+        if recognition_attempt > 0 {
+            run_auto_pipeline_core_for_retry(&root_local, &job_id_local, input)
+        } else {
+            run_auto_pipeline_core(&root_local, &job_id_local, input)
+        }
     };
 
     // 云端任务（async）：**不在主路径上**抢 permit——permit 获取与 cloud_status 推进
@@ -577,7 +579,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     // 版本与稿件**由冻结函数在同一次读取中取回**（`get_canonical_ds` 一次查询同时返回
     // 两列），调用方无从"读新 DS 却贴旧版本"。
     let base_edit_version = if freeze_error.is_none() {
-        match freeze_local_candidate_snapshot(&root, &job_id) {
+        match freeze_local_candidate_snapshot_for_attempt(&root, &job_id, recognition_attempt) {
             Ok(version) => version,
             Err(error) => {
                 eprintln!(
@@ -591,6 +593,14 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     } else {
         0
     };
+
+    let source_sha256 = commands::source_sha256_for_job(&root, &job_id);
+    let recognition_batch_id = commands::recognition_batch_id_for_attempt(
+        &job_id,
+        &source_sha256,
+        base_edit_version,
+        recognition_attempt,
+    );
 
     if launch_cloud {
         // 本地稿已成：标记 local_status=succeeded（此前为 running，云端可能仍在跑）。
@@ -648,7 +658,14 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
         let cycle = run_cycle_in_blocking_boundary({
             let root = root.clone();
             let job_id = job_id.clone();
-            move || run_local_only_recognition_cycle(&root, &job_id, base_edit_version)
+            move || {
+                run_local_only_recognition_cycle_for_batch(
+                    &root,
+                    &job_id,
+                    base_edit_version,
+                    &recognition_batch_id,
+                )
+            }
         })
         .await;
         let (cloud_status, reconcile_status, actionable) = match cycle {
@@ -718,10 +735,7 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     // 旧 A3/A4 的模型通道（`verify_source_answers` / `adjudicate_divergence`）**不再**在
     // 这条路径上叠加：本地周期以 `cloud_enabled = false` 运行，既不调模型，也不按云端
     // 结果自动写入。
-    let batch_id = {
-        let source_sha256 = crate::reconcile::commands::source_sha256_for_job(&root, &job_id);
-        crate::reconcile::commands::recognition_batch_id(&job_id, &source_sha256, base_edit_version)
-    };
+    let batch_id = recognition_batch_id.clone();
     let mut repair_status: Option<String> = None;
     let mut repair_applied: i64 = 0;
     let mut repair_remaining: i64 = 0;
@@ -734,7 +748,14 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     let cycle = run_cycle_in_blocking_boundary({
         let root = root.clone();
         let job_id = job_id.clone();
-        move || run_local_only_recognition_cycle(&root, &job_id, base_edit_version)
+        move || {
+            run_local_only_recognition_cycle_for_batch(
+                &root,
+                &job_id,
+                base_edit_version,
+                &recognition_batch_id,
+            )
+        }
     })
     .await;
 
@@ -1304,6 +1325,24 @@ pub(crate) fn run_local_only_recognition_cycle(
     Ok(summarize_cycle_report(report))
 }
 
+pub(crate) fn run_local_only_recognition_cycle_for_batch(
+    root: &Path,
+    job_id: &str,
+    base_edit_version: i64,
+    batch_id: &str,
+) -> Result<RecognitionCycleReport, String> {
+    let report = crate::reconcile::commands::run_recognition_cycle_core_for_batch(
+        root,
+        job_id,
+        None,
+        false,
+        base_edit_version,
+        batch_id,
+        &|_root, _job_id, _profile_id| Err("cloud_runner_invoked_on_no_cloud_path".to_string()),
+    )?;
+    Ok(summarize_cycle_report(report))
+}
+
 fn summarize_cycle_report(report: Value) -> RecognitionCycleReport {
     let cloud_status = chain_status_to_job_status(
         report
@@ -1339,7 +1378,8 @@ fn summarize_cycle_report(report: Value) -> RecognitionCycleReport {
 /// 「同一批次复用已冻结候选」分支而采用它——于是稍后比对的是冻结时的本地结果，不是用户
 /// 编辑后的当前稿，「云端运行期间用户改了稿」才会被识别，迟到结果才不会覆盖用户修改。
 ///
-/// 幂等安全：`batch_id` 由输入与版本派生，重试必然复用同一快照，不会因重复冻结产生偏差。
+/// 初次处理的 `attempt = 0` 保持历史批次语义；用户重试传入新的 attempt，因而写入新的
+/// candidate/journal 身份，避免把旧的幂等记录误当成新识别结果。
 ///
 /// **版本来自这次读取本身**，不由调用方传入：`get_canonical_ds` 一趟查询同时取回
 /// 稿件与 `current_edit_version`，两者天生一致。若让调用方先单独读版本、函数再单独读稿，
@@ -1353,6 +1393,14 @@ fn summarize_cycle_report(report: Value) -> RecognitionCycleReport {
 /// 于是「云端运行期间用户改了稿」永远检测不到、迟到结果照样覆盖用户修改——正是本
 /// 修复要消灭的缺陷。因此这里把连接 / 取稿 / 落盘三处失败逐一如实上抛。
 fn freeze_local_candidate_snapshot(root: &Path, job_id: &str) -> Result<i64, String> {
+    freeze_local_candidate_snapshot_for_attempt(root, job_id, 0)
+}
+
+pub(crate) fn freeze_local_candidate_snapshot_for_attempt(
+    root: &Path,
+    job_id: &str,
+    attempt: i64,
+) -> Result<i64, String> {
     let conn = open_library_connection(root)
         .map_err(|error| format!("open_library_connection_failed:{error}"))?;
     let (canonical, base_edit_version) =
@@ -1360,9 +1408,22 @@ fn freeze_local_candidate_snapshot(root: &Path, job_id: &str) -> Result<i64, Str
             .map_err(|error| format!("read_canonical_failed:{error}"))?
             .ok_or_else(|| format!("canonical_not_seeded:{job_id}"))?;
     let source_sha256 = commands::source_sha256_for_job(root, job_id);
-    let batch_id = commands::recognition_batch_id(job_id, &source_sha256, base_edit_version);
+    let batch_id = commands::recognition_batch_id_for_attempt(
+        job_id,
+        &source_sha256,
+        base_edit_version,
+        attempt,
+    );
+    // The auto pipeline has just produced the fresh recognition artifact for
+    // this attempt.  It is a candidate input only; the canonical document
+    // above remains the user-authored baseline and is never replaced here.
+    let local_authoring = crate::util::read_json_opt(
+        &crate::util::job_dir(root, job_id)
+            .join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
+    )?
+    .unwrap_or(canonical);
     let snapshot = candidate::local_candidate_from_authoring(
-        &canonical,
+        &local_authoring,
         &batch_id,
         job_id,
         job_id,
@@ -2852,4 +2913,3 @@ mod tests {
         assert_eq!(failed.code(), CYCLE_FAILED);
     }
 }
-

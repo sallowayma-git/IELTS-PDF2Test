@@ -81,6 +81,26 @@ pub(crate) fn recognition_batch_id(
     )
 }
 
+/// Batch identity for a distinct user-triggered recognition attempt.
+///
+/// Attempt zero keeps the historical id so existing artifacts remain readable.
+/// A retry must get a fresh candidate, decision journal, and repair run; reusing
+/// the old id would make the idempotency journal replay the previous attempt
+/// instead of applying newly recognized improvements.
+pub(crate) fn recognition_batch_id_for_attempt(
+    job_id: &str,
+    source_sha256: &str,
+    base_edit_version: i64,
+    attempt: i64,
+) -> String {
+    let base = recognition_batch_id(job_id, source_sha256, base_edit_version);
+    if attempt <= 0 {
+        base
+    } else {
+        format!("{base}-retry-{attempt}")
+    }
+}
+
 /// 取任务主源文件的 sha256（幂等键的输入之一）。取不到时返回空串，
 /// 由 [`recognition_batch_id`] 降级为 `nosha`（仍然确定性）。
 pub(crate) fn source_sha256_for_job(root: &Path, job_id: &str) -> String {
@@ -428,6 +448,30 @@ pub(crate) fn run_recognition_cycle_core(
     )
 }
 
+/// 同一条调度任务的再次识别入口：批次身份由调度器按重试次数派生，
+/// 因而会产生新的候选与新的自动写入请求，同时仍复用本周期的 CAS/保护规则。
+pub(crate) fn run_recognition_cycle_core_for_batch(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+    cloud_enabled: bool,
+    base_edit_version: i64,
+    batch_id: &str,
+    cloud_runner: CloudOutlineRunner<'_>,
+) -> CommandResult<Value> {
+    run_recognition_cycle_core_with_channels_for_batch(
+        root,
+        job_id,
+        profile_id,
+        cloud_enabled,
+        base_edit_version,
+        cloud_runner,
+        None,
+        None,
+        Some(batch_id),
+    )
+}
+
 /// 同上，但显式注入 A4 的**分歧裁决通道**。A3 的核验通道仍为 `None`。
 ///
 /// `adjudicator = None` 时**不碰任何决策项**：确定性规则的逐项结论完整保留，
@@ -473,12 +517,38 @@ pub(crate) fn run_recognition_cycle_core_with_channels(
     source_verifier: Option<SourceVerifyRunner<'_>>,
     adjudicator: Option<AdjudicationRunner<'_>>,
 ) -> CommandResult<Value> {
+    run_recognition_cycle_core_with_channels_for_batch(
+        root,
+        job_id,
+        profile_id,
+        cloud_enabled,
+        base_edit_version,
+        cloud_runner,
+        source_verifier,
+        adjudicator,
+        None,
+    )
+}
+
+fn run_recognition_cycle_core_with_channels_for_batch(
+    root: &Path,
+    job_id: &str,
+    profile_id: Option<&str>,
+    cloud_enabled: bool,
+    base_edit_version: i64,
+    cloud_runner: CloudOutlineRunner<'_>,
+    source_verifier: Option<SourceVerifyRunner<'_>>,
+    adjudicator: Option<AdjudicationRunner<'_>>,
+    batch_id_override: Option<&str>,
+) -> CommandResult<Value> {
     let (canonical, current_version) = {
         let conn = open_library_connection(root)?;
         get_canonical_ds(&conn, job_id)?.ok_or_else(|| format!("ITEM_DS_NOT_SEEDED:{job_id}"))?
     };
     let source_sha256 = source_sha256_for_job(root, job_id);
-    let batch_id = recognition_batch_id(job_id, &source_sha256, base_edit_version);
+    let batch_id = batch_id_override
+        .map(str::to_string)
+        .unwrap_or_else(|| recognition_batch_id(job_id, &source_sha256, base_edit_version));
     let document_ir = read_json_opt(&job_dir(root, job_id).join("document-ir.json"))?;
 
     // 复用批次冻结快照（重试幂等），否则按当前稿投影。

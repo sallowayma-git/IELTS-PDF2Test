@@ -1857,6 +1857,20 @@ pub(crate) fn run_auto_pipeline_core(
     run_auto_pipeline_core_with_gateway(root, job_id, input, run_llm_gateway)
 }
 
+/// Retry entry used by the processing scheduler.
+///
+/// A user retry is a new recognition attempt, not permission to replace the
+/// canonical draft.  The attempt may refresh the derived recognition artifact
+/// so the reconcile/repair chain can compare it with the current canonical
+/// document; canonical writes still happen only through that chain.
+pub(crate) fn run_auto_pipeline_core_for_retry(
+    root: &Path,
+    job_id: &str,
+    input: Option<AutoPipelineInput>,
+) -> CommandResult<Value> {
+    run_auto_pipeline_core_with_gateway_mode(root, job_id, input, run_llm_gateway, true)
+}
+
 fn record_group_llm_review(
     ir: &mut Value,
     group_id: &str,
@@ -2081,7 +2095,20 @@ pub(crate) fn run_auto_pipeline_core_with_gateway<F>(
     root: &Path,
     job_id: &str,
     input: Option<AutoPipelineInput>,
-    mut llm_gateway: F,
+    llm_gateway: F,
+) -> CommandResult<Value>
+where
+    F: FnMut(&Path, &str, &str, &Value, Option<&str>) -> CommandResult<Value> + Send,
+{
+    run_auto_pipeline_core_with_gateway_mode(root, job_id, input, llm_gateway, false)
+}
+
+fn run_auto_pipeline_core_with_gateway_mode<F>(
+    root: &Path,
+    job_id: &str,
+    input: Option<AutoPipelineInput>,
+    llm_gateway: F,
+    allow_existing_draft_for_retry: bool,
 ) -> CommandResult<Value>
 where
     F: FnMut(&Path, &str, &str, &Value, Option<&str>) -> CommandResult<Value> + Send,
@@ -2095,10 +2122,13 @@ where
     let target = options.target.as_deref().unwrap_or("editableDraft");
     let allow_overwrite = options.allow_overwrite.unwrap_or(false);
 
-    let mut job = load_job(root, &job_id)?;
+    let job = load_job(root, &job_id)?;
     let dir = job_dir(root, &job_id);
     ensure_job_dirs(&dir)?;
-    if dir.join("authoring-ir.json").exists() && !allow_overwrite {
+    if dir.join("authoring-ir.json").exists()
+        && !allow_overwrite
+        && !allow_existing_draft_for_retry
+    {
         return Err(
             "editable_draft_exists; pass allowOverwrite=true before regenerating draft".to_string(),
         );
@@ -3421,6 +3451,54 @@ mod tests {
             current_step: WorkflowStep::DocumentReview,
             issue_counts: IssueCounts::default(),
         }
+    }
+
+    #[test]
+    fn retry_recognition_refreshes_an_existing_draft_without_an_overwrite_option() {
+        let root = std::env::temp_dir().join(format!("pdf2test-retry-pipeline-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job = sample_job();
+        save_job(&root, &job).unwrap();
+        let dir = job_dir(&root, &job.job_id);
+        ensure_job_dirs(&dir).unwrap();
+        fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/complex-reading.pdf"),
+            dir.join("uploads/fixture.pdf"),
+        )
+        .unwrap();
+        write_json(&dir.join("authoring-ir.json"), &json!({"sentinel": true})).unwrap();
+
+        let blocked = run_auto_pipeline_core(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                execution_mode: Some("localOnly".to_string()),
+                target: Some("editableDraft".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect_err("普通导入入口仍须保护已有可编辑稿");
+        assert!(blocked.contains("editable_draft_exists"), "{blocked}");
+
+        let report = run_auto_pipeline_core_for_retry(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                execution_mode: Some("localOnly".to_string()),
+                target: Some("editableDraft".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("重新识别必须能在已有稿子上产出新候选");
+        assert!(report.get("status").and_then(Value::as_str).is_some());
+        let refreshed: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("authoring-ir.json")).unwrap(),
+        )
+        .unwrap();
+        assert_ne!(refreshed, json!({"sentinel": true}), "识别必须真的重跑并刷新候选 artifact");
+        assert_eq!(refreshed.get("schemaVersion").and_then(Value::as_str), Some("ReadingAuthoringIRV1"));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     /// 目标 3(a)：DOCX 主源经 `main_source_for_cloud` 必须被接受，绝不返回 `main_source_is_not_pdf`。

@@ -1337,6 +1337,49 @@ fn scripted_edit_attempt_reply(body: &str, round: usize) -> String {
     .to_string()
 }
 
+/// 重试场景：先尝试改动用户刚编辑过的 q14（必须被保护拒绝），再只提交新识别带来的
+/// q15 改进。这样测试既证明人工编辑不会被覆盖，也证明同一轮里其它可安全落地的改进
+/// 不会因为一个受保护目标而一起丢失。
+fn scripted_retry_edit_reply(body: &str, round: usize) -> String {
+    let input = repair_request_input(body);
+    let version = input
+        .as_ref()
+        .and_then(|value| value.pointer("/context/editVersion"))
+        .and_then(Value::as_i64)
+        .unwrap_or(-1);
+    match round {
+        1 => json!({
+            "callId": "retry-c1",
+            "tool": "read_draft",
+            "arguments": {"taskGroupIds": ["early-approaches-q14-15"]}
+        }),
+        2 => json!({
+            "callId": "retry-c2",
+            "tool": "apply_edits",
+            "arguments": {"baseVersion": version, "commands": [set_answer("q14", "C")]}
+        }),
+        3 => json!({
+            "callId": "retry-c3",
+            "tool": "apply_edits",
+            "arguments": {
+                "baseVersion": version,
+                "commands": [set_answer("q15", "E")],
+                "evidence": [{
+                    "sourceFileId": "early-approaches-pdf",
+                    "pageIndex": 1,
+                    "quote": "15 E"
+                }]
+            }
+        }),
+        _ => json!({
+            "callId": "retry-c4",
+            "tool": "finish",
+            "arguments": {"note": "q14 保留人工编辑，q15 采用新识别结果"}
+        }),
+    }
+    .to_string()
+}
+
 /// 剧本：读稿 → 修正**选项库**与**作答结构**（都是已有题组内的结构写入）→ 收尾。
 ///
 /// 为什么必须验结构而不只是答案：云端独立识别最常见的偏差不是「答案选错一个字母」，
@@ -1813,6 +1856,173 @@ fn cloud_repair_cannot_overwrite_a_human_edited_target_on_the_real_chain() {
             .unwrap_or(false),
         "拒绝理由必须具体：{rejected:?}"
     );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 真实「重新识别」收口：新的 attempt 产生新的本地候选与修复批次，人工改过的 q14
+/// 仍然受保护，而同一候选里可安全落地的 q15 改进经唯一云端写入入口落库。
+#[test]
+fn retry_recognition_preserves_human_edit_and_applies_a_new_improvement() {
+    use crate::auto_pipeline::finalize_cloud_authoring_candidate;
+    use crate::authoring_v2_commands::{apply_patch, refresh_quality_report, validate_authoring};
+    use crate::library::repository::{
+        apply_editor_commands_tx_with, ApplyEditorCommandsInput, EditOrigin,
+    };
+    use crate::processing::scheduler::{
+        freeze_local_candidate_snapshot_for_attempt, run_local_only_recognition_cycle,
+        run_local_only_recognition_cycle_for_batch,
+    };
+    use crate::reconcile::commands::recognition_batch_id_for_attempt;
+    use crate::util::{job_dir, write_json};
+
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    seed_job_with_source(&root);
+
+    // First attempt: establish the old batch identity before the author edits q14.
+    let first_base_version = canonical_version(&root);
+    run_local_only_recognition_cycle(&root, ITEM_ID, first_base_version)
+        .expect("初次本地识别周期必须完成");
+    let first_batch = batch_id_for(&root, first_base_version);
+
+    // Use the real editor transaction, not a direct protected_edits_json mutation.  This is the
+    // same origin the UI save path supplies, so the target is protected as a product side effect.
+    {
+        let mut conn = open_library_connection(&root).expect("打开库连接");
+        apply_editor_commands_tx_with(
+            &mut conn,
+            &ApplyEditorCommandsInput {
+                item_id: ITEM_ID.to_string(),
+                base_version: first_base_version,
+                request_id: Some("human-retry-edit".to_string()),
+                commands: vec![set_answer("q14", "A")],
+                title: None,
+            },
+            EditOrigin::Human,
+            None,
+            &apply_patch,
+            &|ds| {
+                refresh_quality_report(&root, ITEM_ID, ds)?;
+                validate_authoring(ds)
+            },
+            &|_, _| Ok(()),
+        )
+        .expect("人工编辑必须经正式事务落库");
+    }
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+
+    // Controlled fresh recognition output: q14 conflicts with the human edit, q15 contains a
+    // new candidate improvement.  The scheduler's real freeze function reads this V2 shadow and
+    // writes it as the retry-local candidate without replacing canonical.
+    let mut fresh_shadow = golden_authoring();
+    fresh_shadow["answerKey"]["q14"]["labels"] = json!(["C"]);
+    fresh_shadow["answerKey"]["q15"]["labels"] = json!(["E"]);
+    write_json(
+        &job_dir(&root, ITEM_ID).join(crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE),
+        &fresh_shadow,
+    )
+    .expect("fresh recognition shadow");
+
+    let retry_base_version = canonical_version(&root);
+    let frozen_version = freeze_local_candidate_snapshot_for_attempt(&root, ITEM_ID, 1)
+        .expect("重试候选冻结必须成功");
+    assert_eq!(frozen_version, retry_base_version);
+    let source_sha256 = crate::reconcile::commands::source_sha256_for_job(&root, ITEM_ID);
+    let retry_batch = recognition_batch_id_for_attempt(
+        ITEM_ID,
+        &source_sha256,
+        retry_base_version,
+        1,
+    );
+    assert_ne!(retry_batch, first_batch, "重试必须使用新的 batch 身份");
+    let local_candidate = store::read_candidate(
+        &root,
+        ITEM_ID,
+        &retry_batch,
+        store::LOCAL_CANDIDATE_FILE,
+    )
+    .expect("重试必须落下新的本地候选");
+    assert_eq!(
+        local_candidate
+            .slots
+            .iter()
+            .find(|slot| slot.slot_id == "q14")
+            .and_then(|slot| slot.answer.as_ref())
+            .and_then(|answer| answer.get("labels")),
+        Some(&json!(["C"]))
+    );
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+
+    // The production local stage consumes the newly frozen batch before the repair writer runs.
+    run_local_only_recognition_cycle_for_batch(
+        &root,
+        ITEM_ID,
+        retry_base_version,
+        &retry_batch,
+    )
+    .expect("重试本地识别周期必须完成");
+
+    let _requests = start_repair_service(&root, scripted_retry_edit_reply);
+    let mut cloud_candidate = cloud_draft("C");
+    cloud_candidate["answerKey"]["cloud-q15"]["labels"] = json!(["E"]);
+    finalize_cloud_authoring_candidate(
+        &root,
+        ITEM_ID,
+        &retry_batch,
+        retry_base_version,
+        &json!({"authoring": cloud_candidate}),
+    )
+    .expect("重试云端候选必须能接入同一批次");
+
+    let not_cancelled = || false;
+    let request = request_for_batch(
+        &root,
+        &retry_batch,
+        "run-retry-1",
+        &not_cancelled,
+        8,
+    );
+    let report = run_repair_loop(&request, |context, observations| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("重试修复循环必须完成");
+
+    assert_eq!(
+        report.applied_count,
+        1,
+        "未受保护的新改进必须真实写入: {:?}",
+        report.observations
+    );
+    assert_eq!(read_answer(&root, "q14")["labels"], json!(["A"]));
+    assert_eq!(
+        read_answer(&root, "q15")["labels"],
+        json!(["E"]),
+        "新识别带来的 q15 改进必须落到 canonical"
+    );
+    assert!(
+        report
+            .observations
+            .iter()
+            .any(|observation| observation["errors"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|error| error.as_str().unwrap_or_default().contains("EDIT_PROTECTED_TARGET"))),
+        "q14 的人工编辑必须收到具体保护拒绝"
+    );
+    assert!(
+        has_task(&report.remaining_tasks, "cloud-diff:slot:q14:answer"),
+        "改不动的人工差异必须进入剩余任务而不是消失: {:?}",
+        report.remaining_tasks
+    );
+
     let _ = std::fs::remove_dir_all(&root);
 }
 
