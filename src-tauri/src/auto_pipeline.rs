@@ -1055,7 +1055,11 @@ fn answer_value_for_slot(canonical: &Value, slot_id: &str, raw: &Value) -> Optio
         }));
     }
     let allowed = option_labels_for_slot(canonical, slot_id);
-    if allowed.is_empty() || values.iter().any(|value| !allowed.contains(value)) {
+    let option_values = values
+        .iter()
+        .map(|value| value.to_ascii_uppercase())
+        .collect::<Vec<_>>();
+    if allowed.is_empty() || option_values.iter().any(|value| !allowed.contains(value)) {
         return None;
     }
     let assignment = response_group_for_slot(canonical, slot_id)
@@ -1071,7 +1075,7 @@ fn answer_value_for_slot(canonical: &Value, slot_id: &str, raw: &Value) -> Optio
         .unwrap_or("per_slot");
     Some(json!({
         "kind": "option",
-        "labels": values,
+        "labels": option_values,
         "assignment": assignment
     }))
 }
@@ -4234,6 +4238,47 @@ mod tests {
                 "value":{"kind":"unresolved"}
             })],
             "空白答案页不得复用上一次答案页识别值"
+        );
+    }
+
+    #[test]
+    fn roman_numeral_option_answers_are_case_insensitive() {
+        let canonical = json!({
+            "answerSlots": {
+                "q15": {"slotId":"q15", "questionNumber":15, "interaction":"select"}
+            },
+            "taskGroups": [{
+                "responseGroups": [{
+                    "slotIds": ["q15"],
+                    "optionBankRef": "headings",
+                    "assignment": "per_slot"
+                }],
+                "optionBank": {
+                    "optionBankId": "headings",
+                    "options": [{"label":"i"},{"label":"ii"},{"label":"iii"}]
+                }
+            }],
+            "answerKey": {"q15": {"kind":"unresolved"}}
+        });
+        let candidate = json!({
+            "answers": {"15": "ii"},
+            "confidence": 0.99,
+            "evidence": [{"questionNumber":"15", "pageIndex":5, "quote":"15 ii"}],
+            "answerPageIndexes": [5]
+        });
+        let commands = build_answer_page_commands(
+            &canonical,
+            &candidate,
+            &std::collections::BTreeSet::new(),
+            &std::collections::BTreeSet::new(),
+        );
+        assert_eq!(
+            commands,
+            vec![json!({
+                "op":"setAnswer",
+                "slotId":"q15",
+                "value":{"kind":"option", "labels":["II"], "assignment":"per_slot"}
+            })]
         );
     }
 
