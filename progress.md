@@ -1603,3 +1603,11 @@ A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
 - [x] 按内容哈希护栏发现旧 exe 后重建；受控 `tauri-cdp-cloud-repair-chain.mjs` 最终 13/13 通过。
 - [x] 全量 Rust `874 passed / 0 failed / 11 ignored`；Vitest `315 passed / 0 failed`。
 - [x] 清理本次 harness 目录、构建日志/清单、旧 dist 临时目录、dist、`src-tauri/target` 和 `tmp`；保留源码、文档与 `.workbuddy` 私有记忆。
+
+## 2026-09-20 source coverage（最终收口）
+
+- [x] 红测先行：canonical 删除 q15 被识别为 `missing` 并阻断质量；不可解析声明为 `undetermined`；补齐紧凑题号、独立 answer-box、空 lines/span fallback 和 pdfium `2 7` 字形空格反例。
+- [x] 质量报告新增 `questionCoverage`，缺题进入 `SOURCE_QUESTION_COVERAGE_MISSING` blocking issue，无法判定进入 `SOURCE_QUESTION_COVERAGE_UNDETERMINED` warning；显式 listening 不套阅读规则。
+- [x] 第一次 CDP 运行因真实 pdfium `2 7` 题号暴露误报而失败（前 12 场景通过，`export-and-student-runtime` 被 coverage 阻断）；修复后同一受控 Tauri 链 **13/13 passed**，真实 `27..40` coverage complete。
+- [x] 最终全量 Rust **881 passed / 0 failed / 11 ignored**；Vitest **315 passed / 0 failed**。
+- [x] 最终构建/验收产物已在收口时清理；外部阻塞仍是真实模型完整链与 token/时延、28 份未见视觉样本准确率、DOCX 端到端真实样本；听力只确认每个 part 独立 media 合同，未实施。

@@ -746,3 +746,46 @@ Errors encountered:
 
 - high-reasoning 云端审计子代理因 workspace credits 耗尽退出；主线程接管审计。
 - 第一次追加 NOTES 的 patch 因尾部文字与预期不一致失败；读取真实尾部后用精确锚点重试成功。
+
+## 2026-09-20 阅读侧间断性收口：判据与唯一剩余阻塞项
+
+用户提议先把阅读相关界面与校验链路做完、间断性收尾，听力另行推进。同意，但收口必须写清
+"哪些是做完了、哪些是被外部卡住了"，不能把后者混进前者。
+
+### 收口前建议补的最后一张阅读卡：source coverage（漏题检测）
+
+理由：它是**唯一**既属于阅读侧、又不依赖网关额度/视觉服务/真实 Word 样本的实质缺口。在它缺位时，
+原文里有、本地与云端同时漏掉的题，没有任何一路能发现，产品会显示"没有问题、可以导出"——对一个
+把卷子交给学生的产品来说，这是剩余缺陷里形状最坏的一个。且它是纯本地解析：解析原文自己声明的
+题域（`Questions 1–13`、`Write your answers in boxes 1-13`，必须能认 `questions1-10` 这种无空格写法），
+与 canonical 题号集比对。硬规则：解析不到声明必须返回 `Undetermined`，绝不能返回"覆盖完整"。
+验收必须先构造"人为删掉一道题"的反例，抓到了才算。
+
+- [x] source coverage：第三个独立视角（原文声明题域 vs canonical 题号集）。
+      `Questions ...` / `Write ... boxes ...` 从 `DocumentIRV2` 独立抽取并与
+      `answerSlots[].questionNumber` 比对；Found 且有缺失 → `SOURCE_QUESTION_COVERAGE_MISSING`
+      阻塞导出；Undetermined → `SOURCE_QUESTION_COVERAGE_UNDETERMINED` 提示但不伪报完整。
+      红测覆盖删除 q15、不可解析声明、`questions1-10`、答案框独立声明、空 lines 回退 spans，
+      真实 PDF 另发现并修复 pdfium 的 `2 7` 字形空格题号；受控 Tauri 链最终 13/13。
+
+### 收口时如实登记为"外部阻塞，未验证"
+
+- 真实模型驱动完整链（阶段 2/3）：网关额度。今日同一网关已连续出现 503（视觉）、
+      401 `INVALID_API_KEY`、402 `user_quota_insufficient` 三种不同的凭据/额度失败。
+      **这个聚合网关不能作为可持续的测试依赖**，需要稳定额度或换一个。
+- 完整候选请求的真实完成时间与 token：同上，测量卡未执行。
+- 28 份未见样本答案页准确率：同上（视觉模型 `gemini-3.8-flash` 已验证可用，缺的只是额度）。
+- DOCX 端到端：缺真实 Word 试卷样本。
+
+### 收口时可选的两张小卡（不阻塞收口）
+
+- 成功/部分成功路径上批次行 cloud 阶段仍停在 `CLOUD_DISABLED`（本轮只修了失败路径；
+      改动会触及既有 13/13 CDP 断言，故单独排）。
+- 单文件导入端到端确认（UI 两条入口已存在，只差"只选一份就只处理一份"的产品级证据）。
+
+### 听力：合同决策已确认，暂不实施
+
+`LISTENING-EPIC-PLAN.md` Phase D 已正确指出 `ListeningExamSourceV1` 只有一个 `media` 对象。
+而用户 D1 的答复是"按节次序号记录、可选整个文件夹"，即**多个 Section MP3**——现有单 `media`
+合同支持不了。因此该答复确认选择 Phase D 的选项 (b)：每个 part 带自己的 media 资源引用。
+这只是听力 epic 的合同基线，本轮未改听力代码。

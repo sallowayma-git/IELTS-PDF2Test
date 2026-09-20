@@ -1,5 +1,16 @@
 # Findings
 
+## 2026-09-20 source coverage（漏题检测）
+
+- 现有 `recognition::local::task_groups::check_declared_range_present` 只在单个 instruction zone 内比较声明范围与已恢复的 question blocks；它依赖同一条本地识别结果，不能发现“声明题域和 canonical 同时漏掉同一道题”。
+- `ielts_grammar::quality::evaluate_quality_with_gate` 已是导出/发布共用的质量事实入口，并接收独立的 `DocumentIRV2` physical shadow；source coverage 应在此处加入独立题域比较，不能从 `taskGroups` 反推 source declaration。
+- `DocumentIRV2.pages[].lines[].text` 是当前产品路径可用的原文证据面。`question_number::parse_question_expression_detailed` 已支持普通 `Questions 1-13`、短横线、`to`、`and`/混合范围，但其边界检查会拒绝 `questions1-10`，需要先写红测再收紧修改。
+- 规则设计：从原文行中收集 `Questions ...` 和 `Write your answers in boxes ...` 声明，union 后与 canonical `answerSlots[].questionNumber` 比较；无法可靠解析任何声明或遇到声明式文本无法解析时返回 `Undetermined`，绝不返回完整覆盖。声明可解析且存在缺题时返回 blocking 缺口。
+- 实现落在 `ielts_grammar::quality::evaluate_quality_with_gate`：报告新增 `questionCoverage`，缺题写入 blocking issue，无法判定写入 warning；显式 `modality=listening` 暂不套用阅读规则。
+- 红测先证明删除 canonical q15 会得到 `missing=[15]` / `SOURCE_QUESTION_COVERAGE_MISSING`，不可解析声明只能得到 `undetermined`；另覆盖 `questions1-10`、独立 answer-box 声明和空 `lines` 回退 `spans`。
+- 真实 CDP 链第一次运行暴露了 pdfium 的实际形状：多位数字被抽成 `2 7` / `3 1`，导致误报缺题。新增反例先红后修，在 coverage 声明入口合并相邻数字间字形空格；修复后同一 PDF 的 `questionCoverage` 为 `complete`，题号 `27..40` 闭合，13/13 场景通过。
+- 本轮全量 Rust `880 passed / 0 failed / 11 ignored` 是数字间空格修复前的结果；最终新增该反例后应以最新复跑数字为准，不能沿用这条旧数字。
+
 ## 2026-09-14 第三轮精简确认 verifier 的技术发现（跨仓）
 
 第三轮派 3 个只读 verifier（发布/打包完整性、学生端提交校验、编辑器与云端 UX）复核第二轮

@@ -581,3 +581,28 @@ HTTP body 还包含内联 PDF/base64。没有输出缓存、没有 completion，
 - 同次 harness 的 `defect-retry-cannot-rerun` 探针为 `not-reproduced`；不把它扩大解释为新的行为保证。
 - 合并后全量验证：Rust `874 passed / 0 failed / 11 ignored`；Vitest `315 passed / 0 failed`。
 - 回归完成后删除本次运行目录、构建日志/清单、旧 dist 临时目录、前端 dist、Rust target 和临时目录；凭据没有写入仓库或保留在验证产物中。
+
+## 13. Source coverage：原文声明题域与 canonical 题号闭合（2026-09-20）
+
+这张卡补的是阅读侧第三个独立视角：不能只看本地 task group 或云端候选，因为两者可能同时漏掉同一道题。
+质量评估从 `DocumentIRV2.pages[].lines[].text`（空行页回退 `spans[].text`）收集原文自己的题域声明：
+`Questions ...` 与带有 answer/write 上下文的 `boxes ...` / `box ...`，再与 canonical
+`answerSlots[].questionNumber` 做集合比较。
+
+状态语义固定为三态：
+
+- `complete`：声明集合与 canonical 集合相同；
+- `missing`：集合不相同，写入 `SOURCE_QUESTION_COVERAGE_MISSING` blocking issue，质量状态阻断；
+- `undetermined`：没有可解析声明、声明无法解析或 physical shadow 不可用，写入
+  `SOURCE_QUESTION_COVERAGE_UNDETERMINED` warning，绝不写成 complete。
+
+反例先行证据：
+
+- 人为从 canonical 草稿删掉 q15，而原文声明仍为 14–15 → `missingQuestionNumbers=[15]`，质量状态 `blocked`；
+- `Questions are based on the passage below.` → `undetermined`，不产生伪造的“完整覆盖”；
+- `questions1-10`、只有 `Write your answers in boxes ...`、空 `lines` 回退 `spans` 均有单测；
+- 第一次真实 Tauri CDP 链还发现 pdfium 会把多位题号抽成 `Questions 2 7 – 3 1`，该真实反例先红，随后只在 coverage 数字声明入口合并相邻数字间的字形空格。
+
+最终真实链证据：`fixtures/parser/demanding-reading-passage-3.pdf` 的 physical shadow 得到声明题号
+`27..40`，canonical 同为 `27..40`，`missing=[]`、`extra=[]`、`status=complete`；重建当前 exe 后
+`tauri-cdp-cloud-repair-chain.mjs` **13/13 passed**。这条逻辑不依赖网关额度、视觉服务或 DOCX 样本，也跳过显式 listening modality，避免把听力合同提前定死。
