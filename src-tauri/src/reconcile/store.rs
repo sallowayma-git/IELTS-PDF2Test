@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::source::SourceVerificationV1;
 use crate::schema::cloud_repair_v1::CloudAuthoringCandidateV1;
@@ -552,6 +552,64 @@ pub(crate) fn write_batch_repair(
     Ok(())
 }
 
+/// 云端**真的跑过、但没交出可用结果**时，把批次行的 cloud 阶段改写成真实终态。
+///
+/// 为什么必须单独有这一格：批次行是本地周期建出来的，而本地周期按设计以
+/// `cloud_enabled = false` 运行，于是它写下的是 `not_run` / `CLOUD_DISABLED`，
+/// 消息字面是「本次导入未启用云端识别」。`write_batch_repair` 只写 `repair_json`，
+/// 从不碰这一格。于是一次真实的云端超时会在库里留下互相矛盾的两行：
+/// 任务行 `cloud_status = failed` 且 `last_error_code` 带着真实超时，批次行却说
+/// 用户没启用云端——而前端状态行读的是**批次行**，用户看到的是
+/// 「题稿已生成，可以开始编辑」，那次超时在界面上完全消失。
+///
+/// 2026-09-20 真实网关跑 `demanding-reading-passage-3.pdf` 时实测到这一点：
+/// `progress_json` 明写 `cloudEnabled:true`，同一行的 `cloud_reason_code` 却是
+/// `CLOUD_DISABLED`。
+pub(crate) fn write_batch_cloud_failure(
+    conn: &Connection,
+    batch_id: &str,
+    state: &str,
+    reason_code: &str,
+    message: &str,
+) -> CommandResult<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let stages_raw: Option<String> = conn
+        .query_row(
+            "SELECT stages_json FROM recognition_batches_v1 WHERE batch_id = ?1",
+            params![batch_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("recognition_batch_stages_read:{error}"))?
+        .flatten();
+    // 阶段快照按需修补：只改 cloud 这一格，其余三路保持本地周期写下的真实值。
+    let mut stages = stages_raw
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    stages["cloud"] = json!({
+        "state": state,
+        "reasonCode": reason_code,
+        "message": message,
+        "updatedAt": now,
+    });
+    let stages_json = serde_json::to_string(&stages)
+        .map_err(|error| format!("recognition_batch_stages_serialize:{error}"))?;
+    let affected = conn
+        .execute(
+            "UPDATE recognition_batches_v1
+                SET cloud_status = ?2, cloud_reason_code = ?3, stages_json = ?4, updated_at = ?5
+              WHERE batch_id = ?1",
+            params![batch_id, state, reason_code, stages_json, now],
+        )
+        .map_err(|error| format!("recognition_write_batch_cloud_failure:{error}"))?;
+    if affected == 0 {
+        return Err(format!("recognition_batch_missing:{batch_id}"));
+    }
+    Ok(())
+}
+
 /// 读取条目最新批次的裁决（数据库为读取权威）。
 pub(crate) fn load_latest_decision(
     conn: &Connection,
@@ -689,7 +747,7 @@ mod tests {
     use crate::library::schema::ensure_v2_schema;
     use crate::schema::recognition_v1::{
         reason, DecisionFieldV1, DecisionResolutionV1, DecisionSeverityV1, DecisionStatusV1,
-        DecisionTargetTypeV1, DecisionTargetV1,
+        DecisionTargetTypeV1, DecisionTargetV1, StageStateV1, StageStatusV1,
     };
     use serde_json::json;
 
@@ -1058,5 +1116,76 @@ mod tests {
             "错误码必须指明候选损坏（反序列化失败）"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 本地周期写下的 `CLOUD_DISABLED` 必须能被一次真实云端失败改写掉。
+    ///
+    /// 修复前 `write_batch_repair` 只写 `repair_json`，这一格永远停在
+    /// 「本次导入未启用云端识别」——而前端状态行读的正是这一格。
+    #[test]
+    fn a_real_cloud_failure_overwrites_the_local_cycle_cloud_disabled_stage() {
+        let conn = memory();
+        let mut decision = decision("batch-cloud-fail");
+        // 先复现本地周期的写入：cloud 如实标 not_run/CLOUD_DISABLED。
+        decision.chain_status.cloud = ChainStatusV1::NotRun;
+        decision.chain_status.cloud_reason_code = Some(reason::CLOUD_DISABLED.to_string());
+        let stages = RecognitionChainStateV1 {
+            local: StageStatusV1::new(StageStateV1::Succeeded),
+            cloud: StageStatusV1::with_reason(
+                StageStateV1::NotRun,
+                reason::CLOUD_DISABLED,
+                "本次导入未启用云端识别。",
+            ),
+            source: StageStatusV1::new(StageStateV1::NotRun),
+            adjudication: StageStatusV1::new(StageStateV1::Succeeded),
+        };
+        upsert_batch_with_stages(&conn, &decision, Some(&stages)).unwrap();
+        let before = load_batch_by_id(&conn, "batch-cloud-fail").unwrap().unwrap();
+        assert_eq!(
+            before.chain_status.cloud_reason_code.as_deref(),
+            Some(reason::CLOUD_DISABLED)
+        );
+
+        write_batch_cloud_failure(
+            &conn,
+            "batch-cloud-fail",
+            "unusable",
+            reason::MODEL_TIMEOUT,
+            "llm_timeout_budget_exhausted:llm_http_timeout",
+        )
+        .unwrap();
+
+        let after = load_batch_by_id(&conn, "batch-cloud-fail").unwrap().unwrap();
+        assert_eq!(
+            after.chain_status.cloud_reason_code.as_deref(),
+            Some(reason::MODEL_TIMEOUT)
+        );
+        let stages_json: String = conn
+            .query_row(
+                "SELECT stages_json FROM recognition_batches_v1 WHERE batch_id = 'batch-cloud-fail'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stages: Value = serde_json::from_str(&stages_json).unwrap();
+        assert_eq!(stages["cloud"]["state"], json!("unusable"));
+        assert_eq!(stages["cloud"]["reasonCode"], json!(reason::MODEL_TIMEOUT));
+        assert!(
+            !stages_json.contains("未启用云端识别"),
+            "云端真的跑过，界面不能再说用户没启用：{stages_json}"
+        );
+        // 其余三路必须原样保留（只改 cloud 这一格）。
+        assert_eq!(stages["local"]["state"], json!("succeeded"));
+        assert_eq!(stages["adjudication"]["state"], json!("succeeded"));
+
+        // 不存在的批次必须报错，不能静默成功。
+        assert!(write_batch_cloud_failure(
+            &conn,
+            "batch-missing",
+            "unusable",
+            reason::MODEL_TIMEOUT,
+            "x"
+        )
+        .is_err());
     }
 }

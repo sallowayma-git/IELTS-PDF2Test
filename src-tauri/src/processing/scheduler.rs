@@ -1025,6 +1025,31 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     if let Some(mapped) = cloud_status_for_job(launch_cloud, repair_status.as_deref(), repair_applied) {
         cloud_status = mapped;
     }
+    // 同一个判定也要写进批次行：前端状态行读批次行，不改这一格的话，一次真实的云端
+    // 失败在界面上与「未启用云端」无法区分（实测见 `write_batch_cloud_failure` 的注释）。
+    if let Some((state, reason_code, message)) =
+        batch_cloud_failure_for_job(launch_cloud, &cloud_status, repair_error.as_deref())
+    {
+        let written = run_blocking({
+            let root = root.clone();
+            let batch_id = batch_id.clone();
+            move || {
+                let conn = open_library_connection(&root)?;
+                crate::reconcile::store::write_batch_cloud_failure(
+                    &conn,
+                    &batch_id,
+                    &state,
+                    &reason_code,
+                    &message,
+                )
+            }
+        })
+        .await;
+        if let Err(error) = written {
+            // 写库失败不改判云端结论，只让诊断看得到。
+            eprintln!("[processing] batch cloud failure write failed for {job_id}: {error}");
+        }
+    }
     let actionable_final = actionable.max(repair_remaining);
 
     let advance_result = advance(
@@ -1078,6 +1103,37 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
 /// 返回 `None` 表示「保留本地周期给出的值」——只在云端**从未启动**时发生（无云导入，
 /// 本地周期如实报 `not_run`）。云端启动了却拿不到结果（取消 / lease 丢失 / 冻结失败
 /// 主动放弃）时返回 `failed`：那是「跑了但没拿到结果」，不是「没参与」。
+/// 批次行的 cloud 阶段**必须与任务行来自同一个判定**。
+///
+/// `cloud_status_for_job` 已经把「云端起了却没拿到可用结果」判成 `failed` 并写进任务行，
+/// 但批次行那一格仍是本地周期写下的 `not_run` / `CLOUD_DISABLED`（本地周期按设计看不见
+/// 云端）。前端状态行读的是批次行，于是一次真实的云端超时在界面上被显示成
+/// 「题稿已生成，可以开始编辑」——与「用户压根没启用云端」同一句话。
+///
+/// 返回 `None` 表示不改写：云端从未启动（无云导入，`not_run` 是实话），或者云端交出了
+/// 结果（成功 / 部分成功——那种情况由 `repair_json` 讲，本格留给后续卡片收敛）。
+/// 原因码复用 `classify_cloud_error`，与旧云端链同一套稳定码，不新造分类。
+fn batch_cloud_failure_for_job(
+    launch_cloud: bool,
+    job_cloud_status: &str,
+    repair_error: Option<&str>,
+) -> Option<(String, String, String)> {
+    if !launch_cloud || job_cloud_status != "failed" {
+        return None;
+    }
+    // 没有错误串也不能沉默：状态已经是 failed，必须给用户一句能行动的话。
+    let error = repair_error
+        .map(str::trim)
+        .filter(|error| !error.is_empty())
+        .unwrap_or("云端识别没有返回可用结果。");
+    let failure = crate::reconcile::engine::classify_cloud_error(error);
+    Some((
+        failure.status.as_str().to_string(),
+        failure.reason_code,
+        failure.message,
+    ))
+}
+
 fn cloud_status_for_job(
     launch_cloud: bool,
     repair_status: Option<&str>,
@@ -2290,6 +2346,48 @@ mod tests {
             cloud_status_for_job(false, Some("completed"), 0).as_deref(),
             Some("succeeded")
         );
+    }
+
+    /// 批次行的 cloud 阶段必须跟着任务行走：**一次真实的云端失败不能在界面上与
+    /// 「未启用云端」同形**。
+    ///
+    /// 这条复现的是 2026-09-20 真实网关跑 `demanding-reading-passage-3.pdf` 时的实测缺陷：
+    /// 候选请求 134 秒超时，任务行如实记 `cloud_status=failed` +
+    /// `llm_timeout_budget_exhausted`，但批次行仍是本地周期写下的 `CLOUD_DISABLED`
+    /// （"本次导入未启用云端识别"）。前端状态行读批次行，于是用户看到的是
+    /// 「题稿已生成，可以开始编辑」——那次超时在界面上彻底消失。
+    #[test]
+    fn batch_cloud_stage_follows_the_job_row_verdict_on_a_real_cloud_failure() {
+        // 真实超时串（取自实测 `last_error_code`）→ 必须归到 MODEL_TIMEOUT，
+        // 且状态是 `unusable`（"试过了，没拿到可用结果"），不是 `not_run`。
+        let (state, reason_code, message) = batch_cloud_failure_for_job(
+            true,
+            "failed",
+            Some("llm_timeout_budget_exhausted:llm_http_timeout:error sending request"),
+        )
+        .expect("云端起了又失败，必须改写批次行");
+        assert_eq!(state, "unusable", "超时是「不可用」，不是「未运行」");
+        assert_eq!(reason_code, crate::schema::recognition_v1::reason::MODEL_TIMEOUT);
+        assert!(
+            message.contains("llm_timeout_budget_exhausted"),
+            "必须保留真实错误细节供排查：{message}"
+        );
+
+        // 没起云端 → 不改写（本地周期的 not_run 是实话）。
+        assert_eq!(batch_cloud_failure_for_job(false, "not_run", None), None);
+        // 云端交出了结果 → 不改写。
+        assert_eq!(batch_cloud_failure_for_job(true, "succeeded", None), None);
+        assert_eq!(batch_cloud_failure_for_job(true, "partial", None), None);
+
+        // failed 但没有错误串：仍必须给出可行动的结论，不能沉默返回 None。
+        let (fallback_state, fallback_reason, fallback_message) =
+            batch_cloud_failure_for_job(true, "failed", None).expect("failed 必须有结论");
+        assert_eq!(fallback_state, "unusable");
+        assert_eq!(
+            fallback_reason,
+            crate::schema::recognition_v1::reason::MODEL_INVALID_OUTPUT
+        );
+        assert!(!fallback_message.trim().is_empty());
     }
 
     /// 端到端锁死「云端拉取失败」这一格：**任务行必须报 `failed`，不能报 `not_run`**。
