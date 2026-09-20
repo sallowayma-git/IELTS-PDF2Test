@@ -977,6 +977,49 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             repair_error.get_or_insert(error);
         }
     }
+
+    // Answer-page recognition is a separate, final machine write: it uses the
+    // already-materialized scanned-page images, then commits through the same
+    // canonical editor transaction as every other answer write.  Running it
+    // after cloud repair means the answer-page candidate sees the final draft;
+    // the CAS/protection check inside the transaction still preserves edits
+    // made while the vision request was in flight.  It is intentionally gated
+    // to PDF + reading inside the product entrypoint, so DOCX and listening do
+    // not acquire this path.
+    if launch_cloud
+        && freeze_error.is_none()
+        && resolved_profile.is_some()
+        && !state.cancelled.read().await.contains(&job_id)
+    {
+        let answer_profile = resolved_profile.clone().unwrap_or_default();
+        let answer_permit = state.cloud_permits.clone().acquire_owned().await;
+        let answer_result = run_blocking({
+            let root = root.clone();
+            let job_id = job_id.clone();
+            move || {
+                let result = crate::auto_pipeline::recognize_and_apply_pdf_answers(
+                    &root,
+                    &job_id,
+                    &answer_profile,
+                );
+                drop(answer_permit);
+                result
+            }
+        })
+        .await;
+        match answer_result {
+            Ok(report) => {
+                if report.get("failure").is_some() {
+                    eprintln!("[processing] answer-page recognition kept unresolved answers for {job_id}: {report}");
+                }
+            }
+            Err(error) => {
+                // This is a conservative enrichment failure, not a reason to
+                // discard the valid draft or pretend that answers were found.
+                eprintln!("[processing] answer-page recognition failed for {job_id}: {error}");
+            }
+        }
+    }
     // 云端**真的跑过**就以修复状态为准：本地周期看不见云端，会把 cloud_status 标成
     // `not_run`（= 本次没有云端参与），拿它描述一次真实的云端修复（成功或失败）都是谎报。
     if let Some(mapped) = cloud_status_for_job(launch_cloud, repair_status.as_deref(), repair_applied) {

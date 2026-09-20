@@ -51,6 +51,7 @@ use crate::artifact_store::write_canonical_json_atomic;
 use chrono::Utc;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -762,19 +763,89 @@ where
     F: FnMut(&Path, &str, &str, &Value, Option<&str>) -> CommandResult<Value>,
 {
     let profile = find_profile(root, profile_id)?;
-    let image_count = image_count_from_extraction(extraction);
+    let (answer_page_extraction, answer_page_indexes) =
+        answer_page_extraction(root, job, extraction);
+    let image_count = image_count_from_extraction(&answer_page_extraction);
     if image_count == 0 {
-        return Err("vision_answer_no_extractable_pdf_images".to_string());
+        // A born-digital reading PDF, or a passage-only PDF with no image-only
+        // answer page, is a valid negative result.  It must not be surfaced as
+        // a model failure and it must not create guessed answer values.
+        return Ok((
+            json!({
+                "schemaVersion": "VisionAnswerCandidateV1",
+                "source": format!("vision-answer-images:{}", profile_id),
+                "provider": profile.get("provider").cloned().unwrap_or_else(|| json!("OpenAiCompatible")),
+                "profileId": profile_id,
+                "model": profile.get("model").cloned().unwrap_or(Value::Null),
+                "jobId": job.job_id,
+                "answers": {},
+                "confidence": 0.0,
+                "warnings": ["no image-only answer page was found"],
+                "evidence": [],
+                "imageCount": 0,
+                "answerPageImageCount": 0,
+                "answerPageIndexes": answer_page_indexes,
+                "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([]))
+            }),
+            json!({
+                "answers": {},
+                "confidence": 0.0,
+                "warnings": ["no image-only answer page was found"],
+                "evidence": [],
+                "answerPageImageCount": 0,
+                "answerPageIndexes": answer_page_indexes
+            }),
+        ));
     }
-    let input = make_vision_answer_extraction_input(&profile, job, profile_id, extraction);
+    let input = make_vision_answer_extraction_input(
+        &profile,
+        job,
+        profile_id,
+        &answer_page_extraction,
+    );
     let api_key = load_llm_api_key(root, profile_id);
-    let output = llm_gateway(
+    let output = match llm_gateway(
         root,
         &job.job_id,
         "extract_pdf_image_answers",
         &input,
         api_key.as_deref(),
-    )?;
+    ) {
+        Ok(output) => output,
+        // The real gateway rejects an empty `answers` object.  Treat that
+        // particular result as a conservative empty page, so a rerun can clear
+        // stale answer-page values while transport/schema failures remain
+        // visible to the caller and never mutate the canonical document.
+        Err(error) if error.starts_with("vision_answer_answers_empty") => {
+            return Ok((
+                json!({
+                    "schemaVersion": "VisionAnswerCandidateV1",
+                    "source": format!("vision-answer-images:{}", profile_id),
+                    "provider": profile.get("provider").cloned().unwrap_or_else(|| json!("OpenAiCompatible")),
+                    "profileId": profile_id,
+                    "model": profile.get("model").cloned().unwrap_or(Value::Null),
+                    "jobId": job.job_id,
+                    "answers": {},
+                    "confidence": 0.0,
+                    "warnings": ["vision model returned no answer values"],
+                    "evidence": [],
+                    "imageCount": image_count,
+                    "answerPageImageCount": image_count,
+                    "answerPageIndexes": answer_page_indexes,
+                    "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([]))
+                }),
+                json!({
+                    "answers": {},
+                    "confidence": 0.0,
+                    "warnings": ["vision model returned no answer values"],
+                    "evidence": [],
+                    "answerPageImageCount": image_count,
+                    "answerPageIndexes": answer_page_indexes
+                }),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
     let answers = output.get("answers").cloned().unwrap_or_else(|| json!({}));
     let candidate = json!({
         "schemaVersion": "VisionAnswerCandidateV1",
@@ -788,9 +859,555 @@ where
         "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
         "evidence": output.get("evidence").cloned().unwrap_or_else(|| json!([])),
         "imageCount": image_count,
+        "answerPageImageCount": image_count,
+        "answerPageIndexes": answer_page_indexes,
         "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([]))
     });
     Ok((candidate, output))
+}
+
+/// Keep the vision answer request on pages that the physical PDF layer has
+/// classified as image-only/scanned.  The semantic layer is intentionally not
+/// asked to infer an answer-page role from text that is known to be absent.
+/// When an old/unit-test artifact has no physical shadow, retain the supplied
+/// extraction as a compatibility fallback; the production import path always
+/// materializes the shadow before this function is called.
+fn answer_page_extraction(
+    root: &Path,
+    job: &ImportJob,
+    extraction: &Value,
+) -> (Value, Vec<u64>) {
+    let shadow = read_json_opt(
+        &job_dir(root, &job.job_id).join(DOCUMENT_V2_SHADOW_ARTIFACT_FILE),
+    )
+    .ok()
+    .flatten();
+    let Some(shadow) = shadow else {
+        let indexes = extraction
+            .get("pages")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|page| image_count_from_extraction(&json!({"pages":[page]})) > 0)
+            .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64))
+            .collect::<Vec<_>>();
+        return (extraction.clone(), indexes);
+    };
+
+    // DocumentIRV2 uses a zero-based pageIndex.  The rendered-image extraction
+    // contract uses the user-facing one-based pageIndex (page-001-rendered.png
+    // is pageIndex 1).  Keep the conversion at this boundary; comparing the
+    // raw numbers would silently drop every answer page except a shifted one.
+    let scanned_indexes = shadow
+        .get("pages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|page| {
+            page.pointer("/quality/classification")
+                .and_then(Value::as_str)
+                == Some("scanned")
+        })
+        .filter_map(|page| page.get("pageIndex").and_then(Value::as_u64))
+        .collect::<BTreeSet<_>>();
+
+    let mut filtered = extraction.clone();
+    let mut selected_indexes = Vec::new();
+    if let Some(pages) = filtered.get_mut("pages").and_then(Value::as_array_mut) {
+        pages.retain(|page| {
+            let page_index = page.get("pageIndex").and_then(Value::as_u64);
+            let selected = page_index
+                .and_then(|index| index.checked_sub(1))
+                .is_some_and(|zero_based| scanned_indexes.contains(&zero_based));
+            if selected && image_count_from_extraction(&json!({"pages":[page]})) > 0 {
+                if let Some(index) = page_index {
+                    selected_indexes.push(index);
+                }
+                true
+            } else {
+                false
+            }
+        });
+    }
+    selected_indexes.sort_unstable();
+    selected_indexes.dedup();
+    (filtered, selected_indexes)
+}
+
+fn normalized_answer_page_question_number(value: &Value) -> Option<String> {
+    let raw = match value {
+        Value::String(text) => text.trim().trim_start_matches(['q', 'Q']).to_string(),
+        Value::Number(number) => number.to_string(),
+        _ => return None,
+    };
+    raw.parse::<u32>().ok().filter(|number| *number > 0).map(|number| number.to_string())
+}
+
+fn answer_values_from_candidate(value: &Value) -> Vec<String> {
+    let values = match value {
+        Value::Array(items) => items.iter().flat_map(answer_values_from_candidate).collect(),
+        Value::String(text) => vec![text.trim().to_string()],
+        Value::Number(number) => vec![number.to_string()],
+        Value::Bool(value) => vec![value.to_string()],
+        _ => Vec::new(),
+    };
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn answer_page_text_normalize(value: &str) -> String {
+    let trimmed = value.trim();
+    let compact = trimmed.to_ascii_uppercase().replace([' ', '-', '_'], "");
+    if compact == "NOTGIVEN" {
+        "NOT GIVEN".to_string()
+    } else if matches!(compact.as_str(), "TRUE" | "FALSE" | "YES" | "NO")
+        || (trimmed.chars().count() == 1 && trimmed.chars().all(|ch| ch.is_ascii_alphabetic()))
+    {
+        compact
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn response_group_for_slot<'a>(canonical: &'a Value, slot_id: &str) -> Option<&'a Value> {
+    canonical
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|group| group.get("responseGroups").and_then(Value::as_array).into_iter().flatten())
+        .find(|response| {
+            response
+                .get("slotIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|slot| slot.as_str() == Some(slot_id))
+        })
+}
+
+fn option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet<String> {
+    let Some(response) = response_group_for_slot(canonical, slot_id) else {
+        return BTreeSet::new();
+    };
+    let mut labels = response
+        .get("options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|option| option.get("label").and_then(Value::as_str))
+        .map(|label| label.to_ascii_uppercase())
+        .collect::<BTreeSet<_>>();
+    if let Some(bank_ref) = response.get("optionBankRef").and_then(Value::as_str) {
+        for group in canonical
+            .get("taskGroups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if group
+                .get("optionBank")
+                .and_then(Value::as_object)
+                .and_then(|bank| bank.get("optionBankId"))
+                .and_then(Value::as_str)
+                == Some(bank_ref)
+            {
+                labels.extend(
+                    group
+                        .pointer("/optionBank/options")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|option| option.get("label").and_then(Value::as_str))
+                        .map(|label| label.to_ascii_uppercase()),
+                );
+            }
+        }
+    }
+    labels
+}
+
+fn answer_value_for_slot(canonical: &Value, slot_id: &str, raw: &Value) -> Option<Value> {
+    let values = answer_values_from_candidate(raw)
+        .into_iter()
+        .map(|value| answer_page_text_normalize(&value))
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return None;
+    }
+    let slot = canonical.pointer(&format!("/answerSlots/{slot_id}"));
+    let interaction = slot
+        .and_then(|slot| slot.get("interaction"))
+        .and_then(Value::as_str)
+        .unwrap_or("text");
+    let option_slot = matches!(
+        interaction,
+        "radio" | "checkbox" | "select" | "dragdrop" | "hotspot"
+    );
+    if !option_slot {
+        return Some(json!({
+            "kind": "text",
+            "values": values,
+            "normalization": "ielts_default"
+        }));
+    }
+    let allowed = option_labels_for_slot(canonical, slot_id);
+    if allowed.is_empty() || values.iter().any(|value| !allowed.contains(value)) {
+        return None;
+    }
+    let assignment = response_group_for_slot(canonical, slot_id)
+        .and_then(|response| response.get("assignment"))
+        .and_then(Value::as_str)
+        .map(|assignment| {
+            if assignment == "ordered_slots" {
+                "ordered"
+            } else {
+                assignment
+            }
+        })
+        .unwrap_or("per_slot");
+    Some(json!({
+        "kind": "option",
+        "labels": values,
+        "assignment": assignment
+    }))
+}
+
+fn answer_is_empty_for_page_write(value: Option<&Value>) -> bool {
+    let Some(value) = value else { return true };
+    match value.get("kind").and_then(Value::as_str) {
+        Some("text") => value
+            .get("values")
+            .and_then(Value::as_array)
+            .map(|values| values.iter().all(|item| item.as_str().is_none_or(|text| text.trim().is_empty())))
+            .unwrap_or(true),
+        Some("option") => value
+            .get("labels")
+            .and_then(Value::as_array)
+            .map(|labels| labels.is_empty())
+            .unwrap_or(true),
+        _ => true,
+    }
+}
+
+fn answer_page_evidence_by_number(candidate: &Value) -> BTreeMap<String, Value> {
+    let allowed_pages = candidate
+        .get("answerPageIndexes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .collect::<BTreeSet<_>>();
+    let mut evidence = BTreeMap::new();
+    for item in candidate
+        .get("evidence")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(number) = item
+            .get("questionNumber")
+            .and_then(normalized_answer_page_question_number)
+        else {
+            continue;
+        };
+        let Some(page_index) = item.get("pageIndex").and_then(Value::as_u64) else {
+            continue;
+        };
+        let quote = item.get("quote").and_then(Value::as_str).unwrap_or("").trim();
+        if page_index == 0 || quote.is_empty() || (!allowed_pages.is_empty() && !allowed_pages.contains(&page_index)) {
+            continue;
+        }
+        evidence.insert(number, item.clone());
+    }
+    evidence
+}
+
+/// Turn one visual candidate into canonical `setAnswer` commands.  The caller
+/// supplies the slots whose latest journal write came from answer-page
+/// recognition; those slots are the only machine values that an empty or
+/// low-confidence rerun is allowed to clear.
+fn build_answer_page_commands(
+    canonical: &Value,
+    candidate: &Value,
+    previous_answer_page_slots: &BTreeSet<String>,
+    protected_targets: &BTreeSet<String>,
+) -> Vec<Value> {
+    let confidence = candidate
+        .get("confidence")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0);
+    let evidence = answer_page_evidence_by_number(candidate);
+    let answers = candidate.get("answers").and_then(Value::as_object);
+    let slot_by_number = canonical
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(slot_id, slot)| {
+            let number = slot.get("questionNumber").and_then(Value::as_u64)? as u32;
+            Some((number.to_string(), slot_id.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut reliable = BTreeMap::<String, Value>::new();
+    if confidence >= 0.85 {
+        if let Some(answers) = answers {
+            for (raw_number, raw_answer) in answers {
+                let Some(number) = normalized_answer_page_question_number(&Value::String(raw_number.clone())) else {
+                    continue;
+                };
+                let Some(slot_id) = slot_by_number.get(&number) else {
+                    continue;
+                };
+                if !evidence.contains_key(&number) {
+                    continue;
+                }
+                if let Some(value) = answer_value_for_slot(canonical, slot_id, raw_answer) {
+                    reliable.insert(slot_id.clone(), value);
+                }
+            }
+        }
+    }
+
+    let mut commands = Vec::new();
+    let mut slot_ids = previous_answer_page_slots.clone();
+    slot_ids.extend(reliable.keys().cloned());
+    for slot_id in slot_ids {
+        if protected_targets.contains(&slot_id)
+            || protected_targets.contains(&format!("answerKey:{slot_id}"))
+        {
+            continue;
+        }
+        let current = canonical
+            .get("answerKey")
+            .and_then(Value::as_object)
+            .and_then(|answers| answers.get(&slot_id));
+        let next = if let Some(value) = reliable.get(&slot_id) {
+            if answer_is_empty_for_page_write(current)
+                || previous_answer_page_slots.contains(&slot_id)
+            {
+                value.clone()
+            } else {
+                continue;
+            }
+        } else if previous_answer_page_slots.contains(&slot_id) {
+            json!({"kind":"unresolved"})
+        } else {
+            continue;
+        };
+        if current == Some(&next) {
+            continue;
+        }
+        commands.push(json!({
+            "op": "setAnswer",
+            "slotId": slot_id,
+            "value": next
+        }));
+    }
+    commands
+}
+
+fn latest_answer_page_slots(
+    conn: &rusqlite::Connection,
+    item_id: &str,
+) -> CommandResult<BTreeSet<String>> {
+    let mut statement = conn
+        .prepare(
+            "SELECT edit_origin, command_json FROM editor_journal_v1
+             WHERE library_item_id = ?1 ORDER BY id DESC",
+        )
+        .map_err(|error| format!("answer_page_journal_prepare:{error}"))?;
+    let rows = statement
+        .query_map([item_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("answer_page_journal_query:{error}"))?;
+    let mut seen = BTreeSet::new();
+    let mut page_slots = BTreeSet::new();
+    for row in rows {
+        let (origin, command_json) = row.map_err(|error| format!("answer_page_journal_row:{error}"))?;
+        let payload: Value = serde_json::from_str(&command_json)
+            .map_err(|error| format!("answer_page_journal_json:{error}"))?;
+        for command in payload
+            .get("commands")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if command.get("op").and_then(Value::as_str) != Some("setAnswer") {
+                continue;
+            }
+            let Some(slot_id) = command.get("slotId").and_then(Value::as_str) else {
+                continue;
+            };
+            if seen.insert(slot_id.to_string()) && origin == "answer_page_recognition" {
+                page_slots.insert(slot_id.to_string());
+            }
+        }
+    }
+    Ok(page_slots)
+}
+
+/// Apply an answer-page candidate to the canonical V2 document.  This is the
+/// only answer-page write path: it uses the same CAS/journal transaction as the
+/// editor and marks the journal origin as `answer_page_recognition`.
+pub(crate) fn apply_vision_answer_candidate(
+    root: &Path,
+    job_id: &str,
+    candidate: &Value,
+) -> CommandResult<Value> {
+    let mut conn = crate::library::repository::open_library_connection(root)?;
+    let Some((canonical, base_version)) =
+        crate::library::repository::get_canonical_ds(&conn, job_id)?
+    else {
+        return Ok(json!({
+            "source": "answer_page_recognition",
+            "attempted": true,
+            "applied": false,
+            "reason": "canonical_missing",
+            "appliedCount": 0
+        }));
+    };
+    if canonical.get("modality").and_then(Value::as_str) != Some("reading") {
+        return Ok(json!({
+            "source": "answer_page_recognition",
+            "attempted": false,
+            "applied": false,
+            "reason": "modality_not_reading",
+            "appliedCount": 0
+        }));
+    }
+    let previous = latest_answer_page_slots(&conn, job_id)?;
+    let protected = crate::library::repository::human_protected_targets(&conn, job_id, &canonical)?;
+    let commands = build_answer_page_commands(&canonical, candidate, &previous, &protected);
+    if commands.is_empty() {
+        return Ok(json!({
+            "source": "answer_page_recognition",
+            "attempted": true,
+            "applied": false,
+            "appliedCount": 0,
+            "protectedCount": protected.len()
+        }));
+    }
+    let request_id = format!(
+        "answer-page-recognition:{}:{}",
+        job_id,
+        crate::hash_bytes(&serde_json::to_vec(candidate).unwrap_or_default())
+    );
+    let result = crate::library::repository::apply_editor_commands_tx_with(
+        &mut conn,
+        &crate::library::repository::ApplyEditorCommandsInput {
+            item_id: job_id.to_string(),
+            base_version,
+            request_id: Some(request_id),
+            commands: commands.clone(),
+            title: None,
+        },
+        crate::library::repository::EditOrigin::AnswerPageRecognition,
+        None,
+        &|document, patch| crate::authoring_v2_commands::apply_patch(document, patch),
+        &|document| {
+            crate::authoring_v2_commands::refresh_quality_report(root, job_id, document)?;
+            crate::authoring_v2_commands::validate_authoring(document)
+        },
+        &|_, _| Ok(()),
+    )?;
+    Ok(json!({
+        "source": "answer_page_recognition",
+        "attempted": true,
+        "applied": result.applied_count > 0,
+        "appliedCount": result.applied_count,
+        "editVersion": result.edit_version,
+        "appliedTargets": result.applied_targets,
+        "protectedCount": protected.len()
+    }))
+}
+
+/// Product entry for the PDF answer-page path.  Failures are returned as a
+/// diagnostic report, not as a successful answer write; callers can keep the
+/// rest of the import/review workflow alive with unresolved answers.
+pub(crate) fn recognize_and_apply_pdf_answers(
+    root: &Path,
+    job_id: &str,
+    profile_id: &str,
+) -> CommandResult<Value> {
+    let job = load_job(root, job_id)?;
+    if !main_source_is_pdf(&job) {
+        return Ok(json!({
+            "source": "answer_page_recognition",
+            "attempted": false,
+            "applied": false,
+            "reason": "main_source_not_pdf"
+        }));
+    }
+    let dir = job_dir(root, job_id);
+    let canonical_modality = crate::library::repository::open_library_connection(root)
+        .and_then(|conn| crate::library::repository::get_canonical_ds(&conn, job_id))?
+        .and_then(|(document, _)| document.get("modality").and_then(Value::as_str).map(str::to_string));
+    if canonical_modality.as_deref() != Some("reading") {
+        return Ok(json!({
+            "source": "answer_page_recognition",
+            "attempted": false,
+            "applied": false,
+            "reason": "modality_not_reading"
+        }));
+    }
+    let (extraction, _asset_dir) = match main_pdf_vision_extraction(root, &job) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json!({
+                "source": "answer_page_recognition",
+                "attempted": true,
+                "applied": false,
+                "failure": error,
+                "appliedCount": 0
+            }));
+        }
+    };
+    let (candidate, output) = match vision_answer_candidate_for_job(
+        root,
+        &job,
+        profile_id,
+        &extraction,
+        &mut run_llm_gateway,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json!({
+                "source": "answer_page_recognition",
+                "attempted": true,
+                "applied": false,
+                "failure": error,
+                "appliedCount": 0
+            }));
+        }
+    };
+    let _ = write_json(&dir.join("vision-answer-output.json"), &output);
+    let _ = write_vision_answer_candidates_file(&dir, job_id, &candidate);
+    let mut report = apply_vision_answer_candidate(root, job_id, &candidate)?;
+    if let Some(object) = report.as_object_mut() {
+        object.insert(
+            "candidateAnswerCount".to_string(),
+            json!(candidate
+                .get("answers")
+                .and_then(Value::as_object)
+                .map(|answers| answers.len())
+                .unwrap_or(0)),
+        );
+        object.insert(
+            "confidence".to_string(),
+            candidate.get("confidence").cloned().unwrap_or(Value::Null),
+        );
+        object.insert(
+            "warnings".to_string(),
+            candidate.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        );
+    }
+    write_json(&dir.join("vision-answer-application.json"), &report)?;
+    Ok(report)
 }
 
 fn normalized_compare_text(value: &Value) -> String {
@@ -2066,10 +2683,14 @@ fn write_vision_answer_candidates_file(
         &dir.join("vision-answer-candidates.json"),
         &json!({
             "schemaVersion": "VisionAnswerCandidatesV1",
+            "source": "answer_page_recognition",
+            "provenance": {"source": "answer_page_recognition"},
             "jobId": job_id,
             "profileId": candidate.get("profileId").cloned().unwrap_or(Value::Null),
             "provider": candidate.get("provider").cloned().unwrap_or(Value::Null),
             "model": candidate.get("model").cloned().unwrap_or(Value::Null),
+            "answerPageImageCount": candidate.get("answerPageImageCount").cloned().unwrap_or(Value::Null),
+            "answerPageIndexes": candidate.get("answerPageIndexes").cloned().unwrap_or_else(|| json!([])),
             "candidateCount": candidates.len(),
             "candidates": candidates
         }),
@@ -3021,6 +3642,21 @@ where
                             let _ = write_json(&dir.join("vision-answer-output.json"), &output);
                             let candidates_written =
                                 write_vision_answer_candidates_file(&dir, job_id, &candidate);
+                            let application = match apply_vision_answer_candidate(root, job_id, &candidate) {
+                                Ok(report) => report,
+                                Err(error) => json!({
+                                    "source": "answer_page_recognition",
+                                    "attempted": true,
+                                    "applied": false,
+                                    "failure": error,
+                                    "appliedCount": 0
+                                }),
+                            };
+                            let applied = application
+                                .get("applied")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false);
+                            let _ = write_json(&dir.join("vision-answer-application.json"), &application);
                             let filled = answer_question_ids_from_authoring(&ir);
                             let missing = empty_answer_question_ids_from_authoring(&ir);
                             append_authoring_audit_issue(
@@ -3033,17 +3669,20 @@ where
                                         "视觉答案候选落盘失败；请人工核对图片答案页。"
                                     } else if answer_count == 0 {
                                         "视觉模型已检查 PDF 图片答案页，但没有产出可用的答案候选；空答案仍需人工补齐。"
+                                    } else if applied {
+                                        "视觉模型已从答案页提取答案并写入题稿；请按证据复核。"
                                     } else {
                                         "视觉模型产出了答案候选，尚未写入题稿；请在题稿编辑页逐题采用或忽略。"
                                     },
                                     "attempted": true,
-                                    "applied": false,
-                                    "diagnosticOnly": true,
+                                    "applied": applied,
+                                    "diagnosticOnly": !applied,
                                     "answerCount": answer_count,
                                     "filledQuestionIds": filled,
                                     "missingQuestionIds": missing,
                                     "confidence": output.get("confidence").cloned().unwrap_or(Value::Null),
                                     "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
+                                    "application": application,
                                     "failure": Value::Null
                                 }),
                             );
@@ -3558,6 +4197,171 @@ mod tests {
             "DOCX 不得被判为「非 PDF」，实际: {err}"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn blank_answer_page_clears_a_previous_answer_page_value_instead_of_reusing_it() {
+        let canonical = json!({
+            "answerSlots": {
+                "q1": {"slotId":"q1", "questionNumber":1, "interaction":"text"}
+            },
+            "answerKey": {
+                "q1": {"kind":"text", "values":["previous answer"]}
+            }
+        });
+        let blank_candidate = json!({
+            "answers": {},
+            "confidence": 0.0,
+            "warnings": ["answer page was blank"],
+            "evidence": [],
+            "answerPageImageCount": 1,
+            "answerPageIndexes": [5]
+        });
+        let mut previous_answer_page_slots = std::collections::BTreeSet::new();
+        previous_answer_page_slots.insert("q1".to_string());
+
+        let commands = build_answer_page_commands(
+            &canonical,
+            &blank_candidate,
+            &previous_answer_page_slots,
+            &std::collections::BTreeSet::new(),
+        );
+        assert_eq!(
+            commands,
+            vec![json!({
+                "op":"setAnswer",
+                "slotId":"q1",
+                "value":{"kind":"unresolved"}
+            })],
+            "空白答案页不得复用上一次答案页识别值"
+        );
+    }
+
+    #[test]
+    fn answer_page_extraction_joins_zero_based_physical_pages_to_one_based_images() {
+        let root = std::env::temp_dir().join(format!("pdf2test-answer-pages-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job = sample_job();
+        save_job(&root, &job).unwrap();
+        let dir = job_dir(&root, &job.job_id);
+        ensure_job_dirs(&dir).unwrap();
+        write_json(
+            &dir.join(DOCUMENT_V2_SHADOW_ARTIFACT_FILE),
+            &json!({
+                "schemaVersion": "DocumentIRV2",
+                "pages": [
+                    {"pageIndex": 4, "quality": {"classification": "scanned"}},
+                    {"pageIndex": 5, "quality": {"classification": "born-digital"}}
+                ]
+            }),
+        )
+        .unwrap();
+        let extraction = json!({
+            "pages": [
+                {"pageIndex": 5, "images": [{"fileName":"page-005-rendered.png"}]},
+                {"pageIndex": 6, "images": [{"fileName":"page-006-rendered.png"}]}
+            ]
+        });
+
+        let (selected, indexes) = answer_page_extraction(&root, &job, &extraction);
+        assert_eq!(indexes, vec![5], "physical p5 (index 4) must select rendered p5");
+        assert_eq!(selected.pointer("/pages/0/pageIndex"), Some(&json!(5)));
+        assert_eq!(selected.pointer("/pages/1"), None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn answer_page_write_uses_canonical_journal_provenance_and_clears_on_blank_rerun() {
+        let root = std::env::temp_dir().join(format!("pdf2test-answer-write-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job = sample_job();
+        save_job(&root, &job).unwrap();
+        let dir = job_dir(&root, &job.job_id);
+        ensure_job_dirs(&dir).unwrap();
+        fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/complex-reading.pdf"),
+            dir.join("uploads/fixture.pdf"),
+        )
+        .unwrap();
+        run_auto_pipeline_core(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                execution_mode: Some("localOnly".to_string()),
+                target: Some("editableDraft".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("local draft should seed a canonical candidate");
+        crate::library::migration::ensure_initial_canonical(&root, &job.job_id)
+            .expect("canonical seed should succeed");
+
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        let (mut canonical, _) = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+            .unwrap()
+            .expect("canonical should exist");
+        let (slot_id, question_number) = canonical["answerSlots"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .find(|(_, slot)| slot.get("interaction").and_then(Value::as_str) == Some("text"))
+            .map(|(slot_id, slot)| {
+                (
+                    slot_id.clone(),
+                    slot["questionNumber"].as_u64().unwrap(),
+                )
+            })
+            .expect("fixture should contain a text answer slot");
+        // Make the write target explicitly unresolved so this test exercises
+        // the fill path rather than the intentional no-overwrite guard for a
+        // pre-existing local answer.
+        canonical["answerKey"][slot_id.as_str()] = json!({"kind":"unresolved"});
+        conn.execute(
+            "UPDATE library_items_v2 SET canonical_ds_json = ?2 WHERE id = ?1",
+            rusqlite::params![job.job_id, canonical.to_string()],
+        )
+        .unwrap();
+        drop(conn);
+        let candidate = json!({
+            "answers": {question_number.to_string(): "answer-page-value"},
+            "confidence": 0.99,
+            "evidence": [{"questionNumber": question_number.to_string(), "pageIndex": 1, "quote": "answer-page-value"}],
+            "answerPageIndexes": [1]
+        });
+        let applied = apply_vision_answer_candidate(&root, &job.job_id, &candidate).unwrap();
+        assert_eq!(applied["source"], "answer_page_recognition");
+        assert_eq!(applied["applied"], true, "answer-page application report: {applied}");
+
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        let (canonical, _) = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(canonical["answerKey"][slot_id.as_str()]["values"][0], "answer-page-value");
+        let origin: String = conn
+            .query_row(
+                "SELECT edit_origin FROM editor_journal_v1 WHERE library_item_id = ?1 ORDER BY id DESC LIMIT 1",
+                [&job.job_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(origin, "answer_page_recognition");
+        drop(conn);
+
+        let blank = json!({
+            "answers": {},
+            "confidence": 0.0,
+            "warnings": ["answer page was blank"],
+            "evidence": [],
+            "answerPageIndexes": [1]
+        });
+        let cleared = apply_vision_answer_candidate(&root, &job.job_id, &blank).unwrap();
+        assert_eq!(cleared["applied"], true);
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        let (canonical, _) = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(canonical["answerKey"][slot_id.as_str()]["kind"], "unresolved");
+        let _ = fs::remove_dir_all(root);
     }
 
     /// 目标 3(b) 的构件：`document_ir_source_text` 必须把 DocumentIRV2 的

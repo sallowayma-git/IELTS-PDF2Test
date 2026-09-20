@@ -237,6 +237,11 @@ pub(crate) enum EditOrigin {
     Human,
     /// 云端校核修复通过受限编辑工具做的修改。
     CloudRepair,
+    /// 从原文件答案页图像识别出的答案写入。
+    ///
+    /// 这是机器派生结果，不是人工编辑；但它仍须尊重已有的人工保护目标，
+    /// 否则一次答案页重跑会把用户刚确认的答案重新覆盖。
+    AnswerPageRecognition,
     /// 撤销自动修复产生的修改。
     Undo,
 }
@@ -246,6 +251,7 @@ impl EditOrigin {
         match self {
             EditOrigin::Human => "human",
             EditOrigin::CloudRepair => "cloud_repair",
+            EditOrigin::AnswerPageRecognition => "answer_page_recognition",
             EditOrigin::Undo => "undo",
         }
     }
@@ -260,11 +266,12 @@ impl EditOrigin {
         matches!(self, EditOrigin::Human | EditOrigin::Undo)
     }
 
-    /// 是否受「人工保护目标」约束。目前只有云端修复受约束；既有规则的自动填空路径
-    /// 保留它原有的、更窄的前提复核（`auto_apply_eligible`），不在这里叠加，以免
-    /// 改变已经上线并被测试覆盖的行为。
+    /// 是否受「人工保护目标」约束。云端修复和答案页识别都受约束；既有规则的自动
+    /// 填空路径保留它原有的、更窄的前提复核（`auto_apply_eligible`），不在这里叠加，
+    /// 以免改变已经上线并被测试覆盖的行为。
     fn enforces_protection(self, repair_run_id: Option<&str>) -> bool {
         matches!(self, EditOrigin::CloudRepair) && repair_run_id.is_some()
+            || matches!(self, EditOrigin::AnswerPageRecognition)
     }
 }
 

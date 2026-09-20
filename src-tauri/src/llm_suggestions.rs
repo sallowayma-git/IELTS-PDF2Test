@@ -200,7 +200,7 @@ pub(crate) fn make_vision_answer_extraction_input(
                 "evidence": [{"questionNumber": "8", "pageIndex": 5, "quote": "short visible text"}]
             },
             "rules": [
-                "Only extract answer keys visible in the supplied PDF images.",
+                "The supplied pages were selected from scanned/image-only answer-page candidates. Extract only answer keys visibly printed on those pages; do not infer answers from the question paper.",
                 "Use question number strings without q prefix, for example \"8\".",
                 "Do not invent missing answers; omit uncertain question numbers.",
                 "Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase."
