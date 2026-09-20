@@ -1255,6 +1255,11 @@ fn validate_repair_step_output(output: &mut Value) -> CommandResult<()> {
 /// 契约文字与 `make_adjudication_input` 的 `outputContract` 是**同一套规则**：
 /// 「模型该返回什么」与「我们会校验什么」若各写一份，两者迟早漂移，
 /// 而漂移的代价是模型产出被静默拒绝、用户看到「裁决失败」却无从解释。
+/// A4 裁决的 prompt。
+///
+/// 与 A3 同一处缺陷、同一天由真实网关暴露：`validate_adjudication_output` 要求顶层
+/// `rulings` 数组，而这条 prompt 原本从不声明它，真实模型返回被整份拒绝
+/// （`adjudication_rulings_missing_or_invalid`）。同样只补信封声明，不动校验规则。
 fn adjudication_prompt(input: &Value) -> String {
     let divergences = serde_json::to_string(input.get("divergences").unwrap_or(&Value::Null))
         .unwrap_or_else(|_| "[]".to_string());
@@ -1276,6 +1281,13 @@ Fix exactly that and return JSON only."
 three independent sources: `local` (on-device recognition of the authoring draft), `cloud` \
 (automated full-paper recognition) and `source` (an answer extracted from the original file).\n\
 For EACH item in DIVERGENCES below, decide which of the given answers the ORIGINAL FILE supports.\n\
+Return exactly one JSON object with this shape: {{\"rulings\":[{{\"decisionId\":\"a decisionId from \
+DIVERGENCES\",\"chosen\":\"cloud\",\"value\":{{\"kind\":\"text\",\"values\":[\"TRUE\"]}},\
+\"rationale\":\"what in the original file decided it\",\"confidence\":0.9}}]}}\n\
+One ruling per decisionId, never two rulings for the same decisionId. `value` is required unless \
+`chosen` is \"unresolved\", and uses one of exactly three shapes: \
+{{\"kind\":\"text\",\"values\":[\"...\"]}}, {{\"kind\":\"option\",\"labels\":[\"A\"]}}, or \
+{{\"kind\":\"unresolved\"}}. `confidence` is optional and must be a number in [0,1] when present.\n\
 Hard rules:\n\
 1. Answer only for the decisionId values listed; never invent an id.\n\
 2. `chosen` must be exactly one of: local, cloud, source, unresolved.\n\
@@ -1383,6 +1395,13 @@ fn validate_answer_value_shape(value: &Value) -> Result<(), String> {
 
 /// A3：原文件核验的 prompt。
 ///
+/// **信封声明不是可选的装饰**：`validate_source_verification_output` 对缺少顶层
+/// `findings` 数组的回复整份拒绝。2026-09-20 用真实网关（grok-4.5）实测时，这条
+/// prompt 因为只讲字段规则、从不声明外层结构，返回被校验器整份拒绝
+/// （`source_verification_findings_missing_or_invalid`）。受控假模型是照着校验器写的，
+/// 所以它永远"记得"这个键，这处 prompt 与校验器的不一致在假模型下不可观测。
+/// 修的是 prompt，不是校验器——下面每条 hard rule 一条都没放宽。
+///
 /// 与裁决的关键差别写在正文里：**裁决是「三选一」，核验是「回原文查」**。
 /// 把这两个任务说混，模型就会去挑一条链交差，而不是真的读原文——
 /// 那样得到的「确认」没有任何证据含量。
@@ -1406,6 +1425,14 @@ Fix exactly that and return JSON only."
 in it).\n\
 For EACH item in SLOTS below, the on-device draft already holds `localValue`. Decide whether the \
 ORIGINAL FILE supports that value.\n\
+Return exactly one JSON object with this shape: {{\"findings\":[{{\"slotId\":\"a slotId from SLOTS\",\
+\"questionNumber\":1,\"verdict\":\"confirmed\",\"quote\":\"short excerpt copied from the file\",\
+\"pageIndex\":1,\"observedValue\":{{\"kind\":\"text\",\"values\":[\"FALSE\"]}},\"confidence\":0.9}}]}}\n\
+One finding per slotId, never two findings for the same slotId. `quote` and `pageIndex` are required \
+unless `verdict` is \"not_verifiable\"; `observedValue` is required only when `verdict` is \
+\"contradicted\". Every answer value uses one of exactly three shapes: \
+{{\"kind\":\"text\",\"values\":[\"...\"]}}, {{\"kind\":\"option\",\"labels\":[\"A\"]}}, or \
+{{\"kind\":\"unresolved\"}}. `confidence` is optional and must be a number in [0,1] when present.\n\
 Hard rules:\n\
 1. Answer only for the slotId values listed; never invent an id.\n\
 2. `verdict` must be exactly one of: confirmed, contradicted, not_verifiable.\n\
@@ -2491,5 +2518,43 @@ mod tests {
         let error = validate_source_verification_output(&mut duplicated, &input)
             .expect_err("重复 slotId 必须被拒绝");
         assert!(error.contains("duplicate_slot"), "实际错误：{error}");
+    }
+
+    /// 校验器要求的**顶层信封键**必须写在 prompt 里。
+    ///
+    /// 2026-09-20 真实网关实测暴露的缺陷：A3/A4 的 prompt 逐条写了字段规则，却从未
+    /// 声明 `{"findings":[…]}` / `{"rulings":[…]}` 这个外层结构，而校验器对缺少该键的
+    /// 回复整份拒绝。受控假模型是照着校验器写的，所以它永远"记得"这个键，这个
+    /// prompt 与校验器的不一致在假模型下完全不可见。真实模型两条请求均被拒。
+    #[test]
+    fn every_prompt_declares_the_envelope_key_its_validator_requires() {
+        let verification_input = json!({
+            "slots": [{"slotId": "slot-1", "questionNumber": 1,
+                "localValue": {"kind": "text", "values": ["TRUE"]}}]
+        });
+        let verification = source_verification_prompt(&verification_input);
+        assert!(
+            verification.contains("\"findings\""),
+            "A3 prompt 必须声明顶层 findings 信封，否则模型无从得知校验器要什么：{verification}"
+        );
+
+        let adjudication_input = json!({
+            "divergences": [{"decisionId": "decision-1", "questionNumber": 1}]
+        });
+        let adjudication = adjudication_prompt(&adjudication_input);
+        assert!(
+            adjudication.contains("\"rulings\""),
+            "A4 prompt 必须声明顶层 rulings 信封：{adjudication}"
+        );
+
+        // 另外三类请求在真实网关上通过，正是因为它们已经声明了信封；
+        // 一并钉住，避免以后有人把这几行删掉。
+        let outline = cloud_outline_prompt(&json!({}));
+        assert!(outline.contains("\"groups\""), "outline prompt 丢了信封声明");
+        let repair = repair_step_prompt(&json!({"draft": {}, "observations": []}));
+        assert!(
+            repair.contains("\"callId\"") && repair.contains("\"tool\""),
+            "repair prompt 丢了信封声明"
+        );
     }
 }
