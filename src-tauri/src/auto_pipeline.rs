@@ -64,6 +64,110 @@ use zip::ZipArchive;
 
 const LOCAL_PLACEHOLDER_PROFILE_ID: &str = "profile-local-placeholder";
 
+const VISION_ANSWER_STATE_SUCCEEDED: &str = "succeeded";
+const VISION_ANSWER_STATE_FAILED: &str = "failed";
+const VISION_ANSWER_STATE_NOT_EXECUTED: &str = "not_executed";
+
+fn vision_answer_failure_state(error: &str) -> (&'static str, &'static str) {
+    let lower = error.to_ascii_lowercase();
+    if lower.starts_with("llm_http_401:")
+        || lower.starts_with("llm_http_403:")
+        || lower.contains("invalid_api_key")
+        || lower.contains("credentials")
+    {
+        return (VISION_ANSWER_STATE_NOT_EXECUTED, "credentials_invalid");
+    }
+    let http_status_is_unavailable = lower
+        .strip_prefix("llm_http_")
+        .and_then(|value| value.split(':').next())
+        .and_then(|value| value.parse::<u16>().ok())
+        .is_some_and(|status| (500..=599).contains(&status) || matches!(status, 408 | 425 | 429));
+    if http_status_is_unavailable
+        || lower.starts_with("llm_http_timeout:")
+        || lower.starts_with("llm_http_connect_failed:")
+        || lower.starts_with("llm_http_transport_failed:")
+        || lower.starts_with("llm_http_body_failed:")
+        || lower.contains("timeout")
+        || lower.contains("timed out")
+        || lower.contains("no_enabled_llm_profile")
+    {
+        return (VISION_ANSWER_STATE_NOT_EXECUTED, "service_unavailable");
+    }
+    (VISION_ANSWER_STATE_FAILED, "invalid_response")
+}
+
+fn vision_answer_candidate_state(
+    candidate: &Value,
+    failure: Option<&str>,
+) -> (&'static str, &'static str) {
+    if let Some(error) = failure {
+        return vision_answer_failure_state(error);
+    }
+    if candidate
+        .get("answerPageImageCount")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        == 0
+    {
+        return (VISION_ANSWER_STATE_NOT_EXECUTED, "no_answer_page");
+    }
+    match candidate.get("state").and_then(Value::as_str) {
+        Some(VISION_ANSWER_STATE_FAILED) => (VISION_ANSWER_STATE_FAILED, "invalid_response"),
+        _ => (VISION_ANSWER_STATE_SUCCEEDED, "answers_extracted"),
+    }
+}
+
+fn insert_vision_answer_state(candidate: &mut Value, state: &str, reason: &str) {
+    if let Some(object) = candidate.as_object_mut() {
+        object.insert("state".to_string(), json!(state));
+        object.insert("stateReason".to_string(), json!(reason));
+    }
+}
+
+/// Answer constraints are defined by the V2 canonical structure.  Cloud review
+/// normally has a seeded canonical document; the auto-pipeline diagnostic can
+/// run before that seed, so it derives the same V2 shadow in memory and only
+/// falls back to the legacy IR when V2 construction itself is unavailable.
+fn answer_page_validation_document(root: &Path, job_id: &str, fallback: &Value) -> Value {
+    if let Ok(conn) = crate::library::repository::open_library_connection(root) {
+        if let Ok(Some((canonical, _))) = crate::library::repository::get_canonical_ds(&conn, job_id) {
+            return canonical;
+        }
+    }
+    read_json_opt(&job_dir(root, job_id).join(AUTHORING_V2_SHADOW_ARTIFACT_FILE))
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| fallback.clone())
+}
+
+fn vision_answer_user_message(
+    state: &str,
+    state_reason: &str,
+    answer_count: usize,
+    applied: bool,
+    has_constraint_violations: bool,
+) -> &'static str {
+    if state == VISION_ANSWER_STATE_NOT_EXECUTED && state_reason == "no_answer_page" {
+        return "原文件没有可识别的扫描答案页，请手工填写答案。";
+    }
+    if state == VISION_ANSWER_STATE_NOT_EXECUTED {
+        return "答案页识别这次未执行完成，题稿仍可编辑，请重试。";
+    }
+    if state == VISION_ANSWER_STATE_FAILED {
+        return "答案页识别失败，返回内容无法核验；题稿仍可编辑，请重试。";
+    }
+    if has_constraint_violations {
+        return "答案页识别结果有答案不符合题型约束，已保留为未解析，请核对答案页。";
+    }
+    if answer_count == 0 {
+        return "视觉模型检查了答案页但没有产出可核验答案，请手工填写答案。";
+    }
+    if applied {
+        return "视觉模型已从答案页提取答案并写入题稿；请按证据复核。";
+    }
+    "视觉模型产出了答案候选，尚未写入题稿；请在题稿编辑页逐题采用或忽略。"
+}
+
 fn answer_key_sources(job: &ImportJob) -> Vec<&SourceFile> {
     job.source_files
         .iter()
@@ -779,6 +883,8 @@ where
                 "model": profile.get("model").cloned().unwrap_or(Value::Null),
                 "jobId": job.job_id,
                 "answers": {},
+                "state": VISION_ANSWER_STATE_NOT_EXECUTED,
+                "stateReason": "no_answer_page",
                 "confidence": 0.0,
                 "warnings": ["no image-only answer page was found"],
                 "evidence": [],
@@ -789,6 +895,8 @@ where
             }),
             json!({
                 "answers": {},
+                "state": VISION_ANSWER_STATE_NOT_EXECUTED,
+                "stateReason": "no_answer_page",
                 "confidence": 0.0,
                 "warnings": ["no image-only answer page was found"],
                 "evidence": [],
@@ -826,6 +934,8 @@ where
                     "model": profile.get("model").cloned().unwrap_or(Value::Null),
                     "jobId": job.job_id,
                     "answers": {},
+                    "state": VISION_ANSWER_STATE_FAILED,
+                    "stateReason": "no_answer_values",
                     "confidence": 0.0,
                     "warnings": ["vision model returned no answer values"],
                     "evidence": [],
@@ -836,6 +946,8 @@ where
                 }),
                 json!({
                     "answers": {},
+                    "state": VISION_ANSWER_STATE_FAILED,
+                    "stateReason": "no_answer_values",
                     "confidence": 0.0,
                     "warnings": ["vision model returned no answer values"],
                     "evidence": [],
@@ -847,7 +959,7 @@ where
         Err(error) => return Err(error),
     };
     let answers = output.get("answers").cloned().unwrap_or_else(|| json!({}));
-    let candidate = json!({
+    let mut candidate = json!({
         "schemaVersion": "VisionAnswerCandidateV1",
         "source": format!("vision-answer-images:{}", profile_id),
         "provider": profile.get("provider").cloned().unwrap_or_else(|| json!("OpenAiCompatible")),
@@ -863,6 +975,11 @@ where
         "answerPageIndexes": answer_page_indexes,
         "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([]))
     });
+    insert_vision_answer_state(
+        &mut candidate,
+        VISION_ANSWER_STATE_SUCCEEDED,
+        "answers_extracted",
+    );
     Ok((candidate, output))
 }
 
@@ -973,20 +1090,27 @@ fn answer_page_text_normalize(value: &str) -> String {
 }
 
 fn response_group_for_slot<'a>(canonical: &'a Value, slot_id: &str) -> Option<&'a Value> {
-    canonical
-        .get("taskGroups")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .flat_map(|group| group.get("responseGroups").and_then(Value::as_array).into_iter().flatten())
-        .find(|response| {
-            response
+    task_group_and_response_for_slot(canonical, slot_id).map(|(_, response)| response)
+}
+
+fn task_group_and_response_for_slot<'a>(
+    canonical: &'a Value,
+    slot_id: &str,
+) -> Option<(&'a Value, &'a Value)> {
+    for group in canonical.get("taskGroups")?.as_array()? {
+        for response in group.get("responseGroups")?.as_array()? {
+            let contains_slot = response
                 .get("slotIds")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-                .any(|slot| slot.as_str() == Some(slot_id))
-        })
+                .any(|slot| slot.as_str() == Some(slot_id));
+            if contains_slot {
+                return Some((group, response));
+            }
+        }
+    }
+    None
 }
 
 fn option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet<String> {
@@ -1030,6 +1154,339 @@ fn option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet<String> 
     labels
 }
 
+fn roman_label(value: u32) -> Option<String> {
+    let mut value = value;
+    let mut output = String::new();
+    for (number, symbol) in [(10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")] {
+        while value >= number {
+            output.push_str(symbol);
+            value -= number;
+        }
+    }
+    (!output.is_empty()).then_some(output)
+}
+
+fn option_labels_from_alphabet(alphabet: &str) -> BTreeSet<String> {
+    let normalized = alphabet.trim().to_ascii_uppercase();
+    if normalized == "ROMAN" || normalized == "I-X" {
+        return (1..=10).filter_map(roman_label).collect();
+    }
+    let Some((start, end)) = normalized.split_once('-') else {
+        return BTreeSet::new();
+    };
+    let (Some(start), Some(end)) = (start.trim().as_bytes().first(), end.trim().as_bytes().first()) else {
+        return BTreeSet::new();
+    };
+    if !start.is_ascii_alphabetic() || !end.is_ascii_alphabetic() || start > end {
+        return BTreeSet::new();
+    }
+    ((*start as char)..=(*end as char))
+        .map(|label| label.to_ascii_uppercase().to_string())
+        .collect()
+}
+
+fn declared_option_labels_for_slot(canonical: &Value, slot_id: &str) -> BTreeSet<String> {
+    let explicit = option_labels_for_slot(canonical, slot_id);
+    if !explicit.is_empty() {
+        return explicit;
+    }
+    let Some((group, _response)) = task_group_and_response_for_slot(canonical, slot_id) else {
+        return BTreeSet::new();
+    };
+    let task_type = group.get("taskType").and_then(Value::as_str).unwrap_or_default();
+    if task_type == "true_false_not_given" {
+        return ["TRUE", "FALSE", "NOT GIVEN"]
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+    }
+    if task_type == "yes_no_not_given" {
+        return ["YES", "NO", "NOT GIVEN"]
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+    }
+    group
+        .pointer("/instructionSignature/optionAlphabet")
+        .and_then(Value::as_str)
+        .map(option_labels_from_alphabet)
+        .unwrap_or_default()
+}
+
+fn answer_word_limit(canonical: &Value, slot_id: &str) -> Option<(usize, Option<usize>, bool)> {
+    let slot_limit = canonical
+        .pointer(&format!("/answerSlots/{slot_id}/constraints"));
+    let group_limit = task_group_and_response_for_slot(canonical, slot_id)
+        .and_then(|(group, _)| group.pointer("/instructionSignature/wordLimit"));
+    for limit in [slot_limit, group_limit].into_iter().flatten() {
+        let Some(max_words) = limit.get("maxWords").and_then(Value::as_u64) else {
+            continue;
+        };
+        let max_numbers = limit.get("maxNumbers").and_then(Value::as_u64).map(|value| value as usize);
+        let words_and_or_number = limit
+            .get("wordsAndOrNumber")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        return Some((max_words as usize, max_numbers, words_and_or_number));
+    }
+    None
+}
+
+fn is_number_token(token: &str) -> bool {
+    token
+        .trim_matches(|ch: char| matches!(ch, ',' | '.' | ';' | ':' | '(' | ')' | '[' | ']'))
+        .chars()
+        .all(|ch| ch.is_ascii_digit())
+}
+
+fn answer_exceeds_word_limit(canonical: &Value, slot_id: &str, values: &[String]) -> bool {
+    let Some((max_words, max_numbers, words_and_or_number)) = answer_word_limit(canonical, slot_id) else {
+        return false;
+    };
+    values.iter().any(|value| {
+        let tokens = value.split_whitespace().filter(|token| !token.is_empty()).collect::<Vec<_>>();
+        let numbers = tokens.iter().filter(|token| is_number_token(token)).count();
+        let words = tokens.len().saturating_sub(numbers);
+        // "N WORDS AND/OR A NUMBER" gives the number its own allowance;
+        // it must not consume one of the N word positions.  Without that
+        // declaration, keep the conservative token-count behaviour.
+        let word_limit_exceeded = if words_and_or_number {
+            words > max_words
+        } else {
+            tokens.len() > max_words
+        };
+        word_limit_exceeded || max_numbers.is_some_and(|limit| numbers > limit)
+    })
+}
+
+fn violation(code: &str, question_number: Option<&str>, message: impl Into<String>) -> Value {
+    json!({
+        "code": code,
+        "questionNumber": question_number,
+        "message": message.into()
+    })
+}
+
+/// Validate a vision answer candidate against the canonical question structure.
+///
+/// This is deliberately a semantic gate, not a confidence gate.  The caller may
+/// still show the model's raw candidate for diagnosis, but only `acceptedAnswers`
+/// may reach `setAnswer`; every violation is therefore unresolved rather than a
+/// potentially wrong answer written into the canonical key.
+fn validate_answer_page_candidate(canonical: &Value, candidate: &Value) -> Value {
+    let mut accepted_answers = serde_json::Map::new();
+    let mut violations = Vec::new();
+    let mut review_warnings = Vec::new();
+    let mut slot_by_number = BTreeMap::<String, String>::new();
+    let mut group_by_slot = BTreeMap::<String, String>::new();
+
+    for group in canonical
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let task_id = group.get("taskId").and_then(Value::as_str).unwrap_or("document");
+        for response in group
+            .get("responseGroups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            for slot_id in response
+                .get("slotIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                group_by_slot.insert(slot_id.to_string(), task_id.to_string());
+            }
+        }
+    }
+    for (slot_id, slot) in canonical
+        .get("answerSlots")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        let Some(number) = slot.get("questionNumber").and_then(Value::as_u64) else {
+            continue;
+        };
+        let number = number.to_string();
+        if slot_by_number.insert(number.clone(), slot_id.clone()).is_some() {
+            violations.push(violation(
+                "ANSWER_QUESTION_NUMBER_DUPLICATE",
+                Some(&number),
+                format!("canonical question number {number} maps to more than one answer slot"),
+            ));
+        }
+    }
+
+    if let Some(answers) = candidate.get("answers").and_then(Value::as_object) {
+        for (raw_number, raw_answer) in answers {
+            let Some(number) = normalized_answer_page_question_number(&Value::String(raw_number.clone())) else {
+                violations.push(violation(
+                    "ANSWER_QUESTION_NUMBER_INVALID",
+                    None,
+                    format!("answer key contains invalid question number {raw_number}"),
+                ));
+                continue;
+            };
+            let Some(slot_id) = slot_by_number.get(&number) else {
+                violations.push(violation(
+                    "ANSWER_QUESTION_NUMBER_OUT_OF_RANGE",
+                    Some(&number),
+                    format!("question {number} is outside the canonical question ranges"),
+                ));
+                continue;
+            };
+            let values = answer_values_from_candidate(raw_answer)
+                .into_iter()
+                .map(|value| answer_page_text_normalize(&value))
+                .collect::<Vec<_>>();
+            if values.is_empty() {
+                violations.push(violation(
+                    "ANSWER_VALUE_EMPTY",
+                    Some(&number),
+                    format!("question {number} has no answer value"),
+                ));
+                continue;
+            }
+            let slot = canonical.pointer(&format!("/answerSlots/{slot_id}"));
+            let interaction = slot
+                .and_then(|slot| slot.get("interaction"))
+                .and_then(Value::as_str)
+                .unwrap_or("text");
+            let option_slot = matches!(interaction, "radio" | "checkbox" | "select" | "dragdrop" | "hotspot");
+            if option_slot {
+                let allowed = declared_option_labels_for_slot(canonical, slot_id);
+                let normalized_values = values
+                    .iter()
+                    .map(|value| value.to_ascii_uppercase())
+                    .collect::<Vec<_>>();
+                if allowed.is_empty() || normalized_values.iter().any(|value| !allowed.contains(value)) {
+                    violations.push(violation(
+                        "ANSWER_OPTION_NOT_ALLOWED",
+                        Some(&number),
+                        format!("question {number} answer is outside the declared option set"),
+                    ));
+                    continue;
+                }
+            } else if answer_exceeds_word_limit(canonical, slot_id, &values) {
+                violations.push(violation(
+                    "ANSWER_WORD_LIMIT_VIOLATION",
+                    Some(&number),
+                    format!("question {number} answer exceeds its declared word/number limit"),
+                ));
+                continue;
+            }
+            accepted_answers.insert(raw_number.clone(), raw_answer.clone());
+        }
+    }
+
+    // The canonical group ranges are themselves part of the evidence contract.
+    // A hole in a declared range is a review warning, while an out-of-range model
+    // answer above is a hard violation and is never accepted.
+    for group in canonical
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let task_id = group.get("taskId").and_then(Value::as_str).unwrap_or("document");
+        let mut group_numbers = BTreeSet::new();
+        for response in group
+            .get("responseGroups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let mut numbers = response
+                .get("slotIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|slot_id| canonical.pointer(&format!("/answerSlots/{slot_id}")))
+                .filter_map(|slot| slot.get("questionNumber").and_then(Value::as_u64))
+                .collect::<Vec<_>>();
+            numbers.sort_unstable();
+            group_numbers.extend(numbers.iter().copied());
+            if numbers.len() >= 2 && numbers.windows(2).any(|pair| pair[1] != pair[0] + 1) {
+                violations.push(violation(
+                    "ANSWER_QUESTION_RANGE_NONCONTIGUOUS",
+                    None,
+                    "a response group contains a non-contiguous question range",
+                ));
+            }
+        }
+        let Some(range) = group.get("displayRange") else {
+            continue;
+        };
+        let (Some(start), Some(end)) = (
+            range.get("start").and_then(Value::as_u64),
+            range.get("end").and_then(Value::as_u64),
+        ) else {
+            continue;
+        };
+        let expected = if start <= end {
+            (start..=end).collect::<BTreeSet<_>>()
+        } else {
+            BTreeSet::new()
+        };
+        if group_numbers != expected {
+            violations.push(violation(
+                "ANSWER_TASK_GROUP_RANGE_MISMATCH",
+                None,
+                format!("task group {task_id} slots do not match its declared display range"),
+            ));
+        }
+    }
+
+    for group in canonical
+        .get("taskGroups")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let task_id = group.get("taskId").and_then(Value::as_str).unwrap_or("document");
+        let mut values = Vec::new();
+        for (number, slot_id) in &slot_by_number {
+            if group_by_slot.get(slot_id).map(String::as_str) != Some(task_id) {
+                continue;
+            }
+            let Some(value) = accepted_answers.iter().find_map(|(raw_number, value)| {
+                normalized_answer_page_question_number(&Value::String(raw_number.clone()))
+                    .filter(|normalized| normalized == number)
+                    .map(|_| value)
+            }) else {
+                continue;
+            };
+            let interaction = canonical
+                .pointer(&format!("/answerSlots/{slot_id}/interaction"))
+                .and_then(Value::as_str)
+                .unwrap_or("text");
+            if matches!(interaction, "radio" | "checkbox" | "select" | "dragdrop" | "hotspot") {
+                values.push(answer_values_from_candidate(value).join("|").to_ascii_uppercase());
+            }
+        }
+        if values.len() >= 3 && values.iter().all(|value| value == &values[0]) {
+            review_warnings.push(json!({
+                "code": "ANSWER_DISTRIBUTION_REVIEW",
+                "taskId": task_id,
+                "message": "all resolved answers in this option group are identical; review the source image"
+            }));
+        }
+    }
+
+    json!({
+        "acceptedAnswers": Value::Object(accepted_answers),
+        "violations": violations,
+        "reviewWarnings": review_warnings
+    })
+}
+
 fn answer_value_for_slot(canonical: &Value, slot_id: &str, raw: &Value) -> Option<Value> {
     let values = answer_values_from_candidate(raw)
         .into_iter()
@@ -1054,7 +1511,7 @@ fn answer_value_for_slot(canonical: &Value, slot_id: &str, raw: &Value) -> Optio
             "normalization": "ielts_default"
         }));
     }
-    let allowed = option_labels_for_slot(canonical, slot_id);
+    let allowed = declared_option_labels_for_slot(canonical, slot_id);
     let option_values = values
         .iter()
         .map(|value| value.to_ascii_uppercase())
@@ -1145,7 +1602,10 @@ fn build_answer_page_commands(
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
     let evidence = answer_page_evidence_by_number(candidate);
-    let answers = candidate.get("answers").and_then(Value::as_object);
+    let constraint_report = validate_answer_page_candidate(canonical, candidate);
+    let answers = constraint_report
+        .get("acceptedAnswers")
+        .and_then(Value::as_object);
     let slot_by_number = canonical
         .get("answerSlots")
         .and_then(Value::as_object)
@@ -1271,6 +1731,8 @@ pub(crate) fn apply_vision_answer_candidate(
             "source": "answer_page_recognition",
             "attempted": true,
             "applied": false,
+            "state": VISION_ANSWER_STATE_NOT_EXECUTED,
+            "stateReason": "canonical_missing",
             "reason": "canonical_missing",
             "appliedCount": 0
         }));
@@ -1280,18 +1742,51 @@ pub(crate) fn apply_vision_answer_candidate(
             "source": "answer_page_recognition",
             "attempted": false,
             "applied": false,
+            "state": VISION_ANSWER_STATE_NOT_EXECUTED,
+            "stateReason": "modality_not_reading",
             "reason": "modality_not_reading",
             "appliedCount": 0
         }));
     }
     let previous = latest_answer_page_slots(&conn, job_id)?;
     let protected = crate::library::repository::human_protected_targets(&conn, job_id, &canonical)?;
+    let constraint_report = validate_answer_page_candidate(&canonical, candidate);
+    let (state, state_reason) = vision_answer_candidate_state(candidate, None);
+    let constraint_violations = constraint_report
+        .get("violations")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let review_warnings = constraint_report
+        .get("reviewWarnings")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    if state == VISION_ANSWER_STATE_FAILED
+        || (state == VISION_ANSWER_STATE_NOT_EXECUTED && state_reason != "no_answer_page")
+    {
+        return Ok(json!({
+            "source": "answer_page_recognition",
+            "attempted": true,
+            "applied": false,
+            "state": state,
+            "stateReason": state_reason,
+            "answerPageImageCount": candidate.get("answerPageImageCount").cloned().unwrap_or(Value::Null),
+            "constraintViolations": constraint_violations,
+            "reviewWarnings": review_warnings,
+            "appliedCount": 0,
+            "protectedCount": protected.len()
+        }));
+    }
     let commands = build_answer_page_commands(&canonical, candidate, &previous, &protected);
     if commands.is_empty() {
         return Ok(json!({
             "source": "answer_page_recognition",
             "attempted": true,
             "applied": false,
+            "state": state,
+            "stateReason": state_reason,
+            "answerPageImageCount": candidate.get("answerPageImageCount").cloned().unwrap_or(Value::Null),
+            "constraintViolations": constraint_violations,
+            "reviewWarnings": review_warnings,
             "appliedCount": 0,
             "protectedCount": protected.len()
         }));
@@ -1323,11 +1818,37 @@ pub(crate) fn apply_vision_answer_candidate(
         "source": "answer_page_recognition",
         "attempted": true,
         "applied": result.applied_count > 0,
+        "state": state,
+        "stateReason": state_reason,
+        "answerPageImageCount": candidate.get("answerPageImageCount").cloned().unwrap_or(Value::Null),
+        "constraintViolations": constraint_violations,
+        "reviewWarnings": review_warnings,
         "appliedCount": result.applied_count,
         "editVersion": result.edit_version,
         "appliedTargets": result.applied_targets,
         "protectedCount": protected.len()
     }))
+}
+
+fn vision_answer_failure_report(
+    error: &str,
+    answer_page_image_count: Option<usize>,
+    answer_page_indexes: &[u64],
+) -> Value {
+    let (state, state_reason) = vision_answer_failure_state(error);
+    json!({
+        "source": "answer_page_recognition",
+        "attempted": true,
+        "applied": false,
+        "state": state,
+        "stateReason": state_reason,
+        "answerPageImageCount": answer_page_image_count,
+        "answerPageIndexes": answer_page_indexes,
+        "failure": error,
+        "appliedCount": 0,
+        "constraintViolations": [],
+        "reviewWarnings": []
+    })
 }
 
 /// Product entry for the PDF answer-page path.  Failures are returned as a
@@ -1344,6 +1865,8 @@ pub(crate) fn recognize_and_apply_pdf_answers(
             "source": "answer_page_recognition",
             "attempted": false,
             "applied": false,
+            "state": VISION_ANSWER_STATE_NOT_EXECUTED,
+            "stateReason": "main_source_not_pdf",
             "reason": "main_source_not_pdf"
         }));
     }
@@ -1356,21 +1879,19 @@ pub(crate) fn recognize_and_apply_pdf_answers(
             "source": "answer_page_recognition",
             "attempted": false,
             "applied": false,
+            "state": VISION_ANSWER_STATE_NOT_EXECUTED,
+            "stateReason": "modality_not_reading",
             "reason": "modality_not_reading"
         }));
     }
     let (extraction, _asset_dir) = match main_pdf_vision_extraction(root, &job) {
         Ok(value) => value,
         Err(error) => {
-            return Ok(json!({
-                "source": "answer_page_recognition",
-                "attempted": true,
-                "applied": false,
-                "failure": error,
-                "appliedCount": 0
-            }));
+            return Ok(vision_answer_failure_report(&error, None, &[]));
         }
     };
+    let (answer_page_extraction, answer_page_indexes) = answer_page_extraction(root, &job, &extraction);
+    let answer_page_image_count = image_count_from_extraction(&answer_page_extraction);
     let (candidate, output) = match vision_answer_candidate_for_job(
         root,
         &job,
@@ -1380,13 +1901,11 @@ pub(crate) fn recognize_and_apply_pdf_answers(
     ) {
         Ok(value) => value,
         Err(error) => {
-            return Ok(json!({
-                "source": "answer_page_recognition",
-                "attempted": true,
-                "applied": false,
-                "failure": error,
-                "appliedCount": 0
-            }));
+            return Ok(vision_answer_failure_report(
+                &error,
+                Some(answer_page_image_count),
+                &answer_page_indexes,
+            ));
         }
     };
     let _ = write_json(&dir.join("vision-answer-output.json"), &output);
@@ -2906,7 +3425,21 @@ where
             "attempted": false,
             "applied": false,
             "profileId": selected_profile_id,
+            "state": VISION_ANSWER_STATE_NOT_EXECUTED,
+            "stateReason": if selected_profile_id.is_none() {
+                "no_profile"
+            } else if !main_source_is_pdf(&job) {
+                "main_source_not_pdf"
+            } else if local_only {
+                "cloud_not_requested"
+            } else {
+                "cloud_not_requested"
+            },
+            "answerPageImageCount": Value::Null,
+            "answerPageIndexes": [],
             "answerCount": 0,
+            "constraintViolations": [],
+            "reviewWarnings": [],
             "warnings": [],
             "failure": null
         });
@@ -3027,6 +3560,8 @@ where
         if cloud_worker_spawned {
             if let Some(obj) = vision_answer_extraction.as_object_mut() {
                 obj.insert("attempted".to_string(), json!(true));
+                obj.insert("state".to_string(), json!(VISION_ANSWER_STATE_NOT_EXECUTED));
+                obj.insert("stateReason".to_string(), json!("pending"));
             }
         }
 
@@ -3241,6 +3776,20 @@ where
         } else {
             None
         };
+        let answer_constraint_document = build_authoring_v2_shadow(
+            &job,
+            &ir,
+            &split,
+            doc.as_ref(),
+            physical_shadow.as_ref(),
+        )
+        .ok()
+        .or_else(|| {
+            read_json_opt(&dir.join(AUTHORING_V2_SHADOW_ARTIFACT_FILE))
+                .ok()
+                .flatten()
+        })
+        .unwrap_or_else(|| ir.clone());
         if let Some(outcome) = worker_outcome.as_ref() {
             match &outcome.vision_answer {
                 Ok((candidate, output)) => {
@@ -3249,12 +3798,33 @@ where
                         .and_then(Value::as_object)
                         .map(|answers| answers.len())
                         .unwrap_or(0);
+                    let constraint_report =
+                        validate_answer_page_candidate(&answer_constraint_document, candidate);
+                    let (state, state_reason) = vision_answer_candidate_state(candidate, None);
                     write_json(&dir.join("vision-answer-output.json"), output)?;
                     write_vision_answer_candidates_file(&dir, &job_id, candidate)?;
                     if let Some(obj) = vision_answer_extraction.as_object_mut() {
                         obj.insert("applied".to_string(), json!(false));
                         obj.insert("diagnosticOnly".to_string(), json!(true));
+                        obj.insert("state".to_string(), json!(state));
+                        obj.insert("stateReason".to_string(), json!(state_reason));
+                        obj.insert(
+                            "answerPageImageCount".to_string(),
+                            candidate.get("answerPageImageCount").cloned().unwrap_or(Value::Null),
+                        );
+                        obj.insert(
+                            "answerPageIndexes".to_string(),
+                            candidate.get("answerPageIndexes").cloned().unwrap_or_else(|| json!([])),
+                        );
                         obj.insert("answerCount".to_string(), json!(answer_count));
+                        obj.insert(
+                            "constraintViolations".to_string(),
+                            constraint_report.get("violations").cloned().unwrap_or_else(|| json!([])),
+                        );
+                        obj.insert(
+                            "reviewWarnings".to_string(),
+                            constraint_report.get("reviewWarnings").cloned().unwrap_or_else(|| json!([])),
+                        );
                         obj.insert(
                             "confidence".to_string(),
                             output.get("confidence").cloned().unwrap_or(Value::Null),
@@ -3266,7 +3836,10 @@ where
                     }
                 }
                 Err(error) => {
+                    let (state, state_reason) = vision_answer_failure_state(error);
                     if let Some(obj) = vision_answer_extraction.as_object_mut() {
+                        obj.insert("state".to_string(), json!(state));
+                        obj.insert("stateReason".to_string(), json!(state_reason));
                         obj.insert("failure".to_string(), json!(error));
                     }
                 }
@@ -3285,15 +3858,25 @@ where
                 // The summary must not claim the vision model "filled" answers:
                 // candidates are confirm-only, so filled/missing reflect the local
                 // draft state while answerCount reflects what the model produced.
-                let failure = obj.get("failure").and_then(Value::as_str).is_some();
+                let state = obj
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or(VISION_ANSWER_STATE_FAILED);
+                let state_reason = obj
+                    .get("stateReason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("invalid_response");
                 let answer_count = obj.get("answerCount").and_then(Value::as_u64).unwrap_or(0);
-                let message = if failure {
-                    "视觉答案抽取没有完成，本地答案保持不变；请人工核对图片答案页或使用手工转录。"
-                } else if answer_count == 0 {
-                    "视觉模型已检查 PDF 图片答案页，但没有产出可用的答案候选；空答案仍需人工补齐。"
-                } else {
-                    "视觉模型产出了答案候选，尚未写入题稿；请在题稿编辑页逐题采用或忽略。"
-                };
+                let applied = obj.get("applied").and_then(Value::as_bool).unwrap_or(false);
+                let message = vision_answer_user_message(
+                    state,
+                    state_reason,
+                    answer_count as usize,
+                    applied,
+                    obj.get("constraintViolations")
+                        .and_then(Value::as_array)
+                        .is_some_and(|items| !items.is_empty()),
+                );
                 append_authoring_audit_issue(
                     &mut ir,
                     json!({
@@ -3302,12 +3885,16 @@ where
                         "kind": "vision_answer_extraction_summary",
                         "message": message,
                         "attempted": obj.get("attempted").cloned().unwrap_or(Value::Bool(false)),
-                        "applied": obj.get("applied").cloned().unwrap_or(Value::Bool(false)),
-                        "answerCount": obj.get("answerCount").cloned().unwrap_or_else(|| json!(0)),
+                         "applied": obj.get("applied").cloned().unwrap_or(Value::Bool(false)),
+                         "state": obj.get("state").cloned().unwrap_or_else(|| json!(VISION_ANSWER_STATE_FAILED)),
+                         "stateReason": obj.get("stateReason").cloned().unwrap_or_else(|| json!("invalid_response")),
+                         "answerCount": obj.get("answerCount").cloned().unwrap_or_else(|| json!(0)),
                         "filledQuestionIds": filled,
                         "missingQuestionIds": missing,
                         "confidence": obj.get("confidence").cloned().unwrap_or(Value::Null),
-                        "failure": obj.get("failure").cloned().unwrap_or(Value::Null)
+                         "failure": obj.get("failure").cloned().unwrap_or(Value::Null),
+                         "constraintViolations": obj.get("constraintViolations").cloned().unwrap_or_else(|| json!([])),
+                         "reviewWarnings": obj.get("reviewWarnings").cloned().unwrap_or_else(|| json!([]))
                     }),
                 );
             }
@@ -3614,6 +4201,26 @@ where
         "warningCount": 0,
         "issues": []
     });
+    let mut vision_answer_extraction = json!({
+        "attempted": false,
+        "applied": false,
+        "profileId": selected_profile_id,
+        "state": VISION_ANSWER_STATE_NOT_EXECUTED,
+        "stateReason": if selected_profile_id.is_none() {
+            "no_profile"
+        } else if !main_source_is_pdf(&job) {
+            "main_source_not_pdf"
+        } else {
+            "cloud_not_requested"
+        },
+        "answerPageImageCount": Value::Null,
+        "answerPageIndexes": [],
+        "answerCount": 0,
+        "constraintViolations": [],
+        "reviewWarnings": [],
+        "warnings": [],
+        "failure": null
+    });
 
     if let Some(profile_id_for_cloud) = selected_profile_id.as_deref() {
         if main_source_is_pdf(&job) {
@@ -3643,6 +4250,12 @@ where
                                 .and_then(Value::as_object)
                                 .map(|answers| answers.len())
                                 .unwrap_or(0);
+                            let answer_constraint_document =
+                                answer_page_validation_document(root, job_id, &ir);
+                            let constraint_report = validate_answer_page_candidate(
+                                &answer_constraint_document,
+                                &candidate,
+                            );
                             let _ = write_json(&dir.join("vision-answer-output.json"), &output);
                             let candidates_written =
                                 write_vision_answer_candidates_file(&dir, job_id, &candidate);
@@ -3652,6 +4265,8 @@ where
                                     "source": "answer_page_recognition",
                                     "attempted": true,
                                     "applied": false,
+                                    "state": VISION_ANSWER_STATE_FAILED,
+                                    "stateReason": "invalid_response",
                                     "failure": error,
                                     "appliedCount": 0
                                 }),
@@ -3660,6 +4275,40 @@ where
                                 .get("applied")
                                 .and_then(Value::as_bool)
                                 .unwrap_or(false);
+                            let (state, state_reason) = application
+                                .get("state")
+                                .and_then(Value::as_str)
+                                .zip(application.get("stateReason").and_then(Value::as_str))
+                                .unwrap_or_else(|| vision_answer_candidate_state(&candidate, None));
+                            if let Some(obj) = vision_answer_extraction.as_object_mut() {
+                                obj.insert("attempted".to_string(), json!(true));
+                                obj.insert("applied".to_string(), json!(applied));
+                                obj.insert("state".to_string(), json!(state));
+                                obj.insert("stateReason".to_string(), json!(state_reason));
+                                obj.insert(
+                                    "answerPageImageCount".to_string(),
+                                    candidate.get("answerPageImageCount").cloned().unwrap_or(Value::Null),
+                                );
+                                obj.insert(
+                                    "answerPageIndexes".to_string(),
+                                    candidate.get("answerPageIndexes").cloned().unwrap_or_else(|| json!([])),
+                                );
+                                obj.insert("answerCount".to_string(), json!(answer_count));
+                                obj.insert(
+                                    "constraintViolations".to_string(),
+                                    application.get("constraintViolations")
+                                        .cloned()
+                                        .unwrap_or_else(|| constraint_report.get("violations").cloned().unwrap_or_else(|| json!([]))),
+                                );
+                                obj.insert(
+                                    "reviewWarnings".to_string(),
+                                    application.get("reviewWarnings")
+                                        .cloned()
+                                        .unwrap_or_else(|| constraint_report.get("reviewWarnings").cloned().unwrap_or_else(|| json!([]))),
+                                );
+                                obj.insert("confidence".to_string(), output.get("confidence").cloned().unwrap_or(Value::Null));
+                                obj.insert("warnings".to_string(), output.get("warnings").cloned().unwrap_or_else(|| json!([])));
+                            }
                             let _ = write_json(&dir.join("vision-answer-application.json"), &application);
                             let filled = answer_question_ids_from_authoring(&ir);
                             let missing = empty_answer_question_ids_from_authoring(&ir);
@@ -3671,39 +4320,58 @@ where
                                     "kind": "vision_answer_extraction_summary",
                                     "message": if candidates_written.is_err() {
                                         "视觉答案候选落盘失败；请人工核对图片答案页。"
-                                    } else if answer_count == 0 {
-                                        "视觉模型已检查 PDF 图片答案页，但没有产出可用的答案候选；空答案仍需人工补齐。"
-                                    } else if applied {
-                                        "视觉模型已从答案页提取答案并写入题稿；请按证据复核。"
                                     } else {
-                                        "视觉模型产出了答案候选，尚未写入题稿；请在题稿编辑页逐题采用或忽略。"
+                                        vision_answer_user_message(
+                                            state,
+                                            state_reason,
+                                            answer_count,
+                                            applied,
+                                            application.get("constraintViolations")
+                                                .and_then(Value::as_array)
+                                                .is_some_and(|items| !items.is_empty()),
+                                        )
                                     },
                                     "attempted": true,
                                     "applied": applied,
                                     "diagnosticOnly": !applied,
+                                    "state": state,
+                                    "stateReason": state_reason,
                                     "answerCount": answer_count,
                                     "filledQuestionIds": filled,
                                     "missingQuestionIds": missing,
                                     "confidence": output.get("confidence").cloned().unwrap_or(Value::Null),
                                     "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
                                     "application": application,
-                                    "failure": Value::Null
+                                    "failure": Value::Null,
+                                    "constraintViolations": application.get("constraintViolations").cloned().unwrap_or_else(|| json!([])),
+                                    "reviewWarnings": application.get("reviewWarnings").cloned().unwrap_or_else(|| json!([]))
                                 }),
                             );
                         }
                         Err(error) => {
+                            let (state, state_reason) = vision_answer_failure_state(&error);
+                            if let Some(obj) = vision_answer_extraction.as_object_mut() {
+                                obj.insert("attempted".to_string(), json!(true));
+                                obj.insert("state".to_string(), json!(state));
+                                obj.insert("stateReason".to_string(), json!(state_reason));
+                                obj.insert("failure".to_string(), json!(error));
+                            }
                             append_authoring_audit_issue(
                                 &mut ir,
                                 json!({
                                     "layer": "Parser",
                                     "path": "$.parser.visionAnswerExtraction",
                                     "kind": "vision_answer_extraction_summary",
-                                    "message": "视觉答案抽取没有完成，本地答案保持不变；请人工核对图片答案页或使用手工转录。",
+                                    "message": vision_answer_user_message(state, state_reason, 0, false, false),
                                     "attempted": true,
                                     "applied": false,
                                     "diagnosticOnly": true,
                                     "answerCount": 0,
-                                    "failure": error
+                                    "state": state,
+                                    "stateReason": state_reason,
+                                    "failure": error,
+                                    "constraintViolations": [],
+                                    "reviewWarnings": []
                                 }),
                             );
                         }
@@ -3712,6 +4380,13 @@ where
                 Err(error) => {
                     cloud_comparison["attempted"] = json!(true);
                     cloud_comparison["failure"] = json!(error);
+                    let (state, state_reason) = vision_answer_failure_state(&error);
+                    if let Some(obj) = vision_answer_extraction.as_object_mut() {
+                        obj.insert("attempted".to_string(), json!(true));
+                        obj.insert("state".to_string(), json!(state));
+                        obj.insert("stateReason".to_string(), json!(state_reason));
+                        obj.insert("failure".to_string(), json!(error));
+                    }
                 }
             }
         }
@@ -3918,7 +4593,13 @@ where
                         "attempted": false,
                         "applied": false,
                         "profileId": Value::Null,
+                        "state": VISION_ANSWER_STATE_NOT_EXECUTED,
+                        "stateReason": "cloud_not_requested",
+                        "answerPageImageCount": Value::Null,
+                        "answerPageIndexes": [],
                         "answerCount": 0,
+                        "constraintViolations": [],
+                        "reviewWarnings": [],
                         "warnings": [],
                         "failure": Value::Null
                     }
@@ -4025,6 +4706,16 @@ where
             "lowConfidenceBlocks".to_string(),
             json!(low_confidence_blocks),
         );
+        parser.insert(
+            "visionAnswerExtraction".to_string(),
+            vision_answer_extraction.clone(),
+        );
+    } else {
+        pipeline_report["parser"] = json!({
+            "warnings": parser_warnings,
+            "lowConfidenceBlocks": low_confidence_blocks,
+            "visionAnswerExtraction": vision_answer_extraction
+        });
     }
     if let Some(quality) = pipeline_report
         .get_mut("quality")
@@ -4067,6 +4758,7 @@ mod tests {
     use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir, write_json};
     use serde_json::{json, Value};
     use std::fs;
+    use std::sync::{Arc, Mutex};
     use uuid::Uuid;
 
     fn sample_job() -> ImportJob {
@@ -4406,6 +5098,641 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(canonical["answerKey"][slot_id.as_str()]["kind"], "unresolved");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_answer_page_candidate_cannot_write_a_forged_answer() {
+        let root = std::env::temp_dir().join(format!("pdf2test-answer-failed-write-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job = sample_job();
+        save_job(&root, &job).unwrap();
+        let dir = job_dir(&root, &job.job_id);
+        ensure_job_dirs(&dir).unwrap();
+        fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/complex-reading.pdf"),
+            dir.join("uploads/fixture.pdf"),
+        )
+        .unwrap();
+        run_auto_pipeline_core(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                execution_mode: Some("localOnly".to_string()),
+                target: Some("editableDraft".to_string()),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        crate::library::migration::ensure_initial_canonical(&root, &job.job_id).unwrap();
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        let (before, _) = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+            .unwrap()
+            .expect("canonical should exist");
+        drop(conn);
+
+        let rejected = apply_vision_answer_candidate(
+            &root,
+            &job.job_id,
+            &json!({
+                "state": "failed",
+                "stateReason": "invalid_response",
+                "answerPageImageCount": 1,
+                "answers": {"1": "forged answer"},
+                "confidence": 0.99,
+                "evidence": [{"questionNumber":"1","pageIndex":1,"quote":"forged answer"}],
+                "answerPageIndexes": [1]
+            }),
+        )
+        .unwrap();
+        assert_eq!(rejected["state"], "failed");
+        assert_eq!(rejected["applied"], false);
+        assert_eq!(rejected["appliedCount"], 0);
+
+        let conn = crate::library::repository::open_library_connection(&root).unwrap();
+        let (after, _) = crate::library::repository::get_canonical_ds(&conn, &job.job_id)
+            .unwrap()
+            .expect("canonical should remain available");
+        assert_eq!(after, before, "failed visual recognition must not mutate canonical answers");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn answer_constraint_test_canonical() -> Value {
+        json!({
+            "modality": "reading",
+            "taskGroups": [
+                {
+                    "taskId": "tfng",
+                    "displayRange": {"kind":"range","start":1,"end":3},
+                    "taskType": "true_false_not_given",
+                    "instructionSignature": {
+                        "taskType": "true_false_not_given",
+                        "expectedQuestionNumbers": [1,2,3],
+                        "optionAlphabet": "TRUE-FALSE-NOT GIVEN"
+                    },
+                    "responseGroups": [{
+                        "responseGroupId": "tfng-responses",
+                        "kind": "choice",
+                        "slotIds": ["q1","q2","q3"],
+                        "options": [
+                            {"label":"TRUE"}, {"label":"FALSE"}, {"label":"NOT GIVEN"}
+                        ],
+                        "cardinality": {"min":1,"max":1,"exact":1},
+                        "assignment":"per_slot",
+                        "scoringPolicy":"per_slot_binary",
+                        "duplicatePolicy":"reject_submission",
+                        "allowOptionReuse":true
+                    }]
+                },
+                {
+                    "taskId": "matching",
+                    "displayRange": {"kind":"range","start":4,"end":6},
+                    "taskType": "matching_features",
+                    "instructionSignature": {
+                        "taskType": "matching_features",
+                        "expectedQuestionNumbers": [4,5,6],
+                        "optionAlphabet": "A-F"
+                    },
+                    "optionBank": {
+                        "optionBankId":"matching-bank",
+                        "scope":"task_group",
+                        "options": [{"label":"A"},{"label":"B"},{"label":"C"},{"label":"D"},{"label":"E"},{"label":"F"}],
+                        "allowReuse":false
+                    },
+                    "responseGroups": [{
+                        "responseGroupId":"matching-responses",
+                        "kind":"matching",
+                        "slotIds":["q4","q5","q6"],
+                        "optionBankRef":"matching-bank",
+                        "cardinality":{"min":1,"max":1,"exact":1},
+                        "assignment":"per_slot",
+                        "scoringPolicy":"per_slot_binary",
+                        "duplicatePolicy":"reject_submission",
+                        "allowOptionReuse":false
+                    }]
+                },
+                {
+                    "taskId": "completion",
+                    "displayRange": {"kind":"range","start":7,"end":8},
+                    "taskType": "summary_completion",
+                    "instructionSignature": {
+                        "taskType":"summary_completion",
+                        "expectedQuestionNumbers":[7,8],
+                        "wordLimit":{"maxWords":2,"maxNumbers":1,"wordsAndOrNumber":true}
+                    },
+                    "responseGroups": [{
+                        "responseGroupId":"completion-responses",
+                        "kind":"text_entry",
+                        "slotIds":["q7","q8"],
+                        "cardinality":{"min":1,"max":1,"exact":1},
+                        "assignment":"per_slot",
+                        "scoringPolicy":"per_slot_ielts_normalized",
+                        "duplicatePolicy":"reject_submission",
+                        "allowOptionReuse":false
+                    }]
+                }
+            ],
+            "answerSlots": {
+                "q1":{"questionNumber":1,"interaction":"radio"},
+                "q2":{"questionNumber":2,"interaction":"radio"},
+                "q3":{"questionNumber":3,"interaction":"radio"},
+                "q4":{"questionNumber":4,"interaction":"select"},
+                "q5":{"questionNumber":5,"interaction":"select"},
+                "q6":{"questionNumber":6,"interaction":"select"},
+                "q7":{"questionNumber":7,"interaction":"text"},
+                "q8":{"questionNumber":8,"interaction":"text"}
+            },
+            "answerKey": {}
+        })
+    }
+
+    fn answer_constraint_regression_canonical(case: &Value) -> Value {
+        let mut answer_slots = serde_json::Map::new();
+        let mut task_groups = Vec::new();
+        for group in case["groups"].as_array().unwrap() {
+            let task_id = group["taskId"].as_str().unwrap();
+            let slot_numbers = group["slotNumbers"].as_array().unwrap();
+            let slot_ids = slot_numbers
+                .iter()
+                .map(|number| format!("q{}", number.as_u64().unwrap()))
+                .collect::<Vec<_>>();
+            let option_labels = group
+                .get("optionLabels")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let option_bank_id = format!("{task_id}-option-bank");
+            let max_words = group.get("maxWords").and_then(Value::as_u64);
+            for number in slot_numbers {
+                let number = number.as_u64().unwrap();
+                let slot_id = format!("q{number}");
+                let interaction = if option_labels.is_empty() { "text" } else { "select" };
+                answer_slots.insert(
+                    slot_id.clone(),
+                    json!({
+                        "slotId": slot_id,
+                        "questionNumber": number,
+                        "interaction": interaction,
+                        "constraints": max_words.map(|max_words| json!({"maxWords": max_words})).unwrap_or(Value::Null)
+                    }),
+                );
+            }
+            let option_bank = if option_labels.is_empty() {
+                Value::Null
+            } else {
+                json!({
+                    "optionBankId": option_bank_id,
+                    "options": option_labels.iter().map(|label| json!({"label": label})).collect::<Vec<_>>()
+                })
+            };
+            let response = if option_labels.is_empty() {
+                json!({
+                    "responseGroupId": format!("{task_id}-responses"),
+                    "kind": "text_entry",
+                    "slotIds": slot_ids,
+                    "assignment": "per_slot"
+                })
+            } else {
+                json!({
+                    "responseGroupId": format!("{task_id}-responses"),
+                    "kind": "choice",
+                    "slotIds": slot_ids,
+                    "optionBankRef": option_bank_id,
+                    "assignment": "per_slot"
+                })
+            };
+            let mut instruction_signature = json!({
+                "taskType": group["taskType"],
+                "expectedQuestionNumbers": slot_numbers
+            });
+            if let Some(alphabet) = group.get("optionAlphabet") {
+                instruction_signature["optionAlphabet"] = alphabet.clone();
+            }
+            if let Some(max_words) = max_words {
+                instruction_signature["wordLimit"] = json!({"maxWords": max_words});
+            }
+            let start = slot_numbers.first().and_then(Value::as_u64).unwrap();
+            let end = slot_numbers.last().and_then(Value::as_u64).unwrap();
+            task_groups.push(json!({
+                "taskId": task_id,
+                "taskType": group["taskType"],
+                "displayRange": {"kind":"range", "start":start, "end":end},
+                "instructionSignature": instruction_signature,
+                "optionBank": option_bank,
+                "responseGroups": [response]
+            }));
+        }
+        json!({
+            "taskGroups": task_groups,
+            "answerSlots": Value::Object(answer_slots),
+            "answerKey": {}
+        })
+    }
+
+    #[test]
+    fn answer_page_constraint_checker_accepts_a_known_good_key() {
+        let canonical = answer_constraint_test_canonical();
+        let candidate = json!({
+            "answers": {
+                "1":"TRUE", "2":"FALSE", "3":"NOT GIVEN",
+                "4":"A", "5":"B", "6":"C",
+                "7":"two words", "8":"one 2026"
+            }
+        });
+        let report = validate_answer_page_candidate(&canonical, &candidate);
+        assert_eq!(report["violations"], json!([]));
+        assert_eq!(report["acceptedAnswers"].as_object().unwrap().len(), 8);
+        assert!(report["reviewWarnings"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn answer_page_constraint_checker_accepts_all_95_answers_from_seven_golden_runs() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../fixtures/golden/answer-page-constraint-regression.json"
+        ))
+        .unwrap();
+        let mut total = 0usize;
+        for case in fixture["cases"].as_array().unwrap() {
+            let canonical = answer_constraint_regression_canonical(case);
+            let report = validate_answer_page_candidate(
+                &canonical,
+                &json!({"answers": case["answers"]}),
+            );
+            assert_eq!(
+                report["violations"],
+                json!([]),
+                "golden {} produced semantic violations: {}",
+                case["fixtureId"],
+                report["violations"]
+            );
+            assert_eq!(
+                report["acceptedAnswers"].as_object().unwrap().len(),
+                case["answers"].as_object().unwrap().len(),
+                "golden {} lost an answer during semantic validation",
+                case["fixtureId"]
+            );
+            assert!(
+                report["reviewWarnings"].as_array().unwrap().is_empty(),
+                "golden {} unexpectedly triggered a distribution warning",
+                case["fixtureId"]
+            );
+            total += case["answers"].as_object().unwrap().len();
+        }
+        assert_eq!(fixture["cases"].as_array().unwrap().len(), 7);
+        assert_eq!(total, 95);
+    }
+
+    #[test]
+    fn answer_page_constraint_checker_rejects_injected_tfng_option_and_word_limit_errors() {
+        let canonical = answer_constraint_test_canonical();
+
+        let tfng = validate_answer_page_candidate(
+            &canonical,
+            &json!({"answers":{"1":"Yes please"}}),
+        );
+        assert!(tfng["violations"].as_array().unwrap().iter().any(|item| {
+            item.get("code").and_then(Value::as_str) == Some("ANSWER_OPTION_NOT_ALLOWED")
+        }));
+        assert!(tfng["acceptedAnswers"].get("1").is_none());
+
+        let matching = validate_answer_page_candidate(
+            &canonical,
+            &json!({"answers":{"4":"K"}}),
+        );
+        assert!(matching["violations"].as_array().unwrap().iter().any(|item| {
+            item.get("code").and_then(Value::as_str) == Some("ANSWER_OPTION_NOT_ALLOWED")
+        }));
+        assert!(matching["acceptedAnswers"].get("4").is_none());
+
+        let words = validate_answer_page_candidate(
+            &canonical,
+            &json!({"answers":{"7":"one two three four five"}}),
+        );
+        assert!(words["violations"].as_array().unwrap().iter().any(|item| {
+            item.get("code").and_then(Value::as_str) == Some("ANSWER_WORD_LIMIT_VIOLATION")
+        }));
+        assert!(words["acceptedAnswers"].get("7").is_none());
+    }
+
+    #[test]
+    fn answer_page_constraint_checker_allows_words_plus_the_declared_number() {
+        let canonical = answer_constraint_test_canonical();
+        let report = validate_answer_page_candidate(
+            &canonical,
+            &json!({"answers":{"7":"room seven 12"}}),
+        );
+
+        assert!(
+            report["violations"].as_array().unwrap().is_empty(),
+            "NO MORE THAN TWO WORDS AND/OR A NUMBER must allow two words plus one number: {}",
+            report["violations"]
+        );
+        assert_eq!(report["acceptedAnswers"]["7"], json!("room seven 12"));
+    }
+
+    #[test]
+    fn answer_page_command_builder_drops_semantically_invalid_answers_before_write() {
+        let canonical = answer_constraint_test_canonical();
+        let candidate = json!({
+            "answers": {
+                "1": "Yes please",
+                "4": "K",
+                "7": "one two three four five"
+            },
+            "confidence": 0.99,
+            "evidence": [
+                {"questionNumber":"1","pageIndex":1,"quote":"Yes please"},
+                {"questionNumber":"4","pageIndex":1,"quote":"K"},
+                {"questionNumber":"7","pageIndex":1,"quote":"one two three four five"}
+            ],
+            "answerPageIndexes": [1]
+        });
+        let commands = build_answer_page_commands(
+            &canonical,
+            &candidate,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
+        assert!(
+            commands.is_empty(),
+            "semantically invalid visual answers must remain unresolved, got commands: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn answer_page_constraint_checker_flags_out_of_range_numbers_and_uniform_option_distribution() {
+        let canonical = answer_constraint_test_canonical();
+        let report = validate_answer_page_candidate(
+            &canonical,
+            &json!({"answers":{"1":"TRUE","2":"TRUE","3":"TRUE","99":"A"}}),
+        );
+        assert!(report["violations"].as_array().unwrap().iter().any(|item| {
+            item.get("code").and_then(Value::as_str) == Some("ANSWER_QUESTION_NUMBER_OUT_OF_RANGE")
+        }));
+        assert!(report["reviewWarnings"].as_array().unwrap().iter().any(|item| {
+            item.get("code").and_then(Value::as_str) == Some("ANSWER_DISTRIBUTION_REVIEW")
+        }));
+
+        let mut malformed_range = canonical.clone();
+        malformed_range["taskGroups"][0]["displayRange"]["end"] = json!(2);
+        let range_report = validate_answer_page_candidate(&malformed_range, &json!({"answers":{}}));
+        assert!(range_report["violations"].as_array().unwrap().iter().any(|item| {
+            item.get("code").and_then(Value::as_str) == Some("ANSWER_TASK_GROUP_RANGE_MISMATCH")
+        }));
+        assert!(option_labels_from_alphabet("A-G").contains("G"));
+        assert_eq!(option_labels_from_alphabet("A-G").len(), 7);
+        assert!(option_labels_from_alphabet("I-X").contains("X"));
+    }
+
+    #[test]
+    fn answer_page_failure_modes_keep_no_page_transport_and_invalid_response_distinct() {
+        for (error, expected_state, expected_reason) in [
+            (
+                "llm_http_503:{\"error\":\"unavailable\"}",
+                "not_executed",
+                "service_unavailable",
+            ),
+            (
+                "llm_http_timeout:upstream timed out",
+                "not_executed",
+                "service_unavailable",
+            ),
+            (
+                "llm_http_401:{\"error\":\"invalid_api_key\"}",
+                "not_executed",
+                "credentials_invalid",
+            ),
+            (
+                "llm_json_parse_failed:unexpected end of input",
+                "failed",
+                "invalid_response",
+            ),
+            (
+                "llm_http_json_failed:unexpected end of input",
+                "failed",
+                "invalid_response",
+            ),
+        ] {
+            assert_eq!(vision_answer_failure_state(error), (expected_state, expected_reason));
+            let report = vision_answer_failure_report(error, Some(1), &[5]);
+            assert_eq!(report["state"], expected_state);
+            assert_eq!(report["stateReason"], expected_reason);
+            assert_eq!(report["applied"], false);
+            assert_eq!(report["appliedCount"], 0);
+        }
+        assert_eq!(
+            vision_answer_candidate_state(&json!({"answerPageImageCount":0}), None),
+            ("not_executed", "no_answer_page")
+        );
+        assert_eq!(
+            vision_answer_candidate_state(&json!({"answerPageImageCount":1}), None),
+            ("succeeded", "answers_extracted")
+        );
+    }
+
+    #[test]
+    fn answer_page_exists_but_503_is_not_the_same_as_no_answer_page() {
+        let root = std::env::temp_dir().join(format!("pdf2test-answer-failure-state-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        let job = sample_job();
+        save_job(&root, &job).unwrap();
+        ensure_job_dirs(&job_dir(&root, &job.job_id)).unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-answer-failure",
+                "name": "Answer Failure",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 1000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
+
+        let no_page_extraction = json!({"pages": []});
+        let (no_page_candidate, _) = vision_answer_candidate_for_job(
+            &root,
+            &job,
+            "profile-answer-failure",
+            &no_page_extraction,
+            &mut |_root, _job_id, _command, _input, _key| {
+                panic!("no-page result must not call the visual gateway")
+            },
+        )
+        .unwrap();
+        let no_page_state = vision_answer_candidate_state(&no_page_candidate, None);
+
+        let answer_page_extraction = json!({
+            "pages": [{"pageIndex": 5, "images": [{"fileName":"page-005.png"}]}]
+        });
+        let gateway_error = vision_answer_candidate_for_job(
+            &root,
+            &job,
+            "profile-answer-failure",
+            &answer_page_extraction,
+            &mut |_root, _job_id, _command, _input, _key| {
+                Err("llm_http_503:{\"error\":\"unavailable\"}".to_string())
+            },
+        )
+        .expect_err("an answer page plus a 503 must preserve the transport failure");
+        let unavailable_report = vision_answer_failure_report(&gateway_error, Some(1), &[5]);
+
+        assert_eq!(no_page_state, ("not_executed", "no_answer_page"));
+        assert_eq!(
+            (
+                unavailable_report["state"].as_str().unwrap(),
+                unavailable_report["stateReason"].as_str().unwrap()
+            ),
+            ("not_executed", "service_unavailable")
+        );
+        assert_ne!(no_page_state.1, unavailable_report["stateReason"].as_str().unwrap());
+        assert_eq!(unavailable_report["appliedCount"], 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn answer_page_503_keeps_local_draft_available_and_answers_unresolved() {
+        let root = std::env::temp_dir().join(format!("pdf2test-answer-503-pipeline-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-answer-503",
+                "name": "Answer 503",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 1000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
+        let job = sample_job();
+        save_job(&root, &job).unwrap();
+        let dir = job_dir(&root, &job.job_id);
+        ensure_job_dirs(&dir).unwrap();
+        fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/image-only-reading.pdf"),
+            dir.join("uploads/fixture.pdf"),
+        )
+        .unwrap();
+
+        let report = run_auto_pipeline_core_with_gateway(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                profile_id: Some("profile-answer-503".to_string()),
+                target: Some("editableDraft".to_string()),
+                ..Default::default()
+            }),
+            |_root, _job_id, _command, _input, _key| {
+                Err("llm_http_503:{\"error\":\"unavailable\"}".to_string())
+            },
+        )
+        .expect("a visual gateway outage must not fail local draft generation");
+
+        assert_eq!(
+            report.pointer("/parser/visionAnswerExtraction/state").and_then(Value::as_str),
+            Some("not_executed")
+        );
+        assert_eq!(
+            report.pointer("/parser/visionAnswerExtraction/stateReason").and_then(Value::as_str),
+            Some("service_unavailable")
+        );
+        assert_ne!(report.get("status").and_then(Value::as_str), Some("Working"));
+        assert!(dir.join("authoring-ir.json").exists(), "local structure must remain editable");
+        let ir: Value = serde_json::from_str(&fs::read_to_string(dir.join("authoring-ir.json")).unwrap()).unwrap();
+        let resolved = ir
+            .get("answerKey")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter(|(_, value)| value.get("kind").and_then(Value::as_str) != Some("unresolved"))
+            .count();
+        assert_eq!(resolved, 0, "503 must not write any answer value");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn answer_page_retry_runs_the_visual_gateway_again_instead_of_reusing_cache() {
+        let root = std::env::temp_dir().join(format!("pdf2test-answer-retry-{}", Uuid::new_v4().simple()));
+        ensure_app_dirs(&root).unwrap();
+        crate::llm_profiles::save_profiles(
+            &root,
+            &[json!({
+                "profileId": "profile-answer-retry",
+                "name": "Answer Retry",
+                "provider": "OpenAiCompatible",
+                "baseUrl": "http://unit.test/v1",
+                "model": "unit-test",
+                "temperature": 0,
+                "timeoutMs": 1000,
+                "forceJson": true,
+                "enabled": true
+            })],
+        )
+        .unwrap();
+        let job = sample_job();
+        save_job(&root, &job).unwrap();
+        let dir = job_dir(&root, &job.job_id);
+        ensure_job_dirs(&dir).unwrap();
+        fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/parser/image-only-reading.pdf"),
+            dir.join("uploads/fixture.pdf"),
+        )
+        .unwrap();
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let gateway = {
+            let calls = Arc::clone(&calls);
+            move |_root: &Path, _job_id: &str, command: &str, _input: &Value, _key: Option<&str>| {
+                calls.lock().unwrap().push(command.to_string());
+                Err("llm_http_503:{\"error\":\"unavailable\"}".to_string())
+            }
+        };
+
+        run_auto_pipeline_core_with_gateway_mode(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                profile_id: Some("profile-answer-retry".to_string()),
+                target: Some("editableDraft".to_string()),
+                ..Default::default()
+            }),
+            gateway,
+            true,
+        )
+        .expect("first controlled retry run should complete locally");
+        let first_count = calls.lock().unwrap().iter().filter(|command| {
+            command.as_str() == "extract_pdf_image_answers"
+        }).count();
+        assert_eq!(first_count, 1, "first run should make one uncached answer-page request");
+
+        let retry_calls = Arc::clone(&calls);
+        run_auto_pipeline_core_with_gateway_mode(
+            &root,
+            &job.job_id,
+            Some(AutoPipelineInput {
+                profile_id: Some("profile-answer-retry".to_string()),
+                target: Some("editableDraft".to_string()),
+                ..Default::default()
+            }),
+            move |_root: &Path, _job_id: &str, command: &str, _input: &Value, _key: Option<&str>| {
+                retry_calls.lock().unwrap().push(command.to_string());
+                Err("llm_http_503:{\"error\":\"unavailable\"}".to_string())
+            },
+            true,
+        )
+        .expect("retry run should complete locally");
+        let total_count = calls.lock().unwrap().iter().filter(|command| {
+            command.as_str() == "extract_pdf_image_answers"
+        }).count();
+        assert_eq!(total_count, 2, "retry must call the visual gateway again, not reuse the previous failure");
         let _ = fs::remove_dir_all(root);
     }
 

@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "AnswerPageConstraintRegressionV1",
+  "derivedFrom": [
+    {"fixtureId":"chili-peppers","sha256":"f4e70c39b51cff44115e93f0e4dcdaff6ab35b10478869720b7dc549d0b4f602","resolvedCount":13},
+    {"fixtureId":"conformity","sha256":"60dbf15365da522b15ba35729af145bc5b99ea9c598e615691ee5fc405e3d3fd","resolvedCount":14},
+    {"fixtureId":"fishbourne-roman-palace","sha256":"1c8897dd32e095c727d490d132a8d5a3024800f1ab480c71be88361a6b8eae02","resolvedCount":13},
+    {"fixtureId":"organisational-design","sha256":"62aa3d7720c3125130c09fc16e99c60d0a7533664ea499ae527c9910335be830","resolvedCount":13},
+    {"fixtureId":"petri-dish","sha256":"64a62faa5f462549a580bd02535021569d1c5fcabbdd59fb31fa2d4bdc70fa21","resolvedCount":16},
+    {"fixtureId":"sleep-study","sha256":"1c7262c8726850398c20c84d63310143180877979cd8b3705e654c55a5e9b7b2","resolvedCount":13},
+    {"fixtureId":"western-celebrity","sha256":"07b0906358c30c05f6c5efff955a120f8d57e679a5529bbec5a9d25f12435f74","resolvedCount":13}
+  ],
+  "cases": [
+    {
+      "fixtureId":"chili-peppers",
+      "groups":[
+        {"taskId":"group-1","taskType":"true_false_not_given","slotNumbers":[1,2,3,4,5,6],"optionLabels":["TRUE","FALSE","NOT GIVEN"]},
+        {"taskId":"group-2","taskType":"note_completion","slotNumbers":[7,8,9,10,11,12,13],"maxWords":1}
+      ],
+      "answers":{"1":"TRUE","2":"FALSE","3":"NOT GIVEN","4":"FALSE","5":"FALSE","6":"TRUE","7":"germination","8":"fruit","9":"ripening","10":"concentration","11":"coat","12":"fungus","13":"evolution"}
+    },
+    {
+      "fixtureId":"conformity",
+      "groups":[
+        {"taskId":"group-1","taskType":"yes_no_not_given","slotNumbers":[27,28,29,30],"optionLabels":["YES","NO","NOT GIVEN"]},
+        {"taskId":"group-2","taskType":"summary_completion","slotNumbers":[31,32,33,34,35],"maxWords":1},
+        {"taskId":"group-3","taskType":"note_completion","slotNumbers":[36,37,38,39,40],"maxWords":1}
+      ],
+      "answers":{"27":"YES","28":"NOT GIVEN","29":"NOT GIVEN","30":"NO","31":"beans","32":"group","33":"match","34":"untrue","35":"anxious","36":"Asch","37":"internalization","38":"valid","39":"identification","40":"teenagers"}
+    },
+    {
+      "fixtureId":"fishbourne-roman-palace",
+      "groups":[
+        {"taskId":"group-1","taskType":"true_false_not_given","slotNumbers":[1,2,3,4,5,6],"optionLabels":["TRUE","FALSE","NOT GIVEN"]},
+        {"taskId":"group-2","taskType":"note_completion","slotNumbers":[7,8,9,10,11,12,13],"maxWords":2}
+      ],
+      "answers":{"1":"FALSE","2":"TRUE","3":"FALSE","4":"TRUE","5":"FALSE","6":"NOT GIVEN","7":"Roman army","8":"formal gardens","9":"mosaic floors","10":"wall","11":"93","12":"ring","13":"museum"}
+    },
+    {
+      "fixtureId":"organisational-design",
+      "groups":[
+        {"taskId":"group-1","taskType":"multiple_choice","slotNumbers":[14,15],"optionLabels":["A","B","C","D","E"]},
+        {"taskId":"group-2","taskType":"multiple_choice","slotNumbers":[16,17],"optionLabels":["A","B","C","D","E"]},
+        {"taskId":"group-3","taskType":"multiple_choice","slotNumbers":[18,19],"optionLabels":["A","B","C","D","E"]},
+        {"taskId":"group-4","taskType":"multiple_choice","slotNumbers":[20,21],"optionLabels":["A","B","C","D","E"]},
+        {"taskId":"group-5","taskType":"matching_features","slotNumbers":[22,23,24,25,26],"optionLabels":["A","B","C","D"]}
+      ],
+      "answers":{"14":"A","15":"D","16":"B","17":"E","18":"A","19":"D","20":"C","21":"E","22":"B","23":"D","24":"A","25":"C","26":"A"}
+    },
+    {
+      "fixtureId":"petri-dish",
+      "groups":[
+        {"taskId":"group-1","taskType":"matching_information","slotNumbers":[14,15,16,17,18,19],"optionLabels":["A","B","C","D","E","F"]},
+        {"taskId":"group-2","taskType":"matching_features","slotNumbers":[20,21,22,23,24,25],"optionLabels":["A","B","C","D"]},
+        {"taskId":"group-3","taskType":"summary_completion","slotNumbers":[26,27,28,29],"maxWords":1}
+      ],
+      "answers":{"14":"D","15":"F","16":"A","17":"C","18":"F","19":"B","20":"C","21":"A","22":"D","23":"B","24":"A","25":"B","26":"sticking","27":"dimensions","28":"structure","29":"species"}
+    },
+    {
+      "fixtureId":"sleep-study",
+      "groups":[
+        {"taskId":"group-1","taskType":"true_false_not_given","slotNumbers":[1,2,3,4],"optionLabels":["TRUE","FALSE","NOT GIVEN"]},
+        {"taskId":"group-2","taskType":"note_completion","slotNumbers":[5,6,7,8,9,10,11,12,13],"maxWords":1}
+      ],
+      "answers":{"1":"TRUE","2":"NOT GIVEN","3":"NOT GIVEN","4":"TRUE","5":"energy","6":"summer","7":"short","8":"fires","9":"sunrise","10":"temperature","11":"sleeplessness","12":"overweight","13":"hearts"}
+    },
+    {
+      "fixtureId":"western-celebrity",
+      "groups":[
+        {"taskId":"group-1","taskType":"matching_headings","slotNumbers":[14,15,16,17,18,19,20],"optionAlphabet":"ROMAN","optionLabels":["I","II","III","IV","V","VI","VII","VIII","IX","X"]},
+        {"taskId":"group-2","taskType":"matching_features","slotNumbers":[21,22,23],"optionLabels":["A","B","C","D"]},
+        {"taskId":"group-3","taskType":"summary_completion","slotNumbers":[24,25,26],"maxWords":1}
+      ],
+      "answers":{"14":"X","15":"ii","16":"V","17":"vii","18":"iv","19":"viii","20":"iii","21":"D","22":"A","23":"C","24":"newspapers","25":"appearance","26":"audience"}
+    }
+  ]
+}
