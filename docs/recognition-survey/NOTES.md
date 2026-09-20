@@ -337,3 +337,238 @@ pdfium 页面渲染 → vision gateway 图像请求 → canonical 写入链路�
 resolved 率、约束违反率、低置信度触发数和人工确认错误数同样为 **N/A**，不是零。
 没有调模型、提示词、阈值或产品约束，也没有因为服务失败而改抽样清单。服务恢复后应
 直接按该 manifest 继续逐文件 staging、约束筛查和人工复核。
+
+## 8. 视觉服务失败态与答案语义守卫（2026-09-20）
+
+本轮先在不调用外部视觉服务的受控 gateway 下补齐失败态证据。答案页结果现在明确分为：
+
+| 状态 | 典型原因 | 用户动作 | 是否写入答案 |
+|---|---|---|---|
+| `succeeded` | 返回了可核验候选 | 在题稿中复核识别结果 | 只有通过置信度、证据和语义约束的答案才写入 |
+| `failed` | HTTP 成功但返回畸形/不可核验内容 | 重试视觉识别 | 不写入，保持 `unresolved` |
+| `not_executed` | 503、超时、凭据失效等 | 修复服务/凭据后重试 | 不写入，保持 `unresolved` |
+| `not_executed` + `no_answer_page` | 原文件没有可识别的扫描答案页 | 手工填写 | 不编造答案 |
+
+红色反例是“有扫描答案页 + 503”：它记录 `not_executed/service_unavailable`，和
+`no_answer_page` 分开；本地题目结构、编辑和预览仍可继续，任务状态不会停在 `Working`。
+重试测试实际再次进入 `extract_pdf_image_answers`，没有复用上次候选。401/403、超时、5xx
+和畸形 JSON 也分别覆盖了凭据失效、未执行和执行失败的用户提示路径。
+
+同时加入答案语义守卫，守卫位于答案页候选进入 canonical `setAnswer` 之前：TFNG/Y-N-NG、
+选项/配对字母范围、实际选项集合、词数/数字限制、题号范围与连续性都会检查；不合格项
+从 `acceptedAnswers` 中剔除，继续保持 `kind=unresolved`，而不是依赖置信度阈值放行。同组
+选项答案完全相同的情况只标记人工复核，不擅自判错。
+
+已冻结的 7 份 golden 结构中，95 个已知正确答案全部通过，0 条语义违反、0 条分布复核
+误报；注入 `Yes please`、A-F 范围外的 `K`、五词填空三个反例全部被拦截，且命令构造器
+没有生成任何写入命令。未见样本 28 份仍未启动：§7.2 记录的视觉服务 503 尚未形成可用的
+外部答案候选，因此本轮泛化真实错误率仍是 **未测得（有效样本 0/0）**，不能写成 0%。
+## 9. 真实模型云端自主修复基线（2026-09-20）
+
+### 9.1 阶段 0：聚合网关与模型探测
+
+探测对象为用户提供的 OpenAI-compatible `/v1` 网关；凭据只进入测试进程环境，未写入本文件或仓库产物。
+
+`GET /v1/models` 返回 200（707 ms），共 3 个模型：`grok-4.3`、`grok-4.5`、`grok-4.6`，`owned_by` 均为 `xai`。不能仅凭名称推断能力，因此三者都做了最小实测。
+
+| 模型 | JSON 最小请求 | 原生工具调用 | `image_url` | 阶段 0 结论 |
+| --- | --- | --- | --- | --- |
+| `grok-4.3` | 200；`json_object` 返回标准 `chat.completion`，内容为合法 JSON；2.768 s，461 tokens | 200；`finish_reason=tool_calls`，正确调用 `ping`；2.985 s | data URL 实测 503 `Service temporarily unavailable` | 文本/工具协议可用；视觉未打通 |
+| `grok-4.5` | 200；`json_object` 返回标准 `chat.completion`，内容为合法 JSON；2.066 s，325 tokens | 200；正确调用 `ping`；3.105 s | data URL 与 HTTPS URL 均为 503 `Service temporarily unavailable` | 文本候选中响应最快、token 最少；视觉未打通 |
+| `grok-4.6` | 首轮工具调用 200；后续 JSON 探测出现 502，未得到稳定标准响应 | 200；正确调用 `ping`；2.070 s | data URL 实测 503 | 当前网关路由不稳定，不作为完整链首选 |
+
+网关本身存在瞬时 502/503：同一文本请求重试后 `grok-4.3/4.5` 可恢复为 200，而视觉请求三款均稳定失败。因此本轮完整链文本模型选 `grok-4.5`：理由是它在现有 `response_format=json_object` 与工具消息探测中均成功，且成功样本延迟/token 最低；`grok-4.3` 作为备选。阶段 0 **没有确认任何可用视觉模型**，这只作库存记录，本轮不启动答案页视觉批跑。
+
+### 9.2 阶段 1：五类生产请求的真实契约实测
+
+运行方式：`cargo test --lib real_gateway_five_semantic_contract_probe -- --ignored`（临时 ignored 探针，
+位于 `src-tauri/src/lib.rs` 测试模块）。它把五类请求**全部经由产品自己的** `llm_suggestions::make_*_input`
+→ `llm_gateway::run_llm_gateway` → prompt 构造 → `reqwest` → 契约校验器发出，不复刻任何 prompt 文本，
+因此测的是产品实际会发的东西。模型 `grok-4.5`，凭据从 OS 凭据库读取，未落盘。
+
+| 请求 | 首次基线 | 时延 | 证据 |
+| --- | --- | --- | --- |
+| `generate_pdf_reading_outline` | 通过 | 32.1 s | `title/groups/answerKey/confidence/warnings/metadata`；total 5714 tokens（reasoning 1944） |
+| `verify_source_answers`（A3） | **拒绝** | 1.8 s | `source_verification_findings_missing_or_invalid` |
+| `adjudicate_divergence`（A4） | **拒绝** | 2.4 s | `adjudication_rulings_missing_or_invalid` |
+| `generate_authoring_candidate` | 通过 | 83.0 s | `passage/taskGroups/answerSlots/answerKey/unresolvedRegions/sourceCoverageNotes/warnings` |
+| `repair_authoring_step` | 通过 | 48.8 s | 首个工具调用 `read_draft`（先读后改） |
+
+三态判读：两条失败发生在 HTTP 200、JSON 解析成功**之后**（`llm_gateway.rs` 的顺序是
+`openai_post` → `openai_chat_content` → `parse_llm_json_content` → 契约校验），`llm-calls.jsonl` 的
+errorClass 也是契约类而非 `llm_http_*`。这是"执行了且不合格"，不是"未能执行"。
+
+#### 根因：prompt 从不声明校验器强制要求的顶层信封
+
+`source_verification_prompt` / `adjudication_prompt` 都逐条写了字段级规则（枚举、引用、页码、
+逐字一致、非空理由），却通篇没有出现 `findings` / `rulings`；而两个校验器的第一步就是取这个数组，
+取不到即整份拒绝。对照组决定性：三条通过的请求，prompt 里都写了
+"Return exactly one JSON object with this shape: {…}"。
+
+这个缺陷能长期存活，是因为受控假模型 `scripts/controlled-llm-service.mjs` **是照着校验器写的**
+（其文件头明写"必须回 `{findings:[…]}`"）。于是被测链路的两端由同一份理解写成，两端之间的缝隙
+没有任何测试能看见——与"断言自证"同类，只是换了位置。
+
+修复只补信封声明，**不放宽任何校验规则**；并加了守卫测试
+`every_prompt_declares_the_envelope_key_its_validator_requires`（先红后绿），把"prompt 必须声明
+校验器要求的信封"钉成回归。
+
+#### 未完成：真实模型侧复验被网关凭据阻断
+
+修复后重跑同一探针，五条请求全部返回 `llm_http_401 INVALID_API_KEY`（约 460 ms/条），而首次基线
+用**同一把 key、同一 endpoint、同一模型**是 200。凭据本身未被改动。因此：
+
+- 本次修复的证据等级 = **仅单元级**；不写成"真实模型已通过 A3/A4"。
+- 阶段 2（完整 CDP 链）与阶段 3（成本/时延）**未开始**，原因是凭据在阶段 1 末尾失效，不是因为
+  链路不可跑。
+
+决定性证据：用最朴素的请求单独探测凭据——`GET /v1/models`，只带 Bearer、无请求体——同样返回
+`401 {"code":"INVALID_API_KEY","message":"Invalid API key"}`（485 ms）。凭据仍在 OS 凭据库中、长度 67
+未变。§9.1 记录的同一个 `GET /v1/models` 在阶段 0 是 **200 并列出 3 个模型**。所以这不是请求形状、
+不是 prompt 改动、也不是模型能力问题，而是**网关侧这把 key 失效了**（额度耗尽或被轮换）。
+恢复条件：用户提供可用 key 或恢复该 key 的额度，之后直接重跑
+`cargo test --lib real_gateway_five_semantic_contract_probe -- --ignored` 复验 A3/A4，再进入阶段 2。
+
+## 10. Windhub / `grok-4.3` 真实模型基线（2026-09-20）
+
+本节是对 §9 的新网关复测，不覆盖 §9 的历史结果。endpoint 为用户随后提供的
+`https://windhub.cc/v1`，模型固定为 `grok-4.3`；密钥只在测试进程环境或临时 OS
+secret 中使用，未写入仓库、报告或运行产物。
+
+### 10.1 阶段 0：模型枚举与最小请求
+
+`GET /v1/models` 返回 **200 / 199 ms**，共 12 个模型：
+`gemini-3.1-flash-lite`、`gemini-3.8-flash`、`glm-5.2`、`glm-5.3`、`gpt-image-2`、
+`gpt-oss-120b`、`gpt-oss-20b`、`grok-4.3`、`grok-4.5`、`grok-4.6`、`kimi-k3`、
+`qwen-3.8-27b`。
+
+选定 `grok-4.3` 的最小实测结果：
+
+| 请求 | 结果 | 时延 | 备注 |
+| --- | --- | ---: | --- |
+| JSON 输出 | 200 | 14.274 s | 标准 `chat.completion`；JSON 合法；总 698 tokens（reasoning 457） |
+| 原生工具调用 | 200 | 11.921 s | `finish_reason=tool_calls`；正确调用 `ping`；总 538 tokens（reasoning 243） |
+| 视觉候选 `gemini-3.8-flash` | 200 | 1.777 s | `image_url` data URL 返回合法 JSON；仅作视觉库存探测，未用于本链 |
+
+因此阶段 0 结论是：Windhub 的 `grok-4.3` 文本 JSON/工具协议可用，且网关同时
+暴露了至少一个能接受 `image_url` 的视觉候选；本轮完整链只使用 `grok-4.3`，没有启动
+答案页批跑。
+
+### 10.2 阶段 1：五类生产请求
+
+仍使用产品自己的 `make_*_input`、`run_llm_gateway` 和契约校验器。以下是当前工作树实测值：
+
+| 请求 | 结果 | 时延 | 结构/工具证据 |
+| --- | --- | ---: | --- |
+| `generate_pdf_reading_outline` | 通过 | 27.293 s | 顶层含 `answerKey/confidence/groups/metadata/title/warnings`；总 3529 tokens（reasoning 1724） |
+| `verify_source_answers`（A3） | 通过 | 53.133 s | 顶层 `findings` |
+| `adjudicate_divergence`（A4） | 通过 | 21.869 s | 顶层 `rulings` |
+| `generate_authoring_candidate` | 通过 | 32.339 s | `answerKey/answerSlots/passage/taskGroups/sourceCoverageNotes/unresolvedRegions/warnings` |
+| `repair_authoring_step` | 通过 | 16.364 s | 首个工具调用 `read_draft`；顶层 `arguments/callId/tool` |
+
+A3/A4 的响应落在当前工作树已存在的 `llm_gateway.rs` prompt 信封改动之后；这两条结果
+不能当成未改 prompt 的 HEAD 基线。该改动不是本阶段新增的。本阶段没有再改 prompt，也没有
+放宽校验器。完整链的真正候选请求在进入 A3/A4 前就超时，所以该污染不影响完整链的根因
+判定；若要得到干净 A3/A4 baseline，应先在独立干净树复测。
+
+### 10.3 阶段 2：真实 Tauri 产品链
+
+使用 `fixtures/parser/demanding-reading-passage-3.pdf` 和现有 CDP harness。真实 Tauri
+导入的第一遍与第二遍都通过本地稿落盘，第二遍明确记录了 `local-draft-visible-before-cloud`；
+但是两遍的生产候选请求均未在网关客户端预算内完成：
+
+| 导入 | 命令 | 模型 | 时延 | 结果 |
+| --- | --- | --- | ---: | --- |
+| prepass | `generate_authoring_candidate` | `grok-4.3` | 134.043 s | `llm_timeout_budget_exhausted` |
+| 被断言链 | `generate_authoring_candidate` | `grok-4.3` | 144.323 s | `llm_timeout_budget_exhausted` |
+
+对应 artifact 为
+`artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-20T13-22-27-910Z`；两个作业的
+`llm-calls.jsonl` 都只有上述候选失败记录，随后落盘的 cloud candidate 是
+`status=not_run / reasonCode=CLOUD_DISABLED`。没有 `repair_authoring_step`、
+`read_source`、`apply_edits`、`record_ruling` 或 `finish` 回合，因此本次不能声称模型
+完成了自主修复，也没有 sourceAnchors/baseVersion 自修正证据。脚本在确认第二次候选失败后
+停止，避免无意义地等待 900 秒的 repair 轮询；Tauri/Node 进程与临时 OS secret 已清理。
+
+### 10.4 阶段 3：成本与时延结论
+
+一次 harness 导入包含 **1 次候选请求**；由于脚本为真实初稿派生场景而实际导入两遍，
+本次完整运行共发出 **2 次候选请求、0 次修复请求**。失败记录没有保存模型 usage，故真实
+候选 token 数为 **不可得**，不能用阶段 1 的小输入 token 数冒充完整导入成本。两次候选等待
+合计约 **278.366 s**，还不包括本地解析与 UI 导入；对产品而言已是候选单步约 2–2.5 分钟、
+且仍未进入修复链的产品级时延问题。
+
+当前可执行结论：真实 `grok-4.3` 能驱动五类请求的协议层，但**不能在现有客户端预算内
+驱动这条真实云端自主修复链**；卡点是完整候选请求的时延/预算，不是工具校验放宽、视觉能力
+或 `read_source` 语义。下一步建议先拿候选 payload 做独立的请求大小/服务端响应时延分析，
+再决定是否需要模型路由、请求裁剪或预算策略调整；本轮不改这些行为。
+
+### 10.5 复核这次失败的落库状态：一次真实超时在界面上等于"未启用云端"
+
+§10.3 把候选失败后的 `status=not_run / reasonCode=CLOUD_DISABLED` 记成中性事实。直接查同一次
+运行的库（`artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-20T13-22-27-910Z/appdata/data/authoring_hub.db`）
+后可以确定这不是中性的，它是一个用户可见缺陷：
+
+| 行 | 字段 | 实测值 |
+| --- | --- | --- |
+| `processing_jobs_v2` | `cloud_status` | `failed` ✅ |
+| `processing_jobs_v2` | `last_error_code` | `llm_timeout_budget_exhausted:llm_http_timeout:error sending request for url (https://windhub.cc/v1/chat/completions)` ✅ |
+| `processing_jobs_v2` | `progress_json` | `{"cloudEnabled":true,"cloudProfileId":"real-repair-chain-probe",…}` |
+| `recognition_batches_v1` | `cloud_status` | `not_run` ❌ |
+| `recognition_batches_v1` | `cloud_reason_code` | `CLOUD_DISABLED` ❌ |
+| `recognition_batches_v1` | `stages_json.cloud.message` | 「本次导入未启用云端识别。」 ❌ |
+
+**同一行的 `cloudEnabled` 是 true，`cloud_reason_code` 却是 `CLOUD_DISABLED`。** 任务行知道真相，
+批次行说的是另一回事。
+
+前端读的是**批次行**：`RecognitionPanel` 把 `view.cloudStatus` 交给
+`describeVerificationStatus`；`recognitionClient.ts:224` 把 `not_run` 归一成 `not_started`，
+于是走到 `:559` 的分支，返回 **「题稿已生成，可以开始编辑」**——与"用户压根没启用云端"逐字相同。
+那次 134 秒的真实超时在界面上完全不存在。
+
+成因是接缝而不是疏漏：批次行由本地周期建出，而本地周期按设计以 `cloud_enabled = false` 运行
+（`scheduler.rs:736` 的注释明写这一点），因此它写下的 `CLOUD_DISABLED` 在当时是诚实的；
+`scheduler.rs` 原本指望"下面的 advance 会用真实修复状态覆盖它"，但 `write_batch_repair`
+只写 `repair_json`，从不碰这一格，而候选失败时修复循环压根没启动。于是没有任何代码改写它。
+
+值得注意的是 `describeVerificationStatus` **本来就有**这一格的正确文案：
+`unusable → unavailable → 「云端校验暂时不可用，不影响继续编辑」`。缺的不是文案，是把真实终态
+送到批次行。
+
+修复：`store::write_batch_cloud_failure` + `scheduler::batch_cloud_failure_for_job`，
+只在"云端起了、但没交出可用结果"时改写批次行的 cloud 一格，原因码复用既有
+`classify_cloud_error`（超时 → `unusable` / `MODEL_TIMEOUT`），不新造分类、不动其余三路。
+成功/部分成功路径**本轮未改**：那种情况下批次行同样停在 `CLOUD_DISABLED`，但故事由
+`repair_json` 讲，且改动会影响既有 13/13 CDP 断言，单独排卡。
+
+红色证据来自真实运行产物（上表），不是构造出来的；两条单测把修复钉住。
+
+## 11. Welfare / `grok-4.6` 复测（2026-09-20）
+
+endpoint 为 `https://welfare.darkforger.com/v1`，凭据只进入测试进程，没有写入仓库或运行
+产物。`GET /models` 返回 200 / 547 ms，共 13 个模型，目录中明确包含 `grok-4.6`。
+
+阶段 0 的两个最小探测均一次成功：
+
+| 探测 | 结果 | 时延 | usage |
+| --- | --- | ---: | ---: |
+| `response_format=json_object` | 200，标准 `chat.completion`，内容为合法 JSON | 6.679 s | 2551 total（343 reasoning） |
+| 原生工具调用 | 200，`finish_reason=tool_calls`，正确调用一次 `ping` | 5.601 s | 533 total（231 reasoning） |
+
+因此该 endpoint/model 的基础 JSON 与工具消息协议可用。随后没有用手写 prompt 代替产品请求，
+而是临时 ignored 探针调用产品自己的 `generate_cloud_authoring_candidate_raw`：同一份
+`fixtures/parser/demanding-reading-passage-3.pdf`、当前 `make_cloud_authoring_candidate_input`、
+当前 prompt、当前 validator，profile HTTP 预算设为 clamp 上限 300 s。
+
+完整候选没有进入模型生成。网关在 7.534 s 返回 HTTP 402
+`user_quota_insufficient`：可用额度 `2.132969`，网关为该请求预留/预测需要
+`6.01536 credits`。产品命令输入缓存为 12,414 bytes；这不是 wire payload 大小，因为实际
+HTTP body 还包含内联 PDF/base64。没有输出缓存、没有 completion，也没有完整请求 token usage。
+
+结论边界：
+
+- 已证明：`grok-4.6` 在该网关上能做最小 JSON 和 native tool call。
+- 未证明：完整 candidate 能在 300 s 内完成；更未进入 repair loop，仍没有
+  `read_source` / `apply_edits` / `record_ruling` / `finish` 的真实模型证据。
+- 本次阻断是网关明确的额度不足，不是客户端超时、prompt 校验失败或模型协议不兼容。
+- 没有通过压低输出上限制造一个与真实产品请求不同的“通过”。临时探针运行后已从源码移除。
