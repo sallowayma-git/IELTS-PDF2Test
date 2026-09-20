@@ -138,7 +138,10 @@ fn find_question_word(text: &str) -> Option<(usize, usize)> {
                 || !lower[end..]
                     .chars()
                     .next()
-                    .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+                    // `questions1-10` is a real PDF text-layer output.  A digit
+                    // immediately after the keyword is therefore valid; letters
+                    // and `_` still mean this is part of another word.
+                    .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_');
             if before_ok && after_ok {
                 return Some((start, end));
             }
@@ -360,5 +363,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(parsed.numbers, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn parses_compact_questions_without_a_space_before_the_number() {
+        assert_eq!(
+            parse_question_expression("questions1-10"),
+            Some(QuestionNumberExpressionV2::Range { start: 1, end: 10 })
+        );
     }
 }

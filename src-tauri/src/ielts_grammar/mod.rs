@@ -20,6 +20,7 @@ mod prompt_assembler;
 pub(crate) mod quality;
 pub(crate) mod question_number;
 mod reading;
+mod source_coverage;
 #[cfg(test)]
 mod real_pdf_acceptance;
 

@@ -88,6 +88,29 @@ pub struct CoverageStatusV2 {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+pub enum QuestionCoverageStateV2 {
+    Complete,
+    Missing,
+    Undetermined,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct QuestionCoverageReportV2 {
+    pub status: QuestionCoverageStateV2,
+    pub declared_question_numbers: Vec<u32>,
+    pub canonical_question_numbers: Vec<u32>,
+    pub missing_question_numbers: Vec<u32>,
+    pub extra_question_numbers: Vec<u32>,
+    pub declarations: Vec<String>,
+    pub unparsed_declarations: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum CompilerProbeStatusV2 {
     Passed,
     Failed,
@@ -137,6 +160,8 @@ pub struct QualityReportV2 {
     pub source_coverage: f64,
     pub coverage_ledger: Vec<QualityCoverageEntryV2>,
     pub coverage_status: CoverageStatusV2,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_coverage: Option<QuestionCoverageReportV2>,
     pub compiler_probes: CompilerProbesV2,
     pub task_scores: BTreeMap<String, f64>,
     pub hard_failures: Vec<String>,

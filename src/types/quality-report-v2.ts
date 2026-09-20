@@ -45,6 +45,17 @@ export interface CoverageStatusV2 {
   unassignedSourceNodeIds: string[];
 }
 
+export interface QuestionCoverageReportV2 {
+  status: "complete" | "missing" | "undetermined";
+  declaredQuestionNumbers: number[];
+  canonicalQuestionNumbers: number[];
+  missingQuestionNumbers: number[];
+  extraQuestionNumbers: number[];
+  declarations: string[];
+  unparsedDeclarations: string[];
+  reason?: string;
+}
+
 export interface CompilerProbeV2 {
   status: "passed" | "failed";
   schemaVersion: string;
@@ -64,6 +75,7 @@ export interface QualityReportV2 {
   sourceCoverage: number;
   coverageLedger: QualityCoverageEntryV2[];
   coverageStatus: CoverageStatusV2;
+  questionCoverage?: QuestionCoverageReportV2;
   compilerProbes: CompilerProbesV2;
   taskScores: Record<string, number>;
   hardFailures: string[];

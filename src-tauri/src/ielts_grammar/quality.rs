@@ -11,6 +11,7 @@ use crate::validator::validate_reading_source_contract;
 
 use super::instruction_signature::infer_instruction_signature;
 use super::issue_codes::*;
+use super::source_coverage::{assess as assess_source_question_coverage, QuestionCoverageStatus};
 
 #[derive(Debug, Clone, Default)]
 struct GroupEvaluation {
@@ -159,6 +160,51 @@ pub(crate) fn evaluate_quality_with_gate(
     let mut task_scores = BTreeMap::new();
     let mut expected_numbers = BTreeSet::new();
     let mut actual_numbers = Vec::new();
+
+    // Reading-only independent view: the question domain comes from the raw
+    // physical source, never from task groups or cloud output.  Listening will
+    // get its own modality-aware contract when that path is implemented.
+    let question_coverage = if authoring
+        .get("modality")
+        .and_then(Value::as_str)
+        != Some("listening")
+    {
+        Some(assess_source_question_coverage(authoring, physical_shadow))
+    } else {
+        None
+    };
+
+    if let Some(assessment) = question_coverage.as_ref() {
+        match assessment.status {
+            QuestionCoverageStatus::Missing => {
+                let mut coverage_issue = issue(
+                    SOURCE_QUESTION_COVERAGE_MISSING,
+                    "blocking",
+                    "原文声明的题号集合与当前稿不一致，可能有题目被漏掉。",
+                    "document",
+                    "document",
+                    Vec::new(),
+                    vec!["split_prompt", "edit_text"],
+                );
+                coverage_issue["details"] = assessment.as_value();
+                push_issue(&mut issues, &mut hard_failures, coverage_issue);
+            }
+            QuestionCoverageStatus::Undetermined => {
+                let mut coverage_issue = issue(
+                    SOURCE_QUESTION_COVERAGE_UNDETERMINED,
+                    "warning",
+                    "无法可靠解析原文声明的题号范围，未把 source coverage 判为完整。",
+                    "document",
+                    "document",
+                    Vec::new(),
+                    vec!["assign_role", "edit_text"],
+                );
+                coverage_issue["details"] = assessment.as_value();
+                push_issue(&mut issues, &mut hard_failures, coverage_issue);
+            }
+            QuestionCoverageStatus::Complete => {}
+        }
+    }
 
     validate_exam_id(authoring, &mut issues, &mut hard_failures);
     validate_passage(authoring, &mut issues, &mut hard_failures);
@@ -328,7 +374,7 @@ pub(crate) fn evaluate_quality_with_gate(
         unresolved_blocking_issue_count,
     )
     .as_str();
-    json!({
+    let mut report = json!({
         "schemaVersion": "QualityReportV2",
         "state": state,
         "documentScore": round(document_score),
@@ -356,7 +402,11 @@ pub(crate) fn evaluate_quality_with_gate(
         },
         "evaluatedAt": Utc::now().to_rfc3339(),
         "evaluatorVersion": "phase4-pr07-hard-gate-v2"
-    })
+    });
+    if let Some(assessment) = question_coverage {
+        report["questionCoverage"] = assessment.as_value();
+    }
+    report
 }
 
 fn validate_scoring_semantics(
@@ -4402,6 +4452,59 @@ mod tests {
         });
         let report = evaluate_quality(&authoring, None);
         assert_eq!(report.get("state").and_then(Value::as_str), Some("blocked"));
+    }
+
+    #[test]
+    fn source_question_coverage_catches_a_question_deleted_from_the_canonical_draft() {
+        let mut authoring = early_approaches();
+        authoring["modality"] = json!("reading");
+        authoring["taskGroups"][0]["displayRange"] = json!({"kind":"range","start":14,"end":14});
+        authoring["taskGroups"][0]["instructionSignature"]["expectedQuestionNumbers"] = json!([14]);
+        authoring["taskGroups"][0]["instructionSignature"]["expectedSlotCount"] = json!(1);
+        authoring["taskGroups"][0]["responseGroups"] = json!([{
+            "responseGroupId":"early-approaches-q14-15-response-14",
+            "slotIds":["q14"],
+            "prompt":[{"id":"q14-stem","text":"Which approach?"}]
+        }]);
+        authoring["answerSlots"].as_object_mut().unwrap().remove("q15");
+        authoring["answerKey"].as_object_mut().unwrap().remove("q15");
+
+        let mut physical = valid_physical_shadow(&authoring);
+        physical["pages"][0]["lines"] = json!([
+            {"id":"declared-range","text":"Questions 14-15"},
+            {"id":"declared-boxes","text":"Write your answers in boxes 14-15"}
+        ]);
+
+        let report = evaluate_quality(&authoring, Some(&physical));
+        assert_eq!(report["questionCoverage"]["status"], "missing", "{report:#}");
+        assert_eq!(report["questionCoverage"]["missingQuestionNumbers"], json!([15]));
+        assert_eq!(report["state"], "blocked", "{report:#}");
+        assert!(report["hardFailures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|code| code == "SOURCE_QUESTION_COVERAGE_MISSING"));
+    }
+
+    #[test]
+    fn source_question_coverage_is_undetermined_when_source_declaration_cannot_be_parsed() {
+        let authoring = early_approaches();
+        let mut physical = valid_physical_shadow(&authoring);
+        physical["pages"][0]["lines"] = json!([
+            {"id":"unparsed-declaration","text":"Questions are based on the passage below."}
+        ]);
+
+        let report = evaluate_quality(&authoring, Some(&physical));
+        assert_eq!(report["questionCoverage"]["status"], "undetermined", "{report:#}");
+        assert!(!report["hardFailures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|code| code == "SOURCE_QUESTION_COVERAGE_MISSING"));
+        assert!(report["issues"].as_array().unwrap().iter().any(|issue| {
+            issue.get("code").and_then(Value::as_str)
+                == Some("SOURCE_QUESTION_COVERAGE_UNDETERMINED")
+        }));
     }
 
     #[test]
