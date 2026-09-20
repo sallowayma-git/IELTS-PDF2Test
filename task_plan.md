@@ -573,3 +573,19 @@ rendered=32                     # 修之前是 46
 - 功能代码已按归属提交：`9838398`（DOCX）、`9945be5`（重新识别）、`59c1a78`（blocking 前端反例）、`9e83292`（force）、`557f24b`（CAS）、`d9081c7`（PublishVerdict/readiness 测试与持久化）。
 - `node scripts/e2e/tauri-cdp-cloud-repair-chain.mjs` 使用仓库内 `fixtures/parser/demanding-reading-passage-3.pdf`，在刷新 dist 与 Tauri debug exe 后 **13/13 场景通过，退出码 0**。此前把该链报告成 private-real 缺失是错误归因；private-real 缺失属于另一条 `verify:phase5:real-pdf` 脚本。
 - 用同一条 CDP 链指定 `fixtures/parser/complex-reading.docx`：真实 UI 导入通过，`placeholderPrompts=0`，但在 `derive-scenario-from-real-draft` 因 PDF golden hash（`f13bd65c...`）与 DOCX hash（`717918f5...`）不匹配而停止；该运行的真实 V2 质量报告同时为 `blocked`，含 `SLOT_HOST_MISSING` 与 `RUNTIME_COMPILER_FAILED`。因此不能把 DOCX 宣称为已经走完云端修复→预览→导出。
+
+## 2026-09-20 识别事实盘点
+
+- [x] 真实听力导入、pdfium/raw output、几何断词与规则静态盘点
+- [x] 7 个 golden 阅读样本 + 流程图版 + 仅原文无题真实导入
+- [x] 写入并复核 `docs/recognition-survey/NOTES.md`
+- [x] 清点本轮工作树，仅保留调查文档与用户原有 `.workbuddy` 改动
+
+## 2026-09-20 答案页证据链
+
+- [x] 盘点答案页 IR 分类、页面图像落盘和现有视觉 sidecar 的真实调用边界；结论已先写入 `docs/recognition-survey/NOTES.md` §5。
+- [x] 为“空白答案页回到 unresolved”构造并通过红色反例，定位唯一 answerKey 写入入口与 provenance 约束。
+- [x] 实现答案页图像→文本→答案键路径；无答案页、低置信度和无证据映射保持 unresolved，不改变题型识别与质量门禁判据。
+- [x] 对 7 份 golden 做逐份答案数量和人工正确性核对（95/95，0 错），补 `121. P2` 无答案页负控，运行指定 13/13 CDP harness。
+- [x] 评估 PDF folder hook；牵扯独立导入 UX/调度边界，本轮仅记录未改。
+- [x] 按功能块提交并更新本计划、`findings.md`、`progress.md`；最终结果见 NOTES §6。

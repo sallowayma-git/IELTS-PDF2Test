@@ -3418,3 +3418,25 @@ cloud_usable
 - 同次运行落盘的 `authoring-ir-v2.shadow.json` 显示质量状态 `blocked`，硬阻断为 `SLOT_HOST_MISSING` 与 `RUNTIME_COMPILER_FAILED`。后者包含 `RUNTIME_CHOICE_SLOT_ANSWER_NOT_OPTION` 和 `RUNTIME_RESPONSE_ANSWER_KIND_MISMATCH`。
 
 准确结论：本轮已证明 DOCX 题面不再被投影成 placeholder，并且服务层能把同一 DOCX 送到云端修复网关；本轮没有证明用户可以用当前 DOCX 走完产品级“导入→云端修复→预览→导出”，当前 fixture 仍被质量门禁阻断，完整 CDP 链还被 PDF-only golden 绑定阻断。
+
+## F-REC-SURVEY-2026-09-20
+
+- 真实听力 PDF 的 V1 parser 是 pdfium（非 fallback），但关键题目页的词边界在输出中仍缺失或被错误插入；上游 `Questions`/instruction 解析因此全线未命中。
+- 听力实际落盘为 0 task groups / 0 slots；7 个 golden 阅读样本的 V2 组/slot 结构与标注一致，但所有答案值均 unresolved，质量门禁仍 blocked。
+- 识别层 Rust 没有正则引擎调用；主要是空格敏感的 literal `contains`/`starts_with`/字符扫描规则。阅读语料应按 SHA + 结构标注 + known issue 作为私有回归输入，结构门与答案/OCR门分离。
+
+## F-ANSWER-EVIDENCE-2026-09-20（初步）
+
+- 现有答案视觉代码并非完全缺失：`auto_pipeline.rs` 已有 `main_pdf_vision_extraction`、`vision_answer_candidate_for_job` 和 `vision-answer-candidates.json` 持久化路径；但从命名和调用位置看，当前更像云端/诊断候选链，尚未证明它会把候选写入 authoring `answerKey`。
+- `parser.rs` 已有 Python PDF image sidecar、pdfium page-render fallback 与 `PdfImageExtractionV1` 合并逻辑；需要继续确认 Windows/Tauri 默认设置、调用调度和答案页是否包含在 extraction pages/assets 中。
+- `parse_answer_source_candidates` 只遍历独立的 `SourceFile.role == "AnswerKey"`，不能直接解释同一份阅读 PDF 的答案页；主 PDF 答案页的 page-role 识别和答案键唯一写入入口仍待定位。
+- 七份真实答案页已渲染检查：均为清晰的单页/多页答案表或说明页，版式不是简单逐行纯文本；存在表格、多栏/分组标题、答案与证据解释并列。V2 物理层把答案页判为 `scanned`，每页有 `PDF_IMAGE_ONLY_PAGE_REQUIRES_OCR`、`requiresOcrRegions=1` 和至少一个 image placement/assets。
+- 直接调用仓库 Python sidecar 的首次尝试在当前 Python 3.12 环境失败：`missing_pdf_dependency:pypdf:No module named 'pypdf'`。这不是产品断言；需继续核对 Rust fallback 与产品运行时的 Python 解析器选择，不能把 sidecar 能力当成已可用。
+
+## F-ANSWER-EVIDENCE-2026-09-20（实施收口）
+
+- 七份 golden 的答案页均走真实 Tauri 导入、scheduler、pdfium 渲染和视觉网关请求；答案页页号分别为 `5`、`5`、`5`、`6,7`、`7,8`、`5,6`、`5`。
+- 在受控视觉服务返回人工从原图核对的答案表后，canonical answer slots 从 `0/95` resolved 变为 `95/95`，7 份逐项人工核对错误为 0；应用报告均标 `source=answer_page_recognition`。
+- Western 首次 `8/13` 是真实暴露的罗马数字选项大小写映射缺陷；先有失败单测/产品复跑，再把 option labels 统一成大小写不敏感比较，修复后 `13/13`。
+- 空白答案页单测证明旧的答案页机器值会清回 unresolved；无扫描答案页的 `121. P2(仅原文无题)` 负控生成 `answerPageImageCount=0`、不调用视觉抽取、`applied=false` 且无错误。
+- 全量 Rust `860 passed / 0 failed / 11 ignored`，Vitest `311 passed / 0 failed`；指定 `tauri-cdp-cloud-repair-chain.mjs` 使用仓库内 demanding-reading fixture，13/13 passed。

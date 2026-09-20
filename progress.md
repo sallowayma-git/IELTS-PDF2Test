@@ -1480,3 +1480,25 @@ A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
 - 代码已落盘为 6 个功能提交：`9838398`, `9945be5`, `59c1a78`, `9e83292`, `557f24b`, `d9081c7`。
 - 指定 PDF CDP harness 的真实结果不是 private corpus 缺失：刷新构建后 `tauri-cdp-cloud-repair-chain.mjs` 对 `demanding-reading-passage-3.pdf` **13/13 passed, exit 0**。
 - DOCX 产品链单独复跑结果：导入成功且 `placeholderPrompts=0`；随后因 harness 使用 PDF golden 绑定而在场景派生处失败，且该 DOCX 的 V2 质量状态为 `blocked`（`SLOT_HOST_MISSING`, `RUNTIME_COMPILER_FAILED`）。服务层 DOCX 云端网关反例通过，但不能据此声称当前 DOCX 已完成预览/导出闭环。
+
+## 2026-09-20 识别层事实盘点进行中
+
+- 未改产品代码、架构、modality 或发布链；使用真实 Tauri CDP 导入/调度器并保留运行产物。
+- `listening-vol7-t9.pdf` 的 V1 产物确认 `rust-parser:pdf:pdfium`、`degradedFallback=false`、8 页；题目页的空格缺失/错误断词在 pdfium 产物中可复现，识别结果为 0 task group / 0 slot，13 个 layout placeholder 均 `INSTRUCTION_SIGNATURE_UNRESOLVED`。
+- 9 个阅读样本（7 个已有 golden、流程图版、仅原文无题）均进入真实本地识别；7 个 golden 的 V2 结构组/slot 数与标注一致，答案值全部 unresolved；两份附加样本分别得到 3/13 与 0/0。
+- 详见 `docs/recognition-survey/NOTES.md`；运行档位为 CDP diagnostic，local-chain 的 `source=not_run` 报红与识别结构结果分开记录。
+
+## 2026-09-20 答案页证据链：实施前盘点
+
+- 七份 golden 的答案页在 V2 physical shadow 中均为 `scanned`，带 `imagePlacements` / `assetIds` 和 `PDF_IMAGE_ONLY_PAGE_REQUIRES_OCR`；真实渲染图确认是表格、分组和答案/解释并列，不适合纯文本逐行正则。
+- 现有 sidecar 只产图不做 OCR；当前 Python 3.12 直接调用因缺 `pypdf` 失败，但 Windows 产品默认有 pdfium 页面渲染 fallback，会落盘每页 PNG。现有 `vision_answer_candidate_for_job` 已能请求视觉答案候选，但只落诊断文件，从未写 canonical `answerKey`。
+- 盘点结论已先写入 `docs/recognition-survey/NOTES.md` §5；下一步先补空白答案页的红色反例，再接唯一 canonical 编辑事务。
+
+## 2026-09-20 答案页证据链：实施与验收
+
+- [x] 以 `8eebff2` 提交扫描答案页视觉候选到 canonical `answerKey` 的唯一写入路径；journal provenance 为 `answer_page_recognition`，保留人工编辑保护。
+- [x] 以空白页反例先测后修：已有答案页来源的值清回 `unresolved`；无扫描答案页和低置信度不编造答案，并保留 warning。
+- [x] 七份 golden 真实 Tauri 路径逐份运行：95/95 answer slots resolved，原图人工核对 0 错；Western 的罗马数字大小写缺陷先红后修，修复提交为 `21249b5`。
+- [x] `121. P2(仅原文无题)` 负控：无 image-only answer page，不请求视觉抽取，不报错，0 slots/0 resolved。
+- [x] 全量 Rust `860 passed / 0 failed / 11 ignored`；Vitest `311 passed / 0 failed`；指定 PDF `tauri-cdp-cloud-repair-chain.mjs` 13/13 passed。
+- [x] folder hook 未改，作为独立导入 UX 边界记录；临时 survey harness/渲染目录不纳入提交，产品证据保留在 artifacts/e2e-cdp 运行档案。
