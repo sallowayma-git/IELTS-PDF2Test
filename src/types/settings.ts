@@ -113,7 +113,13 @@ export interface AutoPipelineReport {
       attempted: boolean;
       applied: boolean;
       profileId?: string | null;
+      state?: "succeeded" | "failed" | "not_executed";
+      stateReason?: string;
+      answerPageImageCount?: number | null;
+      answerPageIndexes?: number[];
       answerCount?: number;
+      constraintViolations?: Array<{ code?: string; questionNumber?: string | null; message?: string; [key: string]: unknown }>;
+      reviewWarnings?: Array<{ code?: string; message?: string; [key: string]: unknown }>;
       warnings?: string[];
       failure?: string | null;
       confidence?: number;

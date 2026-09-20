@@ -24,6 +24,7 @@ import { useCanonicalEditor } from "./useCanonicalEditor";
 import { describeDeferredRemoteRefresh } from "./remoteVersion";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { getPublishPreflight, type PublishCheckResultV1 } from "../../api/workspaceClient";
+import { answerPageStatusOf } from "./answerPageStatus";
 
 // 题目工作区（计划 §16.6 / §9.10）。
 // 打开就是最终 IELTS 题面；左侧 passage、右侧 questions 由 ExamCanvas 渲染。
@@ -148,6 +149,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const canExport = taskSummary.tasks.length === 0 && Boolean(preflight) && !preflightError && editor.pendingCount === 0;
   // 门禁的三种状态，供界面如实措辞，也给验收脚本一个可等待的锚点。
   const preflightState: "loading" | "loaded" | "error" = preflightError ? "error" : preflight ? "loaded" : "loading";
+  const answerPageStatus = useMemo(
+    () => answerPageStatusOf(detail?.pipelineReport),
+    [detail?.pipelineReport]
+  );
 
   // 识别建议的重拉时机：保存完成、版本变化、识别阶段推进。
   //
@@ -461,6 +466,33 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
         <p className="workspace-notice warning" role="alert" data-testid="workspace-preflight-error">
           下面的问题列表可能不完整（{preflightError}），发布时仍会按完整规则检查。
         </p>
+      ) : null}
+      {answerPageStatus ? (
+        <div
+          className="workspace-notice warning"
+          role={answerPageStatus.canRetry ? "alert" : "status"}
+          data-testid="workspace-answer-page-status"
+          data-answer-page-state={answerPageStatus.state}
+          data-answer-page-reason={answerPageStatus.stateReason ?? ""}
+        >
+          <span>{answerPageStatus.message}</span>
+          {answerPageStatus.detail ? <small className="workspace-notice-detail">{answerPageStatus.detail}</small> : null}
+          {answerPageStatus.canRetry ? (
+            <button
+              className="primary small"
+              data-testid="workspace-answer-page-retry"
+              disabled={Boolean(busyAction)}
+              onClick={() => withBusy("answer-page-retry", async () => {
+                await editor.flush();
+                await retryProcessing(itemId);
+                editor.reload();
+                setNotice("已重新加入识别队列，答案页识别会重新请求视觉服务。题稿仍可编辑。");
+              })}
+            >
+              重试答案页识别
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {editor.saveState === "conflict" || editor.saveState === "failed" ? (
         <div className="workspace-save-recovery" data-testid="workspace-save-recovery">
