@@ -1,0 +1,197 @@
+{
+  "schemaVersion": "AnswerPageGeneralizationManifestV1",
+  "purpose": "unseen answer-page visual recognition accuracy baseline",
+  "sourceDirectory": "F:\\workspace\\IELTS Atlas\\ReadingPractice\\PDF",
+  "populationCount": 277,
+  "eligibleCount": 268,
+  "sampleCount": 28,
+  "seed": 20260920,
+  "selection": {
+    "method": "seeded-sha256-rank",
+    "rankInput": "answer-page-generalization-v1|{seed}|{originalName}",
+    "sort": "rank ascending",
+    "excludeBeforeRanking": [
+      "7. P1 - Chili peppers 辣椒的历史.pdf",
+      "8. P1 - Fishbourne Roman Palace 罗马宫殿.pdf",
+      "105. P2 - How the Petri dish supports scientific advances 培养皿.pdf",
+      "106. P2 - Early Approaches to Organisational Design 组织设计.pdf",
+      "107. P2 - A study of western celebrity 西方名人.pdf",
+      "138. P3 - Conformity 从众心理.pdf",
+      "139. P1 - Sleep Study on Modern-Day Hunter-Gatherers Dispels Popular Notions 部落睡眠研究.pdf",
+      "231. P1 - The History of the Pencil 铅笔的历史（流程图版）.pdf",
+      "121. P2(仅原文无题) - Muscle Loss 肌肉流失.pdf"
+    ]
+  },
+  "codeCommitAtSelection": "f80f150",
+  "samples": [
+    {
+      "rank": "002d2c7fde7ad9267f9aa62dd816ceec1b07e761635df95983c58b67609f8941",
+      "originalName": "80. P3 - Rebranding art museums 博物馆品牌重塑.pdf",
+      "sha256": "de811637481bacb6cdc2e41991116d6e8b6bef147ef4713e370aaa4af2a5ed40",
+      "sizeBytes": 548821
+    },
+    {
+      "rank": "00444b96a1d3ce5d1680417960049d881dde792ce30149128fb9aafd3ef6af5d",
+      "originalName": "232. P2 - The origin and development of applause 掌声的历史.pdf",
+      "sha256": "fef025fc7337d031221957e530d917a2bbd65c2a5deed4687e162a8ccaa1f795",
+      "sizeBytes": 1427816
+    },
+    {
+      "rank": "00e72f9b67bdc94e2ef7648dd9cce4767102a6c3c4a68fea72fa5e2fddbd59ac",
+      "originalName": "51. P2 - The dingo debate 澳洲野犬_澳洲野狗.pdf",
+      "sha256": "e4a4d4f09524ef33c9407c1e989c2d21683d852688ddaa682d85339001a016c2",
+      "sizeBytes": 724778
+    },
+    {
+      "rank": "010188ce1ec3d0349ee52b2dd5817f9bda648db552c3dde25adeae3455c282eb",
+      "originalName": "36. P2 - Bird Migration 鸟类迁徙.pdf",
+      "sha256": "c96facd374388744fa8a0e431a0b9694ddee3d41578196e3213f93230df4b000",
+      "sizeBytes": 1180413
+    },
+    {
+      "rank": "01930e2bb5c1e855304ceab13b09ecb250b0d254141335054485ff8c47c178d9",
+      "originalName": "137. P3 - What is social history 社会史.pdf",
+      "sha256": "97787f339dbe99678c84f7d415eab39ef1cc847ac89afecb64a81011703915d2",
+      "sizeBytes": 741273
+    },
+    {
+      "rank": "0210cb1b784a9e56378f61af8cb140028454ffa435e9cdbdc0db1364e886b040",
+      "originalName": "76. P3 - Living dunes 流动沙丘.pdf",
+      "sha256": "3acd107979e9584ea68d36934fbb2867a271e822858f5e48f4bf22e842ff6bac",
+      "sizeBytes": 524090
+    },
+    {
+      "rank": "0383f13f6a0eb1200f7754def3e92d5ac5f9c51a53cd463a0e68d1e842187648",
+      "originalName": "117. P2 - Stress Less 工作压力.pdf",
+      "sha256": "be9a1276c35000a9360900faad3ab5e859e33d554dea2c5fbf74b2167c87aa12",
+      "sizeBytes": 778600
+    },
+    {
+      "rank": "03cbd111326b56e9828ae158501f6c58984afd29b5d6f32d65ba65e2ac0cc205",
+      "originalName": "97. P3 - The value of literary prizes 文学奖项的价值.pdf",
+      "sha256": "f1f6c68c5494be0bb32892404e06d171fa9bc0b817cc0e89cc8378182ef8dfa0",
+      "sizeBytes": 627251
+    },
+    {
+      "rank": "047ae6e484edc48f224f9d5ff16056da9545bc25ae6f738a369b22bf1fbd0e8d",
+      "originalName": "91. P3 - The New Zealand writer Margaret Mahy 新西兰女作家.pdf",
+      "sha256": "9b47c25b48084935595bbffcbb41614e038bcd02c3f4122d5df001c9bcf496ff",
+      "sizeBytes": 415671
+    },
+    {
+      "rank": "049b0cefbb8b0078e8c27bba2821c90805e1b1db2010c0b982acacaf41119042",
+      "originalName": "100. P3 - What makes a musical expert_ 音乐天赋.pdf",
+      "sha256": "fcb16ba1d147292d7c404edd1d82c7a5b201dede0a274472933f605afe593411",
+      "sizeBytes": 637994
+    },
+    {
+      "rank": "05d5de00b24377075adef0e07e2f209d47e337f3a137e3a579c9d3f31172ff25",
+      "originalName": "74. P3 - Let’s teach them how to teach 教他们如何教学.pdf",
+      "sha256": "8b20e08276b287d1934ec25ad1fd2bea3e98b1667a487731602e77255c437588",
+      "sizeBytes": 732374
+    },
+    {
+      "rank": "09d6e95afddf92e270167310d4618febdb9ad3b076de7d007612867b813ec90d",
+      "originalName": "3. P2 - The History of Applause 掌声的历史.pdf",
+      "sha256": "45be716218451e8bb55b14dcf86e31264bce2a6a8f2bf8a7dc48f998104fef64",
+      "sizeBytes": 1231556
+    },
+    {
+      "rank": "0a1526a82d21c3d86970fbb7e812b097431f2215b0b39c84926902f5d06efbc8",
+      "originalName": "161. P1 - Deep sea discovery 深海发光生物研究.pdf",
+      "sha256": "1aa3ac5ca95c713cb1856efaf6eb203053103fb018dc81e068df65d853c7fd2f",
+      "sizeBytes": 636011
+    },
+    {
+      "rank": "0b2062bf0b5785382721d62b5e34e65ddb255889a6d97a18784600b91a8055a8",
+      "originalName": "218. P3 - The Causes of Linguistic Change 语音的演变.pdf",
+      "sha256": "44e74cc86b23875eff5a39c3faff933233db85d30335fec40f33521f8a21eed9",
+      "sizeBytes": 1453999
+    },
+    {
+      "rank": "0b30b675baf2ce7b8ac5642c1940359d449a81b6a42ac95730dda000eb8e89e1",
+      "originalName": "89. P3 - The Fruit Book 果实之书.pdf",
+      "sha256": "0653ab10b05f652918deab4265cbd13d4afa6dede3c05396ec7cbe8317f7f6a6",
+      "sizeBytes": 1270136
+    },
+    {
+      "rank": "0c626048d7875811ce582fc3c51744873b1dd1149ab266c9c6ea456a39477f45",
+      "originalName": "194. P1 - The history of the British wool industry 英国羊毛产业的历史.pdf",
+      "sha256": "059379ba88994bc6d05c9ef4585477153875468619537d41a70187ff00a41299",
+      "sizeBytes": 598575
+    },
+    {
+      "rank": "0cd2a126d8fd16c51f27310d93836404b0bb0c2fc7ece1a202101e78d1ccca32",
+      "originalName": "10. P3 - Mark Strizic 墨尔本摄影师.pdf",
+      "sha256": "577ae89b387f19887a97f0194ded3e852751012e60d4814b8051bad5760af8a6",
+      "sizeBytes": 1075911
+    },
+    {
+      "rank": "0dd0db110336fd7e8db1ae60260aa8d7ea91d5808d8ca95973a2a0c3e4942226",
+      "originalName": "50. P2 - The conquest of malaria in Italy 意大利疟疾防治.pdf",
+      "sha256": "28bba5f83a398b568cc50d41c8b86c8b6628bd1efc842041fba4ef78486ff71d",
+      "sizeBytes": 543189
+    },
+    {
+      "rank": "1171a2c180b0a936ca494ad366b598fa707f1f9bceefa21baca9409a2e0d2a64",
+      "originalName": "145. P1 - Caral an ancient South American city 卡拉尔古城.pdf",
+      "sha256": "3cb0e13d59c2501b567f332d5c04994349fc2abe0ce430dee93ad5ef9af80d6d",
+      "sizeBytes": 576312
+    },
+    {
+      "rank": "1268de11c16254be72e381bb6ef006650aab37514a7817b6efb5b11cf88aeba8",
+      "originalName": "189. P3 - Mirror 镜子研究.pdf",
+      "sha256": "01d8499f50b36ac95b555541f3937c7009e1803e4a7845ee9ffde6081f38fdd8",
+      "sizeBytes": 963845
+    },
+    {
+      "rank": "132d5ae1b67f1e0ecc7e78a0ff77dfb28b91157ae1b8f23b8bf03f360e9204ed",
+      "originalName": "151. P3 - Inside the mind of a fan 观赛心境.pdf",
+      "sha256": "d7daa42122bb34a32cc1e7c894f18af2dff3e690d819a627bd354a7561ce834b",
+      "sizeBytes": 970133
+    },
+    {
+      "rank": "147625f12d4d9167ad8444e80872a44908acf1daf6334e6fd02d68a60e5f0a39",
+      "originalName": "60. P3 - A closer examination of a study on verbal and non-verbal messages 语言表达研究.pdf",
+      "sha256": "186c60ff5ea560d3a88f0235886dea9ce8538978b99480acbaa5794e544f8de9",
+      "sizeBytes": 510058
+    },
+    {
+      "rank": "15acfc220af1d49f99e972e66d84af2c07c823ce7cddd028344fec50afc9d7ce",
+      "originalName": "1. P1 - Portrait of Bianca Sforza 达芬奇画作.pdf",
+      "sha256": "62629804d0cdfa2d3749fa82ec32956be3012eb995c30b98f8e2b6421160bfe2",
+      "sizeBytes": 1270089
+    },
+    {
+      "rank": "180cc1149609e6a73438216a7e772360e3a98eb5d0fefea3c4dc8882bae5a812",
+      "originalName": "18. P1 - The History of Tea 茶叶的历史.pdf",
+      "sha256": "db4c6f4d774d0869d516292cfafa4d28c8928328a69484508172c890cb801268",
+      "sizeBytes": 520852
+    },
+    {
+      "rank": "188bd4bd1730a8c96de62d818b6475b34b380eb207b0f9b0401282ad956b2c9b",
+      "originalName": "11. P1 - Report on a university drama project 大学戏剧项目报告.pdf",
+      "sha256": "4faf0dfeab4b7fcb27ace3690453e899dec81a90d5823fbc9c87fa404278bb7a",
+      "sizeBytes": 737773
+    },
+    {
+      "rank": "19ad0806309702dbec80563ed307254966d7ac8aa78fd941ba23744e72cf7e0f",
+      "originalName": "150. P2 - Insect Decision-Making 昆虫决策.pdf",
+      "sha256": "3492649a9480553492a811eeff8a79d7d0904b85de6b93fbd4967775a6e49ed0",
+      "sizeBytes": 1014378
+    },
+    {
+      "rank": "1a17048720b1b7bd671bb3cfb32a21788d6cd8d07883756b6e6563c12a505cd3",
+      "originalName": "164. P2 - The Power of Smell 嗅觉的力量.pdf",
+      "sha256": "58093e259bfe2e263264f3b6189cf97182b47d1aa1fe2318ea74263239a02273",
+      "sizeBytes": 975539
+    },
+    {
+      "rank": "1adaa0cfe36d00883ddba407d455d8f28435aa6635b9a054989fb9b870b786b3",
+      "originalName": "53. P2 - The fashion industry 时尚产业.pdf",
+      "sha256": "760173c97bd475a56d98b8980b1ca63edbb5125a1b54b70090052e020c8f7c1e",
+      "sizeBytes": 492868
+    }
+  ],
+  "frozenAt": "2026-09-20"
+}
