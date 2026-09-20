@@ -1502,3 +1502,15 @@ A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
 - [x] `121. P2(仅原文无题)` 负控：无 image-only answer page，不请求视觉抽取，不报错，0 slots/0 resolved。
 - [x] 全量 Rust `860 passed / 0 failed / 11 ignored`；Vitest `311 passed / 0 failed`；指定 PDF `tauri-cdp-cloud-repair-chain.mjs` 13/13 passed。
 - [x] folder hook 未改，作为独立导入 UX 边界记录；临时 survey harness/渲染目录不纳入提交，产品证据保留在 artifacts/e2e-cdp 运行档案。
+
+## 2026-09-20 未见样本答案页泛化验证：启动
+
+- 已确认本轮不改产品代码、参数、提示词、阈值或约束判据；仅做固定 seed 抽样、真实 Tauri 跑样、自动筛查和人工复核。
+- 计划从外部目录的 277 份 PDF 中固定抽取 25–30 份，排除上一轮 7 份 golden、流程图版和 `121. P2(仅原文无题)`，每份单独 staging，避免 folder hook 重复导入。
+
+## 2026-09-20 未见样本答案页泛化验证：冻结但被外部服务阻断
+
+- [x] 固定 seed `20260920` 抽取 28 份，冻结文件名、SHA-256、大小和排序规则；manifest 提交 `fab14d3`。
+- [x] 用真实 Tauri profile 验证凭据链：`hasApiKey=true`，OS secret store 可读；同一配置连续两次返回 `HTTP 503 model_service_unavailable`。
+- [ ] 视觉答案抽取、题型约束筛查和人工复核：外部视觉服务不可用，尚未得到有效样本，不报告伪造的 0% 错误率。
+- [x] 未改产品代码、模型、提示词、阈值、约束或样本清单；临时 runner/staging 不作为回归证据。

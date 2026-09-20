@@ -3440,3 +3440,16 @@ cloud_usable
 - Western 首次 `8/13` 是真实暴露的罗马数字选项大小写映射缺陷；先有失败单测/产品复跑，再把 option labels 统一成大小写不敏感比较，修复后 `13/13`。
 - 空白答案页单测证明旧的答案页机器值会清回 unresolved；无扫描答案页的 `121. P2(仅原文无题)` 负控生成 `answerPageImageCount=0`、不调用视觉抽取、`applied=false` 且无错误。
 - 全量 Rust `860 passed / 0 failed / 11 ignored`，Vitest `311 passed / 0 failed`；指定 `tauri-cdp-cloud-repair-chain.mjs` 使用仓库内 demanding-reading fixture，13/13 passed。
+
+## F-ANSWER-GENERALIZATION-2026-09-20（进行中）
+
+- 本轮验证目标是未参与开发调参的外部阅读 PDF；上一轮 7 份 golden、`231. 铅笔的历史(流程图版)` 和 `121. P2(仅原文无题)`必须排除。
+- 运行必须逐文件 staging，不能复用 folder hook 的目录批量导入行为；每份样本需要保留 source SHA、答案页物理分类、图像请求/候选/应用产物和约束筛查结果。
+- 真实错误率只能由人工查看原卷确认；受控视觉服务返回的答案不能单独作为正确性证据。自动约束只负责缩小人工复核集合，不把“未违反约束”当作正确。
+
+## F-ANSWER-GENERALIZATION-2026-09-20（外部服务阻断）
+
+- 固定样本已冻结：277 份总体、268 份排除后候选、28 份样本，seed `20260920`，manifest 提交 `fab14d3`。
+- 产品真实 Tauri profile 已确认 `hasApiKey=true`，凭据来自 OS secret store；同一 endpoint/model 的两次 profile 测试都返回 `HTTP 503 model_service_unavailable`。
+- 28 份视觉批跑没有有效完成样本；第一份的单文件 staging 在视觉产物生成前中止，不计入指标。没有把服务不可用误报为“无错误”。
+- 因此真实错误率、覆盖率、resolved 率、约束违反率、低置信度触发和人工确认错误均为 N/A；本轮没有调参数、提示词、阈值或产品代码。

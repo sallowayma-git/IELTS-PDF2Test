@@ -589,3 +589,21 @@ rendered=32                     # 修之前是 46
 - [x] 对 7 份 golden 做逐份答案数量和人工正确性核对（95/95，0 错），补 `121. P2` 无答案页负控，运行指定 13/13 CDP harness。
 - [x] 评估 PDF folder hook；牵扯独立导入 UX/调度边界，本轮仅记录未改。
 - [x] 按功能块提交并更新本计划、`findings.md`、`progress.md`；最终结果见 NOTES §6。
+
+## 2026-09-20 未见样本答案页准确率与回归冻结
+
+目标：固定 seed 从外部 277 份 PDF 排除上一轮 7 份及两个特殊样本后抽取 25–30 份；每份单独 staging 走真实 Tauri/vision 答案页路径；用题型约束自动筛查候选，再人工复核被标记项并冻结 manifest。只做验证和语料冻结，不改产品参数、阈值、提示词或约束实现。
+
+- [x] 确认外部目录 277 份文件、排除集合、固定 seed 与可复算抽样算法；28 份候选已冻结到 `fixtures/golden/answer-page-generalization-2026-09-20.manifest.json`。
+- [pending] 先构造/验证约束检查的只读报告输入，明确现有 canonical task group/slot/option/word-limit 字段如何映射；不改产品代码。
+- [pending] 25–30 份逐文件单独 staging 跑真实 Tauri 路径，记录答案页覆盖、请求/抽取成功、resolved/unresolved、低置信度与产物。
+- [pending] 对所有候选答案执行 TFNG/选项/词数/题号连续性/分布异常检查；仅人工查看违反约束的原卷页面，并记录版式特征与真实错误。
+- [pending] 把文件名、SHA、seed、排除规则、运行版本和逐份统计写入冻结 manifest/NOTES；若适合作为系统回归语料，给出接入结论，不改产品代码。
+- [pending] 更新 findings/progress，清理临时 staging；最终只保留证据产物和冻结清单。
+- [blocked] 真实视觉批跑暂未开始：系统凭据链可用（Tauri profile probe `hasApiKey=true`），但同一固定 profile/model 的两次网关测试均返回 `HTTP 503 model_service_unavailable`。不换模型、不改参数，等待外部服务恢复或用户提供可用的同等配置后继续。
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| `llm_http_503:model_service_unavailable` | 2 | Confirmed same configured endpoint/model and keychain profile; no code/threshold change, stop batch before fabricating accuracy. |

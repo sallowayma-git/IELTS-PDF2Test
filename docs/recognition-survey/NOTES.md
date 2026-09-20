@@ -311,3 +311,29 @@ pdfium 页面渲染 → vision gateway 图像请求 → canonical 写入链路�
   `fixtures/golden/private-real/` 无关。
 - 这轮没有改题型识别或质量门禁判据。folder hook 的“选一份却导入同目录全部 PDF”仍未修，
   因为它是独立的导入 UX/调度边界，本轮先不扩大答案证据链范围。
+
+## 7. 未见样本泛化验证与回归冻结（2026-09-20）
+
+### 7.1 固定样本
+
+从 `F:\workspace\IELTS Atlas\ReadingPractice\PDF` 的 277 份 PDF 中，按固定
+`seed=20260920` 和 `seeded-sha256-rank` 选取 28 份；排除了 §6 使用的 7 份 golden、
+`231. P1 - The History of the Pencil 铅笔的历史（流程图版）.pdf` 和
+`121. P2(仅原文无题) - Muscle Loss 肌肉流失.pdf`。文件名、SHA-256、大小和可复算
+排序规则已冻结在
+[`fixtures/golden/answer-page-generalization-2026-09-20.manifest.json`](../../fixtures/golden/answer-page-generalization-2026-09-20.manifest.json)，
+对应提交为 `fab14d3`。后续不得因版式或运行结果替换样本。
+
+### 7.2 真实运行阻断
+
+本轮使用产品实际 Tauri profile，而不是受控答案返回值。profile 的
+`hasApiKey=true`，凭据来自 OS secret store，endpoint/model 保持配置原值。
+同一 profile、endpoint 和 `glm-5.3-flash` model 的两次 Tauri `test_llm_profile`
+均返回 `HTTP 503 model_service_unavailable`。因此视觉答案请求没有完成，不能产出
+候选答案、约束筛查结果或人工复核集合。首份样本曾启动单文件 staging，但在答案视觉
+产物生成前停止；它不计入样本统计，也不构成准确性证据。
+
+本轮真实错误率为 **未测得（有效样本 0/0，不是 0%）**。覆盖率、答案页抽取成功率、
+resolved 率、约束违反率、低置信度触发数和人工确认错误数同样为 **N/A**，不是零。
+没有调模型、提示词、阈值或产品约束，也没有因为服务失败而改抽样清单。服务恢复后应
+直接按该 manifest 继续逐文件 staging、约束筛查和人工复核。
