@@ -572,3 +572,12 @@ HTTP body 还包含内联 PDF/base64。没有输出缓存、没有 completion，
   `read_source` / `apply_edits` / `record_ruling` / `finish` 的真实模型证据。
 - 本次阻断是网关明确的额度不足，不是客户端超时、prompt 校验失败或模型协议不兼容。
 - 没有通过压低输出上限制造一个与真实产品请求不同的“通过”。临时探针运行后已从源码移除。
+
+## 12. 最终提交后回归（2026-09-20）
+
+- 受控 `tauri-cdp-cloud-repair-chain.mjs` 第一次被内容哈希护栏拒绝：旧 exe 不是当前源码/前端的构建产物；这不是链路失败。
+- 按仓库既有 `scripts/e2e/build-app.mjs` 重建后，用同一份
+  `fixtures/parser/demanding-reading-passage-3.pdf` 重跑，13/13 场景通过，覆盖本地初稿、云端自主修复、原文件证据、模型收到反馈后自修正、修复进度、画布刷新、剩余任务可操作、人工编辑重开、导出和学生端加载。
+- 同次 harness 的 `defect-retry-cannot-rerun` 探针为 `not-reproduced`；不把它扩大解释为新的行为保证。
+- 合并后全量验证：Rust `874 passed / 0 failed / 11 ignored`；Vitest `315 passed / 0 failed`。
+- 回归完成后删除本次运行目录、构建日志/清单、旧 dist 临时目录、前端 dist、Rust target 和临时目录；凭据没有写入仓库或保留在验证产物中。

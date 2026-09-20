@@ -1597,3 +1597,9 @@ A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
 - 产品自己的 300 s 完整候选请求在 7.534 s 收到 HTTP 402：额度不足，未进入生成；临时
   ignored probe 已移除。
 - 新增 `docs/recognition-survey/LISTENING-EPIC-PLAN.md`，只做计划，无听力产品代码变更。
+
+## 2026-09-20 最终回归与清理
+
+- [x] 按内容哈希护栏发现旧 exe 后重建；受控 `tauri-cdp-cloud-repair-chain.mjs` 最终 13/13 通过。
+- [x] 全量 Rust `874 passed / 0 failed / 11 ignored`；Vitest `315 passed / 0 failed`。
+- [x] 清理本次 harness 目录、构建日志/清单、旧 dist 临时目录、dist、`src-tauri/target` 和 `tmp`；保留源码、文档与 `.workbuddy` 私有记忆。
