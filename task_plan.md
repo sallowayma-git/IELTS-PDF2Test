@@ -607,3 +607,142 @@ rendered=32                     # 修之前是 46
 | Error | Attempt | Resolution |
 |---|---:|---|
 | `llm_http_503:model_service_unavailable` | 2 | Confirmed same configured endpoint/model and keychain profile; no code/threshold change, stop batch before fabricating accuracy. |
+
+## 2026-09-20 答案页失败态与语义约束守卫
+
+目标：不依赖视觉服务，先把答案页视觉路径的成功/失败/未执行三态、失败可重试行为和题型约束守卫做成可验证产品行为；服务恢复后再按既有 manifest 跑 28 份，不在本轮切换模型、提示词或阈值。
+
+- [x] 先写并通过红色反例：有扫描答案页但 mock 503/超时/401/畸形响应；本地题面仍落盘、job 不停在 running、答案保持 unresolved，并与无答案页报告区分。
+- [x] 实现并验证视觉识别三态及用户可执行信息；重试实际重新调用视觉 gateway，不复用上次 candidates。
+- [x] 先写约束注入红测，再实现 TFNG、选项/字母区间、选择题选项、词数、题号范围/连续性和分布异常检查；非法答案不生成 `setAnswer`。
+- [x] 用上一轮 7 份 golden 的 95 个已解析答案跑约束检查，0 违反；`Yes please`、`K`、五词填空和全 TRUE 分布反例均按预期拦截/提示。
+- [ ] 服务恢复后沿用 `fab14d3` manifest 批跑 28 份；未恢复则停在轨一/轨二，如实报告。
+
+## 2026-09-20 真实模型云端自主修复基线
+
+目标：不改提示词、网关校验或产品架构，先探测用户提供的 OpenAI-compatible 聚合网关，再逐类验证五种生产请求，最后用 demanding-reading PDF 跑一次真实 CDP 云端修复链，记录工具行为、收敛性、token、调用数与时延。
+
+- [x] 阶段 0：列出模型并以最小文本 JSON、工具调用和 `image_url` 请求实测候选；文本首选 `grok-4.5`、备选 `grok-4.3`，当前无已打通视觉模型。
+- [x] 阶段 1：五类请求逐类实测完成。基线 **3/5 通过**（outline / 完整候选 / repair step），A3、A4 被契约校验整份拒绝。
+  - 根因：A3/A4 的 prompt 从不声明校验器强制要求的顶层信封键（`findings` / `rulings`），三条通过的 prompt 都声明了。受控假模型照校验器写成，因此这处不一致在假模型下不可观测。
+  - 已修：只补信封声明，**未放宽任何校验规则**；守卫测试 `every_prompt_declares_the_envelope_key_its_validator_requires` 先红后绿；`cargo test --lib llm_gateway` 全绿。
+  - **真实模型复验未完成**：网关对同一把 key 全线 `401 INVALID_API_KEY`（`GET /v1/models` 亦 401，阶段 0 时为 200）。按三态记为 `not_executed / credentials_invalid`。
+- [blocked] 阶段 2：等可用网关凭据。凭据恢复后先重跑阶段 1 探针复验 A3/A4，再跑 `demanding-reading-passage-3.pdf` 的真实 CDP 链。
+- [blocked] 阶段 2 细则（同上）：核对 read_source、sourceAnchors、自我修正、finish note、record_ruling、轮次和语义守卫。
+- [pending] 阶段 3：汇总真实模型调用次数、token 与总时延；更新 NOTES/findings/progress，只给下一步建议，不实施优化。
+
+### 安全边界
+
+- API key 只进入当前子进程环境，不写入仓库、报告、产物或终端输出。
+- 不运行 28 份答案页批跑，不碰听力、modality、source coverage 或发布链。
+
+### 本轮验收
+
+- Rust 全量：`870 passed / 0 failed / 11 ignored`。
+- Vitest 全量：`315 passed / 0 failed`。
+- 未见样本真实错误率：未测得（有效样本 `0/0`，不是 `0%`）。
+
+### 本轮已确认的现状
+
+- `src-tauri/src/auto_pipeline.rs:1333` 的单份答案页入口在 gateway 错误时直接返回诊断 JSON；`src-tauri/src/processing/scheduler.rs:984` 不因答案页失败丢弃本地稿，但报告只有布尔字段。
+- `vision_answer_candidate_for_job` 对 `answerPageImageCount=0` 返回空候选；gateway 错误则返回 `Err`，两者在 pipeline report 中尚无独立状态/原因枚举。
+- `build_answer_page_commands` 已对选项组做实际 option bank 检查，但文本答案尚未按 `wordLimit`/slot constraints 检查，题号范围和组内分布也尚未作为守卫输出。
+
+## 2026-09-20 用户产品决策答复（三项待决关闭）
+
+用户已就交接文件 §9 的三个待决问题给出方向。以下为**已定方向**，后续卡片按此设计，不再重开讨论。
+
+### D1 听力音频来源：用户上传，应用统一托管
+
+- 导入时判定为听力材料 → 弹出音频绑定弹窗，由用户确认并提供 MP3；不从网络抓取、不合成、不允许"无音频静默通过"。
+- 上传方式两种都要：弹窗内直接拖入 MP3；点击后打开文件/文件夹选择器（听力多为整套分节音频，需支持一次选多个或选目录）。
+- 音频进入**应用运行目录下的统一音频目录**受管存放，并在 SQLite 记录：受管路径、节次序号（Section/Part 序号）、与之匹配的题目文件/题稿标识、源文件 sha256。
+- **一处需要澄清**（见下方待确认）：用户原话同时出现"不创建副本，直接锁定用户提供的 MP3 索引"与"复制到项目运行所在文件夹内统一管理"。这两者是互斥的。当前按**单一受管副本 + SQL 索引**推进，理由是：只存外部路径会让用户移动/删除原文件后题稿静默失效，而导出与学生端需要一个稳定的资源来源。若用户确认要"只索引不复制"，则需要额外的路径失效检测与重新绑定流程。
+- 因此听力 epic 的目标定为**带音频的完整听力卷**，不是"只有题目的填空卷"。`listening_audio_probe_v1.rs` 的原始设计预期成立。
+- **实现锚点（已核对源码，不是推测）**：
+  - `src-tauri/src/schema/listening_audio_probe_v1.rs`（489 行，symphonia 0.6，支持 `audio/mpeg` / `audio/wav` / `audio/mp4`，输出时长、峰值、RMS、削波比与 sha256，含 3 个单测）**当前是死代码**：除 `schema/mod.rs:6` 的 `pub mod` 声明外，全仓无任何生产调用。因此 D1 有可用的探测实现，但接线量是真实的。
+  - `src-tauri/src/db.rs:158` 的 `source_assets` 表已经是"受管副本"模型：`kind` / `original_name` / `stored_path`（相对 appData）/ `sha256` / `size_bytes` / `role`。D1 的 SQL 记录按此表扩展（`kind=audio`、`role=ListeningAudio`）并补节次序号与题稿关联，不需要另起一套资源模型。这也是上面选择"复制到受管目录"的第二个理由：仓库既有资源模型本来就存相对受管路径。
+
+### D2 导入入口：目录批量与单文件并存
+
+- 保留现有目录导入（批量是主场景），**另外**必须提供单文件导入入口。
+- 当前 folder hook 的行为（选一份 PDF 却整目录批量处理）按缺陷处理：单文件入口必须只处理被选中的那一份。
+- **核对结果：产品侧这条基本已经成立，交接文件的描述需要更正。** `src/features/import/ImportDrawer.tsx:63` 已有「选择文件」（`chooseSourceFiles`，多选单个文件，`multiple:true, directory:false`），`:66` 的「选择 PDF 文件夹」是另一个按钮。两条入口本来就是分开的。
+- 真正的"整目录批量"来自**自动化钩子**：`job_commands.rs:377` 的 `PDF2TEST_AUTOMATION_PDF_DIR` 会把整个目录的 PDF 列出来。而 `job_commands.rs:165` 已经有 `PDF2TEST_AUTOMATION_SOURCE_FILES`（显式文件清单）。所以"批量测试必须逐份 staging"是选错了钩子，不是产品缺少单文件导入。
+- 待验证（不是待实现）：从「选择文件」只选一份，端到端确认只产生一个条目、只处理这一份。验证前不宣布这条已关闭。
+
+### D3 答案识别置信度阈值：语义约束为主判据，阈值只做宽松下限
+
+- 用户明确不拍脑袋定数值，要求"不太严格也不太低"。
+- 据此定为：**题型语义约束是主判据**（TFNG 只能取三值、字母配对必须落在声明区间、填空不得超 wordLimit、题号必须落在闭包内等），不合格一律降级 `unresolved`；置信度只作为宽松下限，用于挡掉模型自己都表示不确定的输出，不承担正确性判断。
+- 数值标定不凭猜测：等视觉服务恢复后，用已冻结的 28 份未见样本（`fab14d3`，seed `20260920`）跑出"置信度 vs 人工核对错误"的实际分布，再把下限钉在数据上。在此之前阈值不作为产品正确性论据。
+- **现状核对（回答"现在是多少、怎么定的"）**：答案页路径的门是 `src-tauri/src/auto_pipeline.rs:1617` 的 `confidence >= 0.85`；流水线选项默认值 `auto_pipeline.rs:3260` 同为 `0.85`；块级低置信复核用的是另一个 `0.5`（`auto_pipeline.rs:308` → `source_review.rs:79`）。仓库里**没有任何推导、标定数据或注释**说明 0.85 从何而来，只是个整数——按用户的判断处理，即"拍脑袋定的"。
+- **一个比数值更重要的结构问题**：`:1617` 的 0.85 作用在**整份候选的单个标量置信度**上，是全有或全无——一份答案页的标量偏低会把全部答案一起丢掉，偏高则全部放行。逐题正确性实际由 `validate_answer_page_candidate` 的 `acceptedAnswers` 决定。既然语义约束已是主判据，这个标量门应当放宽（量级上更接近块级复核用的 0.5，而不是 0.85），让"是否写入"由逐题语义约束决定，标量只用来挡模型自述完全不确定的输出。
+- **本轮不改这个数值**：真实模型基线优先，且改阈值必须有 28 份样本的分布支撑，否则只是把一个拍脑袋的数换成另一个。已作为独立卡片排队。
+
+### 待用户确认（仅一项）
+
+- D1 的"只索引不复制"与"复制到统一目录"取哪一个？当前按"复制到统一目录 + SQL 索引"推进。
+
+## 2026-09-20 本轮新增排队卡
+
+按建议顺序，插在交接文件 §8 既有队列之前/之间；每张都写了"反例先写"的入口。
+
+1. **契约被拒时保留模型原始回复**（小、立即有用）。`run_llm_gateway` 只在成功时写
+   `<command>-output-*.json`；契约校验失败时模型回了什么完全不落盘。本轮靠对读 prompt 与校验器
+   源码反推根因，产品里用户遇到 `MODEL_INVALID_OUTPUT` 时没有任何证据可看。
+   反例入口：构造一个返回合法 JSON 但缺信封的受控响应，断言拒绝后**磁盘上存在**被拒载荷。
+2. **答案页置信度标量门重新标定**（依赖视觉服务）。见上文 D3：现值 `auto_pipeline.rs:1617` 的 0.85
+   无推导来源，且作用在整份候选的单一标量上（全有或全无）。用 `fab14d3` 的 28 份未见样本跑出
+   "置信度 vs 人工核对错误"分布后再定；在此之前不动数值。
+3. **单文件导入端到端确认**（小）。UI 两条入口已存在（见 D2），但"只选一份 → 只产生一个条目、
+   只处理这一份"没有产品级证据。反例入口：同目录放 3 份 PDF，只选 1 份，断言恰好 1 个条目。
+4. **测试二进制不退出导致的 LNK1104**（小、纯开发体验）。见 `findings.md` 的环境事实。
+   根因未查；它会让人把链接失败误读成代码错误。
+
+## 2026-09-20 Windhub / grok-4.3 真实链复测收口
+
+- [x] 新网关 `/v1/models` 200，12 个模型；`grok-4.3` 文本 JSON/工具调用通过；`gemini-3.8-flash` 最小视觉 `image_url` 通过。
+- [x] 五类生产请求全部获得合法协议响应；A3/A4 结果受当前工作树既有 prompt 信封改动影响，未当作干净 HEAD baseline。
+- [x] 真实 Tauri/CDP 两遍导入均完成本地初稿；两次候选分别 134.043 s / 144.323 s 超出客户端预算，`llm_timeout_budget_exhausted`，未进入修复工具循环。
+- [x] 成本证据：2 次候选、0 次修复；失败记录无 usage，完整 token 数未知；临时 live harness、进程和 OS secret 已清理。
+- [pending] 只建议下一轮分析完整 candidate payload 的请求大小/服务端时延，再考虑模型路由、请求裁剪或预算策略；本轮不改代码。
+
+## 2026-09-20 候选请求预算：先测量，再决定是否动接口
+
+用户问"是不是要重新把 API 接口再搞一下"。结论：**先测量**。判"API 不行"所需的那个数至今没有。
+
+- [x] 归因复核：134/144 s 是整格时延（含本地 base64+prompt 构造），HTTP 预算 120 s，
+      错误是 reqwest 客户端超时。已证明"服务端 > 120 s"，未证明 > 144 s。
+- [x] 修掉云端失败在界面上等于"未启用云端"的缺陷（见 `findings.md` F-CLOUD-TIMEOUT-ATTRIBUTION）。
+- [pending] **测量卡（下一步唯一该做的事）**：用一次不设 120 s 上限的请求测出完整候选的真实完成
+      时间与 usage。做法：把 profile `timeoutMs` 设到 clamp 上限 `300000`，对
+      `demanding-reading-passage-3.pdf` 只发**一次** `generate_authoring_candidate`，记录
+      服务端完成时间、prompt/completion/reasoning token 与 payload 字节数。
+      不跑完整 CDP 链（那要多花 2 次候选 + 修复轮次）。
+      判据：300 s 内返回 → 是预算问题，调预算 + 补进度反馈即可；300 s 内仍不返回 → 才轮到下面两项。
+- [pending] 失败记录保存 usage 与 payload 大小（现在失败不留 usage，成本不可得；与前一张
+      "契约被拒时保留模型原始回复"合并做）。
+- [pending] 结构性方案（**只有测量结果支持时才做**，按优先级）：
+      1. **把整卷候选拆成按篇章/题组的多次请求**。整卷单响应是输出 token 受限的，时延随卷子长度
+         增长，而一次超时丢掉全部产出；拆开后每次请求有界、重试便宜、还能给用户部分进度。
+      2. **流式响应**。`openai_post` 目前 `stream:false`，长生成必然撞客户端超时；流式能去掉这个
+         结构性上限并让 UI 显示进度。这是"重新搞 API 接口"里唯一站得住的一项，而且改的是我们的
+         客户端，不是网关。
+      3. `llm_timeout` 的 300 s 硬上限（`llm_gateway.rs:142-150`）按需放宽——一个常量。
+- 不做：为了让请求通过而放宽 `apply_edits` / 引文出处 / 语义守卫等任何校验边界。
+
+## 2026-09-20 Welfare / grok-4.6 与听力计划收口
+
+- [x] 当前产品改动按四组提交：A3/A4 信封、云端失败终态、答案页后端守卫、答案页前端状态/重试。
+- [x] `/models`、最小 JSON、原生工具调用均确认 `grok-4.6` 可用。
+- [blocked] 300 s 完整候选测量没有进入模型生成：网关 HTTP 402，当前可用额度
+  `2.132969`，预测完整请求需要 `6.01536 credits`。额度恢复后重跑同一单候选探针；不要
+  通过降低输出上限替代真实产品请求。
+- [x] 临时 live probe 已从 `src-tauri/src/lib.rs` 移除，没有进入提交。
+- [x] 听力实施计划写入 `docs/recognition-survey/LISTENING-EPIC-PLAN.md`；本轮不改听力代码。
+
+Errors encountered:
+
+- high-reasoning 云端审计子代理因 workspace credits 耗尽退出；主线程接管审计。
+- 第一次追加 NOTES 的 patch 因尾部文字与预期不一致失败；读取真实尾部后用精确锚点重试成功。

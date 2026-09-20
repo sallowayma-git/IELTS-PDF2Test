@@ -3453,3 +3453,149 @@ cloud_usable
 - 产品真实 Tauri profile 已确认 `hasApiKey=true`，凭据来自 OS secret store；同一 endpoint/model 的两次 profile 测试都返回 `HTTP 503 model_service_unavailable`。
 - 28 份视觉批跑没有有效完成样本；第一份的单文件 staging 在视觉产物生成前中止，不计入指标。没有把服务不可用误报为“无错误”。
 - 因此真实错误率、覆盖率、resolved 率、约束违反率、低置信度触发和人工确认错误均为 N/A；本轮没有调参数、提示词、阈值或产品代码。
+
+## F-ANSWER-FAILURE-CONSTRAINTS-2026-09-20（进行中）
+
+- 轨一现状：答案页路径的失败不会通过 `apply_vision_answer_candidate` 写入答案，scheduler 也会继续收尾本地稿；但 `visionAnswerExtraction` 只有 `attempted/applied/failure`，没有 `succeeded/failed/not_executed` 三态，也没有把“没有答案页”和“有答案页但服务未执行”做成不同原因。
+- 轨一现状：`run_cloud_conversion_worker` 将答案视觉错误带回主线程，主线程等待 worker；需要对失败结果显式落盘终态，保证用户看到可重试动作而不是 running 或无答案页提示。
+- 轨二现状：选项答案已有基于 response group/option bank 的范围拒绝；文本答案路径直接构造 `kind=text`，尚未检查 slot/group word limit、题号越界/连续性或组内答案分布异常。
+
+## F-ANSWER-FAILURE-CONSTRAINTS-2026-09-20（完成）
+
+- 受控 gateway 的 503/超时/401/403 现在落为 `not_executed`，分别带 `service_unavailable` 或 `credentials_invalid`；HTTP 成功但畸形 JSON 落为 `failed/invalid_response`；没有扫描答案页落为 `not_executed/no_answer_page`，三者在 pipeline report 和前端动作上分开。
+- 有答案页但 503 的红测证明本地 authoring draft 会完成落盘、job 不停在 `Working`，answerKey 保持 unresolved；重试红测两次实际调用 `extract_pdf_image_answers`，没有复用失败缓存。
+- 语义守卫覆盖 TFNG/Y-N-NG、选项/配对范围、实际选项集合、word/number limit、题号闭包/连续性和同组完全一致分布提示。7 份 golden 的 95 个已知答案全部通过，注入 `Yes please`、`K`、五词填空均被拒绝，命令构造器为这些答案生成 0 条 `setAnswer`。
+- 全量验证：Rust `870 passed / 0 failed / 11 ignored`，Vitest `315 passed / 0 failed`；28 份未见样本没有因服务仍未形成有效视觉候选而启动，真实错误率继续记为 N/A（0/0，不是 0%）。
+
+## F-REAL-MODEL-CLOUD-REPAIR-2026-09-20（进行中）
+
+- 本轮问题是网关上的真实模型能否遵守现有五类请求契约并驱动自主修复链，不以识别准确率或 13/13 场景通过为目标。
+- 所有结论必须来自真实 HTTP 响应与真实 Tauri/CDP 产品路径；模型列表、协议形状、失败码、调用数、token 与时延将作为基线落入 NOTES。
+- 阶段 0：网关只列出 3 个 xAI 名称模型。`grok-4.3/4.5` 能按产品所需 `json_object` 返回标准 JSON，三者也能发原生 tool call；`grok-4.6` 后续有 502。所有视觉最小请求均 503，尚无可用视觉模型。
+
+## F-REAL-MODEL-CLOUD-REPAIR-2026-09-20 阶段 1（五类生产请求实测）
+
+运行方式：`cargo test --lib real_gateway_five_semantic_contract_probe -- --ignored`，模型 `grok-4.5`，
+走**产品自己的** prompt 构造器、HTTP 客户端与校验器（`llm_gateway::run_llm_gateway`），未改 prompt、
+未改校验器、未改阈值。key 从 OS 凭据库读出，不进入源码、日志或产物。
+
+| 请求 | 结果 | 时延 | 备注 |
+| --- | --- | --- | --- |
+| `generate_pdf_reading_outline` | **通过** | 32.1 s | 返回 `title/groups/answerKey/confidence/warnings/metadata`；5714 tokens（其中 reasoning 1944） |
+| `verify_source_answers`（A3） | **失败** | 1.8 s | `source_verification_findings_missing_or_invalid` |
+| `adjudicate_divergence`（A4） | **失败** | 2.4 s | `adjudication_rulings_missing_or_invalid` |
+| `generate_authoring_candidate` | **通过** | 83.0 s | 返回 `passage/taskGroups/answerSlots/answerKey/unresolvedRegions/sourceCoverageNotes/warnings` |
+| `repair_authoring_step` | **通过** | 48.8 s | 首个工具调用是 `read_draft`——先读再改，没有凭题面直接下笔 |
+
+即 **3/5 通过**。两条失败都不是 HTTP 故障：`llm_gateway.rs:1475-1478` 的顺序是
+`openai_post` → `openai_chat_content` → `parse_llm_json_content` → 契约校验，因此这两个 errorClass
+只可能在 **HTTP 200 且 JSON 解析成功之后**产生；`llm-calls.jsonl` 也记录 `ok=false` 且 errorClass 为
+契约类而非 `llm_http_*`。三态没有坍缩。
+
+### 根因（已由源码逐条核对，不是推测）
+
+**A3/A4 的 prompt 从未声明校验器强制要求的顶层信封键。**
+
+- `source_verification_prompt`（`llm_gateway.rs:1389`）写了 6 条 hard rules，逐条讲 `verdict` 枚举、
+  `quote`、`pageIndex`、`observedValue`，但**通篇没有出现 `findings`**。而
+  `validate_source_verification_output`（`:1510`）第一件事就是取 `output["findings"]` 数组，取不到整份拒绝。
+- `adjudication_prompt`（`:1258`）同样：5 条规则讲 `chosen` 枚举、`value` 逐字一致、`rationale` 非空，
+  **没有出现 `rulings`**；`validate_adjudication_output`（`:1625`）取不到 `rulings` 即整份拒绝。
+- 对照组是决定性的：三条通过的请求，prompt 里**都**明确写了信封。
+  `cloud_outline_prompt`（`:506`）"Return exactly one JSON object with this shape: {…\"groups\":[…]}"；
+  `repair_step_prompt`（`:1114`）"exactly one object {\"callId\":…,\"tool\":…,\"arguments\":{…}}"；
+  候选识别同理。**通过与失败的分界线正好落在"prompt 有没有声明信封"上。**
+
+### 为什么这个缺陷能活到今天
+
+受控假模型 `scripts/controlled-llm-service.mjs` 是**照着校验器**写的（它的文件头就写明"必须回
+`{findings:[…]}`"），所以它永远"记得"这个键。prompt 与校验器的不一致在假模型下**结构上不可观测**。
+这正是交接文件 §3「验收自证」那一类，只是换了个位置：不是断言自证，而是**被测对象的两端由同一份
+理解写成**，于是两端之间的缝隙没有任何测试能看见。真实模型第一次发请求就踩中。
+
+注意这**不是**"真实模型不够好"。模型无从知道一个从未被告知的键名；把它算作模型能力不足会指向
+完全错误的修复方向（换模型、调温度、加重试），而正确修复是把校验器已经要求的信封写进 prompt——
+**不放宽任何一条校验规则**。
+
+### 附带发现：契约被拒时不留原始回复
+
+`run_llm_gateway` 只在成功时写 `<command>-output-*.json`；契约校验失败时只留 input 与
+`llm-calls.jsonl` 里的 errorClass，**模型到底回了什么没有落盘**。本轮靠对照 prompt 与校验器源码
+反推出根因，但产品里用户遇到 `MODEL_INVALID_OUTPUT` 时同样没有证据可看。已作为独立卡片记下。
+
+### 环境事实（本轮反复踩到，记给下一位）
+
+`cargo test --lib` 结束并打印 `test result` 之后，测试二进制
+`target/debug/deps/ielts_author_studio_lib-*.exe` **仍留在进程表里**，于是下一次构建在链接阶段以
+`LNK1104 无法打开文件` 失败。本轮命中 4 次。绕过办法：每次 `cargo test` 前先
+`Get-Process | ? { $_.ProcessName -like '*ielts_author_studio*' } | Stop-Process -Force`。
+这不是本轮改动引入的（第一次命中发生在只跑既有 ignored 测试时），但它会让人把链接失败
+误读成代码错误——本轮第一次就差点这样归因。根因未查（疑似某个测试留下非 daemon 线程或
+被杀进程的 pending-delete 状态），单独记卡。
+
+### 阶段 1 末尾：网关凭据失效，真实模型复验未完成
+
+修完 prompt 信封后重跑探针，五条请求全部 `llm_http_401 INVALID_API_KEY`（约 460 ms/条）。
+用最朴素的 `GET /v1/models`（只带 Bearer、无请求体）单独探测：同样 401，485 ms；key 仍在 OS
+凭据库、长度 67 未变；而阶段 0 同一个 `GET /v1/models` 是 200 并列出 3 个模型。
+
+结论按三态记：**未能执行（`not_executed` / `credentials_invalid`）**，不是"修复失败"，也不是
+"真实模型不合格"。prompt 修复目前只有单元级证据。阶段 2/3 未开始，原因是凭据失效。
+
+## F-REAL-MODEL-CLOUD-REPAIR-2026-09-20（Windhub / grok-4.3 复测）
+
+- 新网关 `https://windhub.cc/v1` 的 `/v1/models` 返回 200，共 12 个模型；`grok-4.3` 的最小 JSON 与原生工具调用均返回 200。`gemini-3.8-flash` 的最小 `image_url` 请求也返回 200，但本轮完整链固定使用 `grok-4.3`，没有跑视觉批量。
+- 五类生产请求全部得到合法协议结果：outline 27.293 s、A3 53.133 s、A4 21.869 s、candidate 32.339 s、repair step 16.364 s。A3/A4 结果受当前工作树已有的 prompt 信封改动影响，不能当作干净 HEAD baseline；本阶段没有新增 prompt 改动或校验放宽。
+- 真实 Tauri/CDP 链使用仓库 PDF fixture 跑了两遍导入。两次 `generate_authoring_candidate` 分别耗时 134.043 s、144.323 s，均为 `llm_timeout_budget_exhausted`；本地初稿和题目结构仍落盘，但云端候选写为 `not_run/CLOUD_DISABLED`。
+- 因候选请求失败，完整链实际为 2 次候选、0 次修复，没有 `read_source`、`sourceAnchors`、`apply_edits`、`record_ruling` 或 `finish` 证据。模型协议层可用，但当前预算下不能驱动真实自主修复链；主要阻断是完整候选请求的时延/预算。
+- 失败记录没有保存 usage，所以完整导入 token 数为未知；不能用小型阶段 1 请求的 token 数代替。两次候选等待合计 278.366 s。artifact：`artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-20T13-22-27-910Z`。
+- 阶段 2 因候选失败停止等待并清理临时进程/OS secret；没有把“未进入修复回合”误报成模型已经收敛。
+
+## F-CLOUD-TIMEOUT-ATTRIBUTION-2026-09-20
+
+复核 windhub / `grok-4.3` 那次真实链失败的落库状态，得到两条与"API 好不好"无关的结论。
+
+### 1. 这次失败在界面上被显示成"未启用云端"（已修）
+
+同一次运行的库里两行互相矛盾：任务行 `cloud_status=failed` +
+`last_error_code=llm_timeout_budget_exhausted:llm_http_timeout:…`、`progress_json.cloudEnabled=true`；
+批次行 `cloud_status=not_run`、`cloud_reason_code=CLOUD_DISABLED`、
+`stages_json.cloud.message="本次导入未启用云端识别。"`。
+
+前端状态行读批次行，`not_run` 被 `recognitionClient.ts:224` 归一成 `not_started`，最终渲染
+**「题稿已生成，可以开始编辑」**——134 秒的真实超时在界面上消失。用户不会去排查一个真实存在的
+故障，下一个接手的人也会被这条 `CLOUD_DISABLED` 指向错误方向（正是交接文件 §3 第 2 条那个坑）。
+
+成因是接缝：批次行由本地周期建出，本地周期按设计 `cloud_enabled=false`，它写的 `CLOUD_DISABLED`
+当时是诚实的；`scheduler.rs` 指望 advance 用真实修复状态覆盖，但 `write_batch_repair` 只写
+`repair_json`，而候选失败时修复循环根本没启动。没有任何代码改写这一格。
+
+修复只补"云端起了却没交出可用结果"这一条路径，原因码复用 `classify_cloud_error`
+（超时 → `unusable`/`MODEL_TIMEOUT`），前端既有文案随即正确
+（`unusable → unavailable →「云端校验暂时不可用，不影响继续编辑」`）。成功/部分成功路径未改，单独排卡。
+
+### 2. "API 太慢"目前**不成立**，因为我们从未测到它的完成时间
+
+- 客户端预算来自 profile `timeoutMs`：harness 写的是 `120000`
+  （`scripts/e2e/tauri-cdp-cloud-repair-chain.mjs:355`）。
+- 记录的 134.043 s / 144.323 s 是 `run_llm_gateway` 的**整格时延**，包含 HTTP 之前的本地准备
+  （读 PDF + base64 + prompt 构造）。即 ≈14 s / ≈24 s 本地 + 120 s HTTP 预算。
+- 错误串 `llm_http_timeout:error sending request` 是 **reqwest 客户端超时**——是我们先挂断的。
+  因此已证明的只有"服务端 > 120 s"，**没有**证明它 > 144 s，更没有证明它不会在 180 s 或 240 s 返回。
+- 重试不会放大等待：`openai_post_once` 拿到的 timeout 就是剩余预算，第一次尝试即可用尽全部预算，
+  之后 `remaining.is_zero()` 直接退出（`llm_gateway.rs:311-338`）。所以 278 s 是两次导入各一次候选，
+  不是重试叠加。
+- 真实上限是硬编码的：`llm_timeout` 把 `timeoutMs` clamp 到 **1 s–300 s**（`llm_gateway.rs:142-150`）。
+
+### Welfare / grok-4.6 复测
+
+- `/models` 200，明确列出 `grok-4.6`；最小 JSON 和 native tool call 都一次成功，因此基础
+  OpenAI-compatible 协议不是当前阻断。
+- 产品 `generate_cloud_authoring_candidate_raw` 的真实完整请求在生成前被 HTTP 402 拒绝：
+  `available=2.132969`、`required=6.01536 credits`。这不是超时，也不能评价模型输出质量。
+- 命令输入缓存 12,414 bytes 不等于 wire payload；实际 HTTP body 还包含 PDF/base64。网关未
+  返回 completion，因此 token usage 不可得。
+  即便设置页填更大的值也不会超过 300 s。这是一个常量，不是接口设计问题。
+
+结论：判"API 不行"之前必须先有一次**不设 120 s 上限**的测量。在没有这个数之前重写网关接口层，
+与当年把 PDF harness 失败归因到缺私有语料是同一类错误。

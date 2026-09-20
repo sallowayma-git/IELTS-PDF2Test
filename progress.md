@@ -1508,9 +1508,92 @@ A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
 - 已确认本轮不改产品代码、参数、提示词、阈值或约束判据；仅做固定 seed 抽样、真实 Tauri 跑样、自动筛查和人工复核。
 - 计划从外部目录的 277 份 PDF 中固定抽取 25–30 份，排除上一轮 7 份 golden、流程图版和 `121. P2(仅原文无题)`，每份单独 staging，避免 folder hook 重复导入。
 
+## 2026-09-20 答案页失败态与语义约束守卫：收口
+
+- [x] 受控 503/超时/凭据失效/畸形 JSON/无答案页反例；三态和原因进入 pipeline report 与前端用户动作。
+- [x] 有答案页但服务失败时本地题稿继续完成、job 不停在 `Working`、answerKey 不写入；重试再次调用视觉 gateway。
+- [x] 语义约束守卫覆盖 TFNG、选项集合/字母范围、word/number limit、题号闭包/连续性和分布异常；7 份 golden 的 95/95 通过，3 类注入错误均被拦截。
+- [x] Rust 全量 `870 passed / 0 failed / 11 ignored`；Vitest 全量 `315 passed / 0 failed`。
+- [ ] 28 份未见样本：沿用 `fab14d3`，等待外部视觉服务恢复；当前有效样本 `0/0`，真实错误率未测得，不报告为 0%。
+
 ## 2026-09-20 未见样本答案页泛化验证：冻结但被外部服务阻断
 
 - [x] 固定 seed `20260920` 抽取 28 份，冻结文件名、SHA-256、大小和排序规则；manifest 提交 `fab14d3`。
 - [x] 用真实 Tauri profile 验证凭据链：`hasApiKey=true`，OS secret store 可读；同一配置连续两次返回 `HTTP 503 model_service_unavailable`。
 - [ ] 视觉答案抽取、题型约束筛查和人工复核：外部视觉服务不可用，尚未得到有效样本，不报告伪造的 0% 错误率。
 - [x] 未改产品代码、模型、提示词、阈值、约束或样本清单；临时 runner/staging 不作为回归证据。
+
+## 2026-09-20 答案页失败态与约束守卫：启动
+
+- 已读现有答案页入口、scheduler 收尾、pipeline report、canonical 唯一写入入口和前端任务聚合；确认本轮先补轨一/轨二，不启动 28 份视觉批跑。
+- 当前第一处缺口是答案页报告只有布尔字段：无答案页和 gateway 失败都没有稳定状态/原因，下一步先加失败反例测试。
+- 当前第二处缺口是 `build_answer_page_commands` 对选项有局部校验，但文本词数、题号闭包和组内异常分布没有守卫，下一步先加注入测试。
+
+## 2026-09-20 真实模型云端自主修复基线：启动
+
+- 已确认本轮仅测真实网关的协议兼容性与云端修复链可驱动性，不调模型参数、提示词、阈值或校验器。
+- 将先做模型枚举和最小探测，再做五类生产请求，只有前两阶段拿到可用组合后才启动完整 CDP 链。
+- 用户提供的 key 不落盘、不进入文档或日志；现有答案页工作树改动保持不动。
+
+### 阶段 0 完成
+
+- `/v1/models` 200，模型为 `grok-4.3/4.5/4.6`；三者原生工具调用最小探测均成功。
+- `grok-4.3/4.5` 的 `response_format=json_object` 最小请求返回标准合法 JSON；`grok-4.6` 后续出现 502，不够稳定。
+- 三者的 data-URL 视觉探测均 503，`grok-4.5` 改用 HTTPS `image_url` 仍 503；本轮没有已验证视觉候选。
+- 文本链首选 `grok-4.5`，备选 `grok-4.3`；进入五类生产请求实测。
+
+### 阶段 1 完成：五类生产请求实测 3/5，两条失败的根因在我们这边
+
+- 用产品自己的 prompt 构造器、HTTP 客户端与校验器逐类实测（`grok-4.5`）：outline、完整候选、
+  repair step **通过**；`verify_source_answers`(A3)、`adjudicate_divergence`(A4) **被整份拒绝**。
+- 两条失败不是 HTTP 故障，也不是模型能力问题：A3/A4 的 prompt 从不声明校验器强制要求的顶层
+  信封键（`findings` / `rulings`），而三条通过的 prompt 都明确声明了信封。分界线正好在这里。
+- 受控假模型是照着校验器写的，所以它永远返回正确的信封——这处 prompt 与校验器的不一致在假模型
+  下结构上不可观测。真实模型第一次发请求就踩中。
+- 修法是把校验器已经要求的信封写进 prompt，**没有放宽任何一条校验规则**；先加会红的守卫测试
+  （`every_prompt_declares_the_envelope_key_its_validator_requires`），确认红→修→绿。
+- `cargo test --lib llm_gateway` 全绿（含既有 8 条 A3/A4 契约测试）。
+- **真实模型侧的复验未完成**：修完后重跑同一个 probe，网关对同一把 key 全部返回
+  `llm_http_401 INVALID_API_KEY`（5/5，约 460 ms）。第一次基线时同一把 key 同一 endpoint 是 200。
+  因此本条修复目前只有**单元级证据**，不报告为"真实模型已通过"。
+- 全量 Rust `cargo test --lib`：**871 passed / 0 failed / 14 ignored**（上一轮 870/11；+1 为新增守卫测试，
+  +3 为真实网关的临时 ignored 探针）。未动前端，Vitest 未重跑。
+
+## 2026-09-20 真实模型云端自主修复：Windhub / grok-4.3 复测收口
+
+- [x] `/v1/models`：200，12 个模型；`grok-4.3` 最小 JSON 14.274 s、工具调用 11.921 s 均通过；`gemini-3.8-flash` 最小 `image_url` 1.777 s 通过，仅作视觉候选记录。
+- [x] 五类生产请求：outline 27.293 s、A3 53.133 s、A4 21.869 s、candidate 32.339 s、repair step 16.364 s，均得到合法协议结果。
+- [x] 真实 Tauri/CDP 链跑到候选阶段：两次候选请求分别 134.043 s / 144.323 s，均 `llm_timeout_budget_exhausted`；本地初稿仍落盘，未进入任何修复工具回合。
+- [x] 真实链证据：2 次 `generate_authoring_candidate`、0 次 `repair_authoring_step`；没有 `read_source`/`sourceAnchors`/`baseVersion`/`record_ruling`/`finish` 证据。完整失败记录没有 usage，token 数记为未知，不用小请求 token 冒充。
+- [x] 临时 live harness 已恢复，进程与 OS secret 已清理；完整记录见 `docs/recognition-survey/NOTES.md` §10 和 `findings.md` 的 Windhub 条目。
+- [ ] 下一步只给建议，不在本轮实现：针对完整 candidate payload 做请求大小/服务端响应时延分析，再决定模型路由、请求裁剪或预算策略；不要先放宽校验器。
+
+## 2026-09-20 真实链超时的归因复核与云端失败落库修复
+
+- 复核 windhub 那次失败的落库状态：任务行如实记 `failed` + `llm_timeout_budget_exhausted`，
+  批次行却停在 `not_run/CLOUD_DISABLED`（"本次导入未启用云端识别"），而前端状态行读的是批次行 →
+  用户看到的是「题稿已生成，可以开始编辑」，134 秒的真实超时在界面上消失。
+- 已修：`store::write_batch_cloud_failure` + `scheduler::batch_cloud_failure_for_job`，只改写
+  "云端起了却没交出可用结果"这一路，原因码复用既有 `classify_cloud_error`
+  （超时 → `unusable`/`MODEL_TIMEOUT`）。前端既有文案随即正确，未改前端。
+- 红色证据取自真实运行产物（`run-cloud-repair-chain-2026-09-20T13-22-27-910Z` 的
+  `authoring_hub.db` 两行互相矛盾），不是构造样例；两条单测把修复钉住。
+- 归因结论：**"API 太慢"目前不成立**。134.043 s / 144.323 s 是整格时延（含 ≈14 s / ≈24 s 本地
+  PDF 读取+base64+prompt 构造），HTTP 预算只有 120 s（harness profile `timeoutMs`），错误是
+  reqwest 客户端超时——是我们先挂断。已证明的只有"服务端 > 120 s"。另外 `llm_timeout` 把预算
+  硬 clamp 到 300 s 上限（`llm_gateway.rs:142-150`），设置页填更大也无效。
+- 全量 Rust `cargo test --lib`：**873 passed / 0 failed / 11 ignored**（+2 为本次两条守卫测试）。
+  未改前端，Vitest 未重跑。
+
+## 2026-09-20 分组提交、grok-4.6 探测与听力 plan
+
+- 提交 `9f38b56`：A3/A4 prompt 明示 `findings` / `rulings` 顶层信封，守卫测试通过。
+- 提交 `f34b805`：云端真实失败改写批次 cloud 终态，两条真实反例测试通过。
+- 提交 `6683fe9`：答案页三态、语义约束和 canonical 写入守卫；额外发现并先红后修
+  `AND/OR A NUMBER` 会错误占用 word token 的边界，答案页相关 16 条测试通过。
+- 提交 `c8e8f8a`：编辑器显示答案页状态并提供真实重试，定向 Vitest 4/4 通过。
+- Welfare `/models` 200 / 547 ms，包含 `grok-4.6`；最小 JSON 200 / 6.679 s，工具调用
+  200 / 5.601 s。
+- 产品自己的 300 s 完整候选请求在 7.534 s 收到 HTTP 402：额度不足，未进入生成；临时
+  ignored probe 已移除。
+- 新增 `docs/recognition-survey/LISTENING-EPIC-PLAN.md`，只做计划，无听力产品代码变更。
