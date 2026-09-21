@@ -789,3 +789,74 @@ Errors encountered:
 而用户 D1 的答复是"按节次序号记录、可选整个文件夹"，即**多个 Section MP3**——现有单 `media`
 合同支持不了。因此该答复确认选择 Phase D 的选项 (b)：每个 part 带自己的 media 资源引用。
 这只是听力 epic 的合同基线，本轮未改听力代码。
+
+## 2026-09-21 回到主线：云端链路 / 听力 / 内部 prompt / 强制导出 / 题库保存
+
+第一版已打包交付（`customer-delivery/`，未跟踪，不动）。用户指示回到主线，并**明确要求并发子代理**
+先查缺口再开发。
+
+### 架构确认（已对照代码）
+
+导入 PDF/DOCX → 本地识别秒出初稿 → 云端独立生成完整候选（`generate_authoring_candidate`）→
+云端修复循环（`repair_authoring_step`）比对原文件 / 候选 / 当前稿，自主编辑 canonical，只把解决不了的
+交给用户。全程无需用户点击。更正一点：旧的独立核验步 A3（`verify_source_answers`）/ A4
+（`adjudicate_divergence`）**已不在主链上**（`scheduler.rs:736`）；修复循环本身就是核验。
+目标：一次典型导入用户只做 1–2 个决策。
+
+### D4 强制导出（用户决策，推翻 `9e83292` 删除 force 的旧决定）
+
+- 导出拦截过重。用户必须能强制导出一份残破文件：前端明确提示风险，**第二次确认点击时必须完成一次导出**。
+- 设计约束（我方坚持，用户需求不受影响）：这是**显式、有记录的用户越权**，不是回到当年那条无声的
+  force 通道。导出包打上"强制导出"标记；门禁自己的 `PublishVerdict` 不被改写成 Ready；
+  任何未解析答案保持 unresolved，绝不为了"能导出"而编造答案。
+- 待审计确认：runtime 编译失败时还能写出什么产物。
+
+### D5 题库保存（用户已定义语义）
+
+- 用户发布一道题之后，把它的**可编辑最终版本**存进软件的 SQLite，只存一个最终版本。
+- **所有过程产物以及 PDF 等源文件都不保存**（发布后清理）。
+- 用户下次点开这道题：可以继续编辑、保存，也可以正常再次发布。
+
+**已核实的陷阱（必须在实现里处理，否则"正常再次发布"做不到）**：清掉过程产物会删掉
+`document-ir-v2.shadow.json`（physical shadow）。`quality.rs:296-312` 在 shadow 缺失时推一条
+`PHYSICAL_SHADOW_MISSING` warning，且 `SourceCoverageSummary` 是 `#[derive(Default)]`，score = **0.0**；
+`readiness_from_facts` 里 `source_coverage < 0.995` → `ReviewRequired`；而
+`authoring_validation.rs:449` 把任何非 Ready 都判 `PublishVerdict::Blocked{QUALITY_NOT_READY}`。
+即：**按现有代码，发布后清理产物，这道题就再也无法正常发布。**
+处理方向：发布时把"已核实的证据摘要"（原文声明题号集合、节点覆盖结论）冻结进 SQL 记录，而不是保留过程产物；
+清理后的题用冻结摘要判 source coverage（题号集合仍能对当前稿比对，改题会被抓到），节点覆盖以
+"发布时已核实、源已按设计清理"的独立状态出现，不再是 0.0 分。
+另一个后果需在界面说明：源文件清理后，这道题**不能再"重新识别"/云端修复**（修复循环要读原文件），
+入口应禁用并说明原因，而不是点了失败。
+
+### 执行方式
+
+- 第一波：4 个只读审计子代理并行（听力链路、云端链路+prompt、导出门禁+题库保存、用户决策点数量）。
+- 第二波：按审计给出的**互不相交文件集**切片，在独立 git worktree 里并行实现，逐片合并；
+  每片先写会红的测试。
+
+### 2026-09-21 第二波：五个开发子代理（各自独立 worktree）
+
+用户补充决策：**前端不展示任何阻拦 / 校验门槛与门控，默认用户已全部阅读；点发布即认可。**
+发布按钮一次点击即发布：verdict 为 Ready 走正常发布；否则后端以显式记录的 forced 方式发布
+（`publishOverride` + `publish_records_v2.forced=1`，verdict 不被改写，不编造答案）。
+唯一保留的结果提示：`studentLoadable=false` 时说明「学生端暂时无法打开这道题」（这是交付结果，不是门槛）。
+用户确认：发布后 PDF 也不保留。
+
+| 代理 | 范围 | 文件归属要点 |
+| --- | --- | --- |
+| 发布 | 一键发布/强制导出、publish_records_v2、发布后冻结证据+清理过程产物与源文件、清理后可正常再发布、显式保存按钮、清理后禁用重新识别 | nas_package_v2 / authoring_v2_commands 导出 / quality / authoring_validation / library schema 迁移；不得清理 `<appData>/audio/` |
+| 简化流程 | 去门控化展示、修复后状态说真话、stale 只看人工编辑、剩余任务读时重算、单一安静清单、保存冲突自动 rebase、答案页单步重试、重新识别诚实、库行文案、设置去死项 | 前端状态/任务 UI、scheduler 批次阶段 helper、reconcile stale |
+| 云端链路 | S1 传输与可观测性（超时不走图片回退、保留首错、保存被拒回复、max_tokens/truncation、clamp 与设置页一致）→ S2 prompt/校验对齐 + modality 钩子 + 去掉候选 passage 输出 → S4 修复循环一次受约束重试 → S3 候选按原文声明题段切分并合并 | llm_gateway / llm_suggestions / candidate.rs / auto_pipeline 云端函数 |
+| 听力识别 | Slice 0 每 part 独立 media 合同；1a pdfium 几何保留词间距（阅读侧只允许空白变化，结构计数不变）；1b 门槛容忍无空格写法；1c `listening_parts.rs` 纯模块 | schema/contracts/pdf_geometry/ielts_grammar 识别模块 |
+| 听力导入 | modality 端到端、导入时听力检测、MP3 弹窗（拖拽/选文件/选文件夹）、受管音频复制到 `<appData>/audio/<itemId>/` + `listening_audio_assets_v1`、听力工作区基础 | 导入链路、listening_audio 新模块、库 UI |
+
+第三波（依赖前两波合并）：听力编译/打包（ListeningExamSourceV1 转换、NAS 包、quality/validation 按 modality 分派）、
+听力云端候选接线（candidate.rs 保留 listening parts）、学生端仓库支持每 part 音频（当前只认单一 media）。
+
+### 更正（影响结论）
+
+我在 09-20 记录的"134 s = ≈14 s 本地准备 + 120 s HTTP"是**错的**。云端审计核对代码：212 KB 的 base64 是毫秒级；
+`llm_timeout_budget_exhausted` 只可能来自**图片回退**那次请求。更可能的真实过程是：直连 PDF 的请求因未知原因快速失败
+（该错误被丢弃），随后带页图的第二次请求用满 120 s 超时。结论不变的部分："服务端太慢"仍未被证明；
+新增的部分：一次坏请求最坏可烧掉约 4× 超时，已排为云端链路 S1 首要修复。

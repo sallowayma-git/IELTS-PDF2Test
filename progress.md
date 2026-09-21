@@ -1611,3 +1611,9 @@ A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
 - [x] 第一次 CDP 运行因真实 pdfium `2 7` 题号暴露误报而失败（前 12 场景通过，`export-and-student-runtime` 被 coverage 阻断）；修复后同一受控 Tauri 链 **13/13 passed**，真实 `27..40` coverage complete。
 - [x] 最终全量 Rust **881 passed / 0 failed / 11 ignored**；Vitest **315 passed / 0 failed**。
 - [x] 最终构建/验收产物已在收口时清理；外部阻塞仍是真实模型完整链与 token/时延、28 份未见视觉样本准确率、DOCX 端到端真实样本；听力只确认每个 part 独立 media 合同，未实施。
+
+## 2026-09-21 更正与第二波启动
+
+- 更正：09-20 条目中"134/144 s = ≈14/24 s 本地准备 + 120 s HTTP"不成立（base64 为毫秒级；该错误只可能来自图片回退请求）。
+  真实过程更可能是直连 PDF 请求快速失败且错误被丢弃、图片回退请求耗尽 120 s。详见 task_plan 同日"更正"。
+- 四个只读审计完成（听力、云端链路+prompt、导出门禁+题库保存、用户决策点）；五个开发子代理已在独立 worktree 并行开工，分工见 task_plan。

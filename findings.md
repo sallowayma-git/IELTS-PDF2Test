@@ -3610,3 +3610,35 @@ cloud_usable
 
 结论：判"API 不行"之前必须先有一次**不设 120 s 上限**的测量。在没有这个数之前重写网关接口层，
 与当年把 PDF harness 失败归因到缺私有语料是同一类错误。
+
+## F-SOURCE-COVERAGE-REVIEW-2026-09-20（独立复核）
+
+对 `719c901` 的复核结论：**实现与"不能伪报完整"这条硬规则一致**，链路是通的，不是只加了个分数。
+
+逐条核到的事实：
+
+- 阻断链完整:`SOURCE_QUESTION_COVERAGE_MISSING` 是 blocking issue → 进 `hardFailures` →
+  `readiness_from_facts` 第一条即 `Blocked`（`quality.rs:73`）→ `authoring_validation.rs:449` 把任何
+  非 `Ready` 映射成 `PublishVerdict::Blocked{QUALITY_NOT_READY}` → 导出被拦。不是只压低
+  `sourceCoverage` 分数。
+- `undetermined` 确实不阻断：它是 warning，而 `readiness_from_facts` 只看 hardFailures、
+  document_score、low task score、节点级 `source_coverage` 分和 unresolved blocking 数——
+  warning 不进其中任何一项。与"提示但不阻塞"的产品语义一致。
+- **两向比对**是这版实现最关键的一点：`missing`（declared − canonical）与
+  `extra`（canonical − declared）任一非空都判 `Missing`。因此字形空格合并这类启发式一旦解析
+  短了（例如把 27–40 读成 27–31），多出来的 32..40 会落进 `extra` → 仍然阻断。
+  **启发式的失败方向指向安全侧，不会变成"系统说没问题但漏了题"。**
+- 任何一条声明解析失败即 `Undetermined`，且该分支排在 missing/complete 之前。所以一条乱码声明
+  不会被另一条"看起来完整"的声明盖过去。
+- `answer_box_context` 守卫避免把随机的 "box 1" 表格单元当成全卷题域。
+- listening 由 modality 显式跳过，不会在听力实现前误报阻断。
+- 12/13 → 13/13 的根因有记录（NOTES §13）：pdfium 把多位题号抽成 `Questions 2 7 – 3 1`，
+  先有真实反例再修，且只在 coverage 的数字声明入口合并相邻数字的字形空格。不是无解释的红转绿。
+
+两处小瑕疵（不影响收口，不单独开卡）：
+
+1. blocking 文案固定为「可能有题目被漏掉」，但同一个码也在 `extra` 非空时触发——那种情况事实
+   相反（稿里有、原文没声明）。`details` 里两个集合都有，只是首句措辞会误导。
+2. `undetermined` 的那条单测只断言"不在 hardFailures 里"，没有断言 `state` 仍未被阻断。
+   若将来有人把它改成 blocking，这条测试**仍会通过**。补一句
+   `assert_ne!(report["state"], "blocked")` 就能封住。
