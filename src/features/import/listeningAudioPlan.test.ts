@@ -4,12 +4,14 @@ import {
   addAudioLaterDecision,
   assignmentNotices,
   assignParts,
+  listeningCandidates,
   listeningDecision,
   moveEntry,
   naturalCompare,
   probeSummaryFrom,
   readingDecision,
   removeEntry,
+  splitImportPlan,
   withProbe
 } from "./listeningAudioPlan";
 
@@ -102,5 +104,35 @@ describe("dialog decisions", () => {
       issueCodes: []
     });
     expect(probeSummaryFrom({ probe: { status: "weird" } })).toBeUndefined();
+  });
+});
+
+describe("import plan", () => {
+  const paper = (name: string) => ({ path: `/p/${name}`, name, sizeBytes: 1 });
+
+  it("asks only about files detected as listening, in selection order", () => {
+    const files = [paper("r.pdf"), paper("l1.pdf"), paper("u.pdf"), paper("l2.pdf")];
+    const queue = listeningCandidates(files, [
+      { path: "/p/r.pdf", modality: "reading", cues: [] },
+      { path: "/p/l1.pdf", modality: "listening", cues: ["listening:four_parts"] },
+      { path: "/p/u.pdf", modality: "unknown", cues: [] },
+      { path: "/p/l2.pdf", modality: "listening", cues: [] }
+    ]);
+    expect(queue.map((item) => [item.file.name, item.cues])).toEqual([
+      ["l1.pdf", ["listening:four_parts"]],
+      ["l2.pdf", []]
+    ]);
+  });
+
+  it("splits reading files into one batch and each listening paper into its own import with audio", () => {
+    const files = [paper("r.pdf"), paper("l.pdf"), paper("switched.pdf")];
+    const split = splitImportPlan(files, {
+      "/p/l.pdf": { modality: "listening", audio: [{ partOrdinal: 1, path: "/a/1.mp3", name: "1.mp3" }] },
+      "/p/switched.pdf": readingDecision()
+    });
+    expect(split.reading.map((file) => file.name)).toEqual(["r.pdf", "switched.pdf"]);
+    expect(split.listening).toEqual([
+      { file: files[1], audio: [{ partOrdinal: 1, path: "/a/1.mp3", name: "1.mp3" }] }
+    ]);
   });
 });

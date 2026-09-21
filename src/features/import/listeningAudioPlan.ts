@@ -185,3 +185,50 @@ export function probeSummaryFrom(raw: unknown): AudioProbeSummary | undefined {
     issueCodes
   };
 }
+
+export interface ImportDetectionLike {
+  path: string;
+  modality: "listening" | "reading" | "unknown";
+  cues: string[];
+}
+
+export interface ListeningCandidate<F> {
+  file: F;
+  cues: string[];
+}
+
+/** Files the dialog must ask about: detected as listening, in the user's selection order. */
+export function listeningCandidates<F extends { path: string }>(
+  files: readonly F[],
+  detections: readonly ImportDetectionLike[]
+): ListeningCandidate<F>[] {
+  const byPath = new Map(detections.map((detection) => [detection.path, detection]));
+  return files.flatMap((file) => {
+    const detection = byPath.get(file.path);
+    return detection?.modality === "listening" ? [{ file, cues: detection.cues }] : [];
+  });
+}
+
+export interface ListeningImportEntry<F> {
+  file: F;
+  audio: AudioAssignment[];
+}
+
+/**
+ * Reading files (including ones the user switched back to reading) go in one batch; each
+ * confirmed listening paper is imported on its own so its created item can be bound to
+ * exactly its audio.
+ */
+export function splitImportPlan<F extends { path: string }>(
+  files: readonly F[],
+  decisions: Readonly<Record<string, ListeningImportDecision>>
+): { reading: F[]; listening: ListeningImportEntry<F>[] } {
+  const reading: F[] = [];
+  const listening: ListeningImportEntry<F>[] = [];
+  for (const file of files) {
+    const decision = decisions[file.path];
+    if (decision?.modality === "listening") listening.push({ file, audio: decision.audio });
+    else reading.push(file);
+  }
+  return { reading, listening };
+}

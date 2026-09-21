@@ -164,6 +164,49 @@ export async function choosePdfFolderSources(): Promise<PickedPath[]> {
   });
 }
 
+/** Listening audio files (MP3 first; M4A/WAV also probe-supported). Desktop only. */
+export async function chooseAudioFiles(): Promise<string[]> {
+  if (!isTauriRuntime()) return [];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    multiple: true,
+    directory: false,
+    filters: [{ name: "Listening audio", extensions: ["mp3", "m4a", "wav"] }]
+  });
+  if (!selected) return [];
+  return Array.isArray(selected) ? selected : [selected];
+}
+
+/** A folder whose MP3 files become Part 1..n in natural name order. Desktop only. */
+export async function chooseAudioFolder(): Promise<string | null> {
+  if (!isTauriRuntime()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({ multiple: false, directory: true });
+  if (!selected) return null;
+  return Array.isArray(selected) ? selected[0] ?? null : selected;
+}
+
+/**
+ * Native file drops onto the window (Tauri webview drag-drop event). Returns an unlisten
+ * function; outside the desktop runtime it is a no-op.
+ */
+export async function listenForFileDrops(handlers: {
+  onDrop: (paths: string[]) => void;
+  onHover?: (hovering: boolean) => void;
+}): Promise<() => void> {
+  if (!isTauriRuntime()) return () => undefined;
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  return getCurrentWebview().onDragDropEvent((event) => {
+    const payload = event.payload;
+    if (payload.type === "enter" || payload.type === "over") handlers.onHover?.(true);
+    else if (payload.type === "leave") handlers.onHover?.(false);
+    else if (payload.type === "drop") {
+      handlers.onHover?.(false);
+      handlers.onDrop(payload.paths);
+    }
+  });
+}
+
 export async function chooseSourceFile(): Promise<PickedPath | null> {
   const files = await chooseSourceFiles();
   return files[0] ?? null;
