@@ -110,11 +110,7 @@ export function describePreviewPublishLimitation(input: {
   }
   if (input.runtimeIssueCount && input.runtimeIssueCount > 0) {
     level = "warning";
-    parts.push(`其中 ${input.runtimeIssueCount} 个答案位的答案类型与题目形式不匹配：预览里能作答，但学生提交时会被判为无效。`);
-  }
-  if (input.blockerCount > 0) {
-    level = "warning";
-    parts.push(`还有 ${input.blockerCount} 处问题没有处理完，修好之前这道题发不出去。`);
+    parts.push(`其中 ${input.runtimeIssueCount} 个答案位的答案形式与题目不匹配，学生提交时会被判为无效；已列在「待补充」里。`);
   }
   return { level, message: parts.join("") };
 }

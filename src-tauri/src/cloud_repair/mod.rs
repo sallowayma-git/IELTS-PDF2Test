@@ -298,7 +298,7 @@ fn push_difference(out: &mut Vec<Value>, target_type: &str, target_id: &str, fie
     out.push(json!({
         "targetType": target_type,
         "targetId": target_id,
-        "field": field,
+        "field": field.clone(),
         "canonical": current,
         "candidate": candidate,
     }));
@@ -1321,7 +1321,7 @@ fn execute_tool(
                 recorded.push(json!({
                     "targetType": target_type,
                     "targetId": target_id,
-                    "field": field,
+                    "field": field.clone(),
                     "ruling": ruling,
                     "reason": entry.get("reason").cloned().unwrap_or(Value::Null),
                     "evidence": entry.get("evidence").cloned().unwrap_or_else(|| json!([])),
@@ -1612,6 +1612,10 @@ fn remaining_tasks(
                                 ),
                                 "action": "review_difference",
                                 "blocking": false,
+                                // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
+                                "field": field.clone(),
+                                "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
+                                "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
                                 "evidence": ruling.get("evidence").cloned().unwrap_or_else(|| json!([])),
                                 "repairFamily": repair_family_for_difference_field(&field),
                             }),
@@ -1628,6 +1632,10 @@ fn remaining_tasks(
                                 "message": describe_difference(&difference),
                                 "action": "review_difference",
                                 "blocking": false,
+                                // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
+                                "field": field.clone(),
+                                "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
+                                "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
                                 "repairFamily": repair_family_for_difference_field(&field),
                             }),
                         );
@@ -1739,6 +1747,85 @@ fn is_constrained_retry_rejection(error: &str) -> bool {
         || error.starts_with("llm_json_parse_failed")
         || error.starts_with("llm_output_truncated")
         || error.starts_with("llm_empty_content")
+}
+
+/// 读路径用：按**当前稿**重算剩余任务。
+///
+/// 与修复循环收尾时同一个 [`remaining_tasks`]，输入取自落盘的裁定与模型疑问。
+/// 额外一条：**人已经动过的目标**上的非阻断任务（候选差异、模型疑问）不再挂出来——
+/// 用户在那里做了决定，再拿云端的另一个值去问他就是逼他重复回答。阻断任务是当前稿
+/// 的事实，照常保留。
+pub(crate) fn current_remaining_tasks(
+    root: &Path,
+    item_id: &str,
+    job_id: &str,
+    batch_id: &str,
+) -> CommandResult<Vec<Value>> {
+    let stored = store::read_repair_rulings(root, job_id, batch_id)?;
+    let list = |key: &str| -> Vec<Value> {
+        stored
+            .as_ref()
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let rulings = list("rulings");
+    let questions = list("modelQuestions");
+    let tasks = remaining_tasks(root, item_id, job_id, batch_id, &rulings, &questions)?;
+    let conn = open_library_connection(root)?;
+    let protected = match get_canonical_ds(&conn, item_id)? {
+        Some((canonical, _)) => human_protected_targets(&conn, item_id, &canonical)?,
+        None => Default::default(),
+    };
+    Ok(tasks
+        .into_iter()
+        .filter(|task| {
+            if task.get("blocking").and_then(Value::as_bool) == Some(true) {
+                return true;
+            }
+            let touched = task
+                .get("targetIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .any(|id| protected.contains(id) || protected.contains(&format!("answerKey:{id}")));
+            !touched
+        })
+        .collect())
+}
+
+/// 把批次行里的修复摘要换成**此刻**的剩余任务（读路径）。
+///
+/// - `running`：不重算（进行中本来就没有可信清单）；
+/// - 损坏 / 未知形状：原样返回；
+/// - 重算失败：原样返回快照（宁可旧，不可空——空清单会被读成「没有要处理的」）；
+/// - `needs_attention` 且重算后为空 → `completed`；`completed` 且重算后非空 →
+///   `needs_attention`（状态跟着事实走，否则状态行与清单自相矛盾）。
+pub(crate) fn refresh_repair_summary(
+    root: &Path,
+    item_id: &str,
+    job_id: &str,
+    batch_id: &str,
+    repair: &Value,
+) -> Value {
+    let status = repair.get("status").and_then(Value::as_str).unwrap_or("");
+    if status == REPAIR_STATUS_RUNNING || repair.get("reasonCode").is_some() || !repair.is_object() {
+        return repair.clone();
+    }
+    let Ok(tasks) = current_remaining_tasks(root, item_id, job_id, batch_id) else {
+        return repair.clone();
+    };
+    let mut refreshed = repair.clone();
+    let next_status = match status {
+        REPAIR_STATUS_NEEDS_ATTENTION if tasks.is_empty() => REPAIR_STATUS_COMPLETED,
+        REPAIR_STATUS_COMPLETED if !tasks.is_empty() => REPAIR_STATUS_NEEDS_ATTENTION,
+        other => other,
+    };
+    refreshed["status"] = json!(next_status);
+    refreshed["remainingTasks"] = Value::Array(tasks);
+    refreshed
 }
 
 /// 修复循环的编排。
@@ -2003,7 +2090,9 @@ where
         request.root,
         request.job_id,
         request.batch_id,
-        &json!({ "rulings": rulings }),
+        // 模型留下的疑问一并落盘：读路径要按当前稿重算剩余任务，没有它们就只能
+        // 在「丢掉模型的疑问」和「永远用冻结快照」之间二选一。
+        &json!({ "rulings": rulings, "modelQuestions": model_questions }),
     ) {
         last_error = Some(error);
         if status == REPAIR_STATUS_COMPLETED {

@@ -33,7 +33,26 @@ export type ImportModality = "reading" | "listening";
 export function importFiles(input: { files: PickedPath[]; cloudEnabled: boolean; cloudProfileId?: string; modality?: ImportModality }) {
   return command<{ created: Array<{ itemId: string; title: string }>; rejected: Array<{ name: string; reason: string }> }>("import_files", { input });
 }
-export function retryProcessing(itemId: string) { return command<void>("retry_processing", { itemId }); }
+/** 后端 `retry_processing` 的返回：`queued = false` 表示任务正在跑 / 已在排队，这次没有新入队。 */
+export function retryQueued(result: { queued?: boolean } | null | undefined): boolean {
+  return result?.queued === true;
+}
+
+/** 重新识别的回执文案：没入队就如实说，绝不一律「已加入识别队列」。 */
+export function describeRetryOutcome(queued: boolean): string {
+  return queued
+    ? "已加入识别队列，会按当前的云端设置重新识别。题稿仍可编辑。"
+    : "这道题正在识别中，没有重复加入队列；完成后结果会自动更新。";
+}
+
+/** 重新识别。返回是否**真的**加入了队列。云端设置由后端按此刻的模型连接重新解析。 */
+export async function retryProcessing(itemId: string): Promise<boolean> {
+  return retryQueued(await command<{ queued?: boolean } | null>("retry_processing", { itemId }));
+}
+/** 只重跑答案页识别（不重新入队整条流水线）。服务暂时不可用时后端会自动再试一次。 */
+export function retryAnswerPageRecognition(itemId: string) {
+  return command<{ state?: string; stateReason?: string; answerCount?: number; appliedCount?: number }>("retry_answer_page_recognition", { itemId });
+}
 export function cancelProcessing(itemId: string) { return command<void>("cancel_processing", { itemId }); }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

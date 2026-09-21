@@ -11,6 +11,7 @@ import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { toUserFacingError } from "../../utils/userFacingError";
 import type { DiagnosticsSettings, EnvironmentPreflightReport, LlmProfilePublic, LlmTestResult } from "../../types";
 import { useAppSettings } from "./appSettings";
+import { cloudShouldBeEnabledAfterSave } from "./settingsLogic";
 
 // 设置页（计划 §14 / §16.13）：默认只有模型连接、文件与发布目标，其他收进「高级设置」。
 //
@@ -127,30 +128,47 @@ export function SettingsPage() {
     setNotice(undefined);
   }
 
-  async function saveAndTest() {
+  function profileInput(enabled: boolean, profileId = form.profileId) {
+    return {
+      profileId,
+      name: form.name.trim() || "默认模型",
+      provider: form.provider,
+      baseUrl: form.baseUrl.trim(),
+      model: form.model.trim(),
+      // 留空表示不改动已保存的 Key。
+      apiKey: form.apiKey ? form.apiKey : undefined,
+      // 产品逻辑固定：温度 0、强制 JSON。不给普通用户开关。
+      temperature: 0,
+      timeoutMs: form.timeoutMs,
+      forceJson: true,
+      enabled
+    };
+  }
+
+  async function saveAndTest(toggle = cloudEnabled) {
     setBusy("saving");
     setError(undefined);
     setNotice(undefined);
     setTestResult(undefined);
     try {
-      const saved = await saveLlmProfile({
-        profileId: form.profileId,
-        name: form.name.trim() || "默认模型",
-        provider: form.provider,
-        baseUrl: form.baseUrl.trim(),
-        model: form.model.trim(),
-        // 留空表示不改动已保存的 Key。
-        apiKey: form.apiKey ? form.apiKey : undefined,
-        // 产品逻辑固定：温度 0、强制 JSON。不给普通用户开关。
-        temperature: 0,
-        timeoutMs: form.timeoutMs,
-        forceJson: true,
-        enabled: cloudEnabled
-      });
+      const saved = await saveLlmProfile(profileInput(toggle));
       setBusy("testing");
       const result = await testLlmProfile(saved.profileId);
       setTestResult(result);
-      setNotice(result.ok ? "已保存，连接正常。" : "已保存，但连接测试未通过。");
+      // 保存了一个能用的密钥 = 要用云端：自动启用，不必再单独勾一次开关。
+      const enable = cloudShouldBeEnabledAfterSave({
+        toggle,
+        testOk: result.ok,
+        hasKey: Boolean(form.apiKey) || form.hasApiKey,
+        provider: form.provider
+      });
+      if (enable && !toggle) {
+        await saveLlmProfile({ ...profileInput(true, saved.profileId), apiKey: undefined });
+      }
+      setCloudEnabled(enable);
+      setNotice(result.ok
+        ? enable ? "已保存，连接正常，导入时会自动使用云端识别。" : "已保存，连接正常。"
+        : "已保存，但连接测试未通过。");
       setReloadTick((value) => value + 1);
     } catch (caught) {
       setError(describeSettingsError(caught, "保存或连接测试失败，请稍后重试。"));
@@ -162,8 +180,12 @@ export function SettingsPage() {
   async function toggleCloud(next: boolean) {
     setCloudEnabled(next);
     setNotice(undefined);
-    // 关闭是即时生效的安全动作；开启需要用户点「保存并测试」确认连接可用。
-    if (next || !form.profileId) return;
+    // 勾选开关本身就要生效：已有连接时立刻保存并测试（以前只改了界面，什么都没存）。
+    if (next) {
+      if (form.profileId || form.apiKey) await saveAndTest(true);
+      return;
+    }
+    if (!form.profileId) return;
     try {
       await saveLlmProfile({
         profileId: form.profileId,
@@ -223,7 +245,7 @@ export function SettingsPage() {
           />
           <span>
             启用云端识别
-            <small>开启后，导入时云端模型与本地识别并发运行，结果需要确认后才会进入题稿。</small>
+            <small>开启后，导入时云端会在本地识别之后自动检查并直接修正题稿；每处修正都可以撤销，你改过的地方不会被覆盖。</small>
           </span>
         </label>
 
@@ -275,21 +297,6 @@ export function SettingsPage() {
         </div>
       </section>
 
-      <section className="settings-group">
-        <h2>文件</h2>
-        <label className="settings-toggle">
-          <input
-            type="checkbox"
-            checked={settings.keepSourceFiles}
-            data-testid="settings-keep-source"
-            onChange={(event) => updateSettings({ keepSourceFiles: event.target.checked })}
-          />
-          <span>
-            保留原始 PDF 以便后续核对
-            <small>关闭后，题目首次确认或发布成功即删除原文件；发现题干错漏时将失去来源对照。</small>
-          </span>
-        </label>
-      </section>
 
       <section className="settings-group">
         <h2>发布</h2>
@@ -343,29 +350,6 @@ export function SettingsPage() {
               />
             </label>
 
-            <label className="settings-field">
-              本地并发数
-              <input
-                type="number"
-                min={1}
-                max={4}
-                value={settings.localConcurrency}
-                data-testid="settings-local-concurrency"
-                onChange={(event) => updateSettings({ localConcurrency: Number(event.target.value) })}
-              />
-            </label>
-
-            <label className="settings-field">
-              云端并发数
-              <input
-                type="number"
-                min={1}
-                max={4}
-                value={settings.cloudConcurrency}
-                data-testid="settings-cloud-concurrency"
-                onChange={(event) => updateSettings({ cloudConcurrency: Number(event.target.value) })}
-              />
-            </label>
 
             <label className="settings-toggle">
               <input

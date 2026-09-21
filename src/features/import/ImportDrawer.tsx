@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { listLlmProfiles } from "../../api/tauriCommands";
+import { go } from "../../app/router";
+import { hasCloudConnection } from "../settings/settingsLogic";
 import { choosePdfFolderSources, chooseSourceFiles, type PickedPath } from "../../api/desktopDialogs";
 import { detectImportModality } from "../../api/listeningAudioClient";
 import type { ImportRejection } from "./useImportFiles";
@@ -30,6 +33,16 @@ export function ImportDrawer({
   // 识别为听力的文件逐个确认；decisions 以源文件路径为键。
   const [queue, setQueue] = useState<ListeningCandidate<PickedPath>[]>([]);
   const [decisions, setDecisions] = useState<Record<string, ListeningImportDecision>>({});
+  // `undefined` = 还没查到；查不到时不提示（不猜）。
+  const [cloudConnected, setCloudConnected] = useState<boolean | undefined>();
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    listLlmProfiles()
+      .then((profiles) => { if (!cancelled) setCloudConnected(hasCloudConnection(profiles)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [open]);
 
   if (!open) return null;
 
@@ -92,6 +105,12 @@ export function ImportDrawer({
 
         <div className="drawer-body">
           <p className="drawer-hint">选择一份或多份 PDF / DOCX / TXT / MD。标题默认取文件名，之后可以在题目里直接改。</p>
+          {cloudConnected === false ? (
+            <p className="drawer-hint" data-testid="import-cloud-offline">
+              未连接云端，仅本地识别 ·{" "}
+              <button className="ghost small" onClick={() => { close(); go("/settings"); }}>去连接</button>
+            </p>
+          ) : null}
           <div className="button-row">
             <button className="ghost" data-testid="import-pick-files" disabled={busy} onClick={() => chooseSourceFiles().then(addFiles)}>
               选择文件

@@ -289,8 +289,36 @@ pub(crate) fn get_recognition_decision_core(
     // 权威稿用于判定「已写入的修正是否仍生效」。读不到时传 `None`：判定取保守
     // （保持原状），绝不凭空宣称某条修正已失效。
     let canonical = get_canonical_ds(&conn, item_id)?.map(|(ds, _)| ds);
-    let view = build_view(&batch, items, current, canonical.as_ref());
+    let mut view = build_view(&batch, items, current, canonical.as_ref());
+    refine_view_for_reader(root, &conn, &batch, &mut view);
     serde_json::to_value(view).map_err(|error| error.to_string())
+}
+
+/// 读路径上两处**必须对着此刻状态**判定的东西：
+///
+/// 1. `stale`：只在批次之后**人**改过稿时为真（机器写入不算，见
+///    `store::human_edited_since`）。读不到日志时保留版本判定（保守）。
+/// 2. 修复摘要的 `remainingTasks`：修复循环结束时写下的是一次性快照，用户修好了
+///    问题，任务却一直挂着。这里按**当前稿**重算（与修复循环同一个
+///    `remaining_tasks`），重算失败才退回快照。进行中（`running`）不重算。
+fn refine_view_for_reader(
+    root: &Path,
+    conn: &rusqlite::Connection,
+    batch: &store::BatchRow,
+    view: &mut RecognitionDecisionViewV1,
+) {
+    if let Ok(human_edited) = store::human_edited_since(conn, &batch.library_item_id, batch.base_edit_version) {
+        view.stale = human_edited;
+    }
+    if let Some(repair) = view.repair.as_ref() {
+        view.repair = Some(crate::cloud_repair::refresh_repair_summary(
+            root,
+            &batch.library_item_id,
+            &batch.job_id,
+            &batch.batch_id,
+            repair,
+        ));
+    }
 }
 
 // ── 完整识别周期（本地已有稿 → 云端 → 核验 → 裁决 → 自动应用）──────────
@@ -1114,7 +1142,9 @@ pub(crate) fn apply_recognition_decisions_core(
     let refreshed = store::load_batch_by_id(&conn, &batch.batch_id)?
         .map(|row| {
             let canonical = get_canonical_ds(&conn, &item_id).ok().flatten().map(|(ds, _)| ds);
-            build_view(&row, items.clone(), after, canonical.as_ref())
+            let mut view = build_view(&row, items.clone(), after, canonical.as_ref());
+            refine_view_for_reader(root, &conn, &row, &mut view);
+            view
         })
         .unwrap_or_else(|| build_view(&batch, items.clone(), after, None));
 

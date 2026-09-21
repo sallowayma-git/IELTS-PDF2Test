@@ -17,9 +17,11 @@ export const STAGE_LABEL: Record<LibraryStageV1, string> = {
   queued: "排队中",
   local: "本地识别",
   cloud: "云端识别",
-  reconciling: "合并结果",
-  action_required: "待检查",
-  ready: "可发布",
+  reconciling: "云端检查",
+  // 识别完成就是识别完成：不再按质量状态分成「待检查 / 可发布」两种结论——
+  // 发布前的检查由用户按「发布」时一并完成，题库行不替他下结论。
+  action_required: "识别完成",
+  ready: "识别完成",
   published: "已发布",
   failed: "失败"
 };
@@ -31,7 +33,7 @@ export const FILTER_TAB_LABEL: Record<LibraryFilterTab, string> = {
   all: "全部",
   processing: "处理中",
   action_required: "待检查",
-  ready: "可发布",
+  ready: "已完成",
   failed: "失败",
   trash: "回收站"
 };
@@ -142,15 +144,16 @@ function detailFor(
   v2?: LibraryItemSummaryV2
 ): string | undefined {
   if (stage === "local") return "正在读取原文件并识别题目";
-  if (stage === "cloud") return "本地识别完成 · 云端识别中";
-  if (stage === "reconciling") return "正在合并本地与云端结果";
+  if (stage === "cloud") return "本地识别完成 · 云端识别中，可先打开编辑";
+  // 这一段就是最长十分钟的云端自动检查（修复循环）；「正在合并」让人以为要等它。
+  if (stage === "reconciling") return "云端正在自动检查，可先打开编辑";
   if (stage === "queued") return "等待开始识别";
   if (stage === "action_required") {
     // G1/A4-F03：恢复上限路径不得谎称"已自动排队重试"，按真实错误码给出人话。
     const errorCode = v2?.processing?.lastErrorCode;
     if (errorCode === "retry_exhausted") return "已达到自动恢复上限，请手动重试";
     if (errorCode === "interrupted") return "已自动排队重试";
-    return actionable > 0 ? `${actionable} 处需要确认` : "有内容需要确认";
+    return "可以打开编辑";
   }
   if (stage === "failed") {
     // G1 对抗审计：用户主动取消的行不得显示成"识别失败，可以重试"。
@@ -210,6 +213,11 @@ export function buildRow(
       issueCounts: job?.issueCounts
     }
   };
+}
+
+/** 失败 / 已取消的行可以直接在题库里重试（它们没有可编辑的题稿，打开也没用）。 */
+export function canRetryRow(row: LibraryRowV1): boolean {
+  return row.stage === "failed" && !row.inTrash;
 }
 
 export function matchesTab(row: LibraryRowV1, tab: LibraryFilterTab): boolean {

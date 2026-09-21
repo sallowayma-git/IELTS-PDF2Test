@@ -288,11 +288,9 @@ describe("describePreviewPublishLimitation — 预览与发布的差距", () => 
     expect(note.message).toContain("已保存");
   });
 
-  it("有阻断问题时是 warning，并说明发不出去", () => {
+  it("不再说「发不出去」：预览里没有门槛话术（产品决定 2）", () => {
     const note = describePreviewPublishLimitation({ pendingCount: 0, blockerCount: 4 });
-    expect(note.level).toBe("warning");
-    expect(note.message).toContain("4");
-    expect(note.message).toContain("发不出去");
+    expect(note.message).not.toMatch(/发不出去|不能导出|阻断/);
   });
 
   it("答案键类型不匹配时是 warning，并说明学生提交会被判无效", () => {
@@ -300,6 +298,7 @@ describe("describePreviewPublishLimitation — 预览与发布的差距", () => 
     expect(note.level).toBe("warning");
     expect(note.message).toContain("3");
     expect(note.message).toContain("提交");
+    expect(note.message).toContain("待补充");
   });
 
   it("干净草稿是 info，并说明预览与已保存内容一致（**不带版本号**）", () => {

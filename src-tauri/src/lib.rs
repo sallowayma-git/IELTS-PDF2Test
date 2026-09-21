@@ -1120,11 +1120,37 @@ async fn retry_processing(
     item_id: String,
     state: tauri::State<'_, Arc<processing::scheduler::ProcessingState>>,
     app: AppHandle,
-) -> CommandResult<()> {
+) -> CommandResult<serde_json::Value> {
     let root = app_root(&app)?;
     // 题库保存：发布后原文件已删除的条目，需要原文件的操作明确报错。
     library::final_version::ensure_source_available(&root, &item_id)?;
-    processing::scheduler::retry_job((*state).clone(), app, &item_id).await
+    // `queued = false`：任务正在跑 / 已在排队，这次没有新加入队列——前端必须如实说。
+    let queued = processing::scheduler::retry_job((*state).clone(), app, &item_id).await?;
+    Ok(serde_json::json!({ "queued": queued }))
+}
+
+/// 只重跑答案页识别这一步（不重新入队整条流水线、不重跑云端修复）。
+#[tauri::command]
+async fn retry_answer_page_recognition(item_id: String, app: AppHandle) -> CommandResult<Value> {
+    let root = app_root(&app)?;
+    // 答案页识别要读原文件的扫描页：发布后原文件已删除的条目明确报错。
+    library::final_version::ensure_source_available(&root, &item_id)?;
+    let report = tauri::async_runtime::spawn_blocking({
+        let root = root.clone();
+        let item_id = item_id.clone();
+        move || {
+            processing::answer_page::retry_answer_page_at_root(&root, &item_id, &mut |root, job_id, profile| {
+                auto_pipeline::recognize_and_apply_pdf_answers(root, job_id, profile)
+            })
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    // 答案可能已写进权威稿：通知工作区按新版本刷新。
+    if let Ok(conn) = library::repository::open_library_connection(&root) {
+        let _ = processing::scheduler::notify_item_content_changed(&conn, &app, &item_id);
+    }
+    Ok(report)
 }
 
 #[tauri::command]
@@ -1702,6 +1728,7 @@ pub fn run() {
             open_source_file,
             cancel_processing,
             retry_processing,
+            retry_answer_page_recognition,
             list_jobs,
             get_job,
             update_job_meta,

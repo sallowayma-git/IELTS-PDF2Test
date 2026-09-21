@@ -25,6 +25,11 @@ export interface WorkspaceItemV1 {
   ds: Record<string, unknown> | null;
   editVersion: number;
   issues: unknown[];
+  /**
+   * 最近的编辑日志（基线版本 + 来源）。保存冲突时据此判断「是不是只被机器写入挤掉」，
+   * 是就自动重放，不必让用户二选一。旧后端没有这个字段。
+   */
+  recentEdits?: Array<{ baseVersion: number; origin?: string | null }>;
 }
 
 export interface LibraryItemSummaryV2 {

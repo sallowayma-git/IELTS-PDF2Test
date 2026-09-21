@@ -147,7 +147,9 @@ describe("完成状态只由后端状态决定，不由剩余条数决定", () =
     const headline = repairHeadline(next);
     expect(headline).toContain("本轮上限");
     expect(headline).toContain("2 处");
-    expect(headline).toContain("1 处不处理不能导出");
+    // 剩下的条目在「待补充」里；这里不再说「不处理不能导出」（产品决定 2）。
+    expect(headline).not.toMatch(/导出|阻断/);
+    expect(headline).toContain("待补充");
   });
 
   it("只有 completed 才会说「已完成」", () => {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { describeBatchPublishOutcome, publishItems } from "../../api/publishClient";
+import { describeRetryOutcome, retryProcessing } from "../../api/processingClient";
 import { go, legacyPath, workspacePath, type LibraryIntent } from "../../app/router";
 import { ImportDrawer } from "../import/ImportDrawer";
 import { useImportFiles, type ImportRejection } from "../import/useImportFiles";
@@ -124,6 +125,17 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
     }
   }
 
+  /** 失败 / 已取消的行在题库里直接重试（按此刻的云端设置），并如实说有没有入队。 */
+  async function retry(id: string) {
+    try {
+      const queued = await retryProcessing(id);
+      setNotice(describeRetryOutcome(queued));
+      store.refresh();
+    } catch (error) {
+      setNotice(describeLibraryActionError(error, "重试没有成功，请稍后再试。"));
+    }
+  }
+
   async function restore(id: string) {
     try {
       await store.restore(id);
@@ -166,6 +178,7 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
         onOpen={(id) => go(store.rows.find((row) => row.id === id)?.modality === "writing" ? legacyPath("writing", id) : workspacePath(id))}
         onTrash={trash}
         onRestore={restore}
+        onRetry={retry}
       />
 
       <LibraryBatchBar

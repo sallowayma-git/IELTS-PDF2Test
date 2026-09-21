@@ -6,6 +6,7 @@
 //!
 //! 权威状态在 SQLite（计划 §5.2）；事件只携带可比较的状态版本，前端以 DB 为准刷新。
 
+pub(crate) mod answer_page;
 pub(crate) mod commands;
 pub(crate) mod queue;
 pub(crate) mod scheduler;

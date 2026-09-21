@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter};
 
 use super::queue::{
     self, advance_stage, claim_next, finalize_cancelled_without_lease, finalize_ready_without_lease,
-    get_job, renew_lease, request_cancel, retry, set_cloud_status, STAGE_CLOUD_RECOGNITION,
+    get_job, renew_lease, request_cancel, set_cloud_status, STAGE_CLOUD_RECOGNITION,
     STAGE_RECONCILING,
     STAGE_FAILED, STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
 };
@@ -250,20 +250,40 @@ pub(crate) async fn cancel(state: Arc<ProcessingState>, app: AppHandle, job_id: 
     result
 }
 
-pub(crate) async fn retry_job(state: Arc<ProcessingState>, app: AppHandle, job_id: &str) -> Result<(), String> {
+/// 用户重试 / 重新识别。返回是否**真的**加入了队列（正在跑的任务不会重复入队）。
+///
+/// 云端设置按**此刻**的模型连接重新解析（`current_cloud_profile`），不沿用导入时冻结的值。
+pub(crate) async fn retry_job(state: Arc<ProcessingState>, app: AppHandle, job_id: &str) -> Result<bool, String> {
     state.cancelled.write().await.remove(job_id);
     let root = app_root(&app)?;
     let job_id_owned = job_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
+        let queued = retry_job_at_root(&root, &job_id_owned)?;
         let conn = open_library_connection(&root)?;
-        retry(&conn, &job_id_owned)?;
         if let Some(job) = get_job(&conn, &job_id_owned)? {
             emit_row(&conn, &app, &job);
         }
-        Ok(())
+        Ok(queued)
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// 此刻可用的云端模型连接：第一个启用的、不是本地占位的 profile。
+pub(crate) fn current_cloud_profile(profiles: &[Value]) -> Option<String> {
+    profiles
+        .iter()
+        .filter(|profile| profile.get("enabled").and_then(Value::as_bool) == Some(true))
+        .filter_map(|profile| profile.get("profileId").and_then(Value::as_str))
+        .find(|id| *id != "profile-local-placeholder")
+        .map(str::to_string)
+}
+
+pub(crate) fn retry_job_at_root(root: &std::path::Path, job_id: &str) -> Result<bool, String> {
+    let profiles = crate::llm_profiles::load_profiles(root).unwrap_or_default();
+    let profile = current_cloud_profile(&profiles);
+    let conn = open_library_connection(root)?;
+    queue::retry_with_cloud(&conn, job_id, profile.as_deref())
 }
 
 use crate::CommandResult;
@@ -997,10 +1017,15 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
             let root = root.clone();
             let job_id = job_id.clone();
             move || {
-                let result = crate::auto_pipeline::recognize_and_apply_pdf_answers(
+                // 同一个答案页步骤：服务暂时不可用时自动再试一次，结果写回工作区读的
+                // `parser.visionAnswerExtraction`（此前这里只打日志，界面看不到这次识别）。
+                let result = super::answer_page::run_answer_page_step(
                     &root,
                     &job_id,
                     &answer_profile,
+                    &mut |root, job_id, profile| {
+                        crate::auto_pipeline::recognize_and_apply_pdf_answers(root, job_id, profile)
+                    },
                 );
                 drop(answer_permit);
                 result
@@ -1027,20 +1052,27 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
     }
     // 同一个判定也要写进批次行：前端状态行读批次行，不改这一格的话，一次真实的云端
     // 失败在界面上与「未启用云端」无法区分（实测见 `write_batch_cloud_failure` 的注释）。
-    if let Some((state, reason_code, message)) =
-        batch_cloud_failure_for_job(launch_cloud, &cloud_status, repair_error.as_deref())
-    {
+    //
+    // 成功 / 部分成功 / 取消也一样要写：批次行那一格是本地周期写下的 `not_run`，
+    // 留着它，前端会在一次已经改好稿的云端修复之后说「题稿已生成，可以开始编辑」。
+    if let Some(stage) = batch_cloud_stage_for_job(
+        launch_cloud,
+        &cloud_status,
+        repair_status.as_deref(),
+        repair_error.as_deref(),
+    ) {
         let written = run_blocking({
             let root = root.clone();
             let batch_id = batch_id.clone();
             move || {
                 let conn = open_library_connection(&root)?;
-                crate::reconcile::store::write_batch_cloud_failure(
+                crate::reconcile::store::write_batch_cloud_stage(
                     &conn,
                     &batch_id,
-                    &state,
-                    &reason_code,
-                    &message,
+                    &stage.chain_status,
+                    &stage.stage_state,
+                    stage.reason_code.as_deref(),
+                    &stage.message,
                 )
             }
         })
@@ -1110,28 +1142,69 @@ async fn run_job_inner(app: AppHandle, state: Arc<ProcessingState>, job: queue::
 /// 云端）。前端状态行读的是批次行，于是一次真实的云端超时在界面上被显示成
 /// 「题稿已生成，可以开始编辑」——与「用户压根没启用云端」同一句话。
 ///
-/// 返回 `None` 表示不改写：云端从未启动（无云导入，`not_run` 是实话），或者云端交出了
-/// 结果（成功 / 部分成功——那种情况由 `repair_json` 讲，本格留给后续卡片收敛）。
-/// 原因码复用 `classify_cloud_error`，与旧云端链同一套稳定码，不新造分类。
-fn batch_cloud_failure_for_job(
+/// 返回 `None` 表示不改写：只在云端从未启动时发生（无云导入，`not_run` 是实话）。
+/// 成功 / 部分成功 / 取消同样要改写——否则前端在一次已经改好稿的修复之后仍会说
+/// 「题稿已生成，可以开始编辑」。失败原因码复用 `classify_cloud_error`。
+#[derive(Debug, Clone, PartialEq)]
+struct BatchCloudStage {
+    /// `cloud_status` 列（`ChainStatusV1`：succeeded / partial / unusable / not_run）。
+    chain_status: String,
+    /// `stages_json.cloud.state`（`StageStateV1`，可表达 canceled）。
+    stage_state: String,
+    reason_code: Option<String>,
+    message: String,
+}
+
+fn batch_cloud_stage_for_job(
     launch_cloud: bool,
     job_cloud_status: &str,
+    repair_status: Option<&str>,
     repair_error: Option<&str>,
-) -> Option<(String, String, String)> {
-    if !launch_cloud || job_cloud_status != "failed" {
+) -> Option<BatchCloudStage> {
+    if !launch_cloud {
         return None;
     }
-    // 没有错误串也不能沉默：状态已经是 failed，必须给用户一句能行动的话。
-    let error = repair_error
-        .map(str::trim)
-        .filter(|error| !error.is_empty())
-        .unwrap_or("云端识别没有返回可用结果。");
-    let failure = crate::reconcile::engine::classify_cloud_error(error);
-    Some((
-        failure.status.as_str().to_string(),
-        failure.reason_code,
-        failure.message,
-    ))
+    let cancelled = repair_status == Some(crate::cloud_repair::REPAIR_STATUS_CANCELLED);
+    match job_cloud_status {
+        "failed" => {
+            // 没有错误串也不能沉默：状态已经是 failed，必须给用户一句能行动的话。
+            let error = repair_error
+                .map(str::trim)
+                .filter(|error| !error.is_empty())
+                .unwrap_or("云端识别没有返回可用结果。");
+            let failure = crate::reconcile::engine::classify_cloud_error(error);
+            Some(BatchCloudStage {
+                chain_status: failure.status.as_str().to_string(),
+                stage_state: failure.status.as_str().to_string(),
+                reason_code: Some(failure.reason_code),
+                message: failure.message,
+            })
+        }
+        "succeeded" => Some(BatchCloudStage {
+            chain_status: "succeeded".to_string(),
+            stage_state: "succeeded".to_string(),
+            reason_code: None,
+            message: "云端自动检查已完成。".to_string(),
+        }),
+        "partial" => Some(BatchCloudStage {
+            chain_status: "partial".to_string(),
+            stage_state: "partial".to_string(),
+            reason_code: cancelled
+                .then(|| crate::schema::recognition_v1::reason::CLOUD_REPAIR_CANCELLED.to_string()),
+            message: if cancelled {
+                "云端自动检查已取消，已完成的修改保留在题稿里。".to_string()
+            } else {
+                "云端自动检查已完成一部分。".to_string()
+            },
+        }),
+        "not_run" if cancelled => Some(BatchCloudStage {
+            chain_status: "not_run".to_string(),
+            stage_state: "canceled".to_string(),
+            reason_code: Some(crate::schema::recognition_v1::reason::CLOUD_REPAIR_CANCELLED.to_string()),
+            message: "云端自动检查已取消，题稿没有被云端修改。".to_string(),
+        }),
+        _ => None,
+    }
 }
 
 fn cloud_status_for_job(
@@ -2360,34 +2433,102 @@ mod tests {
     fn batch_cloud_stage_follows_the_job_row_verdict_on_a_real_cloud_failure() {
         // 真实超时串（取自实测 `last_error_code`）→ 必须归到 MODEL_TIMEOUT，
         // 且状态是 `unusable`（"试过了，没拿到可用结果"），不是 `not_run`。
-        let (state, reason_code, message) = batch_cloud_failure_for_job(
+        let stage = batch_cloud_stage_for_job(
             true,
             "failed",
+            None,
             Some("llm_timeout_budget_exhausted:llm_http_timeout:error sending request"),
         )
         .expect("云端起了又失败，必须改写批次行");
-        assert_eq!(state, "unusable", "超时是「不可用」，不是「未运行」");
-        assert_eq!(reason_code, crate::schema::recognition_v1::reason::MODEL_TIMEOUT);
+        assert_eq!(stage.stage_state, "unusable", "超时是「不可用」，不是「未运行」");
+        assert_eq!(stage.chain_status, "unusable");
+        assert_eq!(
+            stage.reason_code.as_deref(),
+            Some(crate::schema::recognition_v1::reason::MODEL_TIMEOUT)
+        );
         assert!(
-            message.contains("llm_timeout_budget_exhausted"),
-            "必须保留真实错误细节供排查：{message}"
+            stage.message.contains("llm_timeout_budget_exhausted"),
+            "必须保留真实错误细节供排查：{}",
+            stage.message
         );
 
         // 没起云端 → 不改写（本地周期的 not_run 是实话）。
-        assert_eq!(batch_cloud_failure_for_job(false, "not_run", None), None);
-        // 云端交出了结果 → 不改写。
-        assert_eq!(batch_cloud_failure_for_job(true, "succeeded", None), None);
-        assert_eq!(batch_cloud_failure_for_job(true, "partial", None), None);
+        assert_eq!(batch_cloud_stage_for_job(false, "not_run", None, None), None);
 
         // failed 但没有错误串：仍必须给出可行动的结论，不能沉默返回 None。
-        let (fallback_state, fallback_reason, fallback_message) =
-            batch_cloud_failure_for_job(true, "failed", None).expect("failed 必须有结论");
-        assert_eq!(fallback_state, "unusable");
+        let fallback = batch_cloud_stage_for_job(true, "failed", None, None).expect("failed 必须有结论");
+        assert_eq!(fallback.stage_state, "unusable");
         assert_eq!(
-            fallback_reason,
-            crate::schema::recognition_v1::reason::MODEL_INVALID_OUTPUT
+            fallback.reason_code.as_deref(),
+            Some(crate::schema::recognition_v1::reason::MODEL_INVALID_OUTPUT)
         );
-        assert!(!fallback_message.trim().is_empty());
+        assert!(!fallback.message.trim().is_empty());
+    }
+
+    /// 云端**成功 / 部分成功 / 取消**之后，批次行的 cloud 阶段也必须说实话。
+    ///
+    /// 复现：修复成功后批次行仍是本地周期写下的 `not_run`，前端据此说
+    /// 「题稿已生成，可以开始编辑」，同一面板的修复行却说「已自动修正 N 处」。
+    #[test]
+    fn batch_cloud_stage_reports_the_true_state_after_a_successful_or_partial_repair() {
+        use crate::cloud_repair::{
+            REPAIR_STATUS_CANCELLED, REPAIR_STATUS_COMPLETED, REPAIR_STATUS_NEEDS_ATTENTION,
+        };
+        let succeeded = batch_cloud_stage_for_job(true, "succeeded", Some(REPAIR_STATUS_COMPLETED), None)
+            .expect("云端成功必须改写批次行，不能留着本地周期的 not_run");
+        assert_eq!(succeeded.chain_status, "succeeded");
+        assert_eq!(succeeded.stage_state, "succeeded");
+        assert_eq!(succeeded.reason_code, None);
+
+        let partial = batch_cloud_stage_for_job(true, "partial", Some(REPAIR_STATUS_NEEDS_ATTENTION), None)
+            .expect("部分成功必须改写批次行");
+        assert_eq!(partial.chain_status, "partial");
+        assert_eq!(partial.stage_state, "partial");
+
+        // 取消但已经改过稿 → partial（稿子已不是取消前的样子）。
+        let cancelled_with_edits =
+            batch_cloud_stage_for_job(true, "partial", Some(REPAIR_STATUS_CANCELLED), None)
+                .expect("取消但已改稿必须改写批次行");
+        assert_eq!(cancelled_with_edits.stage_state, "partial");
+
+        // 取消且一处没改 → 阶段是 canceled，不是「没启用云端」。
+        let cancelled = batch_cloud_stage_for_job(true, "not_run", Some(REPAIR_STATUS_CANCELLED), None)
+            .expect("取消也是一次真实运行，不能留着 CLOUD_DISABLED");
+        assert_eq!(cancelled.stage_state, "canceled");
+        assert_eq!(cancelled.chain_status, "not_run");
+        assert_ne!(
+            cancelled.reason_code.as_deref(),
+            Some(crate::schema::recognition_v1::reason::CLOUD_DISABLED)
+        );
+    }
+
+    /// 重新识别用此刻的模型连接：跳过本地占位与未启用的 profile。
+    #[test]
+    fn current_cloud_profile_skips_placeholder_and_disabled_profiles() {
+        let profiles = vec![
+            serde_json::json!({"profileId": "profile-local-placeholder", "enabled": true}),
+            serde_json::json!({"profileId": "off", "enabled": false}),
+            serde_json::json!({"profileId": "real", "enabled": true}),
+        ];
+        assert_eq!(current_cloud_profile(&profiles).as_deref(), Some("real"));
+        assert_eq!(current_cloud_profile(&profiles[..2]), None);
+    }
+
+    /// 凭据错误要有自己的原因码：前端据此把用户送去设置页，而不是说「暂时不可用」。
+    #[test]
+    fn batch_cloud_stage_classifies_credential_errors_separately() {
+        let stage = batch_cloud_stage_for_job(
+            true,
+            "failed",
+            None,
+            Some("cloud_authoring_candidate_llm_http_401:{\"error\":\"invalid_api_key\"}"),
+        )
+        .expect("凭据失败必须改写批次行");
+        assert_eq!(
+            stage.reason_code.as_deref(),
+            Some(crate::schema::recognition_v1::reason::MODEL_CREDENTIALS_INVALID)
+        );
+        assert_eq!(stage.stage_state, "unusable");
     }
 
     /// 端到端锁死「云端拉取失败」这一格：**任务行必须报 `failed`，不能报 `not_run`**。

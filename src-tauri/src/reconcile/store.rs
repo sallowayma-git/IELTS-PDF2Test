@@ -565,6 +565,7 @@ pub(crate) fn write_batch_repair(
 /// 2026-09-20 真实网关跑 `demanding-reading-passage-3.pdf` 时实测到这一点：
 /// `progress_json` 明写 `cloudEnabled:true`，同一行的 `cloud_reason_code` 却是
 /// `CLOUD_DISABLED`。
+#[allow(dead_code)]
 pub(crate) fn write_batch_cloud_failure(
     conn: &Connection,
     batch_id: &str,
@@ -572,6 +573,23 @@ pub(crate) fn write_batch_cloud_failure(
     reason_code: &str,
     message: &str,
 ) -> CommandResult<()> {
+    write_batch_cloud_stage(conn, batch_id, state, state, Some(reason_code), message)
+}
+
+/// 把批次行 cloud 阶段改写成云端**真实终态**（成功 / 部分 / 取消 / 不可用）。
+///
+/// `chain_status` 写 `cloud_status` 列（`ChainStatusV1`），`stage_state` 写
+/// `stages_json.cloud.state`（`StageStateV1`，可表达 `canceled`）。`reason_code` 为
+/// `None` 表示「无异常」。
+pub(crate) fn write_batch_cloud_stage(
+    conn: &Connection,
+    batch_id: &str,
+    chain_status: &str,
+    stage_state: &str,
+    reason_code: Option<&str>,
+    message: &str,
+) -> CommandResult<()> {
+    let state = chain_status;
     let now = chrono::Utc::now().to_rfc3339();
     let stages_raw: Option<String> = conn
         .query_row(
@@ -588,12 +606,15 @@ pub(crate) fn write_batch_cloud_failure(
         .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
         .filter(Value::is_object)
         .unwrap_or_else(|| json!({}));
-    stages["cloud"] = json!({
-        "state": state,
-        "reasonCode": reason_code,
+    let mut cloud = json!({
+        "state": stage_state,
         "message": message,
         "updatedAt": now,
     });
+    if let Some(code) = reason_code {
+        cloud["reasonCode"] = json!(code);
+    }
+    stages["cloud"] = cloud;
     let stages_json = serde_json::to_string(&stages)
         .map_err(|error| format!("recognition_batch_stages_serialize:{error}"))?;
     let affected = conn
@@ -608,6 +629,32 @@ pub(crate) fn write_batch_cloud_failure(
         return Err(format!("recognition_batch_missing:{batch_id}"));
     }
     Ok(())
+}
+
+/// 批次基线之后，**人**有没有改过这份稿。
+///
+/// 「过期」的产品含义是「这批建议是针对你修改之前的内容做的」。云端修复、答案页识别
+/// 这些机器写入同样会推进编辑版本，拿 `base < current` 判过期，用户一笔没改就会被
+/// 警告「你修改之前」。这里只数 `edit_origin = 'human'` 的编辑日志行，且排除
+/// 「在识别面板里接受这批建议」本身（`recognition-accept:` 请求）——那是对这批建议
+/// 的回应，不是另一处修改。
+pub(crate) fn human_edited_since(
+    conn: &Connection,
+    item_id: &str,
+    base_edit_version: i64,
+) -> CommandResult<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM editor_journal_v1
+             WHERE library_item_id = ?1
+               AND edit_origin = 'human'
+               AND base_version >= ?2
+               AND (request_id IS NULL OR request_id NOT LIKE 'recognition-accept:%'))",
+        params![item_id, base_edit_version],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|exists| exists != 0)
+    .map_err(|error| format!("recognition_human_edit_lookup:{error}"))
 }
 
 /// 读取条目最新批次的裁决（数据库为读取权威）。
