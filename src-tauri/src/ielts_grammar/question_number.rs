@@ -14,6 +14,137 @@ enum ExpressionItem {
     Range(u32, u32),
 }
 
+/// Whether a line opens with a `Question(s) <n>` heading. Accepts the compact
+/// `Questions1-4` form that PDFs without space glyphs produce, but never a
+/// longer word such as `Questionnaire`.
+pub(crate) fn starts_with_question_heading(text: &str) -> bool {
+    let lower = text
+        .trim_start()
+        .trim_start_matches('#')
+        .trim_start()
+        .to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("questions")
+        .or_else(|| lower.strip_prefix("question"));
+    rest.and_then(|rest| rest.chars().next())
+        .is_some_and(|ch| ch.is_whitespace() || ch.is_ascii_digit())
+}
+
+/// Known IELTS instruction phrases, in canonical lowercase spacing.
+fn instruction_cue_lexicon() -> &'static [String] {
+    static LEXICON: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    LEXICON.get_or_init(|| {
+        let counts = ["one", "two", "three", "four", "five", "six"];
+        let mut phrases = Vec::new();
+        for count in counts {
+            phrases.push(format!("no more than {count} words"));
+            phrases.push(format!("no more than {count} word"));
+            phrases.push(format!("choose {count} correct answers"));
+            phrases.push(format!("choose {count} correct letters"));
+            phrases.push(format!("choose {count} answers"));
+            phrases.push(format!("choose {count} letters"));
+        }
+        for container in [
+            "form",
+            "notes",
+            "table",
+            "summary",
+            "sentences",
+            "flow-chart",
+            "diagram",
+            "map",
+            "plan",
+        ] {
+            phrases.push(format!("complete the {container} below"));
+            phrases.push(format!("complete the {container}"));
+        }
+        for phrase in [
+            "one word only",
+            "choose the correct letter",
+            "choose the correct answer",
+            "write the correct letter",
+            "and/or a number",
+        ] {
+            phrases.push(phrase.to_string());
+        }
+        let key = |phrase: &String| phrase.chars().filter(|ch| !ch.is_whitespace()).count();
+        phrases.sort_by(|left, right| key(right).cmp(&key(left)));
+        phrases
+    })
+}
+
+/// Match `phrase` at `start` ignoring whitespace in the text (so both
+/// `completetheformbelow` and `an d/o r a num ber` match). A `/` in the phrase
+/// optionally matches one of `/ | i l 1` (`ANDIORANUMBER` is a real text-layer
+/// rendering of `AND/OR A NUMBER`). Returns the end index on a match.
+fn match_spacing_insensitive(text: &[char], start: usize, phrase: &str) -> Option<usize> {
+    let mut index = start;
+    let mut first = true;
+    for expected in phrase.chars().filter(|ch| !ch.is_whitespace()) {
+        if !first {
+            while text.get(index).is_some_and(|ch| ch.is_whitespace()) {
+                index += 1;
+            }
+        }
+        first = false;
+        if expected == '/' {
+            if text
+                .get(index)
+                .is_some_and(|ch| matches!(ch, '/' | '|' | 'i' | 'l' | '1'))
+            {
+                index += 1;
+            }
+            continue;
+        }
+        if text.get(index) != Some(&expected) {
+            return None;
+        }
+        index += 1;
+    }
+    Some(index)
+}
+
+/// Derived grammar view of instruction text for cue matching: ASCII-lowercased,
+/// with known instruction phrases re-spaced to their canonical form when the
+/// source lost (or split) the word spaces. Text whose phrases are already
+/// canonically spaced is returned unchanged apart from case. The source text
+/// and its evidence are never rewritten; only cue matching reads this view.
+pub(crate) fn instruction_cue_text(text: &str) -> String {
+    let lower = super::instruction_zone::normalize_instruction_text(text).to_ascii_lowercase();
+    let chars = lower.chars().collect::<Vec<_>>();
+    let lexicon = instruction_cue_lexicon();
+    let mut output = String::with_capacity(lower.len() + 16);
+    let mut index = 0;
+    while index < chars.len() {
+        let replacement = lexicon.iter().find_map(|phrase| {
+            let end = match_spacing_insensitive(&chars, index, phrase)?;
+            let raw = chars[index..end].iter().collect::<String>();
+            (raw != *phrase).then_some((phrase, end))
+        });
+        match replacement {
+            Some((phrase, end)) => {
+                if output
+                    .chars()
+                    .last()
+                    .is_some_and(|ch| ch.is_ascii_alphanumeric())
+                {
+                    output.push(' ');
+                }
+                output.push_str(phrase);
+                if chars.get(end).is_some_and(|ch| ch.is_ascii_alphanumeric()) {
+                    output.push(' ');
+                }
+                index = end;
+            }
+            None => {
+                output.push(chars[index]);
+                index += 1;
+            }
+        }
+    }
+    output
+}
+
 pub(crate) fn parse_question_expression(text: &str) -> Option<QuestionNumberExpressionV2> {
     parse_question_expression_detailed(text).map(|result| result.expression)
 }
@@ -372,4 +503,62 @@ mod tests {
             Some(QuestionNumberExpressionV2::Range { start: 1, end: 10 })
         );
     }
+
+    #[test]
+    fn question_heading_gate_accepts_compact_and_spaced_forms_only() {
+        for heading in [
+            "Questions 1-4",
+            "Questions1-4",
+            "questions1-10",
+            "  QUESTIONS 17-20",
+            "Question 5",
+            "Question5",
+        ] {
+            assert!(starts_with_question_heading(heading), "{heading:?}");
+        }
+        for text in [
+            "Questionnaire results were mixed",
+            "questioning the survey",
+            "The questions in this section are hard",
+            "Section 1 explains the questions",
+            "",
+        ] {
+            assert!(!starts_with_question_heading(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn instruction_cue_text_respaces_compact_instruction_phrases() {
+        for (compact, spaced) in [
+            ("Completetheformbelow", "complete the form below"),
+            (
+                "WriteNOMORETHANTWOWORDSforeachanswer.",
+                "write no more than two words foreachanswer.",
+            ),
+            ("ChooseFOURcorrectanswers,A-F", "choose four correct answers,a-f"),
+            (
+                "WriteNOMORETHANTWOWORDSANDIORANUMBER",
+                "write no more than two words and/or a number",
+            ),
+            (
+                "Write NO MORE THAN TWO WORDS AN D/O R A NUM BER fo r each answer.",
+                "write no more than two words and/or a number fo r each answer.",
+            ),
+        ] {
+            assert_eq!(instruction_cue_text(compact), spaced, "{compact:?}");
+        }
+    }
+
+    #[test]
+    fn instruction_cue_text_leaves_spaced_text_unchanged_apart_from_case() {
+        for text in [
+            "Questions 1-3 Do the following statements agree with Reading Passage 1?",
+            "Complete the summary using the list of words and phrases, A-H, below.",
+            "Choose the correct letter, A, B, C or D. Write NO MORE THAN TWO WORDS AND/OR A NUMBER.",
+            "The committee could choose four new members for the section next year.",
+        ] {
+            assert_eq!(instruction_cue_text(text), text.to_ascii_lowercase(), "{text:?}");
+        }
+    }
+
 }

@@ -386,8 +386,14 @@ fn mentions_multiple_answers(lower: &str) -> bool {
     let has_count = COUNT_WORDS.iter().any(|word| lower.contains(word));
     let multiple_marker = lower.contains("two letters")
         || lower.contains("three letters")
+        || lower.contains("four letters")
+        || lower.contains("five letters")
         || lower.contains("choose two")
         || lower.contains("choose three")
+        || lower.contains("choose four")
+        || lower.contains("choose five")
+        || lower.contains("four answers")
+        || lower.contains("five answers")
         || lower.contains("which two")
         || lower.contains("which three")
         || lower.contains("two answers")
@@ -439,8 +445,10 @@ fn is_alpha_label(label: &str) -> bool {
             .is_some_and(|ch| ch.is_ascii_uppercase())
 }
 
+/// Lowercase, whitespace-collapsed cue view; compact instruction phrases
+/// (`ChooseFOURcorrectanswers`) are re-spaced so the cue checks below match.
 fn normalize(text: &str) -> String {
-    text.to_ascii_lowercase()
+    crate::ielts_grammar::question_number::instruction_cue_text(text)
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

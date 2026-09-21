@@ -1,5 +1,6 @@
 use super::question_number::{
     expand_expression, parse_question_expression, question_expression_end,
+    starts_with_question_heading,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -256,8 +257,7 @@ fn is_option_run_start(text: &str) -> bool {
 }
 
 fn is_new_task_heading(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    lower.starts_with("questions ") || lower.starts_with("question ")
+    starts_with_question_heading(text)
 }
 
 fn trim_question_line_after_first_item(text: String, expected_numbers: &[u32]) -> String {
@@ -478,4 +478,18 @@ mod tests {
         let lines = semantic_lines_from_v2_shadow(&shadow);
         assert_eq!(lines[0].bbox, Some([10.0, 20.0, 30.0, 4.0]));
     }
+
+    #[test]
+    fn instruction_zone_stops_at_a_compact_next_question_heading() {
+        let lines = vec![
+            line("h", "Questions 1-4"),
+            line("i", "Complete the form below"),
+            line("n", "Questions5-7"),
+            line("c", "Choose the correct answer."),
+        ];
+        let zone = collect_instruction_zone(&lines, 0, &[1, 2, 3, 4]);
+        assert_eq!(zone.line_ids, vec!["h", "i"]);
+        assert_eq!(zone.end_index, 2);
+    }
+
 }

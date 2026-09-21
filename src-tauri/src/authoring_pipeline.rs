@@ -973,12 +973,7 @@ fn is_known_dynamic_umbrella_block(block: &Value, umbrella_blocks: &[Value]) -> 
 }
 
 fn is_dynamic_question_heading_text(text: &str) -> bool {
-    let lower = text
-        .trim_start()
-        .trim_start_matches('#')
-        .trim_start()
-        .to_lowercase();
-    lower.starts_with("questions ") || lower.starts_with("question ")
+    crate::ielts_grammar::question_number::starts_with_question_heading(text)
 }
 
 fn detect_dynamic_question_heading_range(text: &str) -> Option<(u32, u32)> {
@@ -2793,8 +2788,7 @@ fn is_dynamic_passage_break_marker(text: &str) -> bool {
         return true;
     }
     lower.starts_with("reading passage")
-        || lower.starts_with("questions ")
-        || lower.starts_with("question ")
+        || crate::ielts_grammar::question_number::starts_with_question_heading(&lower)
         || lower.starts_with("answers")
         || lower.contains("answer key")
         || is_dynamic_question_or_instruction_like_text(&lower)
