@@ -1,7 +1,7 @@
 import { STAGE_LABEL, isProcessingStage, type LibraryRowV1 } from "./libraryTypes";
 
 // 普通行不显示 hash、source path、schema、revision 或错误技术码（计划 §10.6 / §3.4）。
-const MODALITY_LABEL = { reading: "Reading", writing: "Writing" } as const;
+const MODALITY_LABEL = { reading: "Reading", listening: "Listening", writing: "Writing" } as const;
 
 function relativeTime(iso: string): string {
   if (!iso) return "";

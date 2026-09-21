@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { listLlmProfiles } from "../../api/tauriCommands";
-import { importFiles as enqueueFiles } from "../../api/processingClient";
+import { importFiles as enqueueFiles, type ImportModality } from "../../api/processingClient";
 import type { PickedPath } from "../../api/desktopDialogs";
 import { toUserFacingError } from "../../utils/userFacingError";
 import { buildRow, type LibraryRowV1 } from "../library/libraryTypes";
@@ -17,7 +17,7 @@ export function useImportFiles(onRowsChanged: () => void) {
   const [error, setError] = useState<string>();
   const changed = useRef(onRowsChanged);
   changed.current = onRowsChanged;
-  const importFiles = useCallback(async (files: PickedPath[], options: { cloudEnabled?: boolean } = {}): Promise<ImportBatchResult> => {
+  const importFiles = useCallback(async (files: PickedPath[], options: { cloudEnabled?: boolean; modality?: ImportModality } = {}): Promise<ImportBatchResult> => {
     if (!files.length) return { rows: [], rejected: [] };
     setBusy(true);
     setError(undefined);
@@ -26,8 +26,12 @@ export function useImportFiles(onRowsChanged: () => void) {
       const profiles = options.cloudEnabled === false ? [] : await listLlmProfiles().catch(() => []);
       const cloudProfileId = profiles.find((profile) => profile.enabled && profile.profileId !== "profile-local-placeholder")?.profileId;
       const cloudEnabled = options.cloudEnabled ?? Boolean(cloudProfileId);
-      const result = await enqueueFiles({ files, cloudEnabled, cloudProfileId });
-      const rows = result.created.map(({ itemId, title }) => ({ ...buildRow(itemId, undefined, undefined), title }));
+      const result = await enqueueFiles({ files, cloudEnabled, cloudProfileId, modality: options.modality });
+      const rows = result.created.map(({ itemId, title }) => ({
+        ...buildRow(itemId, undefined, undefined),
+        title,
+        modality: options.modality === "listening" ? ("listening" as const) : ("reading" as const)
+      }));
       if (result.rejected.length) setError(`${result.rejected.length} 份文件未能导入。`);
       changed.current();
       return { rows, rejected: result.rejected.map(({ name, reason }) => ({ name, reason: toUserFacingError(reason, "文件未能导入。").userMessage })) };

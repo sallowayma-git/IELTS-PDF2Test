@@ -29,7 +29,8 @@ export interface ProcessingItemUpdate {
   editVersion?: number;
 }
 
-export function importFiles(input: { files: PickedPath[]; cloudEnabled: boolean; cloudProfileId?: string }) {
+export type ImportModality = "reading" | "listening";
+export function importFiles(input: { files: PickedPath[]; cloudEnabled: boolean; cloudProfileId?: string; modality?: ImportModality }) {
   return command<{ created: Array<{ itemId: string; title: string }>; rejected: Array<{ name: string; reason: string }> }>("import_files", { input });
 }
 export function retryProcessing(itemId: string) { return command<void>("retry_processing", { itemId }); }

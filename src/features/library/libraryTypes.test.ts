@@ -81,3 +81,22 @@ describe("buildRow 重试耗尽展示（G1/A4-F03）", () => {
     expect(row.detail).toBe("有内容需要确认");
   });
 });
+
+describe("buildRow modality comes from the backend item", () => {
+  it("shows a listening item as listening even when the legacy summary says reading", () => {
+    const v2 = { ...v2WithProcessing({ stage: "queued", localStatus: "not_started" }), modality: "listening" };
+    const row = buildRow(
+      "item-1",
+      undefined,
+      { subject: "reading" } as never,
+      {},
+      v2 as LibraryItemSummaryV2
+    );
+    expect(row.modality).toBe("listening");
+  });
+
+  it("keeps reading and writing rows unchanged", () => {
+    expect(buildRow("r", undefined, undefined, {}, v2WithProcessing({ stage: "queued", localStatus: "x" })).modality).toBe("reading");
+    expect(buildRow("w", undefined, { subject: "writing" } as never).modality).toBe("writing");
+  });
+});
