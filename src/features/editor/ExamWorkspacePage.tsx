@@ -10,10 +10,12 @@ import { compileStructureAction } from "../../exam-canvas/structureActions";
 import { SelectionInspector } from "./SelectionInspector";
 import type { IeltsAuthoringIRV2, JobDetail } from "../../types";
 import { readAppSettings, writeAppSettings } from "../settings/appSettings";
-import { blockerCount, deriveActionableIssues, mergePublishGateIssues } from "./actionableIssues";
+import { deriveActionableIssues, mergePublishGateIssues, type ActionableIssueV1 } from "./actionableIssues";
+import { getRecognitionDecision } from "../../api/recognitionClient";
 import {
-  buildUserTasks,
+  buildEditingAids,
   rootCausesOf,
+  type RepairAidInputV1,
   splitVisibleTasks,
   type UserTaskActionV1,
   type UserTaskV1
@@ -81,8 +83,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const [previewToken, setPreviewToken] = useState(0);
   /** 本题每收到一次处理事件就 +1。识别建议面板靠它感知「识别阶段推进/结果落地」。 */
   const [processingTick, setProcessingTick] = useState(0);
-  /** 学生预览里「答案类型不匹配」超过 8 处时是否展开（此前是硬截断「仅显示前 8 处」）。 */
-  const [previewIssuesExpanded, setPreviewIssuesExpanded] = useState(false);
 
   useEffect(() => {
     previewTokenRef.current += 1;
@@ -125,41 +125,51 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }, [itemId, editor.noteRemoteVersion]);
 
   const localIssues = useMemo(() => deriveActionableIssues(editor.draft), [editor.draft]);
-  const issues = useMemo(() => mergePublishGateIssues(localIssues, preflight), [localIssues, preflight]);
-  const blockers = blockerCount(issues);
-  // 普通界面只呈现**任务**，不呈现原始问题行（本轮任务书第二节）：
-  // 连续缺答并成区间、同一题组内部问题并成一条、泛化行在具体问题存在时隐藏。
-  const taskSummary = useMemo(() => buildUserTasks(editor.draft, issues), [editor.draft, issues]);
+  // 学生预览：先走产品真正使用的编译器校验当前草稿。编译失败就**不**渲染预览，
+  // 而是给出可定位的问题，避免用户对着过期画面继续编辑。
+  const preview = useMemo(() => compilePreviewSource(editor.draft), [editor.draft]);
+  // 学生预览发现的「答案形式与题目不匹配」也并进同一份清单（预览里不再另列一份）。
+  const previewIssues = useMemo<ActionableIssueV1[]>(
+    () => (preview?.ok ? preview.summary.answerKeyIssues : []).map((item) => ({
+      issueId: `preview:${item.code}:${item.targetId}`,
+      targetId: item.targetId,
+      severity: "warning" as const,
+      code: item.code,
+      userMessage: "",
+      source: "local" as const,
+      rootCause: item.code
+    })),
+    [preview]
+  );
+  const issues = useMemo(
+    () => [...mergePublishGateIssues(localIssues, preflight), ...previewIssues],
+    [localIssues, preflight, previewIssues]
+  );
+  // 云端修复后剩下的（读取时按当前稿重算）。并进同一份清单，识别「详情」里不再另列。
+  const [repairAids, setRepairAids] = useState<RepairAidInputV1[]>([]);
+  // **唯一**一份编辑辅助清单（产品决定 2）：安静、不带门槛话术，每个题位只出一条，
+  // 修好了就消失。它不是「能不能发布」的判断——按「发布」本身就是确认。
+  const taskSummary = useMemo(
+    () => buildEditingAids(editor.draft, issues, repairAids),
+    [editor.draft, issues, repairAids]
+  );
   const [tasksExpanded, setTasksExpanded] = useState(false);
   const visibleTasks = useMemo(
     () => splitVisibleTasks(taskSummary.tasks, tasksExpanded),
     [taskSummary.tasks, tasksExpanded]
   );
 
-  // 学生预览：先走产品真正使用的编译器校验当前草稿。编译失败就**不**渲染预览，
-  // 而是给出可定位的问题，避免用户对着过期画面继续编辑。
-  const preview = useMemo(() => compilePreviewSource(editor.draft), [editor.draft]);
   const previewLimitation = useMemo(
     () => describePreviewPublishLimitation({
       pendingCount: editor.pendingCount,
-      blockerCount: blockers,
+      blockerCount: 0,
       // 预览能渲染 ≠ 学生端能提交：答案键类型不匹配时题面照常画出，但真实学生端会在
       // 提交阶段拒绝整份提交。这个数字必须进限制说明，否则预览就是「假完成」。
       runtimeIssueCount: preview?.ok ? preview.summary.answerKeyIssues.length : 0
     }),
-    [editor.pendingCount, blockers, preview]
+    [editor.pendingCount, preview]
   );
-
-  // 「可以导出」的**唯一**判据是当前题稿的后端发布检查（任务书第 5 条）：
-  //   - 任务列表为空（后端门禁的每个阻断都已被某条任务接住，或被判定为泛化重复）；
-  //   - 门禁**确实读到了**（`preflight !== undefined` 且 `preflightError` 为空）。
-  //     读不到时说「可以导出」就是拿一次失败的检查冒充通过；而门禁**还没回来**时
-  //     说「可以导出」更糟——那是在用「还没查」冒充「查过了没问题」（本轮实测就撞上了
-  //     这一条：面板挂载即显示「可以导出」，而同一时刻后端门禁报 34 条阻断）。
-  //   - 没有待保存修改（`pendingCount === 0`）——门禁评的是**已保存的权威稿**，
-  //     草稿还有没落盘的东西时，它评的不是用户眼前这份。
-  const canExport = taskSummary.tasks.length === 0 && Boolean(preflight) && !preflightError && editor.pendingCount === 0;
-  // 门禁的三种状态，供界面如实措辞，也给验收脚本一个可等待的锚点。
+  // 发布前检查的读取状态只作为验收脚本可等待的锚点（`data-preflight-state`），不进用户文案。
   const preflightState: "loading" | "loaded" | "error" = preflightError ? "error" : preflight ? "loaded" : "loading";
   const answerPageStatus = useMemo(
     () => answerPageStatusOf(detail?.pipelineReport),
@@ -218,37 +228,29 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
    * 没有一个按钮是「点了不改门禁」的装饰：
    *   - `fill-answer`  → 把答案控件滚进视野并选中（用户接着在题面上填）；
    *   - `view-source`  → 打开原文件抽屉，并把题面上的对应题组滚进视野；
-   *   - `retry-recognition` → 真的重新入队识别，并**重新读取后端结果**（问题列表与
-   *     识别建议都以后端为权威重算，而不是本地把卡片抹掉）。
    *
-   * 操作后**不**在本地删卡片：门禁没变就还得显示。问题只有在后端结果确实变了之后才消失。
+   * 不再有「重新识别」：重跑不会替换已经生成的题稿，挂在条目上只会让人以为能修好它。
+   * 操作后**不**在本地删条目：条目只在题稿确实改好之后（本地检查 / 后端重算）才消失。
    */
-  async function runTaskAction(task: UserTaskV1, action: UserTaskActionV1) {
-    if (action.id === "fill-answer") {
-      // 定位失败时 `locateTarget` 会给出「这条不在题面上」的如实说明，不会静默无反应。
-      locateTarget(action.targetId);
-      return;
-    }
-    if (action.id === "view-source") {
-      setSourceOpen(true);
-      locateTarget(action.targetId);
-      return;
-    }
-    await withBusy(`task:${task.taskId}`, async () => {
-      // 先把未落盘的编辑刷进权威稿，再重新识别——否则识别评的是旧稿，结果会立刻过期。
-      await editor.flush();
-      await retryProcessing(itemId);
-      // 重新入队后**立刻重读后端结果**：门禁与识别建议都可能已经变了，
-      // 界面必须跟着后端走，而不是等用户手动刷新。
-      editor.reload();
-      const result = await getPublishPreflight(itemId).catch(() => undefined);
-      if (result) {
-        setPreflight(result);
-        setPreflightError(undefined);
-      }
-      setNotice("已重新加入识别队列。识别完成后这里的问题会按新的结果重算。");
-    });
+  function runTaskAction(_task: UserTaskV1, action: UserTaskActionV1) {
+    if (action.id === "view-source") setSourceOpen(true);
+    // 定位失败时 `locateTarget` 会给出「这条不在题面上」的如实说明，不会静默无反应。
+    locateTarget(action.targetId);
   }
+
+  // 云端修复后剩下的条目：读取时后端已按当前稿重算，版本 / 处理事件一变就重读。
+  useEffect(() => {
+    let cancelled = false;
+    getRecognitionDecision(itemId)
+      .then((view) => {
+        if (cancelled) return;
+        const repair = view.repair;
+        // 修复进行中清单本来就是空的；进行中不挂任何云端条目。
+        setRepairAids(repair && repair.status !== "running" ? (repair.remainingTasks ?? []) as RepairAidInputV1[] : []);
+      })
+      .catch(() => { if (!cancelled) setRepairAids([]); });
+    return () => { cancelled = true; };
+  }, [itemId, editor.version, processingTick]);
 
   // 发布门禁是后端对「已保存的权威稿」的判断，也是点「发布」时真正会拦下的东西。
   // 待保存队列清空后重新取一次，让界面问题列表与发布门禁保持一致。
@@ -273,7 +275,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }, [itemId, editor.pendingCount, editor.saveState, editor.loading]);
 
   useEffect(() => {
-    if (intent === "publish") setNotice("检查下面的问题后，点右上角「发布」把这道题发到 NAS。");
+    if (intent === "publish") setNotice("点右上角「发布」把这道题发到 NAS。");
   }, [intent]);
 
   /** 失败提示一律经用户文案层收敛；机器码/路径只进日志与开发者附注（audit A7-F04）。 */
@@ -376,7 +378,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             ) : null}
             <button data-testid="workspace-source" aria-label="查看原文件" onClick={() => setSourceOpen(true)}><FileSearch size={16} /></button>
             <button
-              className={blockers ? "has-blockers" : ""}
               data-testid="workspace-issues"
               aria-expanded={issuesOpen}
               // 两个辅助面板**互斥**：打开一个就关掉另一个。它们共用 `.workspace-aside`
@@ -386,16 +387,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                 if (next) setRecognitionOpen(false);
                 return next;
               })}
-              aria-label={!taskSummary.ready
-                ? "正在检查需要处理的问题"
-                : taskSummary.blockerCount
-                  ? `还有 ${taskSummary.tasks.length} 处需要处理，其中阻断 ${taskSummary.blockerCount} 处`
-                  : `还有 ${taskSummary.tasks.length} 处需要处理`}
+              aria-label={taskSummary.ready ? taskSummary.headline : "正在打开这道题"}
             >
-              {/* 题稿还没打开时不报「问题 0」——那会把「还没查」说成「查过了，没有问题」。 */}
-              {taskSummary.ready
-                ? `问题 ${taskSummary.tasks.length}${taskSummary.blockerCount ? ` · 阻断 ${taskSummary.blockerCount}` : ""}`
-                : "问题 …"}
+              {/* 编辑辅助，不是门槛：只报「还有几处可以补充」，不报阻断。 */}
+              {taskSummary.ready ? `待补充 ${taskSummary.tasks.length}` : "待补充 …"}
             </button>
             <button
               data-testid="workspace-recognition-toggle"
@@ -406,7 +401,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                 if (next) setIssuesOpen(false);
                 return next;
               })}
-            >识别建议</button>
+              title="识别详情：云端自动修正了什么、逐项撤销"
+            >详情</button>
             <button title="撤销" aria-label="撤销" disabled={!editor.canUndo} onClick={editor.undo}><Undo2 size={16} /></button>
             <button title="重做" aria-label="重做" disabled={!editor.canRedo} onClick={editor.redo}><Redo2 size={16} /></button>
             <button data-testid="workspace-publish" disabled={Boolean(busyAction)} onClick={publish}>
@@ -476,11 +472,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
           <button className="ghost small" onClick={editor.dismissSaveNotice} aria-label="知道了">×</button>
         </p>
       ) : null}
-      {preflightError ? (
-        <p className="workspace-notice warning" role="alert" data-testid="workspace-preflight-error">
-          下面的问题列表可能不完整（{preflightError}），发布时仍会按完整规则检查。
-        </p>
-      ) : null}
       {answerPageStatus ? (
         <div
           className="workspace-notice warning"
@@ -542,11 +533,10 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       {issuesOpen ? (
         <aside
           className="workspace-issues"
-          aria-label="需要处理的问题"
+          aria-label="还可以补充的内容"
           data-testid="workspace-issue-list"
           data-task-count={taskSummary.tasks.length}
           data-merged-rows={taskSummary.mergedRowCount}
-          data-can-export={canExport ? "true" : "false"}
           data-preflight-state={preflightState}
           data-tasks-ready={taskSummary.ready ? "true" : "false"}
         >
@@ -578,7 +568,6 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                     // 验收脚本据此断言「合并发生了」而不是「渲染时把行吞掉了」。
                     data-task-covers={rootCausesOf(issues, task).join(",")}
                   >
-                    {task.severity === "blocker" ? <span className="severity-badge" aria-label="阻断问题">⚠</span> : null}
                     <span className="workspace-task-title" data-testid={`workspace-task-title-${task.taskId}`}>
                       {task.title}
                     </span>
@@ -587,14 +576,13 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                       {task.actions.map((action) => (
                         <button
                           key={action.id}
-                          className={action.id === "fill-answer" || action.id === "retry-recognition" ? "primary small" : "ghost small"}
+                          className={action.id === "fill-answer" ? "primary small" : "ghost small"}
                           data-testid={`workspace-task-action-${task.taskId}-${action.id}`}
                           data-action-id={action.id}
                           data-action-target={action.targetId}
-                          disabled={Boolean(busyAction)}
-                          onClick={() => { void runTaskAction(task, action); }}
+                          onClick={() => runTaskAction(task, action)}
                         >
-                          {busyAction === `task:${task.taskId}` ? "正在处理…" : action.label}
+                          {action.label}
                         </button>
                       ))}
                     </div>
@@ -608,33 +596,24 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                   data-testid="workspace-tasks-more"
                   onClick={() => setTasksExpanded(true)}
                 >
-                  还有 {visibleTasks.hiddenCount} 组问题
+                  还有 {visibleTasks.hiddenCount} 条
                 </button>
               ) : null}
             </>
           ) : (
-            // 「没有问题」不生成问题卡片，只保留这一句（任务书第四节）。
-            // 但**只有后端发布检查确实读到了**才敢说「可以导出」。
-            <p className="empty compact" data-testid="workspace-tasks-clear">
-              {canExport
-                ? "可以导出"
-                : preflightState === "loading"
-                  ? "正在检查是否还有需要处理的问题…"
-                  : editor.pendingCount > 0
-                    ? "正在保存修改，保存后会重新检查一遍。"
-                    : "暂时读不到发布检查结果，还无法确认是否可以导出。"}
-            </p>
+            // 没有条目就只留一句安静的话——不是「可以导出」这种结论。
+            <p className="empty compact" data-testid="workspace-tasks-clear">{taskSummary.headline}</p>
           )}
           {locateMiss ? (
             <p className="empty compact" role="status" data-testid="workspace-locate-miss">
               {locateMiss === "document"
                 // 文档级目标在题面上本来就没有对应元素，这是正常的，如实说明即可。
-                ? "这条问题说的是整份题稿，页面上没有可以跳过去的位置。"
+                ? "这一条说的是整份题稿，页面上没有可以跳过去的位置，可以打开原文件对照。"
                 // **不是**文档级：说明题面上确实找不到这个位置（例如填空是内联渲染在题干里的，
                 // 宿主元素带的是内容节点 id 而不是答案位 id）。旧文案把这两种情况都说成
                 // 「是整份文档级别」，对着一道具体题目说这种话是**假信息**，会让用户以为
                 // 自己点错了地方。这里只陈述事实，不编造原因。
-                : `这条问题指向的位置在当前题面上没有对应的元素（目标「${locateMiss}」），需要直接在题面上找到它并修改。`}
+                : "这一条在当前题面上找不到对应的位置，请直接在题面上找到它修改。"}
             </p>
           ) : null}
         </aside>
@@ -748,35 +727,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
                 <p className="workspace-preview-summary" data-testid="workspace-preview-summary">
                   {preview.summary.taskGroups} 个题组 · {preview.summary.slots} 个答案位 · {preview.summary.assets} 个资源
                 </p>
-                {preview.summary.answerKeyIssues.length > 0 ? (
-                  <div className="workspace-preview-runtime-issues" role="alert" data-testid="workspace-preview-runtime-issues">
-                    <p>
-                      以下答案位的答案类型与题目形式不匹配，学生提交时会被判为无效（共 {preview.summary.answerKeyIssues.length} 处）：
-                    </p>
-                    <ul>
-                      {(previewIssuesExpanded ? preview.summary.answerKeyIssues : preview.summary.answerKeyIssues.slice(0, 8)).map((item) => (
-                        <li key={`${item.code}:${item.targetId}`} data-preview-runtime-code={item.code} data-preview-runtime-target={item.targetId}>
-                          <button
-                            type="button"
-                            className="workspace-preview-runtime-locate"
-                            onClick={() => { setMode("edit"); locateTarget(item.targetId); }}
-                          >
-                            {item.targetId}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                    {preview.summary.answerKeyIssues.length > 8 && !previewIssuesExpanded ? (
-                      <button
-                        className="ghost small"
-                        data-testid="workspace-preview-runtime-more"
-                        onClick={() => setPreviewIssuesExpanded(true)}
-                      >
-                        还有 {preview.summary.answerKeyIssues.length - 8} 处
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
+                {/* 答案形式不匹配的题已经并进「待补充」清单，这里不再另列一份。 */}
                 {/* key 绑草稿版本令牌：草稿一变，预览的作答状态整体重置。 */}
                 <ExamCanvas key={`student-preview-${previewToken}`} authoring={editor.draft} mode="student" />
               </>
