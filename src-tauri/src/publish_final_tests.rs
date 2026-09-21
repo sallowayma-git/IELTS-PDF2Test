@@ -1,0 +1,708 @@
+//! 一键发布（显式放行记录）与「题库保存」（发布后冻结最终版 + 清理原文件）的
+//! 命令处理层测试。
+//!
+//! 全部走真实的 command core：`get_workspace_item_core` 播种权威稿、
+//! `publish_items_core` 发布、`apply_editor_commands_core` 编辑，
+//! 断言落在 NAS 清单、SQLite 与 job 目录这些**磁盘事实**上。
+
+use crate::authoring_v2_commands::AUTHORING_V2_SHADOW_FILE;
+use crate::job_store::save_job;
+use crate::nas_package_v2::{publish_items_core, ForceOverride, PublishItemsInput};
+use crate::pdf_facts_shadow::SHADOW_ARTIFACT_FILE as DOCUMENT_V2_SHADOW_FILE;
+use crate::product_chain::{
+    build_e2e_png, chain_job, first_text_node, physical_shadow_for, temp_root, workspace_path,
+    READY_AUTHORING_FIXTURE,
+};
+use crate::util::{ensure_app_dirs, ensure_job_dirs, job_dir, write_json};
+use serde_json::{json, Value};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+fn png_sha(png: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(png);
+    format!("{:x}", hasher.finalize())
+}
+
+/// 播种一道 ready 题：授权稿 + 带题号声明行的物理 shadow + 一个伪原文件；
+/// `with_image` 时再加一张被 passage figure 引用的图片资产。
+fn seed_item(root: &Path, exam_id: &str, with_image: bool, mutate: impl FnOnce(&mut Value)) -> String {
+    let job = chain_job(&format!("Publish final {exam_id}"));
+    save_job(root, &job).unwrap();
+    let dir = job_dir(root, &job.job_id);
+    ensure_job_dirs(&dir).unwrap();
+    let mut authoring: Value =
+        serde_json::from_slice(&fs::read(workspace_path(READY_AUTHORING_FIXTURE)).unwrap()).unwrap();
+    authoring["jobId"] = json!(job.job_id);
+    authoring["exam"]["examId"] = json!(exam_id);
+    let png = build_e2e_png();
+    let descriptor = json!({
+        "assetId": "img-map",
+        "kind": "raster_image",
+        "mime": "image/png",
+        "relativePath": "assets/blobs/img-map.png",
+        "sha256": png_sha(&png),
+        "byteLength": png.len() as u64,
+        "widthPx": 1,
+        "heightPx": 1,
+        "extractionMode": "embedded",
+        "altText": "Map"
+    });
+    if with_image {
+        let anchor = authoring
+            .pointer("/passage/content/0/sourceAnchors/0")
+            .cloned()
+            .unwrap();
+        authoring["assets"] = json!([descriptor.clone()]);
+        authoring["passage"]["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "passage-figure-map",
+                "type": "figure",
+                "provenanceStatus": "source",
+                "sourceAnchors": [anchor],
+                "assetId": "img-map",
+                "display": {"widthPercent": 60, "align": "center"},
+                "caption": []
+            }));
+    }
+    mutate(&mut authoring);
+    write_json(&dir.join(AUTHORING_V2_SHADOW_FILE), &authoring).unwrap();
+    let mut physical = physical_shadow_for(&authoring);
+    // 原文声明的题号域：独立于题组识别，用于 source question coverage。
+    physical["pages"][0]["lines"] = json!([{
+        "id": "line-declaration",
+        "text": "Questions 14-15",
+        "spanIds": []
+    }]);
+    physical["pages"][0]["regions"][0]["childLineIds"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("line-declaration"));
+    if with_image {
+        physical["assets"] = json!([descriptor]);
+        fs::create_dir_all(dir.join("assets").join("blobs")).unwrap();
+        fs::write(dir.join("assets").join("blobs").join("img-map.png"), &png).unwrap();
+    }
+    write_json(&dir.join(DOCUMENT_V2_SHADOW_FILE), &physical).unwrap();
+    fs::create_dir_all(dir.join("uploads")).unwrap();
+    fs::write(dir.join("uploads").join("abcd1234-source.pdf"), b"%PDF-1.4 fake source").unwrap();
+    fs::write(dir.join("pipeline-report.json"), b"{}").unwrap();
+    crate::library::commands::get_workspace_item_core(root, &job.job_id)
+        .expect("on-demand migration must seed the canonical draft");
+    job.job_id
+}
+
+fn destination(root: &Path) -> PathBuf {
+    root.join("nas").join("publish")
+}
+
+fn reading_root(root: &Path) -> PathBuf {
+    crate::export_nas_library::nas_reading_exams_dir(
+        &crate::export_nas_library::normalize_nas_library_root(&destination(root)),
+    )
+}
+
+fn force_now() -> Option<ForceOverride> {
+    Some(ForceOverride {
+        confirmed_at: chrono::Utc::now().to_rfc3339(),
+        acknowledged_reasons: Vec::new(),
+    })
+}
+
+fn publish(root: &Path, item_ids: &[&str], force: Option<ForceOverride>) -> Result<Value, String> {
+    publish_items_core(
+        root,
+        PublishItemsInput {
+            item_ids: item_ids.iter().map(|id| id.to_string()).collect(),
+            destination: destination(root).to_string_lossy().into_owned(),
+            fault: None,
+            force,
+        },
+    )
+}
+
+fn manifest(root: &Path) -> Value {
+    let text = fs::read_to_string(reading_root(root).join("manifest.js")).unwrap();
+    let json_text = text
+        .trim()
+        .trim_start_matches("window.__READING_EXAM_MANIFEST__ = ")
+        .trim_end_matches(';');
+    serde_json::from_str(json_text).unwrap()
+}
+
+fn outcome_for<'a>(result: &'a Value, item_id: &str) -> &'a Value {
+    result["succeeded"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|outcome| outcome["itemId"] == json!(item_id))
+        .unwrap_or_else(|| panic!("no outcome for {item_id}: {result}"))
+}
+
+struct PublishRecordRow {
+    forced: i64,
+    verdict: Value,
+    reasons: Value,
+    student_loadable: i64,
+    status: String,
+    edit_version: i64,
+}
+
+fn publish_records(root: &Path, item_id: &str) -> Vec<PublishRecordRow> {
+    let conn = crate::library::repository::open_library_connection(root).unwrap();
+    let mut statement = conn
+        .prepare(
+            "SELECT forced, verdict_json, reasons_json, student_loadable, status, edit_version
+             FROM publish_records_v2 WHERE library_item_id = ?1 ORDER BY created_at, rowid",
+        )
+        .unwrap();
+    let rows = statement
+        .query_map([item_id], |row| {
+            Ok(PublishRecordRow {
+                forced: row.get(0)?,
+                verdict: serde_json::from_str(&row.get::<_, String>(1)?).unwrap(),
+                reasons: serde_json::from_str(&row.get::<_, String>(2)?).unwrap(),
+                student_loadable: row.get(3)?,
+                status: row.get(4)?,
+                edit_version: row.get(5)?,
+            })
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    rows
+}
+
+fn item_status(root: &Path, item_id: &str) -> String {
+    let conn = crate::library::repository::open_library_connection(root).unwrap();
+    crate::library::repository::get_item(&conn, item_id)
+        .unwrap()
+        .unwrap()
+        .status
+}
+
+fn snapshot_receipts(root: &Path) -> Vec<Value> {
+    let mut receipts = Vec::new();
+    let releases = reading_root(root).join("releases");
+    for batch in fs::read_dir(&releases).into_iter().flatten().flatten() {
+        for snapshot in fs::read_dir(batch.path().join("snapshots")).into_iter().flatten().flatten() {
+            let path = snapshot.path().join("manifest-v2.json");
+            if path.is_file() {
+                let mut receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                receipt["__dir"] = json!(snapshot.path());
+                receipts.push(receipt);
+            }
+        }
+    }
+    receipts
+}
+
+// ───────────────────────── Feature 1：一键发布 ─────────────────────────
+
+#[test]
+fn ready_item_publishes_normally_even_when_the_override_is_sent() {
+    let root = temp_root("publish-ready-with-override");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-ready", false, |_| {});
+
+    let result = publish(&root, &[&item], force_now()).expect("ready item must publish");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["forced"], json!(false), "{outcome}");
+    assert_eq!(outcome["studentLoadable"], json!(true));
+
+    let manifest = manifest(&root);
+    assert!(manifest["final-ready"].is_object());
+    assert!(
+        manifest["final-ready"].get("publishOverride").is_none(),
+        "只有真正绕过门禁时 override 才算被使用：{manifest}"
+    );
+    let records = publish_records(&root, &item);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].forced, 0);
+    assert_eq!(records[0].student_loadable, 1);
+    assert_eq!(records[0].verdict["status"], json!("ready"));
+    assert_eq!(item_status(&root, &item), "published");
+    let receipts = snapshot_receipts(&root);
+    assert!(receipts.iter().all(|receipt| receipt.get("publishOverride").is_none()));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn forced_publish_of_a_quality_blocked_item_records_the_override_and_keeps_the_verdict() {
+    let root = temp_root("publish-forced-blocked");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-blocked", false, |_| {});
+    // 非清理条目缺 physical shadow ⇒ 与今天一样判为 review_required（门禁 Blocked）。
+    fs::remove_file(job_dir(&root, &item).join(DOCUMENT_V2_SHADOW_FILE)).unwrap();
+
+    // 不带 override 的严格发布仍按原样被门禁拒绝。
+    let strict = publish(&root, &[&item], None).unwrap_err();
+    assert!(strict.contains("authoring_v2_export_blocked"), "{strict}");
+    assert!(publish_records(&root, &item).is_empty(), "被拒的严格发布不得留下发布记录");
+
+    let result = publish(&root, &[&item], force_now()).expect("forced publish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["forced"], json!(true), "{outcome}");
+    assert_eq!(outcome["studentLoadable"], json!(true));
+
+    let manifest = manifest(&root);
+    let entry = &manifest["final-blocked"];
+    assert!(entry.is_object(), "可编译的强制发布题必须进学生清单：{manifest}");
+    let override_ = &entry["publishOverride"];
+    assert_eq!(override_["forced"], json!(true));
+    assert_eq!(override_["verdict"]["status"], json!("blocked"), "门禁结论必须原样保留");
+    assert_eq!(override_["verdict"]["ready"], json!(false));
+    assert!(override_["confirmedAt"].as_str().is_some_and(|value| !value.is_empty()));
+    assert!(override_["reasons"].as_array().is_some_and(|reasons| !reasons.is_empty()));
+    let forced_items = manifest["_meta"]["forcedItems"].as_array().expect("_meta.forcedItems");
+    assert!(forced_items.iter().any(|item_meta| item_meta["examId"] == json!("final-blocked")));
+
+    let records = publish_records(&root, &item);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].forced, 1);
+    assert_eq!(records[0].student_loadable, 1);
+    assert_eq!(records[0].verdict["status"], json!("blocked"));
+    assert!(records[0].reasons.as_array().is_some_and(|reasons| !reasons.is_empty()));
+    assert_eq!(records[0].status, "published_forced");
+    assert_eq!(item_status(&root, &item), "published_forced");
+
+    let receipt = snapshot_receipts(&root)
+        .into_iter()
+        .find(|receipt| receipt["examId"] == json!("final-blocked"))
+        .expect("snapshot receipt");
+    assert_eq!(receipt["publishOverride"]["forced"], json!(true));
+    assert_eq!(receipt["publishOverride"]["verdict"]["status"], json!("blocked"));
+    assert_eq!(receipt["reviewRequired"], json!(true), "reviewRequired 必须如实");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn forced_publish_with_an_unresolved_answer_is_authoring_only_and_invents_nothing() {
+    let root = temp_root("publish-forced-unresolved");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-unresolved", false, |authoring| {
+        authoring["answerKey"]["q15"] = json!({"kind": "unresolved"});
+    });
+
+    let result = publish(&root, &[&item], force_now()).expect("forced publish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["forced"], json!(true));
+    assert_eq!(outcome["studentLoadable"], json!(false), "{outcome}");
+
+    let manifest_path = reading_root(&root).join("manifest.js");
+    if manifest_path.is_file() {
+        let manifest = manifest(&root);
+        assert!(
+            manifest.get("final-unresolved").is_none(),
+            "学生端加载不了的题不得进学生清单：{manifest}"
+        );
+    }
+    let receipt = snapshot_receipts(&root)
+        .into_iter()
+        .find(|receipt| receipt["examId"] == json!("final-unresolved"))
+        .expect("authoring-only snapshot must be written");
+    assert_eq!(receipt["studentLoadable"], json!(false));
+    assert_eq!(receipt["publishOverride"]["forced"], json!(true));
+    let dir = PathBuf::from(receipt["__dir"].as_str().unwrap());
+    assert!(!dir.join("reading-source-v2.json").exists(), "不得产出学生端运行时");
+    let authoring: Value =
+        serde_json::from_slice(&fs::read(dir.join("authoring-ir-v2.json")).unwrap()).unwrap();
+    assert_eq!(
+        authoring["answerKey"]["q15"]["kind"],
+        json!("unresolved"),
+        "强制发布绝不编造答案"
+    );
+    let records = publish_records(&root, &item);
+    assert_eq!(records[0].forced, 1);
+    assert_eq!(records[0].student_loadable, 0);
+    assert_eq!(item_status(&root, &item), "published_forced");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn forced_publish_with_a_compile_failure_writes_only_the_authoring_snapshot() {
+    let root = temp_root("publish-forced-compile");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-compile", false, |authoring| {
+        authoring["answerKey"].as_object_mut().unwrap().remove("q15");
+    });
+
+    let result = publish(&root, &[&item], force_now()).expect("forced publish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["studentLoadable"], json!(false), "{outcome}");
+    let receipt = snapshot_receipts(&root)
+        .into_iter()
+        .find(|receipt| receipt["examId"] == json!("final-compile"))
+        .expect("snapshot");
+    let dir = PathBuf::from(receipt["__dir"].as_str().unwrap());
+    assert!(dir.join("authoring-ir-v2.json").is_file());
+    assert!(!dir.join("reading-source-v2.json").exists());
+    let records = publish_records(&root, &item);
+    assert_eq!(records[0].student_loadable, 0);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_forced_item_does_not_abort_a_batch_with_a_ready_item() {
+    let root = temp_root("publish-forced-batch");
+    ensure_app_dirs(&root).unwrap();
+    let ready = seed_item(&root, "final-batch-ready", false, |_| {});
+    let blocked = seed_item(&root, "final-batch-unresolved", false, |authoring| {
+        authoring["answerKey"]["q15"] = json!({"kind": "unresolved"});
+    });
+    let result = publish(&root, &[&ready, &blocked], force_now()).expect("batch must publish");
+    assert_eq!(result["succeeded"].as_array().unwrap().len(), 2, "{result}");
+    let manifest = manifest(&root);
+    assert!(manifest["final-batch-ready"].is_object());
+    assert!(manifest.get("final-batch-unresolved").is_none());
+    assert_eq!(item_status(&root, &ready), "published");
+    assert_eq!(item_status(&root, &blocked), "published_forced");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn malformed_or_unknown_publish_input_is_rejected_explicitly() {
+    let base = json!({"itemIds": ["a"], "destination": "C:/nas"});
+    // 未知字段（例如旧的 validationPolicy）必须报错，而不是被忽略成严格发布。
+    let mut unknown = base.clone();
+    unknown["validationPolicy"] = json!("force");
+    assert!(serde_json::from_value::<PublishItemsInput>(unknown).is_err());
+    for bad_force in [
+        json!({}),
+        json!({"confirmedAt": 5, "acknowledgedReasons": []}),
+        json!({"confirmedAt": "2026-09-21T00:00:00Z", "acknowledgedReasons": [], "extra": 1}),
+        json!(true),
+    ] {
+        let mut input = base.clone();
+        input["force"] = bad_force.clone();
+        assert!(
+            serde_json::from_value::<PublishItemsInput>(input).is_err(),
+            "malformed override must be rejected: {bad_force}"
+        );
+    }
+    let mut ok = base.clone();
+    ok["force"] = json!({"confirmedAt": "2026-09-21T00:00:00Z", "acknowledgedReasons": ["x"]});
+    assert!(serde_json::from_value::<PublishItemsInput>(ok).is_ok());
+
+    // 结构合法但时间戳非法：在任何写入之前明确报错，绝不静默降级成严格发布。
+    let root = temp_root("publish-force-invalid-time");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-bad-time", false, |_| {});
+    let error = publish(
+        &root,
+        &[&item],
+        Some(ForceOverride {
+            confirmed_at: "not-a-time".to_string(),
+            acknowledged_reasons: Vec::new(),
+        }),
+    )
+    .unwrap_err();
+    assert!(error.starts_with("PUBLISH_FORCE_OVERRIDE_INVALID"), "{error}");
+    assert!(!reading_root(&root).join("manifest.js").exists());
+    assert!(publish_records(&root, &item).is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn force_never_bypasses_unsafe_exam_ids_asset_io_or_duplicate_exam_ids() {
+    let root = temp_root("publish-force-hard-guards");
+    ensure_app_dirs(&root).unwrap();
+
+    let unsafe_item = seed_item(&root, "final-unsafe", false, |authoring| {
+        authoring["exam"]["examId"] = json!("../evil");
+    });
+    let error = publish(&root, &[&unsafe_item], force_now()).unwrap_err();
+    assert!(error.contains("exam_id"), "{error}");
+    assert!(publish_records(&root, &unsafe_item).is_empty());
+
+    let missing_asset = seed_item(&root, "final-missing-asset", true, |_| {});
+    fs::remove_file(job_dir(&root, &missing_asset).join("assets").join("blobs").join("img-map.png")).unwrap();
+    let error = publish(&root, &[&missing_asset], force_now()).unwrap_err();
+    assert!(error.contains("asset"), "{error}");
+    assert!(publish_records(&root, &missing_asset).is_empty());
+
+    let first = seed_item(&root, "final-dup", false, |_| {});
+    let second = seed_item(&root, "final-dup", false, |authoring| {
+        authoring["answerKey"]["q15"] = json!({"kind": "unresolved"});
+    });
+    let error = publish(&root, &[&first, &second], force_now()).unwrap_err();
+    assert!(error.contains("PUBLISH_DUPLICATE_EXAM_ID"), "{error}");
+    assert!(!reading_root(&root).join("manifest.js").exists());
+    assert!(publish_records(&root, &first).is_empty());
+    let _ = fs::remove_dir_all(root);
+}
+
+// ───────────────────────── Feature 2：题库保存 ─────────────────────────
+
+fn final_version_row(root: &Path, item_id: &str) -> Option<(i64, Value, Option<String>, Option<Value>)> {
+    let conn = crate::library::repository::open_library_connection(root).unwrap();
+    conn.query_row(
+        "SELECT edit_version, evidence_json, source_purged_at, purge_report_json
+         FROM library_final_versions_v2 WHERE library_item_id = ?1",
+        [item_id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                serde_json::from_str::<Value>(&row.get::<_, String>(1)?).unwrap(),
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?
+                    .map(|text| serde_json::from_str::<Value>(&text).unwrap()),
+            ))
+        },
+    )
+    .ok()
+}
+
+fn list_relative_files(dir: &Path) -> Vec<String> {
+    fn walk(base: &Path, dir: &Path, files: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(base, &path, files);
+            } else {
+                files.push(path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dir, dir, &mut files);
+    files.sort();
+    files
+}
+
+fn edit_first_text(root: &Path, item_id: &str, suffix: &str) -> i64 {
+    let workspace = crate::library::commands::get_workspace_item_core(root, item_id).unwrap();
+    let version = workspace["editVersion"].as_i64().unwrap();
+    let (node_id, text) = first_text_node(&workspace["ds"]).expect("text node");
+    let length = text.chars().count();
+    let result = crate::library::commands::apply_editor_commands_core(
+        root,
+        crate::library::repository::ApplyEditorCommandsInput {
+            item_id: item_id.to_string(),
+            base_version: version,
+            request_id: Some(format!("edit-{item_id}-{version}")),
+            commands: vec![json!({
+                "op": "replaceText",
+                "nodeId": node_id,
+                "from": length,
+                "to": length,
+                "text": suffix
+            })],
+            title: None,
+        },
+    )
+    .expect("editing a purged item must save");
+    result["editVersion"].as_i64().unwrap()
+}
+
+#[test]
+fn publish_freezes_evidence_and_purges_only_this_items_sources() {
+    let root = temp_root("final-purge");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-purge", true, |_| {});
+    let untouched = seed_item(&root, "final-untouched", false, |_| {});
+    // 另一位 agent 的听力托管音频：属于可编辑版本，绝不可被清理。
+    let audio = root.join("audio").join(&item).join("part1.mp3");
+    fs::create_dir_all(audio.parent().unwrap()).unwrap();
+    fs::write(&audio, b"ID3 fake audio").unwrap();
+    let untouched_before = list_relative_files(&job_dir(&root, &untouched));
+
+    let result = publish(&root, &[&item], force_now()).expect("publish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["finalVersion"]["frozen"], json!(true), "{outcome}");
+    assert_eq!(outcome["finalVersion"]["sourcePurged"], json!(true), "{outcome}");
+
+    let remaining = list_relative_files(&job_dir(&root, &item));
+    assert_eq!(
+        remaining,
+        vec!["assets/blobs/img-map.png".to_string(), "job.json".to_string()],
+        "只保留权威稿引用的资产与作业元数据"
+    );
+    assert!(audio.is_file(), "<appData>/audio/<itemId>/ 下的文件必须保留");
+    assert_eq!(
+        list_relative_files(&job_dir(&root, &untouched)),
+        untouched_before,
+        "不得清理其他条目的文件"
+    );
+
+    let (edit_version, evidence, purged_at, purge_report) =
+        final_version_row(&root, &item).expect("final version row");
+    assert_eq!(edit_version, 1);
+    assert!(purged_at.is_some());
+    assert_eq!(evidence["declaredQuestionNumbers"], json!([14, 15]));
+    assert_eq!(evidence["questionCoverage"]["status"], json!("complete"));
+    assert_eq!(evidence["nodeCoverage"]["complete"], json!(true));
+    assert_eq!(evidence["publishedEditVersion"], json!(1));
+    assert!(evidence["publishedAt"].as_str().is_some());
+    assert_eq!(purge_report.unwrap()["failed"], json!([]));
+
+    // 重新打开：预览资产仍可解析；工作区知道原文件已删除。
+    let preview =
+        crate::authoring_v2_commands::resolve_authoring_asset_preview_core(&root, &item, "img-map")
+            .expect("a reopened preview must still render the kept image");
+    assert_eq!(preview["assetId"], json!("img-map"));
+    let workspace = crate::library::commands::get_workspace_item_core(&root, &item).unwrap();
+    assert_eq!(workspace["item"]["sourcePurged"], json!(true));
+    assert!(workspace["ds"].is_object(), "最终版必须仍可编辑");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn purged_item_reopens_edits_saves_and_republishes_as_a_normal_publish() {
+    let root = temp_root("final-republish");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-republish", true, |_| {});
+    publish(&root, &[&item], force_now()).expect("first publish");
+    assert!(!job_dir(&root, &item).join(DOCUMENT_V2_SHADOW_FILE).exists());
+
+    let version = edit_first_text(&root, &item, " (revised)");
+    assert_eq!(version, 2);
+    let workspace = crate::library::commands::get_workspace_item_core(&root, &item).unwrap();
+    assert_eq!(
+        workspace["ds"]["quality"]["coverageStatus"]["physicalShadow"],
+        json!("verified_at_publish_source_purged")
+    );
+    assert_eq!(workspace["ds"]["quality"]["state"], json!("ready"), "{:#}", workspace["ds"]["quality"]);
+
+    let result = publish(&root, &[&item], force_now()).expect("republish must succeed");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["forced"], json!(false), "清理后的正常稿必须是正常发布：{outcome}");
+    assert_eq!(outcome["studentLoadable"], json!(true));
+    let records = publish_records(&root, &item);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[1].forced, 0);
+    assert_eq!(records[1].edit_version, 2);
+    assert_eq!(records[1].verdict["status"], json!("ready"));
+    assert_eq!(item_status(&root, &item), "published");
+    let (edit_version, evidence, _, _) = final_version_row(&root, &item).unwrap();
+    assert_eq!(edit_version, 2, "最终版只有一份，指向最新发布的版本");
+    assert_eq!(evidence["declaredQuestionNumbers"], json!([14, 15]), "冻结声明被沿用");
+    let manifest = manifest(&root);
+    assert!(manifest["final-republish"].get("publishOverride").is_none());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn purged_item_with_a_deleted_question_republishes_as_forced_and_blocked_by_coverage() {
+    let root = temp_root("final-delete-question");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-delete-question", false, |_| {});
+    publish(&root, &[&item], force_now()).expect("first publish");
+
+    // 删除第 15 题。编辑器没有针对该共享多选题组的单命令删除路径，这里直接按
+    // 编辑事务的写法改权威稿并推进版本（质量块由导出时统一重算）。
+    let conn = crate::library::repository::open_library_connection(&root).unwrap();
+    let (mut ds, version) = crate::library::repository::get_canonical_ds(&conn, &item)
+        .unwrap()
+        .unwrap();
+    ds["answerSlots"].as_object_mut().unwrap().remove("q15");
+    ds["answerKey"].as_object_mut().unwrap().remove("q15");
+    for group in ds["taskGroups"][0]["responseGroups"].as_array_mut().unwrap() {
+        if let Some(slots) = group.get_mut("slotIds").and_then(Value::as_array_mut) {
+            slots.retain(|slot| slot != "q15");
+        }
+    }
+    conn.execute(
+        "UPDATE library_items_v2 SET canonical_ds_json = ?2, current_edit_version = ?3 WHERE id = ?1",
+        rusqlite::params![item, ds.to_string(), version + 1],
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut refreshed = ds.clone();
+    crate::authoring_v2_commands::refresh_quality_report(&root, &item, &mut refreshed).unwrap();
+    assert_eq!(refreshed["quality"]["questionCoverage"]["missingQuestionNumbers"], json!([15]));
+    assert!(refreshed["quality"]["hardFailures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|code| code == "SOURCE_QUESTION_COVERAGE_MISSING"));
+
+    let result = publish(&root, &[&item], force_now()).expect("republish must still go out");
+    let outcome = outcome_for(&result, &item);
+    assert_eq!(outcome["forced"], json!(true), "{outcome}");
+    let records = publish_records(&root, &item);
+    let last = records.last().unwrap();
+    assert_eq!(last.forced, 1);
+    assert_eq!(last.verdict["status"], json!("blocked"));
+    assert!(
+        last.verdict.to_string().contains("原文声明的题号集合"),
+        "门禁原因必须是题号覆盖：{}",
+        last.verdict
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn non_purged_item_with_a_missing_shadow_behaves_exactly_as_today() {
+    let root = temp_root("final-non-purged");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-non-purged", false, |_| {});
+    fs::remove_file(job_dir(&root, &item).join(DOCUMENT_V2_SHADOW_FILE)).unwrap();
+    let conn = crate::library::repository::open_library_connection(&root).unwrap();
+    let (mut ds, _) = crate::library::repository::get_canonical_ds(&conn, &item).unwrap().unwrap();
+    drop(conn);
+    crate::authoring_v2_commands::refresh_quality_report(&root, &item, &mut ds).unwrap();
+    assert_eq!(ds["quality"]["coverageStatus"]["physicalShadow"], json!("missing"));
+    assert_eq!(ds["quality"]["sourceCoverage"], json!(0.0));
+    assert_eq!(ds["quality"]["state"], json!("review_required"));
+    assert!(ds["quality"]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["code"] == "PHYSICAL_SHADOW_MISSING"));
+    assert!(crate::library::final_version::ensure_source_available(&root, &item).is_ok());
+    let error = publish(&root, &[&item], None).unwrap_err();
+    assert!(error.contains("authoring_v2_export_blocked"), "{error}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn purged_items_reject_source_dependent_operations_explicitly() {
+    let root = temp_root("final-guard");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-guard", false, |_| {});
+    assert!(crate::library::final_version::ensure_source_available(&root, &item).is_ok());
+    publish(&root, &[&item], force_now()).unwrap();
+    let error = crate::library::final_version::ensure_source_available(&root, &item).unwrap_err();
+    assert!(error.starts_with(crate::library::final_version::SOURCE_PURGED_ERROR), "{error}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_purge_failure_is_reported_but_never_fails_the_publish() {
+    let root = temp_root("final-purge-failure");
+    ensure_app_dirs(&root).unwrap();
+    let item = seed_item(&root, "final-purge-failure", false, |_| {});
+    let locked = job_dir(&root, &item).join("uploads").join("abcd1234-source.pdf");
+    // 让删除必然失败：Windows 上以「不共享删除」打开句柄；其他平台把父目录设为只读。
+    #[cfg(windows)]
+    let _guard = {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new().read(true).share_mode(0).open(&locked).unwrap()
+    };
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(locked.parent().unwrap(), fs::Permissions::from_mode(0o555)).unwrap();
+    }
+
+    let result = publish(&root, &[&item], force_now()).expect("purge failure must not fail publish");
+    let outcome = outcome_for(&result, &item);
+    let failed = outcome["finalVersion"]["purge"]["failed"].as_array().unwrap().clone();
+    assert!(!failed.is_empty(), "清理失败必须如实报告：{outcome}");
+    assert_eq!(item_status(&root, &item), "published");
+    assert!(manifest(&root)["final-purge-failure"].is_object());
+
+    #[cfg(windows)]
+    drop(_guard);
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(locked.parent().unwrap(), fs::Permissions::from_mode(0o755));
+    }
+    let _ = fs::remove_dir_all(root);
+}

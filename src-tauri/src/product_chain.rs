@@ -44,20 +44,20 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-const READY_AUTHORING_FIXTURE: &str =
+pub(crate) const READY_AUTHORING_FIXTURE: &str =
     "fixtures/golden/synthetic/ielts/early-approaches-authoring-v2.json";
 
-fn temp_root(label: &str) -> PathBuf {
+pub(crate) fn temp_root(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("product-chain-{label}-{}", Uuid::new_v4().simple()))
 }
 
-fn workspace_path(relative: &str) -> PathBuf {
+pub(crate) fn workspace_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join(relative)
 }
 
-fn chain_job(title: &str) -> ImportJob {
+pub(crate) fn chain_job(title: &str) -> ImportJob {
     make_job(CreateJobInput {
         title: Some(title.to_string()),
         category: Some("P1".to_string()),
@@ -219,7 +219,7 @@ fn assert_question_layout_graph(dir: &Path, job: &ImportJob, physical: &Value) {
 }
 
 /// First text node id + text in the authoring document, in document order.
-fn first_text_node(value: &Value) -> Option<(String, String)> {
+pub(crate) fn first_text_node(value: &Value) -> Option<(String, String)> {
     match value {
         Value::Object(map) => {
             if map.get("type").and_then(Value::as_str) == Some("text") {
@@ -290,7 +290,7 @@ fn collect_anchored_node_ids(value: &Value, out: &mut BTreeSet<String>) {
 /// A physical DocumentIRV2 shadow whose single region claims every authoring node id, which is
 /// what the quality gate needs to report full source coverage. Mirrors the shape proven in
 /// `ielts_grammar::quality` tests.
-fn physical_shadow_for(authoring: &Value) -> Value {
+pub(crate) fn physical_shadow_for(authoring: &Value) -> Value {
     let mut node_ids = BTreeSet::new();
     collect_anchored_node_ids(authoring, &mut node_ids);
     let source_hash = "a".repeat(64);
@@ -1050,7 +1050,7 @@ fn dump_v2_visual_package_for_part(nas_parent: &Path, exam_id: &str, category: &
 }
 
 /// 与 dump 测试共用的 1x1 红 PNG（CRC 已验证），足以驱动 <img> 真实解码。
-fn build_e2e_png() -> Vec<u8> {
+pub(crate) fn build_e2e_png() -> Vec<u8> {
     vec![
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
         6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 252, 207, 192,
@@ -1457,6 +1457,7 @@ fn publish_items_is_all_or_nothing_across_a_batch() {
         item_ids: item_ids.clone(),
         destination: destination.to_string_lossy().into_owned(),
         fault: fault.map(str::to_string),
+        force: None,
     };
 
     // 1. 第一题之后中断：整批回滚，清单与 releases 都不得留下痕迹。

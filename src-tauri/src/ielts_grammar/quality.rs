@@ -28,6 +28,96 @@ struct SourceCoverageSummary {
     physical_available: bool,
 }
 
+/// 发布时冻结的原文证据（「题库保存」：发布后原文件与过程文件被删除）。
+///
+/// 只有两类结论会被冻结：原文声明的题号集合（之后每次评估仍与当前稿逐题核对），
+/// 以及节点覆盖在发布时的结论（原文件已不存在，无法重算，只能如实标注
+/// `verified_at_publish_source_purged`）。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct FrozenSourceEvidence {
+    pub declared_question_numbers: Vec<u32>,
+    pub declarations: Vec<String>,
+    pub node_score: f64,
+    pub node_complete: bool,
+    pub significant_count: usize,
+    pub explained_count: usize,
+}
+
+impl FrozenSourceEvidence {
+    pub(crate) fn from_value(value: &Value) -> Option<Self> {
+        if value.get("schemaVersion").and_then(Value::as_str) != Some("PublishSourceEvidenceV1") {
+            return None;
+        }
+        let numbers = value
+            .get("declaredQuestionNumbers")?
+            .as_array()?
+            .iter()
+            .map(|number| number.as_u64().and_then(|number| u32::try_from(number).ok()))
+            .collect::<Option<Vec<_>>>()?;
+        let declarations = value
+            .get("declarations")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(ToString::to_string)
+            .collect();
+        let node = value.get("nodeCoverage")?;
+        Some(Self {
+            declared_question_numbers: numbers,
+            declarations,
+            node_score: node.get("score").and_then(Value::as_f64)?,
+            node_complete: node.get("complete").and_then(Value::as_bool)?,
+            significant_count: node
+                .get("significantSourceNodeCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize,
+            explained_count: node
+                .get("explainedSourceNodeCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize,
+        })
+    }
+}
+
+/// 发布成功时要冻结的证据摘要（只读计算，不改稿）。
+///
+/// 题号声明只有在发布时能可靠解析（非 Undetermined）才冻结；否则冻结空集合，
+/// 之后仍报 Undetermined，而不是被原文件删除「洗」成完整。
+pub(crate) fn publish_evidence_summary(authoring: &Value, physical_shadow: Option<&Value>) -> Value {
+    let assessment = assess_source_question_coverage(authoring, physical_shadow);
+    let summary = source_coverage_summary(authoring, physical_shadow);
+    let reliable = assessment.status != QuestionCoverageStatus::Undetermined;
+    json!({
+        "schemaVersion": "PublishSourceEvidenceV1",
+        "questionCoverage": assessment.as_value(),
+        "declaredQuestionNumbers": if reliable { assessment.declared_question_numbers.clone() } else { Vec::new() },
+        "declarations": if reliable { assessment.declarations.clone() } else { Vec::new() },
+        "nodeCoverage": {
+            "physicalShadow": if summary.physical_available { "available" } else { "missing" },
+            "score": round(summary.score),
+            "complete": summary.physical_available && summary.unassigned_ids.is_empty(),
+            "significantSourceNodeCount": summary.significant_count,
+            "explainedSourceNodeCount": summary.assigned_count,
+            "unassignedSourceNodeIds": summary.unassigned_ids
+        }
+    })
+}
+
+/// 原文件已在发布后删除的条目：题号覆盖按冻结声明核对，节点覆盖报告为
+/// `verified_at_publish_source_purged`（非阻断），不再因缺 shadow 报 0.0。
+pub(crate) fn evaluate_quality_with_frozen_evidence(
+    authoring: &Value,
+    frozen: &FrozenSourceEvidence,
+) -> Value {
+    evaluate_quality_inner(
+        authoring,
+        None,
+        Some(frozen),
+        recognition_blockers_gate_enabled(),
+    )
+}
+
 pub(crate) fn evaluate_quality(authoring: &Value, physical_shadow: Option<&Value>) -> Value {
     evaluate_quality_with_gate(
         authoring,
@@ -125,9 +215,24 @@ pub(crate) fn quality_readiness(authoring: &Value) -> Result<QualityReadiness, S
         &report.hard_failures,
         report.document_score,
         report.task_scores.values().any(|score| *score < 0.92),
-        report.source_coverage,
+        effective_source_coverage(
+            report.source_coverage,
+            report.coverage_status.physical_shadow
+                == crate::schema::quality_report_v2::PhysicalShadowStatusV2::VerifiedAtPublishSourcePurged,
+        ),
         unresolved_blocking_issue_count,
     ))
+}
+
+/// 节点覆盖在原文件被删除后不再参与就绪度（`verified_at_publish_source_purged`）。
+/// 只有 `evaluate_quality_inner` 能写出这个状态，且只在条目确实被清理、且真的没有
+/// physical shadow 时；非清理条目缺 shadow 仍是 `missing` 并照旧阻断。
+fn effective_source_coverage(source_coverage: f64, source_purged: bool) -> f64 {
+    if source_purged {
+        1.0
+    } else {
+        source_coverage
+    }
 }
 
 /// `evaluate_quality` with the §6.8/§6.11 recognition gate passed explicitly.
@@ -140,6 +245,17 @@ pub(crate) fn evaluate_quality_with_gate(
     physical_shadow: Option<&Value>,
     recognition_gate_enabled: bool,
 ) -> Value {
+    evaluate_quality_inner(authoring, physical_shadow, None, recognition_gate_enabled)
+}
+
+fn evaluate_quality_inner(
+    authoring: &Value,
+    physical_shadow: Option<&Value>,
+    frozen: Option<&FrozenSourceEvidence>,
+    recognition_gate_enabled: bool,
+) -> Value {
+    // 冻结证据只在「确实没有 physical shadow」时生效；有 shadow 就按事实重算。
+    let frozen = frozen.filter(|_| physical_shadow.is_none());
     let groups = authoring
         .get("taskGroups")
         .and_then(Value::as_array)
@@ -169,7 +285,14 @@ pub(crate) fn evaluate_quality_with_gate(
         .and_then(Value::as_str)
         != Some("listening")
     {
-        Some(assess_source_question_coverage(authoring, physical_shadow))
+        Some(match frozen {
+            Some(frozen) => super::source_coverage::assess_against_frozen_declaration(
+                authoring,
+                &frozen.declared_question_numbers,
+                &frozen.declarations,
+            ),
+            None => assess_source_question_coverage(authoring, physical_shadow),
+        })
     } else {
         None
     };
@@ -293,9 +416,23 @@ pub(crate) fn evaluate_quality_with_gate(
         }
     }
 
-    let source_summary = source_coverage_summary(authoring, physical_shadow);
+    let source_summary = match frozen {
+        Some(frozen) => SourceCoverageSummary {
+            score: frozen.node_score,
+            significant_count: frozen.significant_count,
+            assigned_count: frozen.explained_count,
+            unassigned_ids: Vec::new(),
+            ledger: Vec::new(),
+            physical_available: false,
+        },
+        None => source_coverage_summary(authoring, physical_shadow),
+    };
     let source_coverage = source_summary.score;
-    if !source_summary.physical_available {
+    let source_purged = frozen.is_some();
+    if source_purged {
+        // 原文件已按「题库保存」规则删除：节点覆盖是发布时的结论，不能重算，
+        // 也不再阻断（发布即确认）。题号覆盖仍按冻结声明逐题核对（见上）。
+    } else if !source_summary.physical_available {
         push_issue(
             &mut issues,
             &mut hard_failures,
@@ -370,7 +507,7 @@ pub(crate) fn evaluate_quality_with_gate(
         &hard_failures,
         document_score,
         task_scores.values().any(|score| *score < 0.92),
-        source_coverage,
+        effective_source_coverage(source_coverage, source_purged),
         unresolved_blocking_issue_count,
     )
     .as_str();
@@ -381,8 +518,17 @@ pub(crate) fn evaluate_quality_with_gate(
         "sourceCoverage": round(source_coverage),
         "coverageLedger": source_summary.ledger,
         "coverageStatus": {
-            "physicalShadow": if source_summary.physical_available { "available" } else { "missing" },
-            "complete": source_summary.physical_available && source_summary.unassigned_ids.is_empty(),
+            "physicalShadow": if source_purged {
+                "verified_at_publish_source_purged"
+            } else if source_summary.physical_available {
+                "available"
+            } else {
+                "missing"
+            },
+            "complete": match frozen {
+                Some(frozen) => frozen.node_complete,
+                None => source_summary.physical_available && source_summary.unassigned_ids.is_empty(),
+            },
             "significantSourceNodeCount": source_summary.significant_count,
             "explainedSourceNodeCount": source_summary.assigned_count,
             "unassignedSourceNodeIds": source_summary.unassigned_ids
@@ -5519,5 +5665,72 @@ mod tests {
             vec!["edit_text", "confirm_table"],
         );
         assert_eq!(a["issueId"], b["issueId"]);
+    }
+
+    // ── 题库保存：原文件在发布后被删除，质量评估改用发布时冻结的证据 ──
+
+    fn frozen_from(authoring: &Value, physical: &Value, declared: &[u32]) -> FrozenSourceEvidence {
+        let mut summary = publish_evidence_summary(authoring, Some(physical));
+        summary["declaredQuestionNumbers"] = json!(declared);
+        summary["declarations"] = json!(["Questions 14-15"]);
+        FrozenSourceEvidence::from_value(&summary).expect("frozen evidence must parse")
+    }
+
+    #[test]
+    fn purged_source_uses_frozen_evidence_instead_of_a_zero_coverage_score() {
+        let authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+        let frozen = frozen_from(&authoring, &physical, &[14, 15]);
+        let report = evaluate_quality_with_frozen_evidence(&authoring, &frozen);
+        assert_eq!(report["state"], "ready", "{report:#}");
+        assert_eq!(
+            report["coverageStatus"]["physicalShadow"],
+            "verified_at_publish_source_purged"
+        );
+        assert_ne!(report["sourceCoverage"], json!(0.0), "不得因原文件被删而报 0.0");
+        assert!(report["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|issue| issue["code"] != PHYSICAL_SHADOW_MISSING));
+        assert_eq!(report["questionCoverage"]["status"], "complete");
+        let mut with_quality = authoring.clone();
+        with_quality["quality"] = report;
+        assert_eq!(quality_readiness(&with_quality), Ok(QualityReadiness::Ready));
+    }
+
+    #[test]
+    fn purged_source_still_checks_question_numbers_against_the_frozen_declaration() {
+        let authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+        // 删掉一题：冻结声明 {14,15}，当前稿只剩 14。
+        let mut removed = authoring.clone();
+        removed["answerSlots"].as_object_mut().unwrap().remove("q15");
+        removed["answerKey"].as_object_mut().unwrap().remove("q15");
+        let frozen = frozen_from(&authoring, &physical, &[14, 15]);
+        let report = evaluate_quality_with_frozen_evidence(&removed, &frozen);
+        assert_eq!(report["questionCoverage"]["status"], "missing", "{report:#}");
+        assert_eq!(report["questionCoverage"]["missingQuestionNumbers"], json!([15]));
+        assert!(report["hardFailures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|code| code == SOURCE_QUESTION_COVERAGE_MISSING));
+        assert_ne!(report["state"], "ready");
+
+        // 加一题同样被判为不一致。
+        let frozen_one = frozen_from(&authoring, &physical, &[14]);
+        let report = evaluate_quality_with_frozen_evidence(&authoring, &frozen_one);
+        assert_eq!(report["questionCoverage"]["extraQuestionNumbers"], json!([15]));
+        assert_ne!(report["state"], "ready");
+    }
+
+    #[test]
+    fn frozen_evidence_without_a_declaration_stays_undetermined() {
+        let authoring = early_approaches();
+        let physical = valid_physical_shadow(&authoring);
+        let frozen = frozen_from(&authoring, &physical, &[]);
+        let report = evaluate_quality_with_frozen_evidence(&authoring, &frozen);
+        assert_eq!(report["questionCoverage"]["status"], "undetermined");
     }
 }

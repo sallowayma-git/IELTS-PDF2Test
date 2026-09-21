@@ -82,6 +82,8 @@ mod pdf_ingest;
 mod preview_commands;
 #[cfg(test)]
 mod product_chain;
+#[cfg(test)]
+mod publish_final_tests;
 mod reading_runtime_v2;
 mod reading_source;
 mod reading_source_v2;
@@ -1119,6 +1121,9 @@ async fn retry_processing(
     state: tauri::State<'_, Arc<processing::scheduler::ProcessingState>>,
     app: AppHandle,
 ) -> CommandResult<()> {
+    let root = app_root(&app)?;
+    // 题库保存：发布后原文件已删除的条目，需要原文件的操作明确报错。
+    library::final_version::ensure_source_available(&root, &item_id)?;
     processing::scheduler::retry_job((*state).clone(), app, &item_id).await
 }
 
@@ -1129,6 +1134,8 @@ async fn parse_document(
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
+    // 题库保存：发布后原文件已删除的条目，需要原文件的操作明确报错。
+    library::final_version::ensure_source_available(&root, &job_id)?;
     parse_document_core(&root, &job_id, options)
 }
 
@@ -1380,6 +1387,8 @@ async fn apply_vision_answer_candidates(
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
+    // 题库保存：发布后原文件已删除的条目，需要原文件的操作明确报错。
+    library::final_version::ensure_source_available(&root, &job_id)?;
     tauri::async_runtime::spawn_blocking(move || {
         apply_vision_answer_candidates_core(&root, &job_id, decisions)
     })
@@ -1523,6 +1532,8 @@ async fn run_auto_pipeline(
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
+    // 题库保存：发布后原文件已删除的条目，需要原文件的操作明确报错。
+    library::final_version::ensure_source_available(&root, &job_id)?;
     tauri::async_runtime::spawn_blocking(move || run_auto_pipeline_core(&root, &job_id, input))
         .await
         .map_err(|error| error.to_string())?
@@ -1535,6 +1546,8 @@ async fn run_cloud_review(
     app: AppHandle,
 ) -> CommandResult<Value> {
     let root = app_root(&app)?;
+    // 题库保存：发布后原文件已删除的条目，需要原文件的操作明确报错。
+    library::final_version::ensure_source_available(&root, &job_id)?;
     tauri::async_runtime::spawn_blocking(move || run_cloud_review_core(&root, &job_id, input))
         .await
         .map_err(|error| error.to_string())?
@@ -7776,6 +7789,9 @@ Answers
     //   1. force 必须**明确被拒**，不得静默降级成 strict；
     //   2. strict / 不传 policy 仍然照常工作；
     //   3. unsafe-exam-id 这条不变量必须仍然成立。
+    // 注：产品发布入口 `publish_items` 现在有「点击发布即放行、并记录放行」的
+    // 能力（见 `publish_final_tests`）；这里覆盖的是**无 UI 调用方**的旧导出命令，
+    // 它们保持严格，`validationPolicy: "force"` 仍被明确拒绝。
     #[test]
     fn force_policy_is_rejected_explicitly_not_downgraded() {
         // 1) 直接构造：`force` 报错，且错误码稳定可匹配。

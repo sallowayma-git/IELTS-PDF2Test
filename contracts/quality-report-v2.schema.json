@@ -44,7 +44,7 @@
       "additionalProperties": false,
       "required": ["physicalShadow", "complete", "significantSourceNodeCount", "explainedSourceNodeCount", "unassignedSourceNodeIds"],
       "properties": {
-        "physicalShadow": { "type": "string", "enum": ["available", "missing"] },
+        "physicalShadow": { "type": "string", "enum": ["available", "missing", "verified_at_publish_source_purged"] },
         "complete": { "type": "boolean" },
         "significantSourceNodeCount": { "type": "integer", "minimum": 0 },
         "explainedSourceNodeCount": { "type": "integer", "minimum": 0 },

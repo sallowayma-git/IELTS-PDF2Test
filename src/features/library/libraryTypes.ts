@@ -64,6 +64,8 @@ export interface LibraryRowV1 {
   category?: string;
   updatedAt: string;
   inTrash: boolean;
+  /** 已发布，且那次发布时检查没有全部通过、由用户点击发布放行（后端 `published_forced`）。 */
+  publishedForced: boolean;
   /** 仅供开发者排查，不渲染在行上。 */
   raw: {
     jobStatus?: JobStatus;
@@ -155,7 +157,10 @@ function detailFor(
     if (v2?.processing?.stage === "cancelled") return "已取消";
     return "识别失败，可以重试";
   }
-  if (stage === "published") return job?.status === "Cleaned" ? "已发布并清理过程文件" : "已发布";
+  if (stage === "published") {
+    if (v2?.status === "published_forced") return "已发布（强制发布）";
+    return job?.status === "Cleaned" ? "已发布并清理过程文件" : "已发布";
+  }
   return undefined;
 }
 
@@ -171,7 +176,7 @@ export function buildRow(
     reconciling: "reconciling", failed: "failed", cancelled: "failed"
   };
   const itemStage: Record<string, LibraryStageV1> = {
-    ready: "ready", action_required: "action_required", published: "published", failed: "failed",
+    ready: "ready", action_required: "action_required", published: "published", published_forced: "published", failed: "failed",
     processing: "queued", migration_required: "action_required"
   };
   // G1/A4-F03：重启恢复把任务停在 ready_for_review + action_required，但
@@ -197,6 +202,7 @@ export function buildRow(
     category: summary?.category ?? job?.category,
     updatedAt: v2?.updatedAt ?? job?.updatedAt ?? summary?.updatedAt ?? "",
     inTrash: Boolean(options.inTrash),
+    publishedForced: stage === "published" && v2?.status === "published_forced",
     raw: {
       jobStatus: job?.status,
       currentStep: job?.currentStep,

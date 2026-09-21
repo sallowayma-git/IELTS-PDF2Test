@@ -705,7 +705,42 @@ pub(crate) fn export_authoring_v2_core(root: &Path, input: Value) -> CommandResu
     export_authoring_snapshot(root, input)
 }
 
+/// 发布模式。
+///
+/// - `Strict`：门禁结论不是 Ready 就拒绝（所有旧导出入口与 NAS 单题发布都走这条）。
+/// - `Forced`：用户点击「发布」即放行。门禁**照常计算、结论原样保留**；结论不是
+///   Ready 时本次导出被记录为显式放行（`publishOverride`），学生端加载不了的稿只写
+///   授权快照（`studentLoadable: false`）。它**不**绕过任何硬性安全/IO 检查：
+///   examId 路径安全、资产复制与路径、清单 CAS、锁、重复 examId。
+#[derive(Debug, Clone)]
+pub(crate) enum PublishMode {
+    Strict,
+    Forced {
+        confirmed_at: String,
+        acknowledged_reasons: Vec<String>,
+    },
+}
+
 pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Input) -> CommandResult<Value> {
+    export_authoring_snapshot_with_mode(root, input, &PublishMode::Strict)
+}
+
+fn has_unresolved_answers(authoring: &Value) -> bool {
+    authoring
+        .get("answerKey")
+        .and_then(Value::as_object)
+        .is_some_and(|answers| {
+            answers
+                .values()
+                .any(|value| value.get("kind").and_then(Value::as_str) == Some("unresolved"))
+        })
+}
+
+pub(crate) fn export_authoring_snapshot_with_mode(
+    root: &Path,
+    input: ExportAuthoringV2Input,
+    mode: &PublishMode,
+) -> CommandResult<Value> {
     safe_job_dir(root, &input.job_id)?;
     let artifact_layout = ensure_job_artifact_layout(root, &input.job_id)?;
     let export_lock_path = artifact_layout
@@ -771,17 +806,51 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
             .map(|value| value.min(i64::MAX as u64) as i64),
         scope,
     );
-    if !verdict.is_ready() {
-        return Err(format!(
-            "authoring_v2_export_blocked:{}:{}",
-            verdict.status(),
-            serde_json::to_string(&verdict.to_value()).unwrap_or_default()
-        ));
-    }
+    // 放行只在门禁确实不是 Ready 时才**被使用**；结论本身从不被改写。
+    let publish_override: Option<Value> = if verdict.is_ready() {
+        None
+    } else {
+        match mode {
+            PublishMode::Strict => {
+                return Err(format!(
+                    "authoring_v2_export_blocked:{}:{}",
+                    verdict.status(),
+                    serde_json::to_string(&verdict.to_value()).unwrap_or_default()
+                ));
+            }
+            PublishMode::Forced {
+                confirmed_at,
+                acknowledged_reasons,
+            } => {
+                // 硬性不变量：门禁里的 EXAM_ID_INVALID 可以被放行，路径安全不能。
+                crate::util::validate_path_segment(
+                    "exam_id",
+                    authoring_value
+                        .pointer("/exam/examId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                )?;
+                let mut reason_codes: Vec<&str> = Vec::new();
+                for reason in verdict.reasons() {
+                    if !reason_codes.contains(&reason.code) {
+                        reason_codes.push(reason.code);
+                    }
+                }
+                Some(json!({
+                    "forced": true,
+                    "verdict": verdict.to_value(),
+                    "reasons": reason_codes,
+                    "acknowledgedReasons": acknowledged_reasons,
+                    "confirmedAt": confirmed_at
+                }))
+            }
+        }
+    };
     // proof / preflight 仍然产出（给 UI 与审计看"为什么"），但它们**不再参与判据**。
     // `validate_authoring_v2_publish_readiness` 里唯一不在 verdict 内的检查是
     // 「请求的 revision 是否仍是当前 revision」—— 那是请求属性，不是稿件属性。
-    let publish_proof: Value = if db_direct {
+    // 放行模式下 readiness 会报错（那正是被放行的东西），改用不报错的预检作为证明。
+    let publish_proof: Value = if db_direct || publish_override.is_some() {
         check_publish_preflight(root, &input.job_id, revision, &authoring_value)
     } else {
         validate_authoring_v2_publish_readiness(root, &input.job_id, revision, &authoring_value)?
@@ -795,12 +864,22 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
         crate::ielts_grammar::quality::quality_readiness(&authoring_value),
         Ok(crate::ielts_grammar::quality::QualityReadiness::Ready)
     );
-    let runtime = compile_reading_source_v2(&authoring).map_err(|issues| {
-        format!(
-            "authoring_v2_export_compile_blocked:{}",
-            serde_json::to_string(&issues).unwrap_or_default()
-        )
-    })?;
+    // 学生端加载时拒绝未解析答案与编译不过的运行时。放行模式下这种稿只写授权
+    // 快照（不产出运行时、不进学生清单），绝不为了能加载而编造任何内容。
+    let runtime = match compile_reading_source_v2(&authoring) {
+        Ok(runtime) if publish_override.is_none() => Some(runtime),
+        Ok(runtime) => (!has_unresolved_answers(&authoring_value)
+            && crate::reading_source_v2::validate_reading_source_v2(&runtime).is_empty())
+        .then_some(runtime),
+        Err(_) if publish_override.is_some() => None,
+        Err(issues) => {
+            return Err(format!(
+                "authoring_v2_export_compile_blocked:{}",
+                serde_json::to_string(&issues).unwrap_or_default()
+            ));
+        }
+    };
+    let student_loadable = runtime.is_some();
 
     let export_dir = PathBuf::from(input.export_dir.trim());
     if !export_dir.is_absolute() {
@@ -844,14 +923,25 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
     let manifest_path = staging_dir.join("manifest-v2.json");
     let materialize_result: CommandResult<()> = (|| {
         let authoring_receipt = write_canonical_json_atomic(&authoring_path, &authoring_value)?;
-        let runtime_value = serde_json::to_value(&runtime).map_err(|error| error.to_string())?;
         // 学生端用 JavaScript 的 JSON.stringify 重算 ReadingExamSourceV2 的
         // runtimeSha256，所以运行时源必须按 ECMAScript 数字规则编码，否则整型
         // 浮点（confidence 1.0、widthPercent 60.0）会让发布包被学生端判定为
         // reading_source_integrity_failed。
-        let runtime_receipt = write_js_canonical_json_atomic(&runtime_path, &runtime_value)?;
+        let runtime_sha256 = match runtime.as_ref() {
+            Some(runtime) => {
+                let runtime_value =
+                    serde_json::to_value(runtime).map_err(|error| error.to_string())?;
+                Some(write_js_canonical_json_atomic(&runtime_path, &runtime_value)?.sha256)
+            }
+            None => None,
+        };
         materialize_authoring_assets(&artifact_layout.job_dir, &staging_dir, &authoring.assets)?;
-        let manifest_value = json!({
+        let files: Vec<&str> = if student_loadable {
+            vec!["authoring-ir-v2.json", "reading-source-v2.json", "manifest-v2.json"]
+        } else {
+            vec!["authoring-ir-v2.json", "manifest-v2.json"]
+        };
+        let mut manifest_value = json!({
             "schemaVersion": "AuthoringV2ExportReceiptV1",
             "jobId": input.job_id,
             "examId": authoring.exam.exam_id,
@@ -859,9 +949,9 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
             "editVersion": if db_direct { input.edit_version.unwrap_or(revision) } else { revision },
             "authoringSource": if db_direct { "canonical_ds" } else { "artifact_session" },
             "sourceDocumentId": authoring.source_document_id,
-            "files": ["authoring-ir-v2.json", "reading-source-v2.json", "manifest-v2.json"],
+            "files": files,
             "authoringSha256": authoring_receipt.sha256,
-            "runtimeSha256": runtime_receipt.sha256,
+            "runtimeSha256": runtime_sha256,
             "assetCount": authoring.assets.len(),
             "assets": authoring.assets.iter().map(|asset| json!({
                 "assetId": &asset.asset_id,
@@ -874,8 +964,12 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
             "v1FilesRemainReadable": true,
             "pdfPerQuestionLlmRepair": false,
             "reviewRequired": review_required,
+            "studentLoadable": student_loadable,
             "publishProof": publish_proof
         });
+        if let Some(publish_override) = publish_override.as_ref() {
+            manifest_value["publishOverride"] = publish_override.clone();
+        }
         write_canonical_json_atomic(&manifest_path, &manifest_value)?;
         fs::rename(&staging_dir, &output_dir)
             .map_err(|error| format!("authoring_v2_export_commit:{error}"))?;
@@ -889,19 +983,29 @@ pub(crate) fn export_authoring_snapshot(root: &Path, input: ExportAuthoringV2Inp
         return Err(error);
     }
 
-    let receipt = json!({
+    let mut receipt = json!({
         "schemaVersion": "AuthoringV2ExportReceiptV1",
         "jobId": input.job_id.clone(),
         "examId": authoring.exam.exam_id,
         "revision": revision,
         "outputDir": output_dir,
         "authoringPath": output_dir.join("authoring-ir-v2.json"),
-        "runtimePath": output_dir.join("reading-source-v2.json"),
+        "runtimePath": if student_loadable {
+            json!(output_dir.join("reading-source-v2.json"))
+        } else {
+            Value::Null
+        },
         "manifestPath": output_dir.join("manifest-v2.json"),
         "v1FilesRemainReadable": true,
         "pdfPerQuestionLlmRepair": false,
+        "reviewRequired": review_required,
+        "studentLoadable": student_loadable,
+        "publishVerdict": verdict.to_value(),
         "publishProof": publish_proof
     });
+    if let Some(publish_override) = publish_override.as_ref() {
+        receipt["publishOverride"] = publish_override.clone();
+    }
     let history_path = format!("export-history/phase5-v2-{}-{}.json", revision, export_id);
     let history_file_path = artifact_layout.job_dir.join(&history_path);
     let history_receipt = match write_artifact_json(root, &input.job_id, &history_path, &receipt) {
@@ -1099,7 +1203,17 @@ pub(crate) fn refresh_quality_report_for_targets(
     let previous_quality = authoring.get("quality").cloned();
     let physical_shadow = read_json_opt(&job_dir(root, job_id).join(DOCUMENT_V2_SHADOW_FILE))?
         .filter(|shadow| physical_shadow_matches_authoring(shadow, authoring));
-    let mut quality = evaluate_quality(authoring, physical_shadow.as_ref());
+    // 「题库保存」：发布后原文件与 shadow 被删除的条目改用发布时冻结的证据。
+    // 只有**确实被清理过**的条目才有冻结证据；非清理条目缺 shadow 与今天完全一样。
+    let mut quality = match physical_shadow.as_ref() {
+        Some(shadow) => evaluate_quality(authoring, Some(shadow)),
+        None => match crate::library::final_version::load_purged_evidence(root, job_id) {
+            Some(frozen) => {
+                crate::ielts_grammar::quality::evaluate_quality_with_frozen_evidence(authoring, &frozen)
+            }
+            None => evaluate_quality(authoring, None),
+        },
+    };
     preserve_issue_resolutions(&mut quality, previous_quality.as_ref(), affected_targets);
     authoring
         .as_object_mut()
@@ -1108,7 +1222,7 @@ pub(crate) fn refresh_quality_report_for_targets(
     Ok(())
 }
 
-fn physical_shadow_matches_authoring(shadow: &Value, authoring: &Value) -> bool {
+pub(crate) fn physical_shadow_matches_authoring(shadow: &Value, authoring: &Value) -> bool {
     let authoring_source_ids = authoring
         .get("exam")
         .and_then(|exam| exam.get("sourceFiles"))

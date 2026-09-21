@@ -7,7 +7,7 @@
 
 use crate::artifact_store::JobArtifactPaths;
 use crate::authoring_v2_commands::{
-    validate_authoring_v2_publish_readiness, AUTHORING_V2_SHADOW_FILE,
+    validate_authoring_v2_publish_readiness, PublishMode, AUTHORING_V2_SHADOW_FILE,
 };
 use crate::export_artifacts::{build_wrapper, safe_exam_id};
 use crate::export_nas_library::{nas_reading_exams_dir, normalize_nas_library_root};
@@ -257,17 +257,44 @@ struct PackageReceipt {
     manifest_sha256: String,
 }
 
+/// 发布请求。`deny_unknown_fields`：旧的 `validationPolicy` 之类字段必须报错，
+/// 不能被静默忽略成一次严格发布。
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PublishItemsInput {
     pub item_ids: Vec<String>,
     pub destination: String,
     pub fault: Option<String>,
+    /// 用户点击「发布」即为放行确认。前端总是带上它（`confirmedAt` = 点击时间）；
+    /// 只有门禁结论确实不是 Ready 时才**被使用**并记录为显式放行。
+    #[serde(default)]
+    pub force: Option<ForceOverride>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ForceOverride {
+    pub confirmed_at: String,
+    pub acknowledged_reasons: Vec<String>,
 }
 
 pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> CommandResult<Value> {
     use crate::library::repository::{get_canonical_ds, open_library_connection};
     if input.item_ids.is_empty() { return Err("PUBLISH_ITEMS_REQUIRED".to_string()); }
+    // 放行确认在任何写入之前校验：结构不合法已由 serde 拒绝；时间戳不合法同样明确
+    // 报错，绝不静默降级成严格发布（那会让用户以为自己的点击生效了）。
+    let mode = match input.force.as_ref() {
+        None => PublishMode::Strict,
+        Some(force) => {
+            chrono::DateTime::parse_from_rfc3339(force.confirmed_at.trim()).map_err(|error| {
+                format!("PUBLISH_FORCE_OVERRIDE_INVALID:confirmedAt:{error}")
+            })?;
+            PublishMode::Forced {
+                confirmed_at: force.confirmed_at.trim().to_string(),
+                acknowledged_reasons: force.acknowledged_reasons.clone(),
+            }
+        }
+    };
     let ids: BTreeSet<_> = input.item_ids.iter().collect();
     for id in &ids { crate::library::migration::migrate_single_item(root, id)?; }
     let mut conn = open_library_connection(root)?;
@@ -300,21 +327,54 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
     let mut moved_resources: Vec<(String, bool)> = Vec::new();
     // 提交点标志：清单替换成功即为「包已对学生可见」。此后任何失败都不得回滚资源。
     let mut manifest_committed = false;
-    let result = (|| -> CommandResult<Value> {
+    let mut publications: Vec<ItemPublication> = Vec::new();
+    let mut result = (|| -> CommandResult<Value> {
         fs::create_dir_all(&staging).map_err(|error| error.to_string())?;
         let mut outcomes = Vec::new();
+        // 全部 examId（重复检查是硬性不变量，放行模式同样适用）；
+        // 只有学生端可加载的题才有需要落到根级的资源目录。
         let mut exam_ids = BTreeSet::new();
+        let mut loadable_exam_ids = BTreeSet::new();
+        let mut forced_items = Vec::new();
         for (index, (item_id, ds, version)) in snapshots.iter().enumerate() {
-            let materialized = crate::authoring_v2_commands::export_authoring_snapshot(root,
+            let materialized = crate::authoring_v2_commands::export_authoring_snapshot_with_mode(root,
                 crate::authoring_v2_commands::ExportAuthoringV2Input {
                     job_id: item_id.clone(), export_dir: staging.join("snapshots").to_string_lossy().into_owned(),
                     revision: None, authoring: Some(ds.clone()), edit_version: Some(*version as u64),
-                })?;
-            let source_path = PathBuf::from(materialized.pointer("/receipt/runtimePath").and_then(Value::as_str).ok_or("PUBLISH_RUNTIME_MISSING")?);
+                }, &mode)?;
+            let receipt = materialized.get("receipt").cloned().unwrap_or(Value::Null);
+            let publish_override = receipt.get("publishOverride").cloned();
+            let forced = publish_override.is_some();
+            let student_loadable = receipt.get("studentLoadable").and_then(Value::as_bool).unwrap_or(false);
+            let verdict = receipt.get("publishVerdict").cloned().ok_or("PUBLISH_VERDICT_MISSING")?;
+            let reasons = publish_override
+                .as_ref()
+                .and_then(|value| value.get("reasons").cloned())
+                .unwrap_or_else(|| json!([]));
+            let record_id = Uuid::new_v4().simple().to_string();
+            if !student_loadable {
+                // 授权快照已写在 staging/snapshots（随 release 一起提交）；不进学生清单。
+                let exam_id = safe_exam_id(&json!({"examId": materialized.get("examId").cloned().unwrap_or(Value::Null)}))?;
+                if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
+                forced_items.push(json!({"itemId": item_id, "examId": exam_id, "studentLoadable": false,
+                    "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null),
+                    "confirmedAt": publish_override.as_ref().and_then(|value| value.get("confirmedAt").cloned())}));
+                outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id, "editVersion": version,
+                    "forced": forced, "studentLoadable": false, "publishRecordId": record_id,
+                    "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null)}));
+                publications.push(ItemPublication { item_id: item_id.clone(), edit_version: *version, record_id,
+                    forced, student_loadable: false, verdict, reasons });
+                if input.fault.as_deref() == Some(&format!("after_item_{}", index + 1)) {
+                    return Err("PUBLISH_BATCH_INTERRUPTED".to_string());
+                }
+                continue;
+            }
+            let source_path = PathBuf::from(receipt.get("runtimePath").and_then(Value::as_str).ok_or("PUBLISH_RUNTIME_MISSING")?);
             let source_value: Value = crate::util::read_json(&source_path)?;
             let source: ReadingExamSourceV2 = serde_json::from_value(source_value.clone()).map_err(|error| error.to_string())?;
             let exam_id = safe_exam_id(&source_value)?;
             if !exam_ids.insert(exam_id.clone()) { return Err(format!("PUBLISH_DUPLICATE_EXAM_ID:{exam_id}")); }
+            loadable_exam_ids.insert(exam_id.clone());
             let mut staged_paths = paths.clone();
             staged_paths.staging_root = staging.clone();
             staged_paths.staging_exam_path = staging.join(format!("{exam_id}.js"));
@@ -329,16 +389,28 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
             // 因为学生端 resolver 固定从 reading 根解析 `resources/${examId}`，不消费 resourcesBase。
             let script_relative = staged.entry["script"].as_str().ok_or("PUBLISH_PATH_MISSING")?.trim_start_matches("./");
             staged.entry["script"] = json!(format!("./releases/{batch_id}/{script_relative}"));
+            // 学生端忽略未知的清单条目字段；放行标记留在条目上供审计。
+            if let Some(publish_override) = publish_override.as_ref() {
+                staged.entry["publishOverride"] = publish_override.clone();
+                forced_items.push(json!({"itemId": item_id, "examId": exam_id, "studentLoadable": true,
+                    "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null),
+                    "confirmedAt": publish_override.get("confirmedAt").cloned()}));
+            }
             manifest.insert(exam_id.clone(), staged.entry);
             outcomes.push(json!({"itemId": item_id, "ok": true, "examId": exam_id,
-                "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": source.assets.assets.len()}));
+                "editVersion": version, "manifestPath": paths.manifest_path, "assetCount": source.assets.assets.len(),
+                "forced": forced, "studentLoadable": true, "publishRecordId": record_id,
+                "verdictStatus": verdict.get("status").cloned().unwrap_or(Value::Null)}));
+            publications.push(ItemPublication { item_id: item_id.clone(), edit_version: *version, record_id,
+                forced, student_loadable: true, verdict, reasons });
             if input.fault.as_deref() == Some(&format!("after_item_{}", index + 1)) {
                 return Err("PUBLISH_BATCH_INTERRUPTED".to_string());
             }
         }
         manifest.remove("_meta");
         manifest.insert("_meta".to_string(), json!({"schemaVersion": "ReadingExamManifestV2",
-            "assetCount": manifest.len(), "generatedAt": Utc::now().to_rfc3339(), "batchId": batch_id}));
+            "assetCount": manifest.len(), "generatedAt": Utc::now().to_rfc3339(), "batchId": batch_id,
+            "forcedItems": forced_items}));
         let candidate = staging.join("manifest.js");
         let candidate_bytes = format!("window.__READING_EXAM_MANIFEST__ = {};\n",
             serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?).into_bytes();
@@ -374,7 +446,7 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         }
         write_batch_state(&moved_resources, false)?;
         fs::create_dir_all(reading_root.join("resources")).map_err(|error| error.to_string())?;
-        for exam_id in &exam_ids {
+        for exam_id in &loadable_exam_ids {
             let root_resource = reading_root.join("resources").join(exam_id);
             let had_resources = root_resource.exists();
             // 先把「本题将被移动」写进状态，再动磁盘。顺序反过来会留下一个
@@ -431,7 +503,19 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
         // "真的改了"属于驱动层语义（SQLite 对 UPDATE 计匹配行，但这个前提不该
         // 成为发布判据的一部分）。直接查 `status` + `current_edit_version`，
         // 后置条件成立与否一目了然。
-        let status_drift = commit_published_status(&conn, &snapshots)?;
+        let status_drift = commit_published_status(&conn, &publications)?;
+        // 每次发布一行记录，与状态提交相邻。清单已提交，记录写失败同样不得回滚包，
+        // 但必须向调用方如实报告（不能让「发了」却没有任何可查的放行记录）。
+        if let Err(error) = write_publish_records(
+            &conn,
+            &publications,
+            &status_drift,
+            &batch_id,
+            &input.destination,
+        ) {
+            let _ = fs::remove_file(&paths.lock_metadata_path);
+            return Err(format!("PUBLISH_RECORD_WRITE_FAILED:manifest_committed:{error}"));
+        }
         if !status_drift.is_empty() {
             let _ = fs::remove_file(&paths.lock_metadata_path);
             // `manifest_committed` 前缀是给调用方看的：包**已经**对学生可见，
@@ -440,6 +524,60 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
                 "PUBLISH_BATCH_STATUS_DRIFT:manifest_committed:{}",
                 serde_json::to_string(&status_drift).unwrap_or_default()
             ));
+        }
+        // ── 题库保存：发布**已提交且状态已确认**之后，冻结最终版证据并删除原文件与
+        // 过程文件。两步都不得让发布失败或回滚（包已对学生可见）；结果逐题如实报告。
+        // 冻结失败时**不**删除：没有冻结证据，删除 shadow 会让这道题再也无法正常发布。
+        let mut final_versions = BTreeMap::new();
+        for publication in &publications {
+            let Some((_, ds, _)) = snapshots.iter().find(|(id, _, _)| id == &publication.item_id) else {
+                continue;
+            };
+            let report = match crate::library::final_version::freeze_final_version(
+                &conn,
+                root,
+                &publication.item_id,
+                publication.edit_version,
+                &publication.record_id,
+                ds,
+            ) {
+                Ok(_) => {
+                    let purge = crate::library::final_version::purge_source_artifacts(
+                        root,
+                        &publication.item_id,
+                        ds,
+                    );
+                    let marked = crate::library::final_version::mark_source_purged(
+                        &conn,
+                        &publication.item_id,
+                        &purge,
+                    );
+                    let failed = purge.get("failed").and_then(Value::as_array).map_or(0, Vec::len);
+                    if failed > 0 {
+                        eprintln!("[publish] source purge for {} left {failed} entries", publication.item_id);
+                    }
+                    json!({"frozen": true, "sourcePurged": marked.is_ok(), "purge": purge,
+                        "error": marked.err()})
+                }
+                Err(error) => {
+                    eprintln!("[publish] final version freeze failed for {}: {error}", publication.item_id);
+                    json!({"frozen": false, "sourcePurged": false, "error": error})
+                }
+            };
+            final_versions.insert(publication.item_id.clone(), report);
+        }
+        if let Ok(value) = result.as_mut() {
+            for outcome in value
+                .get_mut("succeeded")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                let item_id = outcome.get("itemId").and_then(Value::as_str).unwrap_or_default().to_string();
+                if let Some(report) = final_versions.remove(&item_id) {
+                    outcome["finalVersion"] = report;
+                }
+            }
         }
     }
     let _ = fs::remove_file(&paths.lock_metadata_path);
@@ -462,15 +600,78 @@ pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> Comma
 /// 判据用**读回校验**而不是 `execute` 的受影响行数：行数是"匹配到"还是"真的改了"
 /// 属于驱动层语义，不该成为发布判据的一部分。直接查 `status` + `current_edit_version`，
 /// 后置条件成立与否一目了然。
+/// 一道题在本批中的发布结果（清单提交后写状态与发布记录用）。
+struct ItemPublication {
+    item_id: String,
+    edit_version: i64,
+    record_id: String,
+    /// 门禁结论不是 Ready、由用户点击发布显式放行。
+    forced: bool,
+    student_loadable: bool,
+    /// 门禁原样结论（`PublishVerdict::to_value`），从不被改写成 Ready。
+    verdict: Value,
+    reasons: Value,
+}
+
+impl ItemPublication {
+    fn item_status(&self) -> &'static str {
+        if self.forced {
+            "published_forced"
+        } else {
+            "published"
+        }
+    }
+}
+
+fn write_publish_records(
+    conn: &rusqlite::Connection,
+    publications: &[ItemPublication],
+    status_drift: &[Value],
+    batch_id: &str,
+    destination: &str,
+) -> CommandResult<()> {
+    let now = Utc::now().to_rfc3339();
+    for publication in publications {
+        let drifted = status_drift
+            .iter()
+            .any(|drift| drift.get("itemId").and_then(Value::as_str) == Some(publication.item_id.as_str()));
+        let status = if drifted { "status_drift" } else { publication.item_status() };
+        conn.execute(
+            "INSERT INTO publish_records_v2
+             (id, library_item_id, edit_version, batch_id, destination, forced, verdict_json,
+              reasons_json, student_loadable, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                publication.record_id,
+                publication.item_id,
+                publication.edit_version,
+                batch_id,
+                destination,
+                publication.forced as i64,
+                publication.verdict.to_string(),
+                publication.reasons.to_string(),
+                publication.student_loadable as i64,
+                status,
+                now
+            ],
+        )
+        .map_err(|error| format!("{}:{error}", publication.item_id))?;
+    }
+    Ok(())
+}
+
 fn commit_published_status(
     conn: &rusqlite::Connection,
-    snapshots: &[(String, Value, i64)],
+    publications: &[ItemPublication],
 ) -> CommandResult<Vec<Value>> {
     let mut status_drift: Vec<Value> = Vec::new();
-    for (id, _, version) in snapshots {
+    for publication in publications {
+        let id = &publication.item_id;
+        let version = &publication.edit_version;
+        let target_status = publication.item_status();
         if let Err(error) = conn.execute(
-            "UPDATE library_items_v2 SET status = 'published' WHERE id = ?1 AND current_edit_version = ?2",
-            rusqlite::params![id, version],
+            "UPDATE library_items_v2 SET status = ?3 WHERE id = ?1 AND current_edit_version = ?2",
+            rusqlite::params![id, version, target_status],
         ) {
             status_drift.push(json!({
                 "itemId": id,
@@ -489,7 +690,7 @@ fn commit_published_status(
             .optional()
             .map_err(|error| format!("PUBLISH_BATCH_STATUS_READ:{id}:{error}"))?;
         match observed {
-            Some((status, current)) if status == "published" && current == *version => {}
+            Some((status, current)) if status == target_status && current == *version => {}
             Some((status, current)) => status_drift.push(json!({
                 "itemId": id,
                 "publishedEditVersion": version,
@@ -1918,6 +2119,18 @@ mod tests {
         root
     }
 
+    fn strict_publication(item_id: &str, edit_version: i64) -> ItemPublication {
+        ItemPublication {
+            item_id: item_id.to_string(),
+            edit_version,
+            record_id: "record-test".to_string(),
+            forced: false,
+            student_loadable: true,
+            verdict: json!({"status": "ready"}),
+            reasons: json!([]),
+        }
+    }
+
     /// 反例（#13）：快照冻结的是版本 1，提交后库里已经是版本 2。
     ///
     /// 修前 `publish_items_core` 里那段是
@@ -1938,7 +2151,7 @@ mod tests {
 
         // 冻结版本 = 1（快照时看到的），库里现在是 2（期间被编辑过）。
         let drift =
-            commit_published_status(&conn, &[("item-drifted".to_string(), json!(null), 1)])
+            commit_published_status(&conn, &[strict_publication("item-drifted", 1)])
                 .unwrap();
 
         assert_eq!(
@@ -1973,7 +2186,7 @@ mod tests {
 
         // 反向：版本一致时不得误报，否则每次正常发布都会被判"漂移"。
         let confirmed =
-            commit_published_status(&conn, &[("item-drifted".to_string(), json!(null), 2)])
+            commit_published_status(&conn, &[strict_publication("item-drifted", 2)])
                 .unwrap();
         assert!(confirmed.is_empty(), "版本一致时必须确认成功：{confirmed:?}");
         let status: String = conn

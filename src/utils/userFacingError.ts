@@ -73,6 +73,19 @@ function classify(raw: string): { category: UserErrorCategory; userMessage?: str
   if (raw.includes("LLM_SUGGESTION_AUTHORITATIVE_STORE_IS_V2")) {
     return { category: "not_ready", userMessage: "这道题的权威稿已经是新版格式，云端建议需要通过新版编辑流程应用。" };
   }
+  // 一键发布（点击即确认）与题库保存的错误：只剩硬性安全/IO 问题，给出能照做的一句话。
+  if (raw.includes("PUBLISH_FORCE_OVERRIDE_INVALID")) {
+    return { category: "validation", userMessage: "发布请求无效，请重新点击发布。" };
+  }
+  if (raw.includes("PUBLISH_DUPLICATE_EXAM_ID")) {
+    return { category: "validation", userMessage: "选中的题目里有试卷编号重复，请改掉其中一道的编号后再发布。" };
+  }
+  if (raw.includes("nas_package_v2_lock_busy")) {
+    return { category: "conflict", userMessage: "另一次发布正在进行，请稍后再试。" };
+  }
+  if (raw.includes("ITEM_SOURCE_PURGED_AFTER_PUBLISH")) {
+    return { category: "not_ready", userMessage: "原文件已在发布后删除，不能重新识别；题目仍可编辑、保存和发布。" };
+  }
   if (raw.includes("authoring_v2_export_blocked")) {
     // 发布门禁的具体原因直接决定用户下一步动作，不能都压成一句话。
     if (raw.includes("human_verification_required")) {
@@ -93,7 +106,8 @@ function classify(raw: string): { category: UserErrorCategory; userMessage?: str
     if (raw.includes("ai_fallback=") || raw.includes("partial_failures=")) {
       return { category: "validation", userMessage: "这道题有部分内容没有识别完成，请手动补齐后再发布。" };
     }
-    return { category: "validation", userMessage: "请先补齐题干、选项或答案，再次发布。" };
+    // 旧导出入口（无界面调用方）仍是严格门禁；产品发布按钮不会再收到这个错误。
+    return { category: "validation", userMessage: "这道题还有未完成的内容，暂时不能用这个方式导出；请直接点击「发布」。" };
   }
   if (raw.includes("requires_tauri_runtime")) {
     return { category: "runtime", userMessage: "这个操作需要在桌面应用中运行。" };

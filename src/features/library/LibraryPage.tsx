@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
-import { publishItems } from "../../api/publishClient";
+import { describeBatchPublishOutcome, publishItems } from "../../api/publishClient";
 import { go, legacyPath, workspacePath, type LibraryIntent } from "../../app/router";
 import { ImportDrawer } from "../import/ImportDrawer";
 import { useImportFiles, type ImportRejection } from "../import/useImportFiles";
@@ -105,9 +105,8 @@ export function LibraryPage({ intent }: { intent?: LibraryIntent }) {
       const outcome = await publishItems(itemIds, destination, (done, total) => {
         setPublishMessage(`正在发布 ${done}/${total}`);
       });
-      const parts = [`发布完成：${outcome.succeeded.length} 题`];
-      if (outcome.failed.length) parts.push(`${outcome.failed.length} 题未发布`);
-      setNotice(parts.join(" · "));
+      // 一次点击即发布：没有预检、没有阻断清单。放行与否只在后端发布记录里。
+      setNotice(describeBatchPublishOutcome(outcome));
       setPublishMessage(outcome.failed.length ? outcome.failed[0].message : undefined);
       if (!outcome.failed.length) setSelectedIds(new Set());
       store.refresh();

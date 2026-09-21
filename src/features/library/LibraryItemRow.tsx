@@ -34,7 +34,12 @@ export function LibraryItemRow({
   const meta = [MODALITY_LABEL[row.modality], row.category, relativeTime(row.updatedAt)].filter(Boolean).join(" · ");
 
   return (
-    <div className={`library-row stage-${row.stage}`} data-testid="library-row" data-item-id={row.id}>
+    <div
+      className={`library-row stage-${row.stage}`}
+      data-testid="library-row"
+      data-item-id={row.id}
+      data-published-forced={row.publishedForced ? "true" : "false"}
+    >
       {row.inTrash ? (
         <span className="library-row-check" aria-hidden="true" />
       ) : (
