@@ -875,3 +875,16 @@ Errors encountered:
   `listening_audio_assets_v1` 的受管音频写进每个 part 的 `media`；听力编译/打包（ListeningExamSourceV1、NAS 包、
   quality/validation 按 modality 分派）；云端候选保留 listening parts；学生端仓库支持每 part 音频；
   永久删除条目时清理受管音频；NAS 对端仓库同步新契约 schema（`npm run sync:phase1:peer`）。
+
+## 2026-09-21 第二波收口 → 第三波启动
+
+- 第二波五支已并入 `main`（c66bf3a）：合并后 Rust 973/0/11、Vitest 390、tsc 干净；真实 Tauri 产品链 **13/13**
+  （受控模型；两处脚本缺陷修正后）。worktree 与分支已清理（先解除指向主检出 node_modules 的 junction，
+  确认主 node_modules 113 个目录不变）。`integrate/2026-09-21` 分支暂留。
+- 第三波四个代理：
+  | 代理 | 范围 |
+  | --- | --- |
+  | 听力草稿 | listening_parts 接入草稿构建器（4 parts / 40 slots；Q17–20 unordered_set）、受管音频写进 part media、听力覆盖与缺音频检查 |
+  | 听力编译/打包 | canonical → ListeningExamSourceV1、四处编译调用按 modality 分派、NAS 听力包（音频按 sha256 复制校验）、听力学生预览 |
+  | 学生端（另一仓库，独立 worktree `IELTS-NASfor-WenDao-listening`） | 每 part 独立音频的加载/播放/进度、阅读目录排除听力、同步契约 |
+  | 云端听力 + 收尾 | 云端候选应用听力 parts（丢弃模型给的媒体）、`cloud_recognition_modality()` 读条目真实 modality、永久删除时清理受管音频、8 个旧 e2e 辅助脚本改用新钩子 |
