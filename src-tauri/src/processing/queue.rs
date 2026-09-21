@@ -460,6 +460,41 @@ pub(crate) fn retry(conn: &Connection, job_id: &str) -> CommandResult<bool> {
     Ok(updated > 0)
 }
 
+/// 用户重试，并把云端设置换成**此刻**的（`cloud_profile_id = None` 表示现在没有可用云端）。
+///
+/// 导入时写进 `progress_json` 的 `cloudEnabled` / `cloudProfileId` 是那一刻的快照；
+/// 用户之后连上（或断开）云端，重新识别必须跟着现在的设置走。返回 `false` = 没有入队
+/// （任务正在跑 / 已在排队），调用方必须如实告诉用户。
+pub(crate) fn retry_with_cloud(
+    conn: &Connection,
+    job_id: &str,
+    cloud_profile_id: Option<&str>,
+) -> CommandResult<bool> {
+    let now = Utc::now().to_rfc3339();
+    let updated = conn
+        .execute(
+            "UPDATE processing_jobs_v2
+             SET stage = 'queued', local_status = 'not_started', cloud_status = 'not_started',
+                 reconcile_status = 'not_started', last_error_code = NULL,
+                 cancel_requested_at = NULL,
+                 progress_json = json_set(
+                     CASE WHEN json_valid(progress_json) THEN progress_json ELSE '{}' END,
+                     '$.cloudEnabled', json(?3),
+                     '$.cloudProfileId', ?4),
+                 retry_count = retry_count + 1, lease_owner = NULL, lease_expires_at = NULL,
+                 event_seq = event_seq + 1, updated_at = ?2
+             WHERE id = ?1 AND stage IN ('failed', 'ready_for_review', 'cancelled')",
+            params![
+                job_id,
+                now,
+                if cloud_profile_id.is_some() { "true" } else { "false" },
+                cloud_profile_id
+            ],
+        )
+        .map_err(|error| format!("processing_retry:{error}"))?;
+    Ok(updated > 0)
+}
+
 /// 用户取消：queued 立即取消；running 落 durable 取消标记，由 worker 在阶段
 /// 边界检查后收尾（G1/P0-2：标记落库，重启恢复时也必须兑现，不得复活）。
 pub(crate) fn request_cancel(conn: &Connection, job_id: &str) -> CommandResult<bool> {
@@ -579,6 +614,31 @@ mod tests {
         let row = get_job(&conn, "job-1").unwrap().unwrap();
         assert_eq!(row.stage, STAGE_QUEUED);
         assert!(row.cancel_requested_at.is_none(), "retry 必须清除 durable 取消标记");
+    }
+
+    /// 重新识别要用**此刻**的云端设置，而不是导入那一刻冻结下来的：用户导入之后才
+    /// 连上云端，点「重新识别」却仍然只跑本地，是一条说不清的死路。
+    #[test]
+    fn retry_rereads_the_current_cloud_profile() {
+        let conn = memory_queue();
+        seed_item(&conn, "it-1");
+        enqueue(&conn, "job-1", "it-1", "asset-1", &serde_json::json!({"cloudEnabled": false, "fileName": "a.pdf"})).unwrap();
+        request_cancel(&conn, "job-1").unwrap();
+        assert!(retry_with_cloud(&conn, "job-1", Some("profile-now")).unwrap());
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.progress["cloudEnabled"], serde_json::json!(true));
+        assert_eq!(row.progress["cloudProfileId"], serde_json::json!("profile-now"));
+        assert_eq!(row.progress["fileName"], serde_json::json!("a.pdf"), "其余进度字段必须保留");
+
+        // 云端被关掉之后重试 → 本地重跑，如实记下不启用云端。
+        request_cancel(&conn, "job-1").unwrap();
+        assert!(retry_with_cloud(&conn, "job-1", None).unwrap());
+        let row = get_job(&conn, "job-1").unwrap().unwrap();
+        assert_eq!(row.progress["cloudEnabled"], serde_json::json!(false));
+
+        // 正在跑的任务不能重新入队：返回 false，调用方必须如实告诉用户「没有加入队列」。
+        claim_next(&conn, "worker-a").unwrap();
+        assert!(!retry_with_cloud(&conn, "job-1", Some("profile-now")).unwrap());
     }
 
     // ── G1 数据安全护栏回归 ────────────────────────────────────────────

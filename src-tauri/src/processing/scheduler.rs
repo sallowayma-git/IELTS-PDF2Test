@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter};
 
 use super::queue::{
     self, advance_stage, claim_next, finalize_cancelled_without_lease, finalize_ready_without_lease,
-    get_job, renew_lease, request_cancel, retry, set_cloud_status, STAGE_CLOUD_RECOGNITION,
+    get_job, renew_lease, request_cancel, set_cloud_status, STAGE_CLOUD_RECOGNITION,
     STAGE_RECONCILING,
     STAGE_FAILED, STAGE_LOCAL_RECOGNITION, STAGE_READY_FOR_REVIEW,
 };
@@ -250,20 +250,40 @@ pub(crate) async fn cancel(state: Arc<ProcessingState>, app: AppHandle, job_id: 
     result
 }
 
-pub(crate) async fn retry_job(state: Arc<ProcessingState>, app: AppHandle, job_id: &str) -> Result<(), String> {
+/// 用户重试 / 重新识别。返回是否**真的**加入了队列（正在跑的任务不会重复入队）。
+///
+/// 云端设置按**此刻**的模型连接重新解析（`current_cloud_profile`），不沿用导入时冻结的值。
+pub(crate) async fn retry_job(state: Arc<ProcessingState>, app: AppHandle, job_id: &str) -> Result<bool, String> {
     state.cancelled.write().await.remove(job_id);
     let root = app_root(&app)?;
     let job_id_owned = job_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
+        let queued = retry_job_at_root(&root, &job_id_owned)?;
         let conn = open_library_connection(&root)?;
-        retry(&conn, &job_id_owned)?;
         if let Some(job) = get_job(&conn, &job_id_owned)? {
             emit_row(&conn, &app, &job);
         }
-        Ok(())
+        Ok(queued)
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// 此刻可用的云端模型连接：第一个启用的、不是本地占位的 profile。
+pub(crate) fn current_cloud_profile(profiles: &[Value]) -> Option<String> {
+    profiles
+        .iter()
+        .filter(|profile| profile.get("enabled").and_then(Value::as_bool) == Some(true))
+        .filter_map(|profile| profile.get("profileId").and_then(Value::as_str))
+        .find(|id| *id != "profile-local-placeholder")
+        .map(str::to_string)
+}
+
+pub(crate) fn retry_job_at_root(root: &std::path::Path, job_id: &str) -> Result<bool, String> {
+    let profiles = crate::llm_profiles::load_profiles(root).unwrap_or_default();
+    let profile = current_cloud_profile(&profiles);
+    let conn = open_library_connection(root)?;
+    queue::retry_with_cloud(&conn, job_id, profile.as_deref())
 }
 
 use crate::CommandResult;
@@ -2475,6 +2495,18 @@ mod tests {
             cancelled.reason_code.as_deref(),
             Some(crate::schema::recognition_v1::reason::CLOUD_DISABLED)
         );
+    }
+
+    /// 重新识别用此刻的模型连接：跳过本地占位与未启用的 profile。
+    #[test]
+    fn current_cloud_profile_skips_placeholder_and_disabled_profiles() {
+        let profiles = vec![
+            serde_json::json!({"profileId": "profile-local-placeholder", "enabled": true}),
+            serde_json::json!({"profileId": "off", "enabled": false}),
+            serde_json::json!({"profileId": "real", "enabled": true}),
+        ];
+        assert_eq!(current_cloud_profile(&profiles).as_deref(), Some("real"));
+        assert_eq!(current_cloud_profile(&profiles[..2]), None);
     }
 
     /// 凭据错误要有自己的原因码：前端据此把用户送去设置页，而不是说「暂时不可用」。

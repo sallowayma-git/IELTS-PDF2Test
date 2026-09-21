@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acceptProcessingUpdate } from "./processingClient";
+import { acceptProcessingUpdate, describeRetryOutcome, retryQueued } from "./processingClient";
 
 /**
  * 这些用例守住的是**一条看不见的规则**：哪些 `processing://item-updated` 会被丢掉。
@@ -71,5 +71,23 @@ describe("acceptProcessingUpdate — 事件收窄与去重", () => {
     expect(acceptProcessingUpdate(versions, payload({ stateVersion: "3" }))).toBeUndefined();
     expect(acceptProcessingUpdate(versions, payload({ stateVersion: Number.NaN }))).toBeUndefined();
     expect(versions.size).toBe(0);
+  });
+});
+
+describe("重新识别 — 如实报告有没有加入队列", () => {
+  it("后端说没入队（正在识别中）时，绝不说「已加入识别队列」", () => {
+    expect(retryQueued({ queued: false })).toBe(false);
+    const text = describeRetryOutcome(false);
+    expect(text).not.toContain("已加入");
+    expect(text).toContain("正在识别");
+  });
+
+  it("入队成功时说明会用当前的云端设置", () => {
+    expect(retryQueued({ queued: true })).toBe(true);
+    expect(describeRetryOutcome(true)).toContain("已加入识别队列");
+  });
+
+  it("旧后端没有返回值：不猜成功", () => {
+    expect(retryQueued(undefined)).toBe(false);
   });
 });

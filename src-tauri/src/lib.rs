@@ -1117,8 +1117,10 @@ async fn retry_processing(
     item_id: String,
     state: tauri::State<'_, Arc<processing::scheduler::ProcessingState>>,
     app: AppHandle,
-) -> CommandResult<()> {
-    processing::scheduler::retry_job((*state).clone(), app, &item_id).await
+) -> CommandResult<serde_json::Value> {
+    // `queued = false`：任务正在跑 / 已在排队，这次没有新加入队列——前端必须如实说。
+    let queued = processing::scheduler::retry_job((*state).clone(), app, &item_id).await?;
+    Ok(serde_json::json!({ "queued": queued }))
 }
 
 #[tauri::command]

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Undo2, Redo2, MoreHorizontal, FileSearch, X } from "lucide-react";
 import { command, getJob } from "../../api/tauriCommands";
-import { retryProcessing, cancelProcessing, subscribeProcessing } from "../../api/processingClient";
+import { describeRetryOutcome, retryProcessing, cancelProcessing, subscribeProcessing } from "../../api/processingClient";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
 import { describePublishError, publishItem } from "../../api/publishClient";
 import { go, libraryPath, type LibraryIntent } from "../../app/router";
@@ -406,8 +406,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             <div className="workspace-menu" role="menu">
               <button role="menuitem" onClick={() => withBusy("local", async () => {
                 await editor.flush();
-                await retryProcessing(itemId);
-                setNotice("已加入识别队列。");
+                // 唯一的「重新识别」入口。后端按此刻的云端设置重跑，并如实回报有没有入队。
+                const queued = await retryProcessing(itemId);
+                setNotice(describeRetryOutcome(queued));
               })}>重新识别</button>
               <button role="menuitem" onClick={() => withBusy("cancel", async () => {
                 await cancelProcessing(itemId);
@@ -658,7 +659,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
             ) : null}
             <div className="button-row">
               <button className="primary small" onClick={() => withBusy("local", async () => {
-                await retryProcessing(itemId);
+                setNotice(describeRetryOutcome(await retryProcessing(itemId)));
               })}>
                 运行本地识别
               </button>
