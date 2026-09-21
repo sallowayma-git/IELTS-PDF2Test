@@ -183,6 +183,18 @@ pub(crate) fn assess_against_frozen_declaration(
     }
 }
 
+/// Every "Questions …" declaration in `text`, in source order, as the question
+/// numbers it declares. Uses the same keyword and number parsing as [`assess`]
+/// (compact `questions1-3` and glyph-spaced `Questions 2 7 – 3 1` included);
+/// declarations that do not parse are skipped.
+pub(crate) fn declared_question_blocks(text: &str) -> Vec<Vec<u32>> {
+    keyword_positions(text, "questions")
+        .into_iter()
+        .filter_map(|start| parse_numbers_after_marker(&text[start..], "questions"))
+        .filter(|numbers| !numbers.is_empty())
+        .collect()
+}
+
 fn undetermined(canonical_question_numbers: Vec<u32>, reason: &str) -> QuestionCoverageAssessment {
     QuestionCoverageAssessment {
         status: QuestionCoverageStatus::Undetermined,

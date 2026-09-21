@@ -159,7 +159,9 @@ pub(crate) fn profile_payload(profile: &Value, profile_id: &str) -> Value {
         "model": profile.get("model").cloned().unwrap_or_else(|| json!("")),
         "temperature": profile.get("temperature").cloned().unwrap_or_else(|| json!(0)),
         "timeoutMs": profile.get("timeoutMs").cloned().unwrap_or_else(|| json!(120000)),
-        "forceJson": profile.get("forceJson").cloned().unwrap_or(Value::Bool(true))
+        "forceJson": profile.get("forceJson").cloned().unwrap_or(Value::Bool(true)),
+        // Optional output-token cap; the gateway falls back to its default when null.
+        "maxOutputTokens": profile.get("maxOutputTokens").cloned().unwrap_or(Value::Null)
     })
 }
 
@@ -178,6 +180,28 @@ pub(crate) fn make_vision_transcription_input(
     })
 }
 
+/// Output contract of `extract_pdf_image_answers`. The shape example must pass
+/// `validate_vision_answer_output` (pinned by a test in `llm_gateway`).
+pub(crate) fn vision_answer_output_contract() -> Value {
+    json!({
+        "schema": "PdfImageAnswerKeyV1",
+        "jsonOnly": true,
+        "shape": {
+            "answers": {"8": "answer text", "9": ["answer", "alternative"]},
+            "confidence": 0.0,
+            "warnings": [],
+            "evidence": [{"questionNumber": "8", "pageIndex": 5, "quote": "short visible text"}]
+        },
+        "rules": [
+            "The supplied pages were selected from scanned/image-only answer-page candidates. Extract only answer keys visibly printed on those pages; do not infer answers from the question paper.",
+            "answers keys are question number strings without q prefix, for example \"8\"; values are an answer string or an array of accepted answer strings.",
+            "answers must contain at least one entry and evidence must contain at least one item {questionNumber, pageIndex >= 1, non-empty quote}. A reply without any answer is rejected and recorded as \"no answer key found\".",
+            "Do not invent missing answers; omit uncertain question numbers.",
+            "Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase."
+        ]
+    })
+}
+
 pub(crate) fn make_vision_answer_extraction_input(
     profile: &Value,
     job: &ImportJob,
@@ -190,22 +214,7 @@ pub(crate) fn make_vision_answer_extraction_input(
         "profile": profile_payload(profile, profile_id),
         "pages": extraction.get("pages").cloned().unwrap_or_else(|| json!([])),
         "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([])),
-        "outputContract": {
-            "schema": "PdfImageAnswerKeyV1",
-            "jsonOnly": true,
-            "shape": {
-                "answers": {"questionNumber": "answer text or array of answer texts"},
-                "confidence": 0.0,
-                "warnings": [],
-                "evidence": [{"questionNumber": "8", "pageIndex": 5, "quote": "short visible text"}]
-            },
-            "rules": [
-                "The supplied pages were selected from scanned/image-only answer-page candidates. Extract only answer keys visibly printed on those pages; do not infer answers from the question paper.",
-                "Use question number strings without q prefix, for example \"8\".",
-                "Do not invent missing answers; omit uncertain question numbers.",
-                "Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase."
-            ]
-        }
+        "outputContract": vision_answer_output_contract()
     })
 }
 
@@ -320,6 +329,50 @@ pub(crate) fn make_source_verification_input(
     })
 }
 
+/// Output contract of `generate_pdf_reading_outline`. The shape example must
+/// pass `validate_cloud_outline_output` (pinned by a test in `llm_gateway`).
+pub(crate) fn cloud_outline_output_contract() -> Value {
+    json!({
+        "schema": "CloudReadingOutlineV1",
+        "jsonOnly": true,
+        "shape": {
+            "title": "paper title",
+            "groups": [{
+                "kind": "true_false_not_given",
+                "range": [1, 5],
+                "layoutHint": "list",
+                "questionIds": ["q1", "q2", "q3", "q4", "q5"],
+                "instructionsText": "Do the following statements agree with the claims of the writer?",
+                "stimulusText": "The passage text this group depends on (for completion groups: the notes/table/diagram text).",
+                "optionBank": {"options": [{"label": "A", "text": "TRUE"}, {"label": "B", "text": "FALSE"}, {"label": "C", "text": "NOT GIVEN"}], "allowReuse": true},
+                "notesText": "",
+                "confidence": 0.9,
+                "evidence": {"quotes": [{"pageIndex": 1, "text": "short visible source excerpt"}]},
+                "slots": [
+                    {"questionNumber": 1, "prompt": "Full transcribed question text for Q1.", "answer": "TRUE", "evidence": [{"pageIndex": 1, "quote": "visible excerpt supporting Q1"}]},
+                    {"questionNumber": 2, "prompt": "Full transcribed question text for Q2.", "answer": "FALSE", "evidence": [{"pageIndex": 1, "quote": "visible excerpt supporting Q2"}]}
+                ]
+            }],
+            "answerKey": {"1": "TRUE", "2": "FALSE", "3": "NOT GIVEN", "4": "TRUE", "5": "FALSE"},
+            "confidence": 0.9,
+            "warnings": []
+        },
+        "rules": [
+            "Return FULL recognition content for comparison, not an outline. An outline alone is not acceptable.",
+            "Transcribe every question's FULL prompt text into slots[].prompt; do not abbreviate or summarize questions.",
+            "Transcribe every option bank and every option label and its text into optionBank.options.",
+            "Transcribe ALL passage / notes / table / diagram text the group depends on into stimulusText (and notesText for completion groups).",
+            "Provide the answer for EVERY question: prefer slots[].answer per question; you may also repeat them in answerKey keyed by question number as a string or string array.",
+            "Required on every group: kind, range, layoutHint (inline_completion, table or list; use list when neither of the others applies), questionIds, notesText (the notes text for completion groups, otherwise an empty string \"\"), confidence, and evidence.quotes.",
+            "Every group must include at least one evidence.quotes item copied from visible PDF text (pageIndex >= 1, non-empty text). A group without a quote is rejected: if you cannot quote a group, leave that group out and say so in warnings.",
+            "Do not invent passage facts or answers; omit uncertain question numbers from answerKey rather than guessing.",
+            "Question kinds must use the local group-kind enum names: single_choice, multi_choice, true_false_not_given, yes_no_not_given, matching, heading_matching, matching_information, classification, summary_completion, table_completion, diagram_completion, short_answer, sentence_completion.",
+            "range must be a 2-element array [start, end] with start>0 and end>=start; questionIds must be unique non-empty strings (length = end-start+1), one per question in the range.",
+            "For notes completion groups (source says Complete the notes below, notes, or uses blank markers such as 8……… or 8 ______), keep the whole range as one completion group: set layoutHint to inline_completion, include qN ids for every blank, and copy the continuous notes text into notesText. Do not rewrite into a list of independent short-answer items."
+        ]
+    })
+}
+
 pub(crate) fn make_cloud_paper_generation_input(
     profile: &Value,
     job: &ImportJob,
@@ -342,52 +395,145 @@ pub(crate) fn make_cloud_paper_generation_input(
         "pdfPath": pdf_path.to_string_lossy(),
         "pages": extraction.get("pages").cloned().unwrap_or_else(|| json!([])),
         "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([])),
-        "outputContract": {
-            "schema": "CloudReadingOutlineV1",
-            "jsonOnly": true,
-            "shape": {
-                "title": "paper title",
-                "groups": [{
-                    "kind": "true_false_not_given",
-                    "range": [1, 5],
-                    "layoutHint": "list",
-                    "questionIds": ["q1", "q2", "q3", "q4", "q5"],
-                    "instructionsText": "Do the following statements agree with the claims of the writer?",
-                    "stimulusText": "The passage text this group depends on (for completion groups: the notes/table/diagram text).",
-                    "optionBank": {"options": [{"label": "A", "text": "TRUE"}, {"label": "B", "text": "FALSE"}, {"label": "C", "text": "NOT GIVEN"}], "allowReuse": true},
-                    "notesText": "Optional notes for completion groups; empty for choice groups.",
-                    "confidence": 0.9,
-                    "evidence": {"quotes": [{"pageIndex": 1, "text": "short visible source excerpt"}]},
-                    "slots": [
-                        {"questionNumber": 1, "prompt": "Full transcribed question text for Q1.", "answer": "TRUE", "evidence": [{"pageIndex": 1, "quote": "visible excerpt supporting Q1"}]},
-                        {"questionNumber": 2, "prompt": "Full transcribed question text for Q2.", "answer": "FALSE", "evidence": [{"pageIndex": 1, "quote": "visible excerpt supporting Q2"}]}
-                    ]
-                }],
-                "answerKey": {"1": "TRUE", "2": "FALSE", "3": "NOT GIVEN", "4": "TRUE", "5": "FALSE"},
-                "confidence": 0.9,
-                "warnings": []
+        "outputContract": cloud_outline_output_contract()
+    })
+}
+
+/// Normalise a modality label to the two values the candidate/repair prompts
+/// know. Anything that is not `listening` is treated as `reading` (the default).
+pub(crate) fn candidate_modality(modality: &str) -> &'static str {
+    if modality.trim().eq_ignore_ascii_case("listening") {
+        "listening"
+    } else {
+        "reading"
+    }
+}
+
+/// Output contract of `generate_authoring_candidate`.
+///
+/// The shape example is the model's template: a test in `llm_gateway` pins that
+/// it passes `validate_authoring_candidate_output` AND `normalize_cloud_authoring`
+/// + serde, so a model that copies it faithfully is never rejected.
+///
+/// There is deliberately no `passage` block: it was the largest part of the
+/// output and no stage reads or compares it (`candidate_differences` compares
+/// task groups only). Listening papers declare their parts in `listeningParts`.
+pub(crate) fn authoring_candidate_output_contract(modality: &str) -> Value {
+    let modality = candidate_modality(modality);
+    let mut shape = json!({
+        "taskGroups": [{
+            "taskId": "cloud-tg-1",
+            "displayRange": {"kind": "range", "start": 1, "end": 5},
+            "taskType": "true_false_not_given",
+            "instructions": [{"type": "paragraph", "id": "cloud-tg-1-instr", "children": [{"type": "text", "id": "cloud-tg-1-instr-text", "text": "full instruction text"}]}],
+            "stimulus": [{"type": "paragraph", "id": "cloud-tg-1-stim", "children": [{"type": "text", "id": "cloud-tg-1-stim-text", "text": "full notes / table / diagram / form text"}]}],
+            "optionBank": {
+                "optionBankId": "cloud-tg-1-bank",
+                "scope": "task_group",
+                "options": [{"optionId": "cloud-opt-a", "label": "A", "content": [{"type": "text", "id": "cloud-opt-a-text", "text": "full option text"}]}],
+                "allowReuse": false
             },
-            "rules": [
-                "Return FULL recognition content for comparison, not an outline. An outline alone is not acceptable.",
-                "Transcribe every question's FULL prompt text into slots[].prompt; do not abbreviate or summarize questions.",
-                "Transcribe every option bank and every option label and its text into optionBank.options.",
-                "Transcribe ALL passage / notes / table / diagram text the group depends on into stimulusText (and notesText for completion groups).",
-                "Provide the answer for EVERY question: prefer slots[].answer per question; you may also repeat them in answerKey keyed by question number as a string or string array.",
-                "Every group must include evidence.quotes with one quote copied from visible PDF text (pageIndex>0, non-empty text). If evidence is missing, lower group confidence below 0.75.",
-                "Do not invent passage facts or answers; omit uncertain question numbers rather than guessing.",
-                "Question kinds must use the local group-kind enum names: single_choice, multi_choice, true_false_not_given, yes_no_not_given, matching, heading_matching, matching_information, classification, summary_completion, table_completion, diagram_completion, short_answer, sentence_completion.",
-                "range must be a 2-element array [start, end] with start>0 and end>=start; questionIds must be unique non-empty strings (length = end-start+1), one per question in the range.",
-                "For notes completion groups (source says Complete the notes below, notes, or uses blank markers such as 8……… or 8 ______), keep the whole range as one completion group: set layoutHint to inline_completion, include qN ids for every blank, and copy the continuous notes text into notesText. Do not rewrite into a list of independent short-answer items."
-            ]
-        }
+            "responseGroups": [{
+                "responseGroupId": "cloud-rg-1",
+                "kind": "choice",
+                "prompt": [{"type": "paragraph", "id": "cloud-q1-prompt", "children": [{"type": "text", "id": "cloud-q1-prompt-text", "text": "full question prompt text"}]}],
+                "slotIds": ["cloud-q1"],
+                "optionBankRef": "cloud-tg-1-bank",
+                "cardinality": {"min": 1, "max": 1, "exact": 1},
+                "assignment": "per_slot",
+                "scoringPolicy": "per_slot_ielts_normalized",
+                "duplicatePolicy": "reject_submission",
+                "allowOptionReuse": false
+            }]
+        }],
+        "answerSlots": {
+            "cloud-q1": {
+                "slotId": "cloud-q1",
+                "questionNumber": 1,
+                "displayLabel": "1",
+                "hostNodeId": "cloud-q1-prompt",
+                "hostType": "prompt",
+                "interaction": "radio",
+                "participation": "scoring",
+                "constraints": {"acceptedOptionLabels": ["A", "B", "C"]},
+                "confidence": 0.9
+            }
+        },
+        "answerKey": {
+            "cloud-q1": {"kind": "option", "labels": ["B"], "assignment": "per_slot"}
+        },
+        "unresolvedRegions": [{
+            "sourceFileId": "the source fileId you were given",
+            "pageIndex": 3,
+            "reason": "page_image_unavailable",
+            "detail": "what could not be read"
+        }],
+        "sourceCoverageNotes": ["anything about source coverage you could not verify"],
+        "warnings": []
+    });
+    let mut rules = vec![
+        "Return FULL recognition content, not an outline and not a summary. This is used as a complete candidate draft.".to_string(),
+        "Top-level keys: taskGroups, answerSlots, answerKey, unresolvedRegions, sourceCoverageNotes, warnings. Nothing else.".to_string(),
+        "Transcribe every question's FULL prompt text. Do not abbreviate, summarise or paraphrase any question.".to_string(),
+        "Transcribe every option's label and FULL option text. Keep the option bank per task group.".to_string(),
+        "Do NOT transcribe the reading passage / audio script body. Transcribe only what the task groups show: instructions, and the notes / table / diagram / flow-chart / form / summary text a group depends on (into stimulus).".to_string(),
+        "Give every question an answerKey entry. If the original file does not provide an answer, use {\"kind\": \"unresolved\"} — never invent an answer.".to_string(),
+        "answerKey values: {\"kind\":\"text\",\"values\":[\"...\"]} with at least one value, {\"kind\":\"option\",\"labels\":[\"A\"],\"assignment\":\"per_slot\"} with at least one label, or {\"kind\":\"unresolved\"}.".to_string(),
+        "Use temporary ids only (for example cloud-tg-1, cloud-q14, cloud-opt-a). NEVER copy ids from any other document and never use a real database id.".to_string(),
+        "Required on every taskGroup: taskId, displayRange, taskType, instructions (array), responseGroups (array). displayRange is {\"kind\":\"range\",\"start\":1,\"end\":5} or {\"kind\":\"set\",\"values\":[1,3,5]}.".to_string(),
+        "Required on every optionBank: optionBankId, scope, options, allowReuse; every option needs optionId, label and content (array).".to_string(),
+        "Required on every responseGroup: responseGroupId, kind, slotIds (non-empty), cardinality {min, max}, assignment, scoringPolicy, duplicatePolicy, allowOptionReuse (true/false).".to_string(),
+        "Required on every answerSlot: slotId, questionNumber, displayLabel, hostType, interaction, participation, confidence (0..1). Every slotIds entry in a responseGroup MUST appear as a key in answerSlots. Every hostNodeId MUST be an id you defined in this same output.".to_string(),
+        "Every content node needs type and id; text nodes need text; paragraph / heading / list_item / table_cell nodes need children.".to_string(),
+        "Do NOT output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus, pageIndex hashes or any publish/verification flag. The backend fills all of those.".to_string(),
+        "sourceAnchors are optional. If you provide them, use only {\"sourceFileId\": \"...\", \"pageIndex\": 1, \"nodeIds\": []}; pageIndex is 1-based. Never invent hashes or file paths.".to_string(),
+        "Report anything you could not read in unresolvedRegions (sourceFileId, 1-based pageIndex, reason, detail — all required) and anything you could not verify in sourceCoverageNotes. Do not hide gaps with empty arrays.".to_string(),
+        "Use only the enum values listed in outputContract.enums.".to_string(),
+        "Return JSON only. No Markdown, no explanations, no code fences.".to_string(),
+    ];
+    if modality == "listening" {
+        shape["listeningParts"] = json!([{
+            "displayLabel": "Part 1",
+            "expectedQuestionNumbers": [1, 2, 3, 4, 5],
+            "taskIds": ["cloud-tg-1"]
+        }]);
+        rules.insert(
+            2,
+            "This is an IELTS Listening question paper. It is organised in Parts (sections) 1-4; list them in listeningParts with displayLabel, expectedQuestionNumbers and the taskIds of the task groups printed under that Part. Every taskIds entry MUST be a taskId you defined.".to_string(),
+        );
+    }
+    json!({
+        "schema": "CloudAuthoringCandidateV1",
+        "jsonOnly": true,
+        "modality": modality,
+        "shape": shape,
+        "enums": {
+            "taskType": ["single_choice", "multiple_choice", "true_false_not_given", "yes_no_not_given", "matching_information", "matching_headings", "matching_features", "matching_sentence_endings", "classification", "sentence_completion", "summary_completion", "note_completion", "table_completion", "form_completion", "flowchart_completion", "diagram_label_completion", "plan_map_label_completion", "short_answer"],
+            "displayRange.kind": ["range", "set"],
+            "optionBank.scope": ["task_group", "response_group"],
+            "responseGroup.kind": ["choice", "text_entry", "matching", "diagram_hotspot", "composite"],
+            "responseGroup.assignment": ["per_slot", "unordered_set", "ordered_slots"],
+            "responseGroup.scoringPolicy": ["per_slot_binary", "per_slot_ielts_normalized", "exact_set", "all_or_nothing"],
+            "responseGroup.duplicatePolicy": ["reject_submission", "ignore_duplicates"],
+            "answerSlot.hostType": ["prompt", "paragraph", "table_cell", "figure_hotspot", "flow_step"],
+            "answerSlot.interaction": ["radio", "checkbox", "text", "select", "dragdrop", "hotspot"],
+            "answerSlot.participation": ["scoring", "example", "non_scoring"],
+            "answerKey.kind": ["text", "option", "unresolved"],
+            "answerKey.assignment": ["per_slot", "unordered_set", "ordered"],
+            "answerKey.normalization": ["ielts_default", "exact"]
+        },
+        "rules": rules
     })
 }
 
 /// 云端**完整候选**识别的输入。
 ///
 /// 与 [`make_cloud_paper_generation_input`] 的关键区别：后者要的是「比对用大纲」，
-/// 本函数要的是**可直接渲染的完整稿件**（正文、题组、富内容题干、选项库、作答位置、答案）。
+/// 本函数要的是**可直接渲染的完整稿件**（题组、富内容题干、选项库、作答位置、答案）。
 /// 模型只负责内容与**临时引用**；job/source 身份、质量、审计、稳定 ID 一律由后端生成。
+///
+/// `modality` 是模态钩子（`reading` 缺省；`listening` 让契约与 prompt 按 Listening 措辞，
+/// 并要求 `listeningParts`）。
 pub(crate) fn make_cloud_authoring_candidate_input(
     profile: &Value,
     job: &ImportJob,
@@ -395,9 +541,11 @@ pub(crate) fn make_cloud_authoring_candidate_input(
     source: &crate::SourceFile,
     pdf_path: &Path,
     extraction: &Value,
+    modality: &str,
 ) -> Value {
     json!({
         "mode": "generate_authoring_candidate",
+        "modality": candidate_modality(modality),
         "job": {"jobId": job.job_id, "title": job.title, "category": job.category, "frequency": job.frequency, "tags": job.tags},
         "profile": profile_payload(profile, profile_id),
         "sourceFile": {
@@ -410,105 +558,18 @@ pub(crate) fn make_cloud_authoring_candidate_input(
         "pdfPath": pdf_path.to_string_lossy(),
         "pages": extraction.get("pages").cloned().unwrap_or_else(|| json!([])),
         "extractionWarnings": extraction.get("warnings").cloned().unwrap_or_else(|| json!([])),
-        "outputContract": {
-            "schema": "CloudAuthoringCandidateV1",
-            "jsonOnly": true,
-            "shape": {
-                "passage": {
-                    "title": "passage title",
-                    "content": [{
-                        "type": "paragraph",
-                        "id": "TEMP-node-id",
-                        "children": [{"type": "text", "id": "TEMP-text-id", "text": "full paragraph text"}]
-                    }],
-                    "paragraphMap": {"A": "TEMP-node-id"}
-                },
-                "taskGroups": [{
-                    "taskId": "TEMP-group-id",
-                    "displayRange": {"kind": "range", "start": 1, "end": 5},
-                    "taskType": "true_false_not_given",
-                    "instructions": [{"type": "paragraph", "id": "TEMP-instr-id", "children": [{"type": "text", "id": "TEMP-instr-text", "text": "full instruction text"}]}],
-                    "stimulus": [{"type": "paragraph", "id": "TEMP-stim-id", "children": [{"type": "text", "id": "TEMP-stim-text", "text": "full notes / table / diagram text"}]}],
-                    "optionBank": {
-                        "optionBankId": "TEMP-bank-id",
-                        "scope": "task_group",
-                        "options": [{"optionId": "TEMP-option-id", "label": "A", "content": [{"type": "text", "id": "TEMP-option-text-id", "text": "full option text"}]}],
-                        "allowReuse": false
-                    },
-                    "responseGroups": [{
-                        "responseGroupId": "TEMP-rg-id",
-                        "kind": "choice",
-                        "prompt": [{"type": "paragraph", "id": "TEMP-prompt-id", "children": [{"type": "text", "id": "TEMP-prompt-text-id", "text": "full question prompt text"}]}],
-                        "slotIds": ["TEMP-slot-key"],
-                        "optionBankRef": "TEMP-bank-id",
-                        "cardinality": {"min": 1, "max": 1, "exact": 1},
-                        "assignment": "per_slot",
-                        "scoringPolicy": "per_slot_ielts_normalized",
-                        "duplicatePolicy": "reject_submission",
-                        "allowOptionReuse": false
-                    }]
-                }],
-                "answerSlots": {
-                    "TEMP-slot-key": {
-                        "slotId": "TEMP-slot-key",
-                        "questionNumber": 1,
-                        "displayLabel": "1",
-                        "hostNodeId": "TEMP-prompt-id",
-                        "hostType": "prompt",
-                        "interaction": "radio",
-                        "participation": "scoring",
-                        "constraints": {"acceptedOptionLabels": ["A", "B", "C"]},
-                        "confidence": 0.9
-                    }
-                },
-                "answerKey": {
-                    "TEMP-slot-key": {"kind": "option", "labels": ["B"], "assignment": "per_slot"}
-                },
-                "unresolvedRegions": [{
-                    "sourceFileId": "the source fileId you were given",
-                    "pageIndex": 3,
-                    "reason": "page_image_unavailable",
-                    "detail": "what could not be read"
-                }],
-                "sourceCoverageNotes": ["anything about source coverage you could not verify"],
-                "warnings": []
-            },
-            "enums": {
-                "taskType": ["single_choice", "multiple_choice", "true_false_not_given", "yes_no_not_given", "matching_information", "matching_headings", "matching_features", "matching_sentence_endings", "classification", "sentence_completion", "summary_completion", "note_completion", "table_completion", "form_completion", "flowchart_completion", "diagram_label_completion", "plan_map_label_completion", "short_answer"],
-                "displayRange.kind": ["range", "set"],
-                "responseGroup.kind": ["choice", "text_entry", "matching", "diagram_hotspot", "composite"],
-                "responseGroup.assignment": ["per_slot", "unordered_set", "ordered_slots"],
-                "responseGroup.scoringPolicy": ["per_slot_binary", "per_slot_ielts_normalized", "exact_set", "all_or_nothing"],
-                "responseGroup.duplicatePolicy": ["reject_submission", "ignore_duplicates"],
-                "answerSlot.hostType": ["prompt", "paragraph", "table_cell", "figure_hotspot", "flow_step"],
-                "answerSlot.interaction": ["radio", "checkbox", "text", "select", "dragdrop", "hotspot"],
-                "answerSlot.participation": ["scoring", "example", "non_scoring"],
-                "answerKey.kind": ["text", "option", "unresolved"],
-                "answerKey.assignment": ["per_slot", "unordered_set", "ordered"],
-                "answerKey.normalization": ["ielts_default", "exact"]
-            },
-            "rules": [
-                "Return FULL recognition content, not an outline and not a summary. This is used as a complete candidate draft.",
-                "Transcribe every question's FULL prompt text. Do not abbreviate, summarise or paraphrase any question.",
-                "Transcribe every option's label and FULL option text. Keep the option bank per task group.",
-                "Transcribe ALL passage text, notes, tables, diagrams and form text the task groups depend on into passage.content / instructions / stimulus.",
-                "Give every question an answerKey entry. If the original file does not provide an answer, use {\"kind\": \"unresolved\"} — never invent an answer.",
-                "Use temporary ids only (for example cloud-tg-1, cloud-q14, cloud-opt-a). NEVER copy ids from any other document and never use a real database id.",
-                "Every slotIds entry in a responseGroup MUST appear as a key in answerSlots. Every hostNodeId MUST be an id you defined in this same output.",
-                "Do NOT output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus, pageIndex hashes or any publish/verification flag. The backend fills all of those.",
-                "sourceAnchors are optional. If you provide them, use only {\"sourceFileId\": \"...\", \"pageIndex\": 1, \"nodeIds\": []}; pageIndex is 1-based. Never invent hashes or file paths.",
-                "Report anything you could not read in unresolvedRegions (with a 1-based pageIndex) and anything you could not verify in sourceCoverageNotes. Do not hide gaps with empty arrays.",
-                "Use only the enum values listed in outputContract.enums.",
-                "Return JSON only. No Markdown, no explanations, no code fences."
-            ]
-        }
+        "outputContract": authoring_candidate_output_contract(modality)
     })
 }
 
-/// 修复回合的输入：上下文 + 之前所有 observation。
+/// 修复输入里最多保留的观察条数（最近的优先）。
+pub(crate) const MAX_REPAIR_OBSERVATIONS: usize = 12;
+
+/// 修复回合的输入：上下文 + 最近的 observation（有界，见 [`MAX_REPAIR_OBSERVATIONS`]）。
 ///
 /// 采用**应用层 JSON 工具消息**（模型输出 JSON → Rust 分发 → 结果回传），而不是供应商
 /// native tools：现有网关只读 `message.content`，本轮不改造 SDK，也不实现第二套协议。
+/// `modality` 是模态钩子（`reading` 缺省）。
 pub(crate) fn make_repair_authoring_step_input(
     profile: &Value,
     job: &ImportJob,
@@ -517,9 +578,15 @@ pub(crate) fn make_repair_authoring_step_input(
     pdf_path: &Path,
     context: &Value,
     observations: &[Value],
+    modality: &str,
 ) -> Value {
+    // 观察历史有界：只带最近的若干条，省略多少如实写明。多轮修复不该让 prompt 无限增长，
+    // 而最近的观察（上一批被拒的具体原因、刚写入的新版本）才是模型下一步需要的。
+    let omitted = observations.len().saturating_sub(MAX_REPAIR_OBSERVATIONS);
+    let recent = &observations[omitted..];
     json!({
         "mode": "repair_authoring_step",
+        "modality": candidate_modality(modality),
         "job": {"jobId": job.job_id, "title": job.title},
         "profile": profile_payload(profile, profile_id),
         "sourceFile": {
@@ -530,7 +597,8 @@ pub(crate) fn make_repair_authoring_step_input(
         },
         "pdfPath": pdf_path.to_string_lossy(),
         "context": context,
-        "observations": observations,
+        "observations": recent,
+        "omittedObservationCount": omitted,
         "tools": {
             "read_draft": {
                 "purpose": "Read the CURRENT draft (authoritative canonical) for specific task groups.",
@@ -574,18 +642,15 @@ Use it when you have checked the original file and the difference does not need 
                 }
             }
         },
-        "allowedOps": [
-            "replaceText", "replaceContent", "insertNode", "moveNode", "deleteNode", "setAnswer",
-            "setTaskType", "setQuestionExpression", "setResponseCardinality", "setResponseGroup",
-            "setOptionBank", "insertAnswerSlot", "setNodeAttrs", "upsertTaskGroupBundle"
-        ],
+        // 唯一真源：分发器真正放行的 op 清单。手抄一份迟早漂移。
+        "allowedOps": crate::cloud_repair::tools::MODEL_ALLOWED_OPS,
         "rules": [
-            "Return JSON only: exactly one object {\"callId\":\"...\",\"tool\":\"...\",\"arguments\":{...}}.",
+            "Return JSON only: exactly one object {\"callId\":\"call-1\",\"tool\":\"read_draft\",\"arguments\":{}} (arguments per the tools table).",
             "tool MUST be one of read_draft, read_source, apply_edits, record_ruling, finish. There is no other tool.",
             "You may only use the ops listed in allowedOps. resolveIssue and any quality/audit/provenance flag are NOT available.",
             "apply_edits REQUIRES baseVersion. Call read_draft first and pass back the editVersion you actually saw.",
             "Target ids MUST be the stable ids you got from read_draft or the context. Never invent an id.",
-            "Content changes need evidence from the original file (sourceFileId, 1-based pageIndex, exact quote).",
+            "Attach evidence from the original file to content changes: evidence entries are {sourceFileId, 1-based pageIndex, exact non-empty quote}. A malformed entry rejects the whole batch. An empty evidence list is accepted, but the change then carries no source support for the reviewer.",
             "Never invent an answer the original file does not provide. Leave it unresolved instead.",
             "Some targets are protected because a human edited them. If a batch is rejected for that reason, narrow the batch instead of retrying the same commands.",
             "The context lists the WHOLE document. Do not claim the paper is verified just because you handled the listed differences.",
@@ -1070,4 +1135,89 @@ pub(crate) fn apply_suggestion_to_authoring(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_job() -> ImportJob {
+        crate::job_store::make_job(
+            serde_json::from_value(json!({"title": "Fixture"})).expect("CreateJobInput"),
+        )
+    }
+
+    fn fixture_source() -> crate::SourceFile {
+        serde_json::from_value(json!({
+            "fileId": "src-1",
+            "originalName": "paper.pdf",
+            "storedName": "paper.pdf",
+            "fileType": "pdf",
+            "sha256": "abc",
+            "sizeBytes": 10,
+            "role": "question_paper",
+            "importedAt": "2026-09-21T00:00:00Z"
+        }))
+        .expect("SourceFile")
+    }
+
+    fn repair_input(observations: &[Value], modality: &str) -> Value {
+        make_repair_authoring_step_input(
+            &json!({"model": "m"}),
+            &fixture_job(),
+            "profile-1",
+            &fixture_source(),
+            Path::new("C:/tmp/paper.pdf"),
+            &json!({"differences": []}),
+            observations,
+            modality,
+        )
+    }
+
+    /// 允许的 op 清单只有一份真源（分发器的 `MODEL_ALLOWED_OPS`）；手抄一份迟早漂移。
+    #[test]
+    fn repair_allowed_ops_come_from_the_dispatcher_allow_list() {
+        let input = repair_input(&[], "reading");
+        let declared: Vec<&str> = input["allowedOps"]
+            .as_array()
+            .expect("allowedOps")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(declared, crate::cloud_repair::tools::MODEL_ALLOWED_OPS.to_vec());
+    }
+
+    /// 观察历史有界：多轮修复不该让 prompt 无限增长。最近的保留，省略的如实计数。
+    #[test]
+    fn repair_observation_history_is_bounded_and_keeps_the_latest() {
+        let observations: Vec<Value> = (0..40)
+            .map(|index| json!({"callId": format!("c{index}")}))
+            .collect();
+        let input = repair_input(&observations, "reading");
+        let kept = input["observations"].as_array().expect("observations");
+        assert_eq!(kept.len(), MAX_REPAIR_OBSERVATIONS);
+        assert_eq!(kept.last().unwrap()["callId"], json!("c39"), "必须保留最近的观察");
+        assert_eq!(
+            input["omittedObservationCount"],
+            json!(40 - MAX_REPAIR_OBSERVATIONS),
+            "省略了多少必须如实写明"
+        );
+    }
+
+    /// 模态钩子：输入带上模态，后续 prompt 按模态措辞。
+    #[test]
+    fn candidate_and_repair_inputs_carry_the_modality() {
+        assert_eq!(repair_input(&[], "listening")["modality"], json!("listening"));
+        let candidate = make_cloud_authoring_candidate_input(
+            &json!({"model": "m"}),
+            &fixture_job(),
+            "profile-1",
+            &fixture_source(),
+            Path::new("C:/tmp/paper.pdf"),
+            &json!({}),
+            "listening",
+        );
+        assert_eq!(candidate["modality"], json!("listening"));
+        assert!(candidate["outputContract"]["shape"].get("listeningParts").is_some());
+    }
 }

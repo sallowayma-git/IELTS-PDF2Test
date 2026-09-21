@@ -1156,7 +1156,17 @@ fn real_docx_import_reaches_cloud_repair_with_original_source_evidence() {
 
     let seen = requests.lock().expect("requests");
     assert_eq!(seen.len(), 1, "one real DOCX repair request expected");
-    assert!(seen[0].contains("sourceText"), "DOCX repair must send source text evidence");
+    // The evidence is the dedicated source-text block; the prompt's Input JSON no
+    // longer repeats the same text a second time.
+    assert!(
+        seen[0].contains("SOURCE TEXT BEGIN"),
+        "DOCX repair must send source text evidence"
+    );
+    assert_eq!(
+        seen[0].matches("SOURCE TEXT BEGIN").count(),
+        1,
+        "the source text must be attached exactly once"
+    );
     assert!(
         seen[0].contains("complex-reading-docx") || seen[0].contains("complex-reading.docx"),
         "DOCX repair request must identify the original source: {}",
@@ -2769,5 +2779,132 @@ fn source_page_texts_falls_back_to_the_v1_extraction_and_never_invents_text() {
         Some("40 The writer recommends that to be effective, social history must")
     );
     assert_eq!(texts.get(&5).map(String::as_str), Some("BLANK PAGE"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// ── S4：修复回合被校验器拒绝时的受约束重试 ─────────────────────────────
+
+/// 复现：网关对修复回合的**校验拒绝**（未知工具、坏 JSON、截断）以前直接让整个循环
+/// 以 `unavailable` 结束——`repairNote` 分支在生产里是死的。现在同一回合内给模型**一次**
+/// 带原因的重试。
+#[test]
+fn a_rejected_repair_reply_gets_one_constrained_retry_carrying_the_reason() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "B");
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let mut calls = 0u32;
+    let mut note_seen_on_retry: Option<String> = None;
+    let report = run_repair_loop(&request, |_context: &Value, observations: &[Value]| {
+        calls += 1;
+        if calls == 1 {
+            return Err("cloud_repair_step_tool_unknown:edit_everything".to_string());
+        }
+        note_seen_on_retry = observations
+            .last()
+            .and_then(|observation| observation.get("repairNote"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        Ok(json!({"callId": "f1", "tool": "finish", "arguments": {"note": "done"}}))
+    })
+    .expect("修复循环必须返回结果");
+
+    assert_eq!(calls, 2, "被拒之后必须在同一回合重试一次");
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:?}");
+    assert_eq!(report.rounds, 1, "重试不另算一个回合：{report:?}");
+    assert!(report.last_error.is_none(), "{report:?}");
+    assert!(
+        note_seen_on_retry
+            .as_deref()
+            .unwrap_or("")
+            .contains("cloud_repair_step_tool_unknown"),
+        "重试必须带上被拒的具体原因：{note_seen_on_retry:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 只重试**一次**，且只对校验拒绝重试：连续两次被拒如实 unavailable（两个原因都留下），
+/// 传输错误不重试。
+#[test]
+fn a_second_rejection_or_a_transport_error_still_ends_the_loop_unavailable() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "B");
+    let not_cancelled = || false;
+
+    let request_twice = request(&root, &not_cancelled, 4);
+    let mut calls = 0u32;
+    let report = run_repair_loop(&request_twice, |_context: &Value, _observations: &[Value]| {
+        calls += 1;
+        Err(format!("llm_json_parse_failed:attempt-{calls}"))
+    })
+    .expect("修复循环必须返回结果");
+    assert_eq!(calls, 2, "每回合最多一次受约束重试");
+    assert_eq!(report.status, REPAIR_STATUS_UNAVAILABLE);
+    let last_error = report.last_error.clone().unwrap_or_default();
+    assert!(
+        last_error.contains("attempt-2") && last_error.contains("attempt-1"),
+        "两次被拒的原因都要留下：{last_error}"
+    );
+
+    let request_transport = request(&root, &not_cancelled, 4);
+    let mut transport_calls = 0u32;
+    let report = run_repair_loop(&request_transport, |_context: &Value, _observations: &[Value]| {
+        transport_calls += 1;
+        Err("llm_timeout_budget_exhausted:llm_http_timeout:stalled".to_string())
+    })
+    .expect("修复循环必须返回结果");
+    assert_eq!(transport_calls, 1, "超时重问同一句话没有意义，不得重试");
+    assert_eq!(report.status, REPAIR_STATUS_UNAVAILABLE);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 剧本：第一轮回一段解析不了的文字，第二轮（重试）正常收工。
+fn scripted_garbage_then_finish_reply(_body: &str, round: usize) -> String {
+    if round == 1 {
+        "I think the draft looks fine overall.".to_string()
+    } else {
+        json!({"callId": "f1", "tool": "finish", "arguments": {"note": "retry succeeded"}})
+            .to_string()
+    }
+}
+
+/// 同一件事走**真实网关**：受控服务第一次回坏 JSON，网关拒绝；循环带着原因重问，
+/// 第二个 HTTP 请求的 prompt 里必须真的写着被拒原因，循环以 completed 结束（以前是 unavailable）。
+#[test]
+fn a_rejected_reply_is_retried_through_the_real_gateway_with_the_rejection_in_the_prompt() {
+    let root = temp_root();
+    let canonical = golden_authoring();
+    seed_item(&root, &canonical);
+    store_candidate(&root, "B");
+    seed_job_with_source(&root);
+    let requests = start_repair_service(&root, scripted_garbage_then_finish_reply);
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 4);
+    let report = run_repair_loop(&request, |context: &Value, observations: &[Value]| {
+        repair_authoring_step_through_gateway(
+            &root,
+            ITEM_ID,
+            Some("controlled-repair"),
+            context,
+            observations,
+        )
+    })
+    .expect("修复循环必须返回结果");
+
+    assert_eq!(report.status, REPAIR_STATUS_COMPLETED, "{report:?}");
+    let seen = requests.lock().expect("requests");
+    assert_eq!(seen.len(), 2, "一次被拒 + 一次受约束重试");
+    assert!(
+        seen[1].contains("REJECTED") && seen[1].contains("llm_json_parse_failed"),
+        "重试请求必须把被拒原因写进 prompt"
+    );
+    assert!(!seen[0].contains("REJECTED"), "首轮请求不该带被拒说明");
+    drop(seen);
     let _ = std::fs::remove_dir_all(&root);
 }

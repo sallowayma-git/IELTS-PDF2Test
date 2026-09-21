@@ -1528,6 +1528,8 @@ pub(crate) struct NormalizedCloudAuthoring {
     pub unresolved_regions: Vec<CloudCandidateUnresolvedRegionV1>,
     pub source_coverage_notes: Vec<String>,
     pub warnings: Vec<String>,
+    /// 分块识别时，失败的块没有覆盖到的题号（升序去重）。非空 ⇒ 候选至多 `Partial`。
+    pub uncovered_question_numbers: Vec<u32>,
 }
 
 /// 权威稿里一个题组的**身份索引**（只读）。
@@ -2077,12 +2079,116 @@ fn sanitize_anchors(value: &mut Value, identity: &CloudAuthoringIdentity<'_>) {
     }
 }
 
+/// 内容节点的后端字段：`sourceAnchors` 缺省为空数组，`provenanceStatus` 一律由后端定为
+/// `source`（模型转写的是原文件内容；模型写什么来源标记都不采信——它无权声称
+/// `user_edited`，那会影响人工保护判定）。子节点递归处理。
+fn fill_content_node_defaults(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                fill_content_node_defaults(item);
+            }
+        }
+        Value::Object(map) => {
+            if map.get("type").map(Value::is_string).unwrap_or(false) {
+                if !map.get("sourceAnchors").map(Value::is_array).unwrap_or(false) {
+                    map.insert("sourceAnchors".to_string(), json!([]));
+                }
+                map.insert("provenanceStatus".to_string(), json!("source"));
+            }
+            for key in ["children", "items", "rows", "cells", "caption"] {
+                if let Some(child) = map.get_mut(key) {
+                    fill_content_node_defaults(child);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn ensure_source_anchors(map: &mut Map<String, Value>) {
+    if !map.get("sourceAnchors").map(Value::is_array).unwrap_or(false) {
+        map.insert("sourceAnchors".to_string(), json!([]));
+    }
+}
+
+/// 补齐**后端拥有**、模型被明确告知不要输出的字段。
+///
+/// 输出契约告诉模型：`sourceAnchors` 可选、`provenanceStatus` 不许写。那么照契约回复的
+/// 模型必然缺这两个字段——而 `IeltsAuthoringIRV2` 把它们定为必填。不在这里补，照做的
+/// 模型就会在 finalize 被整份拒绝。只补这两类后端字段，**不补任何内容字段**。
+fn fill_backend_owned_defaults(draft: &mut Value) {
+    let Some(document) = draft.as_object_mut() else {
+        return;
+    };
+    if let Some(passage) = document.get_mut("passage").and_then(Value::as_object_mut) {
+        ensure_source_anchors(passage);
+        if let Some(content) = passage.get_mut("content") {
+            fill_content_node_defaults(content);
+        }
+    }
+    if let Some(groups) = document.get_mut("taskGroups").and_then(Value::as_array_mut) {
+        for group in groups.iter_mut() {
+            let Some(group_map) = group.as_object_mut() else {
+                continue;
+            };
+            for key in ["instructions", "stimulus"] {
+                if let Some(nodes) = group_map.get_mut(key) {
+                    fill_content_node_defaults(nodes);
+                }
+            }
+            if let Some(bank) = group_map.get_mut("optionBank").and_then(Value::as_object_mut) {
+                ensure_source_anchors(bank);
+                if let Some(title) = bank.get_mut("title") {
+                    fill_content_node_defaults(title);
+                }
+                if let Some(options) = bank.get_mut("options").and_then(Value::as_array_mut) {
+                    for option in options.iter_mut().filter_map(Value::as_object_mut) {
+                        ensure_source_anchors(option);
+                        option.remove("provenanceStatus");
+                        if let Some(content) = option.get_mut("content") {
+                            fill_content_node_defaults(content);
+                        }
+                    }
+                }
+            }
+            if let Some(response_groups) =
+                group_map.get_mut("responseGroups").and_then(Value::as_array_mut)
+            {
+                for response in response_groups.iter_mut().filter_map(Value::as_object_mut) {
+                    ensure_source_anchors(response);
+                    if let Some(prompt) = response.get_mut("prompt") {
+                        fill_content_node_defaults(prompt);
+                    }
+                    if let Some(options) = response.get_mut("options").and_then(Value::as_array_mut)
+                    {
+                        for option in options.iter_mut().filter_map(Value::as_object_mut) {
+                            ensure_source_anchors(option);
+                            option.remove("provenanceStatus");
+                            if let Some(content) = option.get_mut("content") {
+                                fill_content_node_defaults(content);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(slots) = document.get_mut("answerSlots").and_then(Value::as_object_mut) {
+        for slot in slots.values_mut().filter_map(Value::as_object_mut) {
+            ensure_source_anchors(slot);
+            slot.remove("provenanceStatus");
+        }
+    }
+}
+
 /// 把模型草稿收敛到 `IeltsAuthoringIRV2` 的**精确**形状。
 ///
 /// 只做三件事：枚举别名归一、锚点补后端字段、剥掉契约外的键。**不动内容**——
 /// 文本、选项、答案一律原样搬运，缺失就保持缺失（由解析如实报错）。
 fn sanitize_cloud_authoring_draft(draft: &mut Value, identity: &CloudAuthoringIdentity<'_>) {
     sanitize_anchors(draft, identity);
+    fill_backend_owned_defaults(draft);
 
     let Some(document) = draft.as_object_mut() else {
         return;
@@ -2232,7 +2338,7 @@ pub(crate) fn normalize_cloud_authoring(
     // 目的是让「无害的写法差异」不要升级成整份候选反序列化失败。
     sanitize_cloud_authoring_draft(&mut draft, identity);
 
-    let source_coverage_notes: Vec<String> = raw
+    let mut source_coverage_notes: Vec<String> = raw
         .get("sourceCoverageNotes")
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
@@ -2246,6 +2352,31 @@ pub(crate) fn normalize_cloud_authoring(
         .unwrap_or_default();
     if let Some(items) = raw.get("warnings").and_then(Value::as_array) {
         warnings.extend(items.iter().filter_map(Value::as_str).map(str::to_string));
+    }
+    // 分块识别里失败的块：题号如实带出，并成为用户可见的覆盖说明。
+    let uncovered_question_numbers: Vec<u32> = raw
+        .get("uncoveredQuestionNumbers")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_u64)
+                .filter_map(|number| u32::try_from(number).ok())
+                .collect::<BTreeSet<u32>>()
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default();
+    if !uncovered_question_numbers.is_empty() {
+        source_coverage_notes.push(format!(
+            "云端识别未覆盖第 {} 题（该部分的云端请求失败），这些题只有本地识别结果。",
+            format_question_numbers(&uncovered_question_numbers)
+        ));
+    }
+    // Listening 的部分结构（`ListeningStructureV2`）还需要媒体信息，那是听力导入链的
+    // 事实，模型给不出；这里如实记下「收到了但尚未套用」，不伪造一个听力结构。
+    if let Some(parts) = draft.get("listeningParts").and_then(Value::as_array) {
+        warnings.push(format!("cloud_listening_parts_not_applied:{}", parts.len()));
     }
 
     let groups: Vec<Value> = draft
@@ -2264,6 +2395,7 @@ pub(crate) fn normalize_cloud_authoring(
             unresolved_regions,
             source_coverage_notes,
             warnings,
+            uncovered_question_numbers,
         });
     }
 
@@ -2627,12 +2759,14 @@ pub(crate) fn normalize_cloud_authoring(
         }),
     );
 
-    let status = if unresolved.is_empty() {
+    let status = if unresolved.is_empty() && uncovered_question_numbers.is_empty() {
         ChainStatusV1::Succeeded
     } else {
         ChainStatusV1::Partial
     };
-    let reason_code = if unresolved.is_empty() {
+    let reason_code = if !uncovered_question_numbers.is_empty() {
+        Some("cloud_authoring_candidate_chunks_failed".to_string())
+    } else if unresolved.is_empty() {
         None
     } else {
         Some("cloud_authoring_candidate_unresolved_references".to_string())
@@ -2647,6 +2781,7 @@ pub(crate) fn normalize_cloud_authoring(
         unresolved_regions,
         source_coverage_notes,
         warnings,
+        uncovered_question_numbers,
     })
 }
 
@@ -2726,6 +2861,258 @@ fn placeholder_quality_report(generated_at: &str) -> Value {
         "evaluatedAt": generated_at,
         "evaluatorVersion": "cloud_authoring_candidate_placeholder"
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// 云端候选分块（S3）
+//
+// 整卷一次请求在真实网关上会超时（212 KB PDF 在 120 s 预算内出不完整份输出）。
+// 分块计划来自**原文件自己声明的题号**（`Questions 14-26`），绝不来自本地识别的结论——
+// 云端必须保持独立，否则「本地漏了一段、云端也跟着漏」。每块的临时 id 在合并前加上
+// 块命名空间：所有块都会用 cloud-tg-1 / cloud-rg-1 这样的临时 id，直接合并会让
+// 引用重写把两个题组接到同一组 id 上。
+// ─────────────────────────────────────────────────────────────────────
+
+/// 一块的题量上限：没有 passage 级声明时，相邻题组声明合并到不超过这个数。
+const MAX_CHUNK_QUESTIONS: usize = 14;
+
+/// 一个候选分块：一段原文件声明的题号。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CandidateChunk {
+    pub label: String,
+    pub question_numbers: Vec<u32>,
+}
+
+impl CandidateChunk {
+    pub(crate) fn new(mut question_numbers: Vec<u32>) -> Self {
+        question_numbers.sort_unstable();
+        question_numbers.dedup();
+        let label = format!("Questions {}", format_question_numbers(&question_numbers));
+        Self {
+            label,
+            question_numbers,
+        }
+    }
+
+    pub(crate) fn as_value(&self) -> Value {
+        json!({"label": self.label, "questionNumbers": self.question_numbers})
+    }
+}
+
+/// `[1,2,3,5]` → `1-3, 5`。
+pub(crate) fn format_question_numbers(numbers: &[u32]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < numbers.len() {
+        let start = numbers[index];
+        let mut end = start;
+        while index + 1 < numbers.len() && numbers[index + 1] == end + 1 {
+            index += 1;
+            end = numbers[index];
+        }
+        parts.push(if start == end {
+            start.to_string()
+        } else {
+            format!("{start}-{end}")
+        });
+        index += 1;
+    }
+    parts.join(", ")
+}
+
+/// 从原文件文本规划候选分块。
+///
+/// 1. 取出全部 `Questions …` 声明（与来源覆盖检查同一套解析）；
+/// 2. 被别的声明完全包含的声明丢掉（`Questions 1-5` 在 `Questions 1-13` 之内）；
+///    部分重叠的合并——剩下的就是 passage 级（或题组级）的不相交块；
+/// 3. 相邻小块按顺序合并，直到超过 [`MAX_CHUNK_QUESTIONS`]；
+/// 4. 最后不足两块 ⇒ 返回空计划，调用方回到一次整卷请求。
+pub(crate) fn plan_candidate_chunks(source_text: &str) -> Vec<CandidateChunk> {
+    let blocks: Vec<BTreeSet<u32>> = crate::ielts_grammar::source_coverage::declared_question_blocks(source_text)
+        .into_iter()
+        .map(|numbers| numbers.into_iter().collect::<BTreeSet<u32>>())
+        .collect();
+    // 保留极大块（不被任何更大的块严格包含），相同块去重。
+    let mut maximal: Vec<BTreeSet<u32>> = Vec::new();
+    for block in &blocks {
+        let contained = blocks
+            .iter()
+            .any(|other| other.len() > block.len() && block.is_subset(other));
+        if !contained && !maximal.contains(block) {
+            maximal.push(block.clone());
+        }
+    }
+    maximal.sort_by_key(|block| block.iter().next().copied().unwrap_or(0));
+    // 部分重叠（区间相交）的合并成一块，保证各块不相交。
+    let mut disjoint: Vec<BTreeSet<u32>> = Vec::new();
+    for block in maximal {
+        let first = block.iter().next().copied().unwrap_or(0);
+        match disjoint.last_mut() {
+            Some(last) if last.iter().next_back().copied().unwrap_or(0) >= first => {
+                last.extend(block);
+            }
+            _ => disjoint.push(block),
+        }
+    }
+    // 相邻小块按顺序打包。
+    let mut packed: Vec<BTreeSet<u32>> = Vec::new();
+    for block in disjoint {
+        match packed.last_mut() {
+            Some(last) if last.len() + block.len() <= MAX_CHUNK_QUESTIONS => last.extend(block),
+            _ => packed.push(block),
+        }
+    }
+    if packed.len() < 2 {
+        return Vec::new();
+    }
+    packed
+        .into_iter()
+        .map(|block| CandidateChunk::new(block.into_iter().collect()))
+        .collect()
+}
+
+/// 给一块的临时 id 加上块命名空间（`c2-cloud-tg-1`），**全有或全无**地重写所有引用。
+///
+/// 资源引用（`assetId` 等）不加前缀：那是后端登记的稳定 id，不属于模型的临时空间。
+fn namespace_chunk_ids(chunk_output: &mut Value, prefix: &str) -> CommandResult<()> {
+    let mut temp_ids: BTreeSet<String> = BTreeSet::new();
+    collect_reference_ids(chunk_output, &mut temp_ids);
+    let mut asset_ids: BTreeSet<String> = BTreeSet::new();
+    collect_asset_ids(chunk_output, &mut asset_ids);
+    let id_map: BTreeMap<String, String> = temp_ids
+        .iter()
+        .filter(|id| !asset_ids.contains(*id) && !id.is_empty())
+        .map(|id| (id.clone(), format!("{prefix}{id}")))
+        .collect();
+    let outcome = rewrite_authoring_references(chunk_output, &id_map, &temp_ids);
+    if !outcome.conflicts.is_empty() {
+        return Err(format!(
+            "cloud_authoring_chunk_namespace_conflict:{}",
+            outcome.conflicts.join(";")
+        ));
+    }
+    // listeningParts[].taskIds 也在重写范围内（`taskIds` 按字段名递归处理）。
+    Ok(())
+}
+
+fn collect_asset_ids(value: &Value, out: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                if matches!(key.as_str(), "assetId" | "visualFallbackAssetId" | "assetRef") {
+                    if let Some(text) = child.as_str() {
+                        out.insert(text.to_string());
+                    }
+                } else if key == "assetIds" {
+                    for item in child.as_array().into_iter().flatten() {
+                        if let Some(text) = item.as_str() {
+                            out.insert(text.to_string());
+                        }
+                    }
+                }
+                collect_asset_ids(child, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_asset_ids(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 把各块的模型输出合并成一份整卷候选原始 JSON（交给 `normalize_cloud_authoring`）。
+///
+/// - 成功的块：先加块命名空间，再拼接 taskGroups / answerSlots / answerKey / 说明类数组；
+/// - 失败的块：错误进 `warnings`，题号进 `uncoveredQuestionNumbers`（标准化据此给出
+///   `Partial` 与用户可见的覆盖说明）；
+/// - 全部失败 ⇒ `Err`（带每块的原因），不拿空壳冒充候选。
+pub(crate) fn merge_candidate_chunks(
+    results: Vec<(CandidateChunk, CommandResult<Value>)>,
+) -> CommandResult<Value> {
+    let mut task_groups: Vec<Value> = Vec::new();
+    let mut answer_slots = Map::new();
+    let mut answer_key = Map::new();
+    let mut unresolved_regions: Vec<Value> = Vec::new();
+    let mut coverage_notes: Vec<Value> = Vec::new();
+    let mut warnings: Vec<Value> = Vec::new();
+    let mut listening_parts: Vec<Value> = Vec::new();
+    let mut uncovered: BTreeSet<u32> = BTreeSet::new();
+    let mut failures: Vec<String> = Vec::new();
+    let mut chunks_meta: Vec<Value> = Vec::new();
+    let mut succeeded = 0usize;
+
+    for (index, (chunk, result)) in results.into_iter().enumerate() {
+        let prefix = format!("c{}-", index + 1);
+        let mut output = match result {
+            Ok(value) => value
+                .get("authoring")
+                .filter(|inner| inner.is_object())
+                .cloned()
+                .map(|mut inner| {
+                    // 说明类字段可能在外层：一并带进来。
+                    for key in ["unresolvedRegions", "sourceCoverageNotes", "warnings", "listeningParts"] {
+                        if let Some(extra) = value.get(key) {
+                            inner[key] = extra.clone();
+                        }
+                    }
+                    inner
+                })
+                .unwrap_or(value),
+            Err(error) => {
+                uncovered.extend(chunk.question_numbers.iter().copied());
+                warnings.push(json!(format!("cloud_candidate_chunk_failed:{}:{error}", chunk.label)));
+                failures.push(format!("{}:{error}", chunk.label));
+                chunks_meta.push(json!({"label": chunk.label, "questionNumbers": chunk.question_numbers, "ok": false, "error": error}));
+                continue;
+            }
+        };
+        if let Err(error) = namespace_chunk_ids(&mut output, &prefix) {
+            uncovered.extend(chunk.question_numbers.iter().copied());
+            warnings.push(json!(format!("cloud_candidate_chunk_failed:{}:{error}", chunk.label)));
+            failures.push(format!("{}:{error}", chunk.label));
+            chunks_meta.push(json!({"label": chunk.label, "questionNumbers": chunk.question_numbers, "ok": false, "error": error}));
+            continue;
+        }
+        succeeded += 1;
+        chunks_meta.push(json!({"label": chunk.label, "questionNumbers": chunk.question_numbers, "ok": true}));
+        task_groups.extend(output.get("taskGroups").and_then(Value::as_array).cloned().unwrap_or_default());
+        if let Some(slots) = output.get("answerSlots").and_then(Value::as_object) {
+            answer_slots.extend(slots.clone());
+        }
+        if let Some(keys) = output.get("answerKey").and_then(Value::as_object) {
+            answer_key.extend(keys.clone());
+        }
+        for (key, target) in [
+            ("unresolvedRegions", &mut unresolved_regions),
+            ("sourceCoverageNotes", &mut coverage_notes),
+            ("warnings", &mut warnings),
+            ("listeningParts", &mut listening_parts),
+        ] {
+            target.extend(output.get(key).and_then(Value::as_array).cloned().unwrap_or_default());
+        }
+    }
+    if succeeded == 0 {
+        return Err(format!(
+            "cloud_authoring_candidate_all_chunks_failed:{}",
+            failures.join(" | ")
+        ));
+    }
+    let mut merged = json!({
+        "taskGroups": task_groups,
+        "answerSlots": answer_slots,
+        "answerKey": answer_key,
+        "unresolvedRegions": unresolved_regions,
+        "sourceCoverageNotes": coverage_notes,
+        "warnings": warnings,
+        "uncoveredQuestionNumbers": uncovered.into_iter().collect::<Vec<u32>>(),
+        "cloudChunks": chunks_meta,
+    });
+    if !listening_parts.is_empty() {
+        merged["listeningParts"] = json!(listening_parts);
+    }
+    Ok(merged)
 }
 
 #[cfg(test)]
@@ -4041,5 +4428,178 @@ mod cloud_authoring_tests {
             normalized.source_coverage_notes,
             vec!["DOCX 图表证据不完整".to_string()]
         );
+    }
+
+    /// 输出契约不再要求 `passage`（它是最大的一块输出，却没有任何环节读它）。
+    /// 证明：有无 passage，finalize 都成功；修复回合看到的差异清单完全相同。
+    #[test]
+    fn candidate_without_a_passage_finalizes_and_yields_the_same_differences() {
+        let canonical = golden_authoring();
+        let without = json!({"authoring": cloud_draft(&[14, 15], "cloud")});
+        let mut with_draft = cloud_draft(&[14, 15], "cloud");
+        with_draft["passage"] = json!({
+            "title": "Early approaches",
+            "content": [paragraph("cloud-passage-p1", "cloud-passage-t1", "A long passage body.")],
+            "sourceAnchors": []
+        });
+        let with = json!({"authoring": with_draft});
+
+        let finalize = |raw: &Value| {
+            let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), raw)
+                .expect("标准化必须成功");
+            cloud_authoring_candidate_from_normalized(&identity(), normalized)
+                .expect("没有 passage 也必须能装配")
+        };
+        let candidate_without = finalize(&without);
+        let candidate_with = finalize(&with);
+        assert!(candidate_without.authoring.passage.is_none());
+
+        let differences = |candidate: &CloudAuthoringCandidateV1| {
+            crate::cloud_repair::candidate_differences(
+                &canonical,
+                &serde_json::to_value(&candidate.authoring).unwrap(),
+            )
+        };
+        assert_eq!(
+            differences(&candidate_without),
+            differences(&candidate_with),
+            "差异清单不得依赖 passage"
+        );
+    }
+
+    // ── S3：候选分块 + 合并 ───────────────────────────────────────────────
+
+    fn chunk(numbers: &[u32]) -> CandidateChunk {
+        CandidateChunk::new(numbers.to_vec())
+    }
+
+    /// 分块计划来自**原文件自己声明的题号**（含 no-space 与 glyph-spaced 写法），
+    /// 按 passage 级声明切块。
+    #[test]
+    fn chunk_plan_follows_the_passage_declarations_of_the_original_file() {
+        let text = "READING PASSAGE 1\n\
+You should spend about 20 minutes on Questions 1-13, which are based on Reading Passage 1.\n\
+Questions 1-5\nDo the following statements agree...\n\
+Questions6-13\nComplete the notes.\n\
+READING PASSAGE 2\n\
+You should spend about 20 minutes on Questions 14-26\n\
+Questions 14-20\nQuestions 21-26\n\
+You should spend about 20 minutes on Questions 2 7 – 4 0\n\
+Questions 2 7 – 3 1\nQuestions 32-40\n";
+        let plan = plan_candidate_chunks(text);
+        let ranges: Vec<Vec<u32>> = plan.iter().map(|chunk| chunk.question_numbers.clone()).collect();
+        assert_eq!(
+            ranges,
+            vec![(1..=13).collect::<Vec<u32>>(), (14..=26).collect(), (27..=40).collect()]
+        );
+        assert_eq!(plan[2].label, "Questions 27-40");
+    }
+
+    /// 没有 passage 级声明时，相邻题组声明合并到一块不超过上限；只剩一块 ⇒ 空计划
+    /// （调用方回到一次整卷请求）。没有任何声明 ⇒ 空计划。
+    #[test]
+    fn chunk_plan_packs_small_groups_and_falls_back_to_one_request() {
+        assert!(plan_candidate_chunks("Questions 1-5\nQuestions 6-9\nQuestions 10-13\n").is_empty());
+        assert!(plan_candidate_chunks("A passage with no question declarations.").is_empty());
+        let plan = plan_candidate_chunks(
+            "Questions 1-7\nQuestions 8-13\nQuestions 14-20\nQuestions 21-26\n",
+        );
+        let ranges: Vec<Vec<u32>> = plan.iter().map(|chunk| chunk.question_numbers.clone()).collect();
+        assert_eq!(ranges, vec![(1..=13).collect::<Vec<u32>>(), (14..=26).collect()]);
+    }
+
+    /// 两块都用 `cloud-tg-1` / `cloud-rg-1` / `cloud-ob-1` 这类临时 id：不加命名空间直接合并，
+    /// 两个题组会共用同一组 id（引用重写必然冲突或张冠李戴）。合并后必须无冲突地标准化，
+    /// 并按 (题型, 题号) 映射到权威稿的对应题组。
+    #[test]
+    fn chunks_reusing_the_same_temporary_ids_merge_and_map_onto_canonical_groups() {
+        let canonical = golden_authoring();
+        let first = cloud_draft(&[14, 15], "cloud");
+        let second = cloud_draft(&[16, 17], "cloud");
+        assert_eq!(first["taskGroups"][0]["taskId"], second["taskGroups"][0]["taskId"], "测试前提：临时 id 相撞");
+
+        let merged = merge_candidate_chunks(vec![
+            (chunk(&[14, 15]), Ok(first)),
+            (chunk(&[16, 17]), Ok(second)),
+        ])
+        .expect("两块都成功必须能合并");
+        let task_ids: Vec<&str> = merged["taskGroups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|group| group["taskId"].as_str())
+            .collect();
+        assert_eq!(task_ids.len(), 2);
+        assert_ne!(task_ids[0], task_ids[1], "合并后临时 id 必须带块命名空间");
+
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &merged).expect("合并稿必须能标准化");
+        assert_eq!(normalized.status, ChainStatusV1::Succeeded, "{:?}", normalized.unresolved_references);
+        assert!(normalized.uncovered_question_numbers.is_empty());
+        let candidate =
+            cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("必须可装配");
+        let groups = &candidate.authoring.task_groups;
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].task_id, "early-approaches-q14-15", "14-15 必须接到权威稿题组");
+        assert_eq!(groups[1].task_id, "cloud-tg-16-17", "16-17 是新题组，由后端分配身份");
+        assert_ne!(
+            groups[0].response_groups[0].response_group_id,
+            groups[1].response_groups[0].response_group_id
+        );
+        for key in ["q14", "q15", "q16", "q17"] {
+            assert!(candidate.authoring.answer_slots.contains_key(key), "缺 {key}");
+        }
+        assert_eq!(
+            candidate.authoring.answer_slots["q16"].host_node_id.as_deref(),
+            groups[1].response_groups[0]
+                .prompt
+                .as_ref()
+                .and_then(|prompt| serde_json::to_value(&prompt[0]).ok())
+                .and_then(|node| node["id"].as_str().map(str::to_string))
+                .as_deref(),
+            "第二块的 hostNodeId 必须指向第二块自己的提示节点"
+        );
+    }
+
+    /// 一块失败：候选是 Partial，未覆盖的题号如实列出，并成为用户可见的覆盖说明——
+    /// 不是整份失败，也不是假装覆盖了。
+    #[test]
+    fn one_failing_chunk_yields_a_partial_candidate_with_uncovered_numbers() {
+        let canonical = golden_authoring();
+        let merged = merge_candidate_chunks(vec![
+            (chunk(&[14, 15]), Ok(cloud_draft(&[14, 15], "cloud"))),
+            (chunk(&[16, 17]), Err("llm_timeout_budget_exhausted:llm_http_timeout".to_string())),
+        ])
+        .expect("只要有一块成功就不是整份失败");
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &merged).expect("必须能标准化");
+        assert_eq!(normalized.status, ChainStatusV1::Partial);
+        assert_eq!(normalized.uncovered_question_numbers, vec![16, 17]);
+        assert_eq!(
+            normalized.reason_code.as_deref(),
+            Some("cloud_authoring_candidate_chunks_failed")
+        );
+        assert!(
+            normalized
+                .source_coverage_notes
+                .iter()
+                .any(|note| note.contains("16") && note.contains("17")),
+            "未覆盖题号必须成为覆盖说明：{:?}",
+            normalized.source_coverage_notes
+        );
+        assert!(normalized
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("llm_timeout_budget_exhausted")));
+        let candidate =
+            cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("部分候选仍可装配");
+        assert_eq!(candidate.status, ChainStatusV1::Partial);
+
+        let all_failed = merge_candidate_chunks(vec![
+            (chunk(&[14, 15]), Err("llm_http_500:a".to_string())),
+            (chunk(&[16, 17]), Err("llm_http_500:b".to_string())),
+        ]);
+        let error = all_failed.expect_err("全部失败必须如实失败");
+        assert!(error.contains("llm_http_500:a") && error.contains("llm_http_500:b"), "{error}");
     }
 }
