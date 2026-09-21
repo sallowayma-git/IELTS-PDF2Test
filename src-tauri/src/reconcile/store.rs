@@ -631,6 +631,32 @@ pub(crate) fn write_batch_cloud_stage(
     Ok(())
 }
 
+/// 批次基线之后，**人**有没有改过这份稿。
+///
+/// 「过期」的产品含义是「这批建议是针对你修改之前的内容做的」。云端修复、答案页识别
+/// 这些机器写入同样会推进编辑版本，拿 `base < current` 判过期，用户一笔没改就会被
+/// 警告「你修改之前」。这里只数 `edit_origin = 'human'` 的编辑日志行，且排除
+/// 「在识别面板里接受这批建议」本身（`recognition-accept:` 请求）——那是对这批建议
+/// 的回应，不是另一处修改。
+pub(crate) fn human_edited_since(
+    conn: &Connection,
+    item_id: &str,
+    base_edit_version: i64,
+) -> CommandResult<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM editor_journal_v1
+             WHERE library_item_id = ?1
+               AND edit_origin = 'human'
+               AND base_version >= ?2
+               AND (request_id IS NULL OR request_id NOT LIKE 'recognition-accept:%'))",
+        params![item_id, base_edit_version],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|exists| exists != 0)
+    .map_err(|error| format!("recognition_human_edit_lookup:{error}"))
+}
+
 /// 读取条目最新批次的裁决（数据库为读取权威）。
 pub(crate) fn load_latest_decision(
     conn: &Connection,

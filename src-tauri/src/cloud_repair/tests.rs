@@ -2771,3 +2771,137 @@ fn source_page_texts_falls_back_to_the_v1_extraction_and_never_invents_text() {
     assert_eq!(texts.get(&5).map(String::as_str), Some("BLANK PAGE"));
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── 读路径：陈旧判定与剩余任务重算（产品读命令 `get_recognition_decision_core`）──────
+
+/// 建一行真实批次（与本地周期写入同一张表），基线为 `base_edit_version`。
+fn seed_batch_row(root: &Path, base_edit_version: i64) {
+    use crate::schema::recognition_v1::{
+        ChainStatusSummaryV1, ChainStatusV1, DecisionSummaryV1, RecognitionDecisionV1,
+        RECOGNITION_DECISION_V1_SCHEMA_VERSION,
+    };
+    let decision = RecognitionDecisionV1 {
+        schema_version: RECOGNITION_DECISION_V1_SCHEMA_VERSION.to_string(),
+        batch_id: BATCH_ID.to_string(),
+        item_id: ITEM_ID.to_string(),
+        job_id: ITEM_ID.to_string(),
+        base_edit_version,
+        generated_at: "2026-09-20T00:00:00Z".to_string(),
+        chain_status: ChainStatusSummaryV1 {
+            local: ChainStatusV1::Succeeded,
+            cloud: ChainStatusV1::Succeeded,
+            source: ChainStatusV1::Succeeded,
+            cloud_reason_code: None,
+            source_reason_code: None,
+        },
+        items: vec![],
+        summary: DecisionSummaryV1 { agreed: 0, auto_fixed: 0, needs_review: 0, unverifiable: 0 },
+    };
+    let conn = open_library_connection(root).expect("打开库连接");
+    store::upsert_batch(&conn, &decision).expect("写批次行");
+}
+
+/// 走真实编辑事务写一笔（`origin` 决定是人还是机器）。
+fn commit_edit(root: &Path, origin: crate::library::repository::EditOrigin, run_id: Option<&str>, command: Value) {
+    use crate::authoring_v2_commands::{apply_patch, refresh_quality_report, validate_authoring};
+    use crate::library::repository::{apply_editor_commands_tx_with, ApplyEditorCommandsInput};
+    let base_version = canonical_version(root);
+    let mut conn = open_library_connection(root).expect("打开库连接");
+    apply_editor_commands_tx_with(
+        &mut conn,
+        &ApplyEditorCommandsInput {
+            item_id: ITEM_ID.to_string(),
+            base_version,
+            request_id: Some(format!("edit-{}", uuid::Uuid::new_v4().simple())),
+            commands: vec![command],
+            title: None,
+        },
+        origin,
+        run_id,
+        &apply_patch,
+        &|ds| {
+            refresh_quality_report(root, ITEM_ID, ds)?;
+            validate_authoring(ds)
+        },
+        &|_, _| Ok(()),
+    )
+    .expect("编辑必须经正式事务落库");
+}
+
+/// 「这批建议是针对你修改之前的内容做的」只能在**人**改过之后出现。
+///
+/// 复现：`stale = base_edit_version < current`，而云端修复、答案页识别每写一笔都推进
+/// 版本，于是用户一下都没改，面板就警告「你修改之前」。
+#[test]
+fn stale_only_turns_on_after_a_human_edit_never_after_machine_writes() {
+    use crate::library::repository::EditOrigin;
+    let root = temp_root();
+    seed_item(&root, &golden_authoring());
+    seed_batch_row(&root, canonical_version(&root));
+
+    // 机器写入（云端修复）推进了版本。
+    commit_edit(&root, EditOrigin::CloudRepair, Some("run-machine"), set_answer("q15", "E"));
+    let view = crate::reconcile::commands::get_recognition_decision_core(&root, ITEM_ID).expect("读视图");
+    assert!(view["editVersion"].as_i64().unwrap() > view["baseEditVersion"].as_i64().unwrap());
+    assert_eq!(view["stale"], json!(false), "只有机器写入时不能说「你修改之前」：{view}");
+
+    // 人工编辑之后才算过期。
+    commit_edit(&root, EditOrigin::Human, None, set_answer("q14", "A"));
+    let view = crate::reconcile::commands::get_recognition_decision_core(&root, ITEM_ID).expect("读视图");
+    assert_eq!(view["stale"], json!(true), "人改过之后必须标记过期：{view}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 剩余任务在**读取时**按当前稿重算：用户补上答案之后，那条任务不用刷新就消失。
+///
+/// 复现：剩余任务是修复循环结束时写进 `repair_json` 的一次性快照，用户修好了问题，
+/// 任务还挂着，直到下一次重新识别。
+#[test]
+fn remaining_tasks_are_recomputed_on_read_so_a_fixed_problem_disappears() {
+    use crate::authoring_v2_commands::refresh_quality_report;
+    use crate::library::repository::EditOrigin;
+    let root = temp_root();
+    ensure_app_dirs(&root).expect("ensure_app_dirs");
+    let mut canonical = golden_authoring();
+    // q15 没有答案：质量报告按真实规则重算出这条阻断。
+    canonical["answerKey"]["q15"] = json!({"kind": "unresolved"});
+    refresh_quality_report(&root, ITEM_ID, &mut canonical).expect("质量报告");
+    seed_item(&root, &canonical);
+    seed_batch_row(&root, canonical_version(&root));
+
+    let not_cancelled = || false;
+    let request = request(&root, &not_cancelled, 2);
+    let report = run_repair_loop(&request, |_context: &Value, _observations: &[Value]| {
+        Ok(json!({"callId": "f1", "tool": "finish", "arguments": {"note": "q15 原文没有答案"}}))
+    })
+    .expect("修复循环必须返回结果");
+    let targets_q15 = |tasks: &Value| {
+        tasks
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .any(|task| task["targetIds"].as_array().map(|ids| ids.iter().any(|id| id == "q15")).unwrap_or(false))
+    };
+    assert!(
+        targets_q15(&json!(report.remaining_tasks)),
+        "前提：修复结束时 q15 缺答案必须是一条剩余任务：{:?}",
+        report.remaining_tasks
+    );
+    {
+        let conn = open_library_connection(&root).expect("打开库连接");
+        store::write_batch_repair(&conn, BATCH_ID, &report.to_json(false)).expect("写修复摘要");
+    }
+    let view = crate::reconcile::commands::get_recognition_decision_core(&root, ITEM_ID).expect("读视图");
+    assert!(targets_q15(&view["repair"]["remainingTasks"]), "读路径也必须看到这条任务：{view}");
+
+    // 用户在题面上补上 q15。
+    commit_edit(&root, EditOrigin::Human, None, set_answer("q15", "D"));
+    let view = crate::reconcile::commands::get_recognition_decision_core(&root, ITEM_ID).expect("读视图");
+    assert!(
+        !targets_q15(&view["repair"]["remainingTasks"]),
+        "q15 已经填上，这条任务必须在读取时消失：{}",
+        view["repair"]
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
