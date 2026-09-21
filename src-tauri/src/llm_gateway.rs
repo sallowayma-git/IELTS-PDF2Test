@@ -2557,4 +2557,301 @@ mod tests {
             "repair prompt 丢了信封声明"
         );
     }
+
+    // ── S1：传输与可观测性（本地假服务，无真实模型）──────────────────────────
+
+    use std::io::Write as _;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    fn fake_read_request(stream: &mut std::net::TcpStream) -> String {
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut bytes = Vec::new();
+        let mut buffer = [0u8; 8192];
+        let mut expected: Option<usize> = None;
+        loop {
+            let read = match stream.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => read,
+            };
+            bytes.extend_from_slice(&buffer[..read]);
+            if expected.is_none() {
+                if let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                    let length = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    expected = Some(end + 4 + length);
+                }
+            }
+            if let Some(expected) = expected {
+                if bytes.len() >= expected {
+                    break;
+                }
+            }
+        }
+        String::from_utf8_lossy(&bytes).to_string()
+    }
+
+    pub(crate) enum FakeReply {
+        /// 读完请求后一直不回，模拟服务端生成超时。
+        Stall(Duration),
+        /// 按状态码回一段原样 body。
+        Respond(u16, String),
+    }
+
+    /// 每个连接按顺序消费一个 `FakeReply`；收到的请求逐个送进 channel，用来数 POST 次数。
+    /// 线程不 join：停住的连接要比网关超时活得久。
+    pub(crate) fn fake_llm_server(replies: Vec<FakeReply>) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake llm server");
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            for reply in replies {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let request = fake_read_request(&mut stream);
+                let _ = sender.send(request);
+                match reply {
+                    FakeReply::Stall(duration) => thread::sleep(duration),
+                    FakeReply::Respond(status, body) => {
+                        let response = format!(
+                            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                        let _ = stream.flush();
+                    }
+                }
+            }
+        });
+        (format!("http://{address}/v1"), receiver)
+    }
+
+    pub(crate) fn chat_body(content: &str, finish_reason: &str) -> String {
+        json!({
+            "choices": [{"message": {"content": content}, "finish_reason": finish_reason}],
+            "usage": {"prompt_tokens": 1200, "completion_tokens": 34, "total_tokens": 1234}
+        })
+        .to_string()
+    }
+
+    struct FakeJob {
+        root: PathBuf,
+        job_id: &'static str,
+        input: Value,
+    }
+
+    impl Drop for FakeJob {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// 一个 PDF 候选请求：原文件 + 一张页图（页图存在，因此「回退到页图」在物理上可行——
+    /// 断言的是它**不该**因为超时而发生）。
+    fn fake_candidate_job(base_url: &str, job_id: &'static str) -> FakeJob {
+        let root = std::env::temp_dir().join(format!(
+            "llm-gateway-s1-{}-{}",
+            job_id,
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let source_dir = job_dir(&root, job_id).join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+        let pdf_path = source_dir.join("paper.pdf");
+        fs::write(&pdf_path, b"%PDF-1.4 fake paper bytes").unwrap();
+        let image_path = source_dir.join("page-1.png");
+        fs::write(&image_path, [137u8, 80, 78, 71, 13, 10, 26, 10]).unwrap();
+        let input = json!({
+            "profile": {
+                "profileId": "fake",
+                "provider": "OpenAiCompatible",
+                "baseUrl": base_url,
+                "model": "fake-model",
+                "temperature": 0,
+                "timeoutMs": 1000,
+                "forceJson": true
+            },
+            "sourceFile": {"fileId": "src-1", "originalName": "paper.pdf", "fileType": "pdf"},
+            "pdfPath": pdf_path.to_string_lossy(),
+            "pages": [{"pageIndex": 1, "images": [{"path": image_path.to_string_lossy(), "mimeType": "image/png", "assetId": "page-1"}]}],
+            "outputContract": {}
+        });
+        FakeJob { root, job_id, input }
+    }
+
+    fn call_records(job: &FakeJob) -> Vec<Value> {
+        fs::read_to_string(job_dir(&job.root, job.job_id).join("llm-calls.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+
+    /// 真实事故：212 KB PDF 的整卷候选在 134 s / 144 s 以 `llm_timeout_budget_exhausted`
+    /// 失败，而 profile 超时是 120 s。唯一能超出一个预算的路径是「直传 PDF 失败 →
+    /// 页图回退拿一个全新预算」。超时说明服务端在算，换成页图只会再算一遍、再超一次。
+    #[test]
+    fn a_timeout_on_the_direct_pdf_request_never_triggers_the_image_fallback() {
+        let (base_url, requests) = fake_llm_server(vec![
+            FakeReply::Stall(Duration::from_secs(4)),
+            FakeReply::Stall(Duration::from_secs(4)),
+        ]);
+        let job = fake_candidate_job(&base_url, "job-s1-stall");
+        let started = Instant::now();
+        let error = run_llm_gateway(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+        )
+        .expect_err("停住的服务必须让调用失败");
+        let elapsed = started.elapsed();
+        thread::sleep(Duration::from_millis(600));
+        let posts = requests.try_iter().count();
+        assert_eq!(posts, 1, "超时后不得再发页图回退请求（实际 {posts} 次 POST）；错误：{error}");
+        assert!(
+            elapsed < Duration::from_millis(2500),
+            "一次调用不得超过一个超时预算太多：{elapsed:?}"
+        );
+        assert!(error.contains("timeout"), "错误必须如实说明是超时：{error}");
+
+        let records = call_records(&job);
+        let record = records.last().expect("必须留下调用记录");
+        assert_eq!(record["ok"], json!(false));
+        assert_eq!(record["error"].as_str(), Some(error.as_str()), "记录必须保留完整错误串：{record}");
+        assert!(record["requestBytes"].as_u64().unwrap_or(0) > 0, "记录必须有请求体字节数：{record}");
+        assert!(record["pdfBytes"].as_u64().unwrap_or(0) > 0, "记录必须有 PDF 字节数：{record}");
+        let attempts = record["attempts"].as_array().expect("记录必须列出每次 HTTP 尝试");
+        assert_eq!(attempts.len(), 1, "{record}");
+        assert!(
+            attempts[0]["error"].as_str().unwrap_or("").contains("llm_http_timeout"),
+            "每次尝试必须带自己的错误：{record}"
+        );
+        assert_eq!(record["imageFallback"], json!(false), "{record}");
+    }
+
+    /// 回复解析不了时，原始回复必须落盘——否则「模型到底回了什么」事后永远无从得知。
+    #[test]
+    fn an_unparseable_reply_is_persisted_with_its_raw_content_and_usage() {
+        let (base_url, _requests) = fake_llm_server(vec![FakeReply::Respond(
+            200,
+            chat_body("Sure! Here is the draft: {not json", "stop"),
+        )]);
+        let job = fake_candidate_job(&base_url, "job-s1-garbage");
+        let error = run_llm_gateway(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+        )
+        .expect_err("无法解析的回复必须失败");
+        assert!(error.starts_with("llm_json_parse_failed"), "{error}");
+
+        let cache = job_dir(&job.root, job.job_id).join("cache").join("llm");
+        let rejected = fs::read_dir(&cache)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.starts_with("generate_authoring_candidate-rejected-"))
+                    .unwrap_or(false)
+            })
+            .expect("被拒回复必须落盘为 <command>-rejected-<stamp>.json");
+        let saved: Value = serde_json::from_str(&fs::read_to_string(rejected).unwrap()).unwrap();
+        assert_eq!(saved["rawContent"].as_str(), Some("Sure! Here is the draft: {not json"));
+        assert_eq!(saved["error"].as_str(), Some(error.as_str()));
+        assert_eq!(saved["usage"]["total_tokens"], json!(1234));
+
+        let record = call_records(&job).pop().unwrap();
+        assert_eq!(record["usage"]["total_tokens"], json!(1234), "{record}");
+        assert_eq!(record["finishReason"].as_str(), Some("stop"), "{record}");
+        assert_eq!(record["httpStatus"], json!(200), "{record}");
+        assert!(record["rejectedPath"].as_str().is_some(), "{record}");
+    }
+
+    /// `finish_reason = length` 是截断，不是「模型写了坏 JSON」。两者的处理完全不同。
+    #[test]
+    fn a_length_finish_reason_is_reported_as_truncation_not_a_parse_failure() {
+        let (base_url, _requests) = fake_llm_server(vec![FakeReply::Respond(
+            200,
+            chat_body("{\"taskGroups\":[{\"taskId\":\"cloud-tg-1\"", "length"),
+        )]);
+        let job = fake_candidate_job(&base_url, "job-s1-truncated");
+        let error = run_llm_gateway(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+        )
+        .expect_err("被截断的回复必须失败");
+        assert!(error.starts_with("llm_output_truncated"), "{error}");
+        let record = call_records(&job).pop().unwrap();
+        assert_eq!(record["errorClass"].as_str(), Some("llm_output_truncated"));
+    }
+
+    /// 请求体必须带输出上限：否则截断时既不知道上限是多少，也无法与 finish_reason 对账。
+    #[test]
+    fn every_request_carries_an_output_token_budget() {
+        let (base_url, requests) =
+            fake_llm_server(vec![FakeReply::Respond(200, chat_body("{}", "stop"))]);
+        let job = fake_candidate_job(&base_url, "job-s1-max-tokens");
+        let _ = run_llm_gateway(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+        );
+        let request = requests.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(request.contains("\"max_tokens\":"), "请求体缺少 max_tokens");
+    }
+
+    /// 非超时的直传失败（供应商不收 PDF 附件）仍然回退到页图；回退也失败时，
+    /// 直传的错误不得被吞掉。
+    #[test]
+    fn a_failed_image_fallback_keeps_the_direct_pdf_error() {
+        let (base_url, requests) = fake_llm_server(vec![
+            FakeReply::Respond(400, "{\"error\":\"file parts unsupported\"}".to_string()),
+            FakeReply::Respond(400, "{\"error\":\"image too small\"}".to_string()),
+        ]);
+        let job = fake_candidate_job(&base_url, "job-s1-fallback");
+        let error = run_llm_gateway(
+            &job.root,
+            job.job_id,
+            "generate_authoring_candidate",
+            &job.input,
+            None,
+        )
+        .expect_err("两条都失败");
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(requests.try_iter().count(), 2, "400 应当触发且只触发一次页图回退");
+        assert!(error.contains("image too small"), "{error}");
+        assert!(error.contains("file parts unsupported"), "直传 PDF 的错误被吞掉了：{error}");
+        let record = call_records(&job).pop().unwrap();
+        assert_eq!(record["imageFallback"], json!(true), "{record}");
+        assert_eq!(record["imageCount"], json!(1), "{record}");
+        assert_eq!(record["attempts"].as_array().map(Vec::len), Some(2), "{record}");
+    }
+
+    /// Settings 允许 600000 ms，网关却静默夹到 300 s：用户设的值必须真的生效。
+    #[test]
+    fn the_timeout_clamp_matches_the_settings_maximum() {
+        assert_eq!(
+            llm_timeout(&json!({"timeoutMs": 600_000}), 60_000),
+            Duration::from_millis(600_000)
+        );
+        assert_eq!(
+            llm_timeout(&json!({"timeoutMs": 900_000}), 60_000),
+            Duration::from_millis(600_000)
+        );
+    }
 }
