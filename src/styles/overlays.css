@@ -58,3 +58,24 @@
 .reject-list li span { color: var(--danger); }
 .picked-file-list .file-name,
 .reject-list .file-name { min-width: 0; overflow-wrap: anywhere; }
+
+/* 听力导入：音频拖放区与 Part 列表。 */
+.listening-dialog-scrim { z-index: 70; }
+.audio-drop-zone {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 22px 16px;
+  border: 2px dashed var(--line-strong);
+  border-radius: 12px;
+  text-align: center;
+  color: var(--muted);
+}
+.audio-drop-zone.is-hovering { border-color: var(--accent); background: rgba(31, 138, 112, 0.08); color: var(--ink); }
+.audio-drop-zone p { margin: 0; }
+.audio-part-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.audio-part-label { font-weight: 600; white-space: nowrap; }
+.audio-probe { font-size: 13px; white-space: nowrap; color: var(--muted); }
+.audio-probe-passed { color: var(--accent); }
+.audio-probe-blocked { color: var(--danger); }
+.audio-part-actions { display: flex; gap: 4px; }

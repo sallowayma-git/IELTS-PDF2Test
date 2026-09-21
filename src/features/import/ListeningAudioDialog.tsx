@@ -99,7 +99,7 @@ export function ListeningAudioDialog({
   const notices = assignmentNotices(entries);
 
   return (
-    <div className="drawer-scrim listening-dialog-scrim" role="presentation">
+    <div className="drawer-scrim listening-dialog-scrim" role="presentation" onClick={(event) => event.stopPropagation()}>
       <aside
         className="drawer drawer-wide listening-audio-dialog"
         role="dialog"
