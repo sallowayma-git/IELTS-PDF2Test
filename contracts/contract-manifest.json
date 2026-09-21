@@ -16,7 +16,7 @@
     },
     "IeltsAuthoringIRV2": {
       "path": "ielts-authoring-ir-v2.schema.json",
-      "sha256": "61b05bf59dd094c2679e8fb2761a3ec7082c8842e1d2953a9e162665e345fa31"
+      "sha256": "2b0d700f53ff8130d471460d0f424a6eb1d940ded80a69bb2222944ba1ddbcc2"
     },
     "QualityReportV2": {
       "path": "quality-report-v2.schema.json",
@@ -28,7 +28,7 @@
     },
     "ListeningExamSourceV1": {
       "path": "listening-exam-source-v1.schema.json",
-      "sha256": "4d5872434e21a13ab1a78637b02be0d019fb3fa0d12ccd91d0e0dbac906d8d91"
+      "sha256": "1cf9eaef4f4d46219c896b4134c1cdc21abdc88cccf846e9050390f6b94dbbf7"
     },
     "ListeningAttemptV1": {
       "path": "listening-attempt-v1.schema.json",

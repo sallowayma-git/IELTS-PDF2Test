@@ -164,6 +164,12 @@ async function validateStableContractFixtures(compiled, verificationErrors, veri
       pointer: "/quality"
     },
     {
+      // Four sections, one user-supplied audio file per part, no exam-level media.
+      schemaName: "ListeningExamSourceV1",
+      path: join(repoRoot, "fixtures", "golden", "synthetic", "ielts", "phase7-listening-four-part-media-source-v1.json")
+    },
+    {
+      // Listed last: this single complete-exam media source seeds the attempt fixture below.
       schemaName: "ListeningExamSourceV1",
       path: join(repoRoot, "fixtures", "golden", "synthetic", "ielts", "phase7-listening-part1-source-v1.json")
     },
@@ -368,6 +374,14 @@ function runNegativeContractProbes(compiled, stableValues, verificationErrors, v
       schemaName: "ListeningExamSourceV1",
       mutate(value) {
         value.parts[0].cue.startMs = -1;
+      }
+    },
+    {
+      id: "listening-runtime-rejects-source-without-any-media",
+      schemaName: "ListeningExamSourceV1",
+      mutate(value) {
+        delete value.media;
+        for (const part of value.parts) delete part.media;
       }
     },
     {

@@ -4,6 +4,7 @@ import type {
 } from "./schema-common-v2";
 import type { ContentNodeV2 } from "./content-doc-v2";
 import type { QualityReportV2 } from "./quality-report-v2";
+import type { ListeningAudioProbeV1 } from "./listening-runtime-v1";
 
 export type ExamModality = "reading" | "listening";
 
@@ -45,7 +46,8 @@ export interface ReadingPassageV2 {
 
 export interface ListeningStructureV2 {
   scope: ListeningScopeV2;
-  media: ListeningMediaV2;
+  /** Single complete-exam audio; optional when every part carries section media. */
+  media?: ListeningMediaV2;
   parts: ListeningPartV2[];
   playbackPolicy: ListeningPlaybackPolicyV2;
   transcript?: ListeningTranscriptV2;
@@ -80,6 +82,19 @@ export interface ListeningPartV2 {
   taskIds: string[];
   cue?: ListeningCueV2;
   sourceAnchors: SourceAnchorV2[];
+  /** Section audio for this part; cues on this part are relative to it. */
+  media?: ListeningPartMediaV2;
+}
+
+/** Per-part (section) audio. `probe` is required and must pass in a published source. */
+export interface ListeningPartMediaV2 {
+  assetId: string;
+  mime: string;
+  durationMs: number;
+  channels?: number;
+  sampleRateHz?: number;
+  sha256: string;
+  probe?: ListeningAudioProbeV1;
 }
 
 export type ListeningPlaybackModeV2 = "practice" | "mock";
