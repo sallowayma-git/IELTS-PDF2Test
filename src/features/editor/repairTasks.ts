@@ -29,7 +29,7 @@ export interface RepairTaskActionV1 {
 export interface RepairTaskViewV1 {
   taskId: string;
   message: string;
-  /** 阻断项：不处理就不能导出。 */
+  /** 后端内部的严重度标记（界面不据此显示门槛）。 */
   blocking: boolean;
   /** 后端给的处理方式（诊断与文案用，不直接渲染成内部术语）。 */
   action: string;
@@ -136,13 +136,8 @@ export function repairHeadline(view: RecognitionDecisionViewV1 | undefined): str
   if (!repair) return "未进行云端修复。";
   if (repairInFlight(view)) return "云端正在自动修复，先不用管；完成后这里会列出剩余问题。";
   const tasks = repairTasks(view);
-  const blockers = tasks.filter((task) => task.blocking).length;
-  // 剩余部分在所有非 running 状态里措辞一致：条数 + 其中几处阻断。
-  const left = tasks.length
-    ? blockers > 0
-      ? `还有 ${tasks.length} 处需要你处理（其中 ${blockers} 处不处理不能导出）。`
-      : `还有 ${tasks.length} 处建议你确认。`
-    : "";
+  // 剩余部分在所有非 running 状态里措辞一致：只说条数与去哪儿看，不说门槛（产品决定 2）。
+  const left = tasks.length ? `还有 ${tasks.length} 处列在「待补充」里。` : "";
   switch (repair.status) {
     case "completed":
       return tasks.length ? `云端自动修复已完成，${left}` : "云端自动修复已完成，没有需要你处理的问题。";

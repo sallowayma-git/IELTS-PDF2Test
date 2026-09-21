@@ -94,7 +94,7 @@ export interface CloudRepairTaskV1 {
    * 前端**不**据此自己算一遍剩余任务——那会与后端重算结果分叉。
    */
   action?: string;
-  /** 阻断项：不处理就不能导出。非阻断项只是「建议你确认一下」。 */
+  /** 后端内部的严重度标记（界面不据此显示门槛）。 */
   blocking?: boolean;
   /** 模型留下这条疑问时附的出处（可能与裁定一起给出）。 */
   evidence?: unknown;

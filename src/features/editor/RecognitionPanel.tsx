@@ -250,14 +250,14 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
   return (
     <aside
       className="workspace-recognition"
-      aria-label="识别建议"
+      aria-label="识别详情"
       data-testid="workspace-recognition"
       // 安静态（没什么可说的）供样式收紧面板自身的上下内边距：一句话不该还占一整块面板的高度。
       data-quiet={collapsed ? "true" : "false"}
     >
       <header className="workspace-recognition-head">
-        <h2>识别建议</h2>
-        <button className="ghost small" onClick={() => void load()} aria-label="刷新识别建议">刷新</button>
+        <h2>识别详情</h2>
+        <button className="ghost small" onClick={() => void load()} aria-label="刷新识别详情">刷新</button>
       </header>
 
       {loadError ? (
@@ -320,48 +320,8 @@ export function RecognitionPanel({ itemId, editVersion, refreshKey, onLocate, on
               <p className="workspace-recognition-repair-headline" data-testid="workspace-recognition-repair-headline">
                 {repairHeadline(view)}
               </p>
-              {tasks.length ? (
-                <ul className="workspace-recognition-tasks" data-testid="workspace-recognition-repair-tasks">
-                  {tasks.map((task) => (
-                    <li
-                      key={task.taskId}
-                      data-testid="workspace-recognition-repair-task"
-                      data-task-id={task.taskId}
-                      data-blocking={task.blocking ? "true" : "false"}
-                      data-task-action={task.action}
-                    >
-                      <p className="workspace-recognition-task-message">{task.message}</p>
-                      {task.blocking ? (
-                        <p className="workspace-recognition-reason">这一处不处理就不能导出。</p>
-                      ) : null}
-                      {task.actions.length ? (
-                        <div className="button-row">
-                          {task.actions.map((action) => (
-                            <button
-                              key={action.id}
-                              className="ghost small"
-                              data-testid={`workspace-recognition-task-${action.id}-${task.taskId}`}
-                              onClick={() => {
-                                // 「打开原文件」是文档级任务唯一的真动作；其余都靠定位。
-                                if (action.id === "open-source") {
-                                  onOpenSource();
-                                  return;
-                                }
-                                if (action.targetId) onLocate(action.targetId);
-                              }}
-                            >{action.label}</button>
-                          ))}
-                        </div>
-                      ) : (
-                        // 没有可定位的目标就不放按钮：点了不动的按钮比没有按钮更糟。
-                        <p className="workspace-recognition-reason">
-                          这一条没有对应的题面位置，请对照原文件核对后直接在题面上修改。
-                        </p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+              {/* 剩下的条目**只在一处**出现：工作区的「待补充」清单（与本地检查合并、每个题位
+                  一条、修好即消失）。这里不再另列一份。 */}
             </>
           ) : (
             <>
