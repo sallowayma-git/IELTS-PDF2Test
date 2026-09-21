@@ -1617,3 +1617,32 @@ A3/A4 覆盖扩展、PDF/DOCX 完整链到学生端计分。
 - 更正：09-20 条目中"134/144 s = ≈14/24 s 本地准备 + 120 s HTTP"不成立（base64 为毫秒级；该错误只可能来自图片回退请求）。
   真实过程更可能是直连 PDF 请求快速失败且错误被丢弃、图片回退请求耗尽 120 s。详见 task_plan 同日"更正"。
 - 四个只读审计完成（听力、云端链路+prompt、导出门禁+题库保存、用户决策点）；五个开发子代理已在独立 worktree 并行开工，分工见 task_plan。
+
+## 2026-09-21 五支开发分支合并（集成分支 `integrate/2026-09-21`）
+
+- 五个开发代理两次被 API 会话额度打断；第二次起"频繁提交 WIP"，已提交的工作全部保留，恢复后全部完成。
+- 合并顺序：听力导入 → 听力识别（+ 我补的三处受限文件改动）→ 发布/题库保存 → 云端链路 → 简化流程。
+- 冲突处理要点：
+  - `library/schema.rs`：两支都占 v8 → 听力音频 v8、发布记录 v9；**合并后首跑 961/1 失败**，原因是版本常量
+    `LIBRARY_V2_SCHEMA_VERSION` 仍为 8（我起初 grep 漏了它）→ 改 9，并让幂等测试同时断言 `listening_audio_assets_v1`。
+  - `source_coverage.rs`：发布支的冻结声明核对 + 云端支的 `declared_question_blocks` 并存。
+  - `ExamWorkspacePage.tsx` 8 处：以简化流程为准（无门槛文案、无 `data-can-export`、任务里不再有重新识别），
+    同时保留发布支的"原文件已清理"禁用与说明；`retry_answer_page_recognition`（简化流程新命令）补上原文件已清理守卫。
+- 新增验收钩子：工作区提示上的 `data-publish-outcome`（published / published_forced / published_forced_not_loadable /
+  failed），不渲染文字，脚本据此区分干净发布与放行发布。主验收链第 14 步改为核对"后端每条剩余任务都被唯一清单接住"。
+- 合并后全量：Rust **973 passed / 0 failed / 11 ignored**；Vitest **390 passed / 27 files**；tsc 干净。
+  证据等级：单元 + 命令处理器层；真实 Tauri 链正在构建后跑。
+- 已知未更新的开发辅助脚本（仍匹配已删除的「发布完成」/`data-can-export`/旧任务行）：`tauri-cdp-product-chain.mjs`、
+  `tauri-cdp-publish-ready.mjs`、`tauri-cdp-issue-list.mjs`、`tauri-cdp-workspace-layout.mjs`、`tauri-import-edit-publish.mjs`、
+  `tauri-publish-ready.mjs`、`tauri-publish.mjs`、`tauri-direct-canonical.mjs`。它们不是本轮验收链，未改。
+
+### 真实 Tauri 产品链（合并后的集成分支）
+
+- 第 1 次 12/13：第 14 步由我改写，读的是默认收起的「待补充」侧栏 → 脚本缺陷（截图顶栏显示「待补充 4」）。
+- 第 2 次 12/13：清单 3 条，缺 `cloud-question:group-1:0`；截图显示标题下仍是「本地已完成 · 云端自动检查中」——
+  修复循环已结束，但任务还在跑答案页等收尾步骤，云端剩余条目尚未并入 → 脚本读得太早。
+- 第 3 次 **13/13，exit 0**：脚本改为等处理真正结束（最多 90 s，不结束即判失败）后再比对；清单 4 条，
+  含 `cloud-question:group-1:0`，后端 16 条剩余任务全部被接住。发布为干净发布（`published`，
+  `data-publish-outcome="published"`，quality `ready`），学生端真实 provider 加载 14 题 / 3 题组。
+  运行档案：`artifacts/e2e-cdp/run-cloud-repair-chain-2026-09-21T18-51-21-267Z`。
+- 证据等级：产品端到端（受控模型服务；真实模型仍因网关额度未测）。
