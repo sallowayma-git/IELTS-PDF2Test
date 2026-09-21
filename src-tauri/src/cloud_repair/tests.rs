@@ -1156,7 +1156,17 @@ fn real_docx_import_reaches_cloud_repair_with_original_source_evidence() {
 
     let seen = requests.lock().expect("requests");
     assert_eq!(seen.len(), 1, "one real DOCX repair request expected");
-    assert!(seen[0].contains("sourceText"), "DOCX repair must send source text evidence");
+    // The evidence is the dedicated source-text block; the prompt's Input JSON no
+    // longer repeats the same text a second time.
+    assert!(
+        seen[0].contains("SOURCE TEXT BEGIN"),
+        "DOCX repair must send source text evidence"
+    );
+    assert_eq!(
+        seen[0].matches("SOURCE TEXT BEGIN").count(),
+        1,
+        "the source text must be attached exactly once"
+    );
     assert!(
         seen[0].contains("complex-reading-docx") || seen[0].contains("complex-reading.docx"),
         "DOCX repair request must identify the original source: {}",

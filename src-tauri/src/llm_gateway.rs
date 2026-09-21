@@ -640,7 +640,7 @@ fn llm_prompt(input: &Value, mode: &str) -> String {
     ]
     .join(", ");
     format!(
-        "You are an IELTS Reading authoring assistant.\nReturn JSON only. Do not return Markdown, HTML, JavaScript, ReadingExamSource, final export files, or explanations.\nReturn exactly one JSON object with this shape: {{\"kind\":\"short_answer\",\"confidence\":0.0,\"patch\":[],\"questions\":[],\"warnings\":[],\"evidence\":{{\"sourceBlockIds\":[],\"quotes\":[]}}}}.\nThe kind value MUST be one of the allowed group kinds. patch, questions, warnings, evidence.sourceBlockIds, and evidence.quotes MUST be arrays.\nOnly emit JSON Patch-like objects with op=replace and path in repairContract.allowedPatchPaths. Do not create new paths.\nNever invent passage facts or answers. Suggest structure only.\nUse repairContext.sectionEvidence, continuationEdges, table dimensions, heading/numbering metadata, normalized bbox/page rotation, and reviewWarnings to decide whether the current group kind/layout should be repaired.\nEvidence is required: include evidence.sourceBlockIds copied from the input group.sourceBlockIds and evidence.quotes as [{{\"blockId\":\"...\",\"text\":\"...\"}}] using short source excerpts that justify the suggestion.\nEvery evidence.sourceBlockIds entry and evidence.quotes[].blockId MUST be present in group.sourceBlockIds. If you cannot cite the source blocks, return confidence below 0.85.\nTask: {}.\nAllowed group kinds: {}.\nRepair contract JSON: {}.\nRepair context JSON: {}.\nGroup JSON: {}",
+        "You are an IELTS Reading authoring assistant.\nReturn JSON only. Do not return Markdown, HTML, JavaScript, ReadingExamSource, final export files, or explanations.\nReturn exactly one JSON object with this shape: {{\"kind\":\"short_answer\",\"confidence\":0.0,\"patch\":[],\"questions\":[],\"warnings\":[],\"evidence\":{{\"sourceBlockIds\":[],\"quotes\":[]}}}}.\nThe kind value MUST be one of the allowed group kinds. patch, questions, warnings, evidence.sourceBlockIds, and evidence.quotes MUST be arrays.\nEach questions[] item has this shape: {{\"id\":\"q1\",\"prompt\":\"question text\",\"interaction\":{{\"type\":\"text\"}}}}; id is required and must be an id of a question in the input group; prompt (string) and interaction (object with a non-empty type) are optional.\nEach patch[] item has this shape: {{\"op\":\"replace\",\"path\":\"/kind\",\"value\":\"short_answer\"}}.\nOnly emit JSON Patch-like objects with op=replace and path in repairContract.allowedPatchPaths. Do not create new paths.\nNever invent passage facts or answers. Suggest structure only.\nUse repairContext.sectionEvidence, continuationEdges, table dimensions, heading/numbering metadata, normalized bbox/page rotation, and reviewWarnings to decide whether the current group kind/layout should be repaired.\nEvidence is required: include evidence.sourceBlockIds copied from the input group.sourceBlockIds and evidence.quotes as [{{\"blockId\":\"...\",\"text\":\"...\"}}] using short source excerpts that justify the suggestion.\nEvery evidence.sourceBlockIds entry and evidence.quotes[].blockId MUST be present in group.sourceBlockIds. If you cannot cite the source blocks, return confidence below 0.85.\nTask: {}.\nAllowed group kinds: {}.\nRepair contract JSON: {}.\nRepair context JSON: {}.\nGroup JSON: {}",
         mode,
         allowed,
         serde_json::to_string(input.get("repairContract").unwrap_or(&Value::Null))
@@ -660,7 +660,7 @@ fn vision_prompt(input: &Value) -> String {
 
 fn vision_answer_prompt(input: &Value) -> String {
     format!(
-        "You are extracting the answer key from scanned/image-only IELTS Reading answer-page images.\nReturn JSON only. Do not return Markdown, explanations, HTML, JavaScript, or prose outside JSON.\nReturn exactly one JSON object with this shape: {{\"answers\":{{\"8\":\"answer text\",\"9\":\"answer text\"}},\"confidence\":0.0,\"warnings\":[],\"evidence\":[{{\"questionNumber\":\"8\",\"pageIndex\":1,\"quote\":\"short visible source text\"}}]}}.\nUse question number strings without q prefix. Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase. Multi-answer questions may use arrays. Do not invent answers; omit uncertain numbers and add a warning. Only use answers visibly printed on the supplied answer pages; if a page is blank, unreadable, or has no answer key, return no answers and explain it in warnings. Every emitted answer must have a non-empty visible quote and the one-based rendered image pageIndex where it appears.\nJob JSON: {}\nOutput contract JSON: {}",
+        "You are extracting the answer key from scanned/image-only IELTS Reading answer-page images.\nReturn JSON only. Do not return Markdown, explanations, HTML, JavaScript, or prose outside JSON.\nReturn exactly one JSON object with this shape: {{\"answers\":{{\"8\":\"answer text\",\"9\":\"answer text\"}},\"confidence\":0.0,\"warnings\":[],\"evidence\":[{{\"questionNumber\":\"8\",\"pageIndex\":1,\"quote\":\"short visible source text\"}}]}}.\nUse question number strings without q prefix. Normalize TRUE/FALSE/NOT GIVEN/YES/NO and single-letter options to uppercase. Multi-answer questions may use arrays. Do not invent answers; omit uncertain numbers and add a warning. Only use answers visibly printed on the supplied answer pages. answers must contain at least one entry and evidence at least one item: a reply without any answer is rejected and recorded as \"no answer key found\" — that is the honest outcome when the pages show no readable answer key, so never fill answers from anywhere else. Every emitted answer must have a non-empty visible quote and the one-based rendered image pageIndex where it appears.\nJob JSON: {}\nOutput contract JSON: {}",
         serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("outputContract").unwrap_or(&Value::Null)).unwrap_or_default()
     )
@@ -668,7 +668,7 @@ fn vision_answer_prompt(input: &Value) -> String {
 
 fn cloud_outline_prompt(input: &Value) -> String {
     format!(
-        "You are creating a comparison-only outline from an IELTS Reading PDF.\nReturn JSON only. Do not return JavaScript, HTML, Markdown, or final export files.\nReturn exactly one JSON object with this shape: {{\"title\":\"paper title\",\"groups\":[{{\"range\":[1,5],\"kind\":\"true_false_not_given\",\"layoutHint\":\"list\",\"questionIds\":[\"q1\",\"q2\"],\"notesText\":\"\",\"confidence\":0.0,\"evidence\":{{\"quotes\":[{{\"pageIndex\":1,\"text\":\"short visible source excerpt\"}}]}}}}],\"answerKey\":{{\"1\":\"TRUE\"}},\"confidence\":0.0,\"warnings\":[]}}.\nThis output is used only to compare against a local deterministic draft; it must not overwrite the local draft. Use only visible PDF evidence. Do not invent missing groups or answers. Allowed kind values are single_choice, multi_choice, true_false_not_given, yes_no_not_given, matching, heading_matching, matching_information, classification, summary_completion, table_completion, diagram_completion, short_answer, sentence_completion. If your internal label is note_completion, output summary_completion or sentence_completion and preserve layoutHint/notesText. layoutHint must be inline_completion, table, or list when known.\nCritical notes-completion rule: if the PDF says Complete the notes below, note completion, notes, or contains numbered blank/ellipsis markers such as 8……… or 8 ______, keep the entire range as one group, set layoutHint=inline_completion, include every qN in questionIds, and copy the continuous notes text into notesText. Never rewrite this structure into independent list items.\nEvidence rule: every group must include evidence.quotes with short visible PDF excerpts supporting the range, instructions, layout, and blank markers; if you cannot cite evidence, lower that group confidence below 0.75.\nJob JSON: {}\nSource file JSON: {}\nOutput contract JSON: {}",
+        "You are creating a comparison-only outline from an IELTS Reading PDF.\nReturn JSON only. Do not return JavaScript, HTML, Markdown, or final export files.\nReturn exactly one JSON object with this shape: {{\"title\":\"paper title\",\"groups\":[{{\"range\":[1,2],\"kind\":\"true_false_not_given\",\"layoutHint\":\"list\",\"questionIds\":[\"q1\",\"q2\"],\"notesText\":\"\",\"confidence\":0.0,\"evidence\":{{\"quotes\":[{{\"pageIndex\":1,\"text\":\"short visible source excerpt\"}}]}}}}],\"answerKey\":{{\"1\":\"TRUE\"}},\"confidence\":0.0,\"warnings\":[]}}.\nThis output is used only to compare against a local deterministic draft; it must not overwrite the local draft. Use only visible PDF evidence. Do not invent missing groups or answers. Allowed kind values are single_choice, multi_choice, true_false_not_given, yes_no_not_given, matching, heading_matching, matching_information, classification, summary_completion, table_completion, diagram_completion, short_answer, sentence_completion. If your internal label is note_completion, output summary_completion or sentence_completion and preserve layoutHint/notesText. layoutHint is required on every group: inline_completion, table, or list (use list when neither of the others applies). notesText is required on every group: the continuous notes text for completion groups, otherwise an empty string \"\".\nCritical notes-completion rule: if the PDF says Complete the notes below, note completion, notes, or contains numbered blank/ellipsis markers such as 8……… or 8 ______, keep the entire range as one group, set layoutHint=inline_completion, include every qN in questionIds, and copy the continuous notes text into notesText. Never rewrite this structure into independent list items.\nEvidence rule: every group must include at least one evidence.quotes item (pageIndex >= 1, non-empty text) with a short visible PDF excerpt supporting the range, instructions, layout, and blank markers. A group without a quote is rejected: if you cannot quote a group, leave that group out and say so in warnings.\nJob JSON: {}\nSource file JSON: {}\nOutput contract JSON: {}",
         serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("sourceFile").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("outputContract").unwrap_or(&Value::Null)).unwrap_or_default()
@@ -1032,6 +1032,10 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
 /// `repairNote`：上一次回复被校验器拒了，把**被拒原因原样**回给模型再问一次。
 /// 不带原因地重试同一句话，只会再拿到同一种错误——那不是修复，只是多烧一次配额。
 fn authoring_candidate_prompt(input: &Value) -> String {
+    let modality = crate::llm_suggestions::candidate_modality(
+        input.get("modality").and_then(Value::as_str).unwrap_or("reading"),
+    );
+    let paper = ielts_paper_label(modality);
     let repair = input
         .get("repairNote")
         .and_then(Value::as_str)
@@ -1042,26 +1046,47 @@ fn authoring_candidate_prompt(input: &Value) -> String {
             )
         })
         .unwrap_or_default();
+    let (envelope_extra, modality_rules) = if modality == "listening" {
+        (
+            ", \"listeningParts\"",
+            "- This is a Listening question paper: you see the printed questions, not the audio. There is no reading passage.\n\
+- Organise the task groups by Part (Part 1-4, also called Sections) and list every Part in listeningParts as {\"displayLabel\":\"Part 1\",\"expectedQuestionNumbers\":[1,2,3],\"taskIds\":[\"cloud-tg-1\"]}; every taskIds entry MUST be a taskId you defined.\n",
+        )
+    } else {
+        ("", "")
+    };
     format!(
-        "You are recognising an IELTS Reading paper from its ORIGINAL FILE into a COMPLETE authoring draft.\n\
+        "You are recognising an {paper} paper from its ORIGINAL FILE into a COMPLETE authoring draft.\n\
 Return JSON only. Do not return Markdown, HTML, JavaScript, explanations, or final export files.\n\
-This is NOT an outline and NOT a comparison summary: transcribe the FULL content so it can be rendered.\n\
+Return exactly one JSON object with the top-level keys \"taskGroups\", \"answerSlots\", \"answerKey\", \"unresolvedRegions\", \"sourceCoverageNotes\", \"warnings\"{envelope_extra}; the exact shape is outputContract.shape.\n\
+This is NOT an outline and NOT a comparison summary: transcribe the FULL question content so it can be rendered.\n\
 {repair}\n\
 Rules that matter most:\n\
+{modality_rules}\
 - Transcribe every question's FULL prompt text; never abbreviate or summarise a question.\n\
 - Transcribe every option label and its FULL text; keep one option bank per task group.\n\
-- Transcribe ALL passage text and all notes / tables / diagrams / form text a task group depends on.\n\
+- Do NOT transcribe the passage or script body. Transcribe the instructions and the notes / tables / diagrams / form text a task group depends on (into stimulus).\n\
 - Give EVERY question an answerKey entry; use {{\"kind\":\"unresolved\"}} when the file gives no answer. Never invent answers.\n\
 - Use TEMPORARY ids only (cloud-tg-1, cloud-q14, cloud-opt-a ...). Never copy a real database id.\n\
 - Every responseGroups[].slotIds entry MUST be a key of answerSlots; every hostNodeId MUST be an id you defined here.\n\
+- Every responseGroup needs kind, cardinality, assignment, scoringPolicy, duplicatePolicy and allowOptionReuse; every answerSlot needs slotId, questionNumber, displayLabel, hostType, interaction, participation and confidence; every content node needs type and id.\n\
 - NEVER output jobId, schemaVersion, exam, quality, audit, reviewState, sourceDocumentId, provenanceStatus or any publish/verification flag — the backend owns those.\n\
-- Report unreadable areas in unresolvedRegions (1-based pageIndex) and unverified coverage in sourceCoverageNotes.\n\
+- Report unreadable areas in unresolvedRegions (sourceFileId, 1-based pageIndex, reason, detail) and unverified coverage in sourceCoverageNotes.\n\
 - Use only the enum values listed in outputContract.enums.\n\
 Job JSON: {}\nSource file JSON: {}\nOutput contract JSON: {}",
         serde_json::to_string(input.get("job").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("sourceFile").unwrap_or(&Value::Null)).unwrap_or_default(),
         serde_json::to_string(input.get("outputContract").unwrap_or(&Value::Null)).unwrap_or_default()
     )
+}
+
+/// "IELTS Reading" / "IELTS Listening" for the candidate and repair prompts.
+fn ielts_paper_label(modality: &str) -> &'static str {
+    if crate::llm_suggestions::candidate_modality(modality) == "listening" {
+        "IELTS Listening"
+    } else {
+        "IELTS Reading"
+    }
 }
 
 /// 云端完整候选识别的执行体。
@@ -1125,7 +1150,10 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
     )?;
     let content = openai_chat_content(&payload)?;
     let mut parsed = parse_llm_json_content(&content)?;
-    validate_authoring_candidate_output(&mut parsed)?;
+    validate_authoring_candidate_output(
+        &mut parsed,
+        input.get("modality").and_then(Value::as_str).unwrap_or("reading"),
+    )?;
     if !warnings.is_empty() {
         if let Some(items) = parsed.get_mut("warnings").and_then(Value::as_array_mut) {
             for warning in warnings {
@@ -1141,8 +1169,9 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
 /// 只校验「形状是否可用」：内容对不对是模型结合原文的语义判断，程序替代不了。
 /// 但形状不对必须**具体**报错——原因会原样回给模型，让它定向修好再交一次。
 /// 这里刻意**不**校验 quality / audit / 身份字段：那些由后端生成，模型写什么都不采信。
-fn validate_authoring_candidate_output(output: &mut Value) -> CommandResult<()> {
-    let Some(object) = output.as_object_mut() else {
+fn validate_authoring_candidate_output(output: &mut Value, modality: &str) -> CommandResult<()> {
+    let modality = crate::llm_suggestions::candidate_modality(modality);
+    let Some(object) = output.as_object() else {
         return Err("cloud_authoring_output_not_object".to_string());
     };
     let Some(groups) = object.get("taskGroups").and_then(Value::as_array) else {
@@ -1160,38 +1189,34 @@ fn validate_authoring_candidate_output(output: &mut Value) -> CommandResult<()> 
         return Err("cloud_authoring_output_answer_slots_empty".to_string());
     }
 
-    let groups = groups.clone();
+    let mut task_ids = std::collections::BTreeSet::<String>::new();
     for (index, group) in groups.iter().enumerate() {
         let Some(group_object) = group.as_object() else {
             return Err(format!("cloud_authoring_output_group_not_object:{index}"));
         };
-        if group_object
-            .get("taskId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .unwrap_or("")
-            .is_empty()
-        {
-            return Err(format!("cloud_authoring_output_group_task_id_missing:{index}"));
-        }
-        if group_object.get("displayRange").and_then(Value::as_object).is_none() {
+        let task_id = non_empty_str(group_object.get("taskId"))
+            .ok_or_else(|| format!("cloud_authoring_output_group_task_id_missing:{index}"))?;
+        task_ids.insert(task_id.to_string());
+        let Some(range) = group_object.get("displayRange").and_then(Value::as_object) else {
             return Err(format!("cloud_authoring_output_group_range_missing:{index}"));
-        }
-        if group_object
-            .get("taskType")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .unwrap_or("")
-            .is_empty()
-        {
+        };
+        validate_candidate_display_range(range)
+            .map_err(|problem| format!("cloud_authoring_output_group_range_invalid:{index}:{problem}"))?;
+        if non_empty_str(group_object.get("taskType")).is_none() {
             return Err(format!("cloud_authoring_output_group_task_type_missing:{index}"));
         }
-        if !group_object
-            .get("instructions")
-            .map(Value::is_array)
-            .unwrap_or(false)
-        {
+        let Some(instructions) = group_object.get("instructions").and_then(Value::as_array) else {
             return Err(format!("cloud_authoring_output_group_instructions_missing:{index}"));
+        };
+        validate_candidate_nodes(instructions, &format!("{index}:instructions"))?;
+        if let Some(stimulus) = group_object.get("stimulus") {
+            let Some(stimulus) = stimulus.as_array() else {
+                return Err(format!("cloud_authoring_output_group_stimulus_invalid:{index}"));
+            };
+            validate_candidate_nodes(stimulus, &format!("{index}:stimulus"))?;
+        }
+        if let Some(bank) = group_object.get("optionBank").filter(|bank| !bank.is_null()) {
+            validate_candidate_option_bank(bank, index)?;
         }
         let Some(response_groups) = group_object.get("responseGroups").and_then(Value::as_array)
         else {
@@ -1205,16 +1230,47 @@ fn validate_authoring_candidate_output(output: &mut Value) -> CommandResult<()> 
                     "cloud_authoring_output_response_group_not_object:{index}:{position}"
                 ));
             };
-            if response_object
-                .get("responseGroupId")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .unwrap_or("")
-                .is_empty()
-            {
+            if non_empty_str(response_object.get("responseGroupId")).is_none() {
                 return Err(format!(
                     "cloud_authoring_output_response_group_id_missing:{index}:{position}"
                 ));
+            }
+            for field in ["kind", "assignment", "scoringPolicy", "duplicatePolicy"] {
+                if non_empty_str(response_object.get(field)).is_none() {
+                    return Err(format!(
+                        "cloud_authoring_output_response_group_field_missing:{index}:{position}:{field}"
+                    ));
+                }
+            }
+            if !response_object
+                .get("allowOptionReuse")
+                .map(Value::is_boolean)
+                .unwrap_or(false)
+            {
+                return Err(format!(
+                    "cloud_authoring_output_response_group_field_missing:{index}:{position}:allowOptionReuse"
+                ));
+            }
+            let cardinality_ok = response_object
+                .get("cardinality")
+                .and_then(Value::as_object)
+                .map(|cardinality| {
+                    cardinality.get("min").map(Value::is_u64).unwrap_or(false)
+                        && cardinality.get("max").map(Value::is_u64).unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if !cardinality_ok {
+                return Err(format!(
+                    "cloud_authoring_output_response_group_cardinality_invalid:{index}:{position}:expected {{\"min\":1,\"max\":1}}"
+                ));
+            }
+            if let Some(prompt) = response_object.get("prompt").filter(|prompt| !prompt.is_null()) {
+                let Some(prompt) = prompt.as_array() else {
+                    return Err(format!(
+                        "cloud_authoring_output_response_group_prompt_invalid:{index}:{position}"
+                    ));
+                };
+                validate_candidate_nodes(prompt, &format!("{index}:{position}:prompt"))?;
             }
             let Some(slot_ids) = response_object.get("slotIds").and_then(Value::as_array) else {
                 return Err(format!(
@@ -1251,15 +1307,32 @@ fn validate_authoring_candidate_output(output: &mut Value) -> CommandResult<()> 
                     "cloud_authoring_output_slot_question_number_missing:{key}"
                 ));
             }
+            for field in ["slotId", "displayLabel", "hostType", "interaction", "participation"] {
+                if non_empty_str(slot_object.get(field)).is_none() {
+                    return Err(format!(
+                        "cloud_authoring_output_slot_field_missing:{key}:{field}"
+                    ));
+                }
+            }
+            if !slot_object
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .map(|value| (0.0..=1.0).contains(&value))
+                .unwrap_or(false)
+            {
+                return Err(format!(
+                    "cloud_authoring_output_slot_field_missing:{key}:confidence (a number in [0,1])"
+                ));
+            }
         }
     }
     if let Some(keys) = object.get("answerKey").and_then(Value::as_object) {
-        for key in keys.keys() {
+        for (key, value) in keys {
             if !slot_keys.contains(key) {
-                return Err(format!(
-                    "cloud_authoring_output_answer_key_dangling:{key}"
-                ));
+                return Err(format!("cloud_authoring_output_answer_key_dangling:{key}"));
             }
+            validate_candidate_answer_value(value)
+                .map_err(|problem| format!("cloud_authoring_output_answer_key_invalid:{key}:{problem}"))?;
         }
     }
     if let Some(regions) = object.get("unresolvedRegions") {
@@ -1270,13 +1343,7 @@ fn validate_authoring_candidate_output(output: &mut Value) -> CommandResult<()> 
             let Some(region_object) = region.as_object() else {
                 return Err(format!("cloud_authoring_output_unresolved_region_invalid:{index}"));
             };
-            if region_object
-                .get("sourceFileId")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .unwrap_or("")
-                .is_empty()
-            {
+            if non_empty_str(region_object.get("sourceFileId")).is_none() {
                 return Err(format!(
                     "cloud_authoring_output_unresolved_region_source_missing:{index}"
                 ));
@@ -1290,9 +1357,188 @@ fn validate_authoring_candidate_output(output: &mut Value) -> CommandResult<()> 
                     ))
                 }
             }
+            for field in ["reason", "detail"] {
+                if non_empty_str(region_object.get(field)).is_none() {
+                    return Err(format!(
+                        "cloud_authoring_output_unresolved_region_field_missing:{index}:{field}"
+                    ));
+                }
+            }
+        }
+    }
+    if modality == "listening" {
+        if let Some(parts) = object.get("listeningParts").filter(|parts| !parts.is_null()) {
+            let Some(parts) = parts.as_array() else {
+                return Err("cloud_authoring_output_listening_parts_invalid".to_string());
+            };
+            for (index, part) in parts.iter().enumerate() {
+                if non_empty_str(part.get("displayLabel")).is_none() {
+                    return Err(format!(
+                        "cloud_authoring_output_listening_part_label_missing:{index}"
+                    ));
+                }
+                let Some(part_task_ids) = part.get("taskIds").and_then(Value::as_array) else {
+                    return Err(format!(
+                        "cloud_authoring_output_listening_part_task_ids_missing:{index}"
+                    ));
+                };
+                for task_id in part_task_ids {
+                    let task_id = task_id.as_str().unwrap_or_default();
+                    if !task_ids.contains(task_id) {
+                        return Err(format!(
+                            "cloud_authoring_output_listening_part_task_dangling:{index}:{task_id}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // 最后一道闸：用占位身份把回复**真的**标准化 + 反序列化一遍。上面逐字段的检查给模型
+    // 具体的原因；这一步保证「网关放行 ⇒ finalize 必然成功」——任何 serde 在 finalize
+    // 时才会发现的问题（未知枚举值、节点缺必填字段……）都在这里、在还能受约束重试的
+    // 时候暴露，而不是在 finalize 里变成一次没有重试机会的整份失败。
+    dry_run_candidate_finalize(output, modality)
+        .map_err(|error| format!("cloud_authoring_output_schema_invalid:{error}"))
+}
+
+fn non_empty_str(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn validate_candidate_display_range(range: &serde_json::Map<String, Value>) -> Result<(), String> {
+    match range.get("kind").and_then(Value::as_str) {
+        Some("range") => {
+            let start = range.get("start").and_then(Value::as_u64);
+            let end = range.get("end").and_then(Value::as_u64);
+            match (start, end) {
+                (Some(start), Some(end)) if start >= 1 && end >= start => Ok(()),
+                _ => Err("range needs start >= 1 and end >= start".to_string()),
+            }
+        }
+        Some("set") => {
+            let ok = range
+                .get("values")
+                .and_then(Value::as_array)
+                .map(|values| !values.is_empty() && values.iter().all(Value::is_u64))
+                .unwrap_or(false);
+            if ok {
+                Ok(())
+            } else {
+                Err("set needs a non-empty values array of question numbers".to_string())
+            }
+        }
+        Some("mixed") => {
+            if range.get("values").map(Value::is_array).unwrap_or(false) {
+                Ok(())
+            } else {
+                Err("mixed needs a values array".to_string())
+            }
+        }
+        _ => Err("kind must be range or set".to_string()),
+    }
+}
+
+/// 内容节点的最小形状：每个节点都要有 `type` 与 `id`，子节点递归检查。
+fn validate_candidate_nodes(nodes: &[Value], location: &str) -> CommandResult<()> {
+    for (position, node) in nodes.iter().enumerate() {
+        let Some(node_object) = node.as_object() else {
+            return Err(format!(
+                "cloud_authoring_output_content_node_invalid:{location}:{position}"
+            ));
+        };
+        for field in ["type", "id"] {
+            if non_empty_str(node_object.get(field)).is_none() {
+                return Err(format!(
+                    "cloud_authoring_output_content_node_field_missing:{location}:{position}:{field}"
+                ));
+            }
+        }
+        for child_key in ["children", "items", "rows", "cells", "caption"] {
+            if let Some(children) = node_object.get(child_key).and_then(Value::as_array) {
+                validate_candidate_nodes(children, &format!("{location}:{position}:{child_key}"))?;
+            }
         }
     }
     Ok(())
+}
+
+fn validate_candidate_option_bank(bank: &Value, index: usize) -> CommandResult<()> {
+    let Some(bank) = bank.as_object() else {
+        return Err(format!("cloud_authoring_output_option_bank_invalid:{index}"));
+    };
+    for field in ["optionBankId", "scope"] {
+        if non_empty_str(bank.get(field)).is_none() {
+            return Err(format!(
+                "cloud_authoring_output_option_bank_field_missing:{index}:{field}"
+            ));
+        }
+    }
+    if !bank.get("allowReuse").map(Value::is_boolean).unwrap_or(false) {
+        return Err(format!(
+            "cloud_authoring_output_option_bank_field_missing:{index}:allowReuse"
+        ));
+    }
+    let Some(options) = bank.get("options").and_then(Value::as_array) else {
+        return Err(format!(
+            "cloud_authoring_output_option_bank_field_missing:{index}:options"
+        ));
+    };
+    for (position, option) in options.iter().enumerate() {
+        for field in ["optionId", "label"] {
+            if non_empty_str(option.get(field)).is_none() {
+                return Err(format!(
+                    "cloud_authoring_output_option_field_missing:{index}:{position}:{field}"
+                ));
+            }
+        }
+        let Some(content) = option.get("content").and_then(Value::as_array) else {
+            return Err(format!(
+                "cloud_authoring_output_option_field_missing:{index}:{position}:content"
+            ));
+        };
+        validate_candidate_nodes(content, &format!("{index}:option:{position}"))?;
+    }
+    Ok(())
+}
+
+fn validate_candidate_answer_value(value: &Value) -> Result<(), String> {
+    validate_answer_value_shape(value)?;
+    if value.get("kind").and_then(Value::as_str) == Some("option")
+        && non_empty_str(value.get("assignment")).is_none()
+    {
+        return Err("option_assignment_missing".to_string());
+    }
+    Ok(())
+}
+
+/// 占位身份下跑一遍真实的标准化 + 反序列化（不写盘、不读库）。
+fn dry_run_candidate_finalize(output: &Value, modality: &'static str) -> CommandResult<()> {
+    let identity = crate::reconcile::candidate::CloudAuthoringIdentity {
+        job_id: "gateway-dry-run",
+        item_id: "gateway-dry-run",
+        batch_id: "gateway-dry-run",
+        source_file_id: "gateway-dry-run-source",
+        source_sha256: "gateway-dry-run",
+        base_edit_version: 0,
+        generated_at: "1970-01-01T00:00:00Z",
+        exam: json!({
+            "examId": "gateway-dry-run",
+            "title": "gateway-dry-run",
+            "language": "en",
+            "tags": [],
+            "sourceFiles": [{"sourceFileId": "gateway-dry-run-source", "role": "question_paper"}]
+        }),
+        modality,
+        source_document_id: "gateway-dry-run-document",
+        extraction_mode: "pdf_native",
+    };
+    let normalized = crate::reconcile::candidate::normalize_cloud_authoring(&identity, None, output)?;
+    crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(&identity, normalized)
+        .map(|_| ())
 }
 
 /// 修复回合的 prompt。
@@ -1301,6 +1547,16 @@ fn validate_authoring_candidate_output(output: &mut Value) -> CommandResult<()> 
 /// 提示词里写一个、分发器不认，是这类循环最典型的漂移；这里刻意引用同一份常量。
 fn repair_step_prompt(input: &Value) -> String {
     let tools = crate::schema::cloud_repair_v1::CLOUD_REPAIR_TOOLS.join(", ");
+    let paper = ielts_paper_label(input.get("modality").and_then(Value::as_str).unwrap_or("reading"));
+    // 只给模型它需要的：profile（baseUrl / model / timeout）、本机绝对路径、以及已经作为
+    // 独立文本块附上的 DOCX 原文都不进 prompt。前两者对修复毫无用处还泄露本机信息，
+    // 后者会让同一份原文在请求里出现两次。
+    let mut prompt_input = input.clone();
+    if let Some(object) = prompt_input.as_object_mut() {
+        for key in ["profile", "pdfPath", "sourceText", "apiKey", "apiKeySource", "pages", "repairNote"] {
+            object.remove(key);
+        }
+    }
     let repair = input
         .get("repairNote")
         .and_then(Value::as_str)
@@ -1312,15 +1568,15 @@ fn repair_step_prompt(input: &Value) -> String {
         })
         .unwrap_or_default();
     format!(
-        "You are repairing an IELTS Reading authoring draft so it matches the ORIGINAL FILE.\n\
-Return JSON only: exactly one object {{\"callId\":\"...\",\"tool\":\"...\",\"arguments\":{{...}}}}.\n\
+        "You are repairing an {paper} authoring draft so it matches the ORIGINAL FILE.\n\
+Return JSON only: exactly one object {{\"callId\":\"call-1\",\"tool\":\"read_draft\",\"arguments\":{{}}}} (tool is one of the allowed tools; arguments follow the tools table in the input).\n\
 Do not return Markdown, prose, or several objects.\n\
 Allowed tools (and nothing else): {tools}.\n\
 {repair}\n\
 Work like an editor: read what you need, then submit ONE batch of domain commands per turn, then read the result.\n\
 - apply_edits requires baseVersion: pass the editVersion you actually saw from read_draft.\n\
 - Use only the stable ids you were given. Never invent ids.\n\
-- Content changes need evidence copied from the original file.\n\
+- Attach evidence copied from the original file to content changes (sourceFileId, 1-based pageIndex, exact quote). A malformed evidence entry rejects the whole batch.\n\
 - Never invent an answer the file does not give.\n\
 - If a batch is rejected because a target is protected by a human edit, narrow the batch — do not retry the same commands.\n\
 - The context lists the whole document. Do not claim the paper is verified because you handled the listed differences.\n\
@@ -1336,7 +1592,7 @@ The first-pass cloud candidate is only an input and it can be wrong. For every d
 When you are done, call finish. Put every question you could NOT settle in \"unresolved\": \
 those become user-visible items, so leaving them out hides real uncertainty.\n\
 Input JSON: {}",
-        serde_json::to_string(input).unwrap_or_default()
+        serde_json::to_string(&prompt_input).unwrap_or_default()
     )
 }
 
@@ -3039,6 +3295,284 @@ mod tests {
         assert_eq!(
             llm_timeout(&json!({"timeoutMs": 900_000}), 60_000),
             Duration::from_millis(600_000)
+        );
+    }
+
+    // ── S2：prompt 与校验器对齐 + 模态钩子 ────────────────────────────────
+
+    /// 取出 prompt 正文里声明的形状示例（`marker` 之后的第一个 JSON 对象）。
+    /// 测的是**真正发给模型的文字**，不是另一份手抄。
+    fn declared_shape(prompt: &str, marker: &str) -> Value {
+        let start = prompt
+            .find(marker)
+            .unwrap_or_else(|| panic!("prompt 缺少形状声明 `{marker}`：{prompt}"))
+            + marker.len();
+        let offset = start + prompt[start..].find('{').expect("形状声明后必须跟一个 JSON 对象");
+        let end = balanced_json_end(prompt, offset).expect("形状示例必须是闭合的 JSON");
+        serde_json::from_str(&prompt[offset..end])
+            .unwrap_or_else(|error| panic!("形状示例必须是合法 JSON：{error}：{}", &prompt[offset..end]))
+    }
+
+    fn candidate_identity(modality: &'static str) -> crate::reconcile::candidate::CloudAuthoringIdentity<'static> {
+        crate::reconcile::candidate::CloudAuthoringIdentity {
+            job_id: "job-shape",
+            item_id: "job-shape",
+            batch_id: "batch-shape",
+            source_file_id: "the source fileId you were given",
+            source_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            base_edit_version: 1,
+            generated_at: "2026-09-21T00:00:00Z",
+            exam: json!({
+                "examId": "job-shape",
+                "title": "Shape",
+                "language": "en",
+                "tags": [],
+                "sourceFiles": [{"sourceFileId": "src-1", "role": "question_paper"}]
+            }),
+            modality,
+            source_document_id: "job-shape-document",
+            extraction_mode: "pdf_native",
+        }
+    }
+
+    fn finalize_candidate(output: &Value, modality: &'static str) -> CommandResult<()> {
+        let identity = candidate_identity(modality);
+        let normalized =
+            crate::reconcile::candidate::normalize_cloud_authoring(&identity, None, output)?;
+        crate::reconcile::candidate::cloud_authoring_candidate_from_normalized(&identity, normalized)
+            .map(|_| ())
+    }
+
+    /// 每一个写给模型看的形状示例，都必须能通过**它自己的**校验器。
+    ///
+    /// 形状示例就是模型的范本：范本本身过不了校验，照做的模型必然被拒。候选还要再过
+    /// 一道 finalize（标准化 + serde），因为那才是它真正落地的地方。
+    #[test]
+    fn every_declared_output_shape_passes_its_own_validator() {
+        let profile = json!({"model": "fake"});
+        let payload = json!({});
+
+        let mut group = declared_shape(&llm_prompt(&json!({}), "extract_group"), "with this shape:");
+        validate_llm_suggestion_output(&mut group, "extract_group", &profile, &payload)
+            .expect("group prompt 的形状示例必须通过校验");
+
+        let mut vision = declared_shape(&vision_prompt(&json!({})), "with shape");
+        validate_vision_transcription_output(&mut vision, &profile, &payload)
+            .expect("vision prompt 的形状示例必须通过校验");
+
+        let mut vision_answer =
+            declared_shape(&vision_answer_prompt(&json!({})), "with this shape:");
+        validate_vision_answer_output(&mut vision_answer, &profile, &payload)
+            .expect("vision answer prompt 的形状示例必须通过校验");
+        let mut vision_answer_contract =
+            crate::llm_suggestions::vision_answer_output_contract()["shape"].clone();
+        validate_vision_answer_output(&mut vision_answer_contract, &profile, &payload)
+            .expect("vision answer outputContract.shape 必须通过校验");
+
+        let mut outline = declared_shape(&cloud_outline_prompt(&json!({})), "with this shape:");
+        validate_cloud_outline_output(&mut outline, &profile, &payload)
+            .expect("outline prompt 的形状示例必须通过校验");
+        let mut outline_contract =
+            crate::llm_suggestions::cloud_outline_output_contract()["shape"].clone();
+        validate_cloud_outline_output(&mut outline_contract, &profile, &payload)
+            .expect("outline outputContract.shape 必须通过校验");
+
+        let mut repair = declared_shape(&repair_step_prompt(&json!({})), "exactly one object");
+        validate_repair_step_output(&mut repair).expect("repair prompt 的形状示例必须通过校验");
+
+        for modality in ["reading", "listening"] {
+            let shape =
+                crate::llm_suggestions::authoring_candidate_output_contract(modality)["shape"].clone();
+            let mut validated = shape.clone();
+            validate_authoring_candidate_output(&mut validated, modality)
+                .unwrap_or_else(|error| panic!("{modality} 候选形状示例必须通过校验：{error}"));
+            finalize_candidate(&shape, if modality == "reading" { "reading" } else { "listening" })
+                .unwrap_or_else(|error| panic!("{modality} 候选形状示例必须能 finalize：{error}"));
+        }
+    }
+
+    /// 正文（passage）是候选里最大的一块输出，却从来没有人比较或读取它：
+    /// 输出契约不再要求它，finalize 也不依赖它。
+    #[test]
+    fn the_candidate_contract_no_longer_asks_for_the_passage() {
+        for modality in ["reading", "listening"] {
+            let contract = crate::llm_suggestions::authoring_candidate_output_contract(modality);
+            assert!(contract["shape"].get("passage").is_none(), "{modality}: {contract}");
+            let text = contract.to_string();
+            assert!(
+                !text.contains("passage.content"),
+                "{modality} 契约规则仍在要求转写正文：{text}"
+            );
+        }
+    }
+
+    /// 候选校验器必须覆盖 serde 在 finalize 时要求的每一个字段：
+    /// 否则缺字段的回复通过网关、在 finalize 才失败，而那里没有受约束重试。
+    #[test]
+    fn candidate_validator_rejects_everything_finalize_would_reject() {
+        let base = crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        let slot_key = base["answerSlots"]
+            .as_object()
+            .and_then(|slots| slots.keys().next().cloned())
+            .expect("形状示例必须有答案槽");
+        let slot = format!("/answerSlots/{slot_key}");
+        let key = format!("/answerKey/{slot_key}");
+        let removals = [
+            "/taskGroups/0/responseGroups/0/kind".to_string(),
+            "/taskGroups/0/responseGroups/0/cardinality".to_string(),
+            "/taskGroups/0/responseGroups/0/assignment".to_string(),
+            "/taskGroups/0/responseGroups/0/scoringPolicy".to_string(),
+            "/taskGroups/0/responseGroups/0/duplicatePolicy".to_string(),
+            "/taskGroups/0/responseGroups/0/allowOptionReuse".to_string(),
+            "/taskGroups/0/displayRange/end".to_string(),
+            "/taskGroups/0/optionBank/allowReuse".to_string(),
+            "/taskGroups/0/optionBank/options/0/label".to_string(),
+            "/taskGroups/0/instructions/0/type".to_string(),
+            "/taskGroups/0/instructions/0/id".to_string(),
+            format!("{slot}/displayLabel"),
+            format!("{slot}/hostType"),
+            format!("{slot}/interaction"),
+            format!("{slot}/participation"),
+            format!("{slot}/confidence"),
+            format!("{key}/assignment"),
+            "/unresolvedRegions/0/reason".to_string(),
+            "/unresolvedRegions/0/detail".to_string(),
+        ];
+        for pointer in removals {
+            let mut output = base.clone();
+            let (parent, field) = pointer.rsplit_once('/').unwrap();
+            let removed = output
+                .pointer_mut(parent)
+                .and_then(Value::as_object_mut)
+                .and_then(|object| object.remove(field));
+            assert!(removed.is_some(), "测试前提：形状示例里应有 {pointer}");
+            assert!(
+                finalize_candidate(&output, "reading").is_err(),
+                "测试前提：缺 {pointer} 时 finalize 应当失败"
+            );
+            let error = validate_authoring_candidate_output(&mut output, "reading")
+                .expect_err(&format!("缺 {pointer} 必须在网关校验时就被拒"));
+            assert!(error.starts_with("cloud_authoring_output_"), "{pointer}: {error}");
+        }
+
+        let replacements = [
+            ("/taskGroups/0/taskType", json!("note_completion_questions")),
+            ("/taskGroups/0/displayRange", json!({"kind": "set"})),
+            ("/taskGroups/0/responseGroups/0/kind", json!("radio")),
+            ("/taskGroups/0/responseGroups/0/cardinality", json!({"min": 1})),
+        ];
+        for (pointer, value) in replacements {
+            let mut output = base.clone();
+            *output.pointer_mut(pointer).unwrap() = value.clone();
+            let error = validate_authoring_candidate_output(&mut output, "reading")
+                .expect_err(&format!("{pointer}={value} 必须被拒"));
+            assert!(error.starts_with("cloud_authoring_output_"), "{pointer}: {error}");
+        }
+        let mut output = base.clone();
+        output["answerSlots"][&slot_key]["interaction"] = json!("button");
+        assert!(validate_authoring_candidate_output(&mut output, "reading").is_err());
+        let mut output = base.clone();
+        output["answerKey"][&slot_key] = json!({"kind": "text", "values": []});
+        assert!(validate_authoring_candidate_output(&mut output, "reading").is_err());
+    }
+
+    /// prompt 里写「可选」「已知时」「引用不到就降低置信度」，校验器却把它们当必填——
+    /// 照 prompt 做的模型会被拒。prompt 必须说出校验器真正的要求。
+    #[test]
+    fn prompts_state_what_their_validators_require() {
+        let outline = cloud_outline_prompt(&json!({}));
+        assert!(!outline.contains("when known"), "layoutHint 是必填，不是「已知时」：{outline}");
+        assert!(
+            !outline.contains("lower that group confidence"),
+            "引用是必填，不能用降低置信度代替：{outline}"
+        );
+        assert!(outline.contains("notesText"), "{outline}");
+        let contract = crate::llm_suggestions::cloud_outline_output_contract().to_string();
+        assert!(!contract.contains("Optional notes"), "notesText 是必填：{contract}");
+        assert!(!contract.contains("lower group confidence"), "{contract}");
+
+        let vision_answer = vision_answer_prompt(&json!({}));
+        assert!(
+            !vision_answer.contains("return no answers and explain it in warnings"),
+            "空答案会被校验器拒绝，prompt 不能把它当成合法输出：{vision_answer}"
+        );
+
+        let group = llm_prompt(&json!({}), "extract_group");
+        let item = declared_shape(&group, "Each questions[] item has this shape:");
+        assert!(item.get("id").is_some(), "{group}");
+    }
+
+    /// 校验器要求的**顶层信封键**必须写在 prompt 正文里（不只在 outputContract 里）。
+    #[test]
+    fn candidate_vision_and_group_prompts_declare_their_envelope_keys() {
+        for modality in ["reading", "listening"] {
+            let prompt = authoring_candidate_prompt(&json!({"modality": modality}));
+            for key in ["\"taskGroups\"", "\"answerSlots\"", "\"answerKey\""] {
+                assert!(prompt.contains(key), "{modality} 候选 prompt 缺少 {key}：{prompt}");
+            }
+        }
+        assert!(vision_prompt(&json!({})).contains("\"text\""));
+        let vision_answer = vision_answer_prompt(&json!({}));
+        assert!(vision_answer.contains("\"answers\"") && vision_answer.contains("\"evidence\""));
+        let group = llm_prompt(&json!({}), "extract_group");
+        for key in ["\"kind\"", "\"questions\"", "\"evidence\""] {
+            assert!(group.contains(key), "group prompt 缺少 {key}");
+        }
+    }
+
+    /// 模态钩子：listening 候选 / 修复用 Listening 的措辞与部分结构，reading 保持原样。
+    #[test]
+    fn candidate_and_repair_prompts_follow_the_modality() {
+        let reading = authoring_candidate_prompt(&json!({"modality": "reading"}));
+        assert!(reading.contains("IELTS Reading"), "{reading}");
+        let default = authoring_candidate_prompt(&json!({}));
+        assert!(default.contains("IELTS Reading"), "缺省模态必须是 reading");
+        let listening = authoring_candidate_prompt(&json!({"modality": "listening"}));
+        assert!(listening.contains("IELTS Listening"), "{listening}");
+        assert!(!listening.contains("IELTS Reading"), "{listening}");
+        assert!(listening.contains("Part"), "listening 候选必须按 Part 组织：{listening}");
+
+        let repair = repair_step_prompt(&json!({"modality": "listening"}));
+        assert!(repair.contains("IELTS Listening") && !repair.contains("IELTS Reading"));
+        assert!(repair_step_prompt(&json!({})).contains("IELTS Reading"));
+
+        let contract = crate::llm_suggestions::authoring_candidate_output_contract("listening");
+        assert!(contract["shape"].get("listeningParts").is_some(), "{contract}");
+        let mut dangling = contract["shape"].clone();
+        dangling["listeningParts"][0]["taskIds"] = json!(["cloud-tg-404"]);
+        let error = validate_authoring_candidate_output(&mut dangling, "listening")
+            .expect_err("listeningParts 引用不存在的题组必须被拒");
+        assert!(error.contains("listening_part"), "{error}");
+    }
+
+    /// 修复 prompt 只给模型它需要的东西：不带 profile（baseUrl/model/timeout）、
+    /// 不带本机绝对路径、不把 DOCX 原文在 JSON 里再塞一遍。
+    #[test]
+    fn the_repair_prompt_carries_no_profile_path_or_duplicated_source_text() {
+        let input = json!({
+            "mode": "repair_authoring_step",
+            "profile": {"baseUrl": "https://gateway.example/v1", "model": "secret-model-name", "timeoutMs": 120000},
+            "apiKey": "sk-should-never-appear",
+            "pdfPath": "C:\\Users\\someone\\AppData\\paper.pdf",
+            "sourceText": "UNIQUE-SOURCE-TEXT-MARKER",
+            "context": {"differences": [{"targetId": "q1"}]},
+            "observations": []
+        });
+        let prompt = repair_step_prompt(&input);
+        for forbidden in [
+            "gateway.example",
+            "secret-model-name",
+            "sk-should-never-appear",
+            "AppData",
+            "UNIQUE-SOURCE-TEXT-MARKER",
+            "timeoutMs",
+        ] {
+            assert!(!prompt.contains(forbidden), "修复 prompt 泄露了 {forbidden}：{prompt}");
+        }
+        assert!(prompt.contains("\"differences\""), "上下文必须保留：{prompt}");
+        assert!(
+            !prompt.contains("Content changes need evidence"),
+            "校验器不强制证据，prompt 不能谎称必填"
         );
     }
 }

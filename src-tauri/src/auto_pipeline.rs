@@ -2586,6 +2586,20 @@ pub(crate) fn generate_cloud_reading_outline(
     )
 }
 
+/// 云端识别 / 修复的**模态钩子**：决定 prompt 与输出契约按 Reading 还是 Listening 措辞。
+///
+/// 现在的依据是权威稿已登记的 `modality`（没有权威稿时缺省 `reading`）。听力导入链
+/// 若能在更早的时刻知道模态（例如导入时声明），改这里一处即可，候选与修复同时生效。
+pub(crate) fn cloud_recognition_modality(root: &Path, job_id: &str) -> String {
+    use crate::library::repository::{get_canonical_ds, open_library_connection};
+    let modality = open_library_connection(root)
+        .ok()
+        .and_then(|conn| get_canonical_ds(&conn, job_id).ok().flatten())
+        .and_then(|(ds, _)| ds.get("modality").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_else(|| "reading".to_string());
+    crate::llm_suggestions::candidate_modality(&modality).to_string()
+}
+
 /// 云端**完整候选**识别的第一段：原文件证据面 + 真实网关调用。
 ///
 /// 返回的是**模型原始 JSON**（尚未接上后端身份）。之所以只做到这一步：
@@ -2615,6 +2629,7 @@ pub(crate) fn generate_cloud_authoring_candidate_raw(
     } else {
         Value::Null
     };
+    let modality = cloud_recognition_modality(root, job_id);
     let mut input = crate::llm_suggestions::make_cloud_authoring_candidate_input(
         &profile,
         &job,
@@ -2622,6 +2637,7 @@ pub(crate) fn generate_cloud_authoring_candidate_raw(
         &source,
         &upload_path,
         &extraction,
+        &modality,
     );
     if !is_pdf {
         // `data_url_for_pdf` 会按 `data:application/pdf` 发送 `pdfPath`，对 DOCX 是
@@ -2804,6 +2820,7 @@ pub(crate) fn repair_authoring_step_through_gateway(
     let profile = find_profile(root, &selected)?;
     let (source, upload_path) = main_source_for_cloud(root, &job)?;
     let is_pdf = source.file_type == "pdf";
+    let modality = cloud_recognition_modality(root, job_id);
     let mut input = crate::llm_suggestions::make_repair_authoring_step_input(
         &profile,
         &job,
@@ -2812,6 +2829,7 @@ pub(crate) fn repair_authoring_step_through_gateway(
         &upload_path,
         context,
         observations,
+        &modality,
     );
     if !is_pdf {
         if let Some(object) = input.as_object_mut() {

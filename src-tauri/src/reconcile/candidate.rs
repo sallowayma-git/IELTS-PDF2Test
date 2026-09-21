@@ -2077,12 +2077,116 @@ fn sanitize_anchors(value: &mut Value, identity: &CloudAuthoringIdentity<'_>) {
     }
 }
 
+/// 内容节点的后端字段：`sourceAnchors` 缺省为空数组，`provenanceStatus` 一律由后端定为
+/// `source`（模型转写的是原文件内容；模型写什么来源标记都不采信——它无权声称
+/// `user_edited`，那会影响人工保护判定）。子节点递归处理。
+fn fill_content_node_defaults(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                fill_content_node_defaults(item);
+            }
+        }
+        Value::Object(map) => {
+            if map.get("type").map(Value::is_string).unwrap_or(false) {
+                if !map.get("sourceAnchors").map(Value::is_array).unwrap_or(false) {
+                    map.insert("sourceAnchors".to_string(), json!([]));
+                }
+                map.insert("provenanceStatus".to_string(), json!("source"));
+            }
+            for key in ["children", "items", "rows", "cells", "caption"] {
+                if let Some(child) = map.get_mut(key) {
+                    fill_content_node_defaults(child);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn ensure_source_anchors(map: &mut Map<String, Value>) {
+    if !map.get("sourceAnchors").map(Value::is_array).unwrap_or(false) {
+        map.insert("sourceAnchors".to_string(), json!([]));
+    }
+}
+
+/// 补齐**后端拥有**、模型被明确告知不要输出的字段。
+///
+/// 输出契约告诉模型：`sourceAnchors` 可选、`provenanceStatus` 不许写。那么照契约回复的
+/// 模型必然缺这两个字段——而 `IeltsAuthoringIRV2` 把它们定为必填。不在这里补，照做的
+/// 模型就会在 finalize 被整份拒绝。只补这两类后端字段，**不补任何内容字段**。
+fn fill_backend_owned_defaults(draft: &mut Value) {
+    let Some(document) = draft.as_object_mut() else {
+        return;
+    };
+    if let Some(passage) = document.get_mut("passage").and_then(Value::as_object_mut) {
+        ensure_source_anchors(passage);
+        if let Some(content) = passage.get_mut("content") {
+            fill_content_node_defaults(content);
+        }
+    }
+    if let Some(groups) = document.get_mut("taskGroups").and_then(Value::as_array_mut) {
+        for group in groups.iter_mut() {
+            let Some(group_map) = group.as_object_mut() else {
+                continue;
+            };
+            for key in ["instructions", "stimulus"] {
+                if let Some(nodes) = group_map.get_mut(key) {
+                    fill_content_node_defaults(nodes);
+                }
+            }
+            if let Some(bank) = group_map.get_mut("optionBank").and_then(Value::as_object_mut) {
+                ensure_source_anchors(bank);
+                if let Some(title) = bank.get_mut("title") {
+                    fill_content_node_defaults(title);
+                }
+                if let Some(options) = bank.get_mut("options").and_then(Value::as_array_mut) {
+                    for option in options.iter_mut().filter_map(Value::as_object_mut) {
+                        ensure_source_anchors(option);
+                        option.remove("provenanceStatus");
+                        if let Some(content) = option.get_mut("content") {
+                            fill_content_node_defaults(content);
+                        }
+                    }
+                }
+            }
+            if let Some(response_groups) =
+                group_map.get_mut("responseGroups").and_then(Value::as_array_mut)
+            {
+                for response in response_groups.iter_mut().filter_map(Value::as_object_mut) {
+                    ensure_source_anchors(response);
+                    if let Some(prompt) = response.get_mut("prompt") {
+                        fill_content_node_defaults(prompt);
+                    }
+                    if let Some(options) = response.get_mut("options").and_then(Value::as_array_mut)
+                    {
+                        for option in options.iter_mut().filter_map(Value::as_object_mut) {
+                            ensure_source_anchors(option);
+                            option.remove("provenanceStatus");
+                            if let Some(content) = option.get_mut("content") {
+                                fill_content_node_defaults(content);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(slots) = document.get_mut("answerSlots").and_then(Value::as_object_mut) {
+        for slot in slots.values_mut().filter_map(Value::as_object_mut) {
+            ensure_source_anchors(slot);
+            slot.remove("provenanceStatus");
+        }
+    }
+}
+
 /// 把模型草稿收敛到 `IeltsAuthoringIRV2` 的**精确**形状。
 ///
 /// 只做三件事：枚举别名归一、锚点补后端字段、剥掉契约外的键。**不动内容**——
 /// 文本、选项、答案一律原样搬运，缺失就保持缺失（由解析如实报错）。
 fn sanitize_cloud_authoring_draft(draft: &mut Value, identity: &CloudAuthoringIdentity<'_>) {
     sanitize_anchors(draft, identity);
+    fill_backend_owned_defaults(draft);
 
     let Some(document) = draft.as_object_mut() else {
         return;
@@ -2246,6 +2350,11 @@ pub(crate) fn normalize_cloud_authoring(
         .unwrap_or_default();
     if let Some(items) = raw.get("warnings").and_then(Value::as_array) {
         warnings.extend(items.iter().filter_map(Value::as_str).map(str::to_string));
+    }
+    // Listening 的部分结构（`ListeningStructureV2`）还需要媒体信息，那是听力导入链的
+    // 事实，模型给不出；这里如实记下「收到了但尚未套用」，不伪造一个听力结构。
+    if let Some(parts) = draft.get("listeningParts").and_then(Value::as_array) {
+        warnings.push(format!("cloud_listening_parts_not_applied:{}", parts.len()));
     }
 
     let groups: Vec<Value> = draft
@@ -4040,6 +4149,43 @@ mod cloud_authoring_tests {
         assert_eq!(
             normalized.source_coverage_notes,
             vec!["DOCX 图表证据不完整".to_string()]
+        );
+    }
+
+    /// 输出契约不再要求 `passage`（它是最大的一块输出，却没有任何环节读它）。
+    /// 证明：有无 passage，finalize 都成功；修复回合看到的差异清单完全相同。
+    #[test]
+    fn candidate_without_a_passage_finalizes_and_yields_the_same_differences() {
+        let canonical = golden_authoring();
+        let without = json!({"authoring": cloud_draft(&[14, 15], "cloud")});
+        let mut with_draft = cloud_draft(&[14, 15], "cloud");
+        with_draft["passage"] = json!({
+            "title": "Early approaches",
+            "content": [paragraph("cloud-passage-p1", "cloud-passage-t1", "A long passage body.")],
+            "sourceAnchors": []
+        });
+        let with = json!({"authoring": with_draft});
+
+        let finalize = |raw: &Value| {
+            let normalized = normalize_cloud_authoring(&identity(), Some(&canonical), raw)
+                .expect("标准化必须成功");
+            cloud_authoring_candidate_from_normalized(&identity(), normalized)
+                .expect("没有 passage 也必须能装配")
+        };
+        let candidate_without = finalize(&without);
+        let candidate_with = finalize(&with);
+        assert!(candidate_without.authoring.passage.is_none());
+
+        let differences = |candidate: &CloudAuthoringCandidateV1| {
+            crate::cloud_repair::candidate_differences(
+                &canonical,
+                &serde_json::to_value(&candidate.authoring).unwrap(),
+            )
+        };
+        assert_eq!(
+            differences(&candidate_without),
+            differences(&candidate_with),
+            "差异清单不得依赖 passage"
         );
     }
 }
