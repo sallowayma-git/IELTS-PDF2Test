@@ -81,6 +81,8 @@ mod pdf_ingest;
 mod preview_commands;
 #[cfg(test)]
 mod product_chain;
+#[cfg(test)]
+mod publish_final_tests;
 mod reading_runtime_v2;
 mod reading_source;
 mod reading_source_v2;

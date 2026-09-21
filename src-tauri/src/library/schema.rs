@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 7;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 8;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let transaction = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
@@ -101,8 +101,47 @@ fn migrations() -> Vec<(i64, &'static str)> {
             7,
             "ALTER TABLE recognition_batches_v1 ADD COLUMN repair_json TEXT;",
         ),
+        // v8：发布记录与「题库保存」的最终版证据（自包含步骤，合并时可重新编号）。
+        //
+        // - `publish_records_v2`：每次发布一行。`forced = 1` 表示这次发布时门禁结论
+        //   不是 Ready、由用户点击发布显式放行；`verdict_json` 是门禁原样结论，**从不**
+        //   被改写成 Ready。
+        // - `library_final_versions_v2`：每个条目只有一份最终版（权威稿本身仍是
+        //   `library_items_v2.canonical_ds_json`，这里不复制第二份稿），只存发布时冻结的
+        //   证据摘要与原文件清理状态。原文件与过程文件被删除后，质量评估靠这份冻结证据
+        //   继续核对题号集合。
+        (8, PUBLISH_RECORDS_AND_FINAL_VERSION_SQL),
     ]
 }
+
+const PUBLISH_RECORDS_AND_FINAL_VERSION_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS publish_records_v2 (
+    id                TEXT PRIMARY KEY,
+    library_item_id   TEXT NOT NULL REFERENCES library_items_v2(id),
+    edit_version      INTEGER NOT NULL,
+    batch_id          TEXT NOT NULL,
+    destination       TEXT NOT NULL,
+    forced            INTEGER NOT NULL CHECK (forced IN (0, 1)),
+    verdict_json      TEXT NOT NULL,
+    reasons_json      TEXT NOT NULL,
+    student_loadable  INTEGER NOT NULL CHECK (student_loadable IN (0, 1)),
+    status            TEXT NOT NULL,
+    created_at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_publish_records_v2_item
+    ON publish_records_v2(library_item_id, created_at);
+
+CREATE TABLE IF NOT EXISTS library_final_versions_v2 (
+    library_item_id   TEXT PRIMARY KEY REFERENCES library_items_v2(id),
+    edit_version      INTEGER NOT NULL,
+    published_at      TEXT NOT NULL,
+    publish_record_id TEXT,
+    evidence_json     TEXT NOT NULL,
+    source_purged_at  TEXT,
+    purge_report_json TEXT,
+    updated_at        TEXT NOT NULL
+);
+"#;
 
 const RECOGNITION_CLOSED_LOOP_SQL: &str = r#"
 -- 一次导入 = 一个生成批次。重试复用同一 batch_id（幂等 apply 的前提）。
@@ -268,6 +307,8 @@ mod tests {
             "recognition_batches_v1",
             "recognition_decisions_v1",
             "recognition_decision_journal_v1",
+            "publish_records_v2",
+            "library_final_versions_v2",
         ] {
             let name: String = conn
                 .query_row(

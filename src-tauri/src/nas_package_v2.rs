@@ -257,12 +257,25 @@ struct PackageReceipt {
     manifest_sha256: String,
 }
 
+/// 发布请求。`deny_unknown_fields`：旧的 `validationPolicy` 之类字段必须报错，
+/// 不能被静默忽略成一次严格发布。
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PublishItemsInput {
     pub item_ids: Vec<String>,
     pub destination: String,
     pub fault: Option<String>,
+    /// 用户点击「发布」即为放行确认。前端总是带上它（`confirmedAt` = 点击时间）；
+    /// 只有门禁结论确实不是 Ready 时才**被使用**并记录为显式放行。
+    #[serde(default)]
+    pub force: Option<ForceOverride>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ForceOverride {
+    pub confirmed_at: String,
+    pub acknowledged_reasons: Vec<String>,
 }
 
 pub(crate) fn publish_items_core(root: &Path, input: PublishItemsInput) -> CommandResult<Value> {
