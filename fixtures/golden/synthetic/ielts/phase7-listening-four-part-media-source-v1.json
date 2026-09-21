@@ -1,0 +1,3784 @@
+{
+  "schemaVersion": "ListeningExamSourceV1",
+  "examId": "phase7-listening-four-part-media",
+  "meta": {
+    "title": "Listening Four Section Media Contract Fixture",
+    "language": "en",
+    "scope": "complete_exam"
+  },
+  "assets": {
+    "examId": "phase7-listening-four-part-media",
+    "assets": [
+      {
+        "assetId": "audio-section-1",
+        "kind": "audio",
+        "mime": "audio/mpeg",
+        "relativePath": "audio/1111111111111111111111111111111111111111111111111111111111111111.mp3",
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "byteLength": 4096,
+        "durationMs": 1500,
+        "extractionMode": "user_upload"
+      },
+      {
+        "assetId": "audio-section-2",
+        "kind": "audio",
+        "mime": "audio/mpeg",
+        "relativePath": "audio/2222222222222222222222222222222222222222222222222222222222222222.mp3",
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "byteLength": 8192,
+        "durationMs": 2500,
+        "extractionMode": "user_upload"
+      },
+      {
+        "assetId": "audio-section-3",
+        "kind": "audio",
+        "mime": "audio/mpeg",
+        "relativePath": "audio/3333333333333333333333333333333333333333333333333333333333333333.mp3",
+        "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "byteLength": 12288,
+        "durationMs": 3500,
+        "extractionMode": "user_upload"
+      },
+      {
+        "assetId": "audio-section-4",
+        "kind": "audio",
+        "mime": "audio/mpeg",
+        "relativePath": "audio/4444444444444444444444444444444444444444444444444444444444444444.mp3",
+        "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "byteLength": 16384,
+        "durationMs": 4500,
+        "extractionMode": "user_upload"
+      }
+    ]
+  },
+  "parts": [
+    {
+      "partId": "part-1",
+      "displayLabel": "SECTION 1",
+      "expectedQuestionNumbers": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "taskIds": [
+        "section1-notes"
+      ],
+      "cue": {
+        "startMs": 0,
+        "endMs": 1500,
+        "origin": "manual",
+        "confidence": 1,
+        "confirmed": true,
+        "sourceAnchors": []
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "part-heading"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "media": {
+        "assetId": "audio-section-1",
+        "mime": "audio/mpeg",
+        "durationMs": 1500,
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "probe": {
+          "status": "passed",
+          "provider": "phase7-contract-fixture",
+          "providerVersion": "1.0.0",
+          "probedAt": "2026-09-21T00:00:00Z",
+          "issueCodes": []
+        }
+      }
+    },
+    {
+      "partId": "part-2",
+      "displayLabel": "SECTION 2",
+      "expectedQuestionNumbers": [
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ],
+      "taskIds": [
+        "section2-notes"
+      ],
+      "cue": {
+        "startMs": 0,
+        "endMs": 2500,
+        "origin": "manual",
+        "confidence": 1,
+        "confirmed": true,
+        "sourceAnchors": []
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "part-heading"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "media": {
+        "assetId": "audio-section-2",
+        "mime": "audio/mpeg",
+        "durationMs": 2500,
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "probe": {
+          "status": "passed",
+          "provider": "phase7-contract-fixture",
+          "providerVersion": "1.0.0",
+          "probedAt": "2026-09-21T00:00:00Z",
+          "issueCodes": []
+        }
+      }
+    },
+    {
+      "partId": "part-3",
+      "displayLabel": "SECTION 3",
+      "expectedQuestionNumbers": [
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30
+      ],
+      "taskIds": [
+        "section3-notes"
+      ],
+      "cue": {
+        "startMs": 0,
+        "endMs": 3500,
+        "origin": "manual",
+        "confidence": 1,
+        "confirmed": true,
+        "sourceAnchors": []
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "part-heading"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "media": {
+        "assetId": "audio-section-3",
+        "mime": "audio/mpeg",
+        "durationMs": 3500,
+        "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "probe": {
+          "status": "passed",
+          "provider": "phase7-contract-fixture",
+          "providerVersion": "1.0.0",
+          "probedAt": "2026-09-21T00:00:00Z",
+          "issueCodes": []
+        }
+      }
+    },
+    {
+      "partId": "part-4",
+      "displayLabel": "SECTION 4",
+      "expectedQuestionNumbers": [
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40
+      ],
+      "taskIds": [
+        "section4-notes"
+      ],
+      "cue": {
+        "startMs": 0,
+        "endMs": 4500,
+        "origin": "manual",
+        "confidence": 1,
+        "confirmed": true,
+        "sourceAnchors": []
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "part-heading"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "media": {
+        "assetId": "audio-section-4",
+        "mime": "audio/mpeg",
+        "durationMs": 4500,
+        "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "probe": {
+          "status": "passed",
+          "provider": "phase7-contract-fixture",
+          "providerVersion": "1.0.0",
+          "probedAt": "2026-09-21T00:00:00Z",
+          "issueCodes": []
+        }
+      }
+    }
+  ],
+  "playbackPolicy": {
+    "mode": "practice",
+    "autoplay": false,
+    "allowPause": true,
+    "allowSeek": true,
+    "allowReplay": true,
+    "refreshBehavior": "resume_from_snapshot",
+    "crashRecoveryBehavior": "resume_from_snapshot",
+    "showCurrentTime": true,
+    "showDuration": true
+  },
+  "taskGroups": [
+    {
+      "taskId": "section1-notes",
+      "displayRange": {
+        "kind": "range",
+        "start": 1,
+        "end": 10
+      },
+      "taskType": "note_completion",
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "section1-notes-instruction",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "instruction-line"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "section1-notes-instruction-text",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "instruction-line"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Write ONE WORD ONLY."
+            }
+          ]
+        }
+      ],
+      "instructionSignature": {
+        "normalizedText": "Write ONE WORD ONLY.",
+        "taskType": "note_completion",
+        "expectedQuestionNumbers": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "expectedSlotCount": 10,
+        "selectionCardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "answerAssignment": "per_slot",
+        "wordLimit": {
+          "maxWords": 1,
+          "maxNumbers": 0,
+          "wordsAndOrNumber": false
+        },
+        "evidenceAnchors": [
+          {
+            "sourceFileId": "question-paper",
+            "pageIndex": 0,
+            "nodeIds": [
+              "instruction-line"
+            ],
+            "extractionMode": "pdf_native",
+            "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "confidence": 1
+      },
+      "stimulus": [
+        {
+          "type": "paragraph",
+          "id": "section1-notes-notes",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "form-line-1"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "section1-notes-label-1",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 1: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-1",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q1",
+              "displayLabel": "1",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section1-notes-label-2",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 2: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-2",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q2",
+              "displayLabel": "2",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section1-notes-label-3",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 3: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-3",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q3",
+              "displayLabel": "3",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section1-notes-label-4",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 4: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-4",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q4",
+              "displayLabel": "4",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section1-notes-label-5",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 5: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-5",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q5",
+              "displayLabel": "5",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section1-notes-label-6",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 6: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-6",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q6",
+              "displayLabel": "6",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section1-notes-label-7",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 7: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-7",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q7",
+              "displayLabel": "7",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section1-notes-label-8",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 8: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-8",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q8",
+              "displayLabel": "8",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section1-notes-label-9",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 9: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-9",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q9",
+              "displayLabel": "9",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section1-notes-label-10",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 10: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section1-notes-slot-node-10",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q10",
+              "displayLabel": "10",
+              "inline": true
+            }
+          ]
+        }
+      ],
+      "responseGroups": [
+        {
+          "responseGroupId": "section1-notes-response",
+          "kind": "text_entry",
+          "slotIds": [
+            "q1",
+            "q2",
+            "q3",
+            "q4",
+            "q5",
+            "q6",
+            "q7",
+            "q8",
+            "q9",
+            "q10"
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "ignore_duplicates",
+          "allowOptionReuse": false,
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "form-line-1",
+                "slot-1"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ],
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "instruction-line",
+            "form-line-1",
+            "slot-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "quality": {
+        "score": 1,
+        "sourceCoverage": 1,
+        "hardFailures": []
+      },
+      "reviewState": "confirmed"
+    },
+    {
+      "taskId": "section2-notes",
+      "displayRange": {
+        "kind": "range",
+        "start": 11,
+        "end": 20
+      },
+      "taskType": "note_completion",
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "section2-notes-instruction",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "instruction-line"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "section2-notes-instruction-text",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "instruction-line"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Write ONE WORD ONLY."
+            }
+          ]
+        }
+      ],
+      "instructionSignature": {
+        "normalizedText": "Write ONE WORD ONLY.",
+        "taskType": "note_completion",
+        "expectedQuestionNumbers": [
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20
+        ],
+        "expectedSlotCount": 10,
+        "selectionCardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "answerAssignment": "per_slot",
+        "wordLimit": {
+          "maxWords": 1,
+          "maxNumbers": 0,
+          "wordsAndOrNumber": false
+        },
+        "evidenceAnchors": [
+          {
+            "sourceFileId": "question-paper",
+            "pageIndex": 0,
+            "nodeIds": [
+              "instruction-line"
+            ],
+            "extractionMode": "pdf_native",
+            "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "confidence": 1
+      },
+      "stimulus": [
+        {
+          "type": "paragraph",
+          "id": "section2-notes-notes",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "form-line-1"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "section2-notes-label-11",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 11: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-11",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q11",
+              "displayLabel": "11",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section2-notes-label-12",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 12: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-12",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q12",
+              "displayLabel": "12",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section2-notes-label-13",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 13: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-13",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q13",
+              "displayLabel": "13",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section2-notes-label-14",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 14: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-14",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q14",
+              "displayLabel": "14",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section2-notes-label-15",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 15: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-15",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q15",
+              "displayLabel": "15",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section2-notes-label-16",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 16: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-16",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q16",
+              "displayLabel": "16",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section2-notes-label-17",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 17: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-17",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q17",
+              "displayLabel": "17",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section2-notes-label-18",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 18: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-18",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q18",
+              "displayLabel": "18",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section2-notes-label-19",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 19: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-19",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q19",
+              "displayLabel": "19",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section2-notes-label-20",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 20: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section2-notes-slot-node-20",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q20",
+              "displayLabel": "20",
+              "inline": true
+            }
+          ]
+        }
+      ],
+      "responseGroups": [
+        {
+          "responseGroupId": "section2-notes-response",
+          "kind": "text_entry",
+          "slotIds": [
+            "q11",
+            "q12",
+            "q13",
+            "q14",
+            "q15",
+            "q16",
+            "q17",
+            "q18",
+            "q19",
+            "q20"
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "ignore_duplicates",
+          "allowOptionReuse": false,
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "form-line-1",
+                "slot-1"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ],
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "instruction-line",
+            "form-line-1",
+            "slot-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "quality": {
+        "score": 1,
+        "sourceCoverage": 1,
+        "hardFailures": []
+      },
+      "reviewState": "confirmed"
+    },
+    {
+      "taskId": "section3-notes",
+      "displayRange": {
+        "kind": "range",
+        "start": 21,
+        "end": 30
+      },
+      "taskType": "note_completion",
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "section3-notes-instruction",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "instruction-line"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "section3-notes-instruction-text",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "instruction-line"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Write ONE WORD ONLY."
+            }
+          ]
+        }
+      ],
+      "instructionSignature": {
+        "normalizedText": "Write ONE WORD ONLY.",
+        "taskType": "note_completion",
+        "expectedQuestionNumbers": [
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30
+        ],
+        "expectedSlotCount": 10,
+        "selectionCardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "answerAssignment": "per_slot",
+        "wordLimit": {
+          "maxWords": 1,
+          "maxNumbers": 0,
+          "wordsAndOrNumber": false
+        },
+        "evidenceAnchors": [
+          {
+            "sourceFileId": "question-paper",
+            "pageIndex": 0,
+            "nodeIds": [
+              "instruction-line"
+            ],
+            "extractionMode": "pdf_native",
+            "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "confidence": 1
+      },
+      "stimulus": [
+        {
+          "type": "paragraph",
+          "id": "section3-notes-notes",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "form-line-1"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "section3-notes-label-21",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 21: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-21",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q21",
+              "displayLabel": "21",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section3-notes-label-22",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 22: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-22",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q22",
+              "displayLabel": "22",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section3-notes-label-23",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 23: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-23",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q23",
+              "displayLabel": "23",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section3-notes-label-24",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 24: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-24",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q24",
+              "displayLabel": "24",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section3-notes-label-25",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 25: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-25",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q25",
+              "displayLabel": "25",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section3-notes-label-26",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 26: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-26",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q26",
+              "displayLabel": "26",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section3-notes-label-27",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 27: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-27",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q27",
+              "displayLabel": "27",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section3-notes-label-28",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 28: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-28",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q28",
+              "displayLabel": "28",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section3-notes-label-29",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 29: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-29",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q29",
+              "displayLabel": "29",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section3-notes-label-30",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 30: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section3-notes-slot-node-30",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q30",
+              "displayLabel": "30",
+              "inline": true
+            }
+          ]
+        }
+      ],
+      "responseGroups": [
+        {
+          "responseGroupId": "section3-notes-response",
+          "kind": "text_entry",
+          "slotIds": [
+            "q21",
+            "q22",
+            "q23",
+            "q24",
+            "q25",
+            "q26",
+            "q27",
+            "q28",
+            "q29",
+            "q30"
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "ignore_duplicates",
+          "allowOptionReuse": false,
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "form-line-1",
+                "slot-1"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ],
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "instruction-line",
+            "form-line-1",
+            "slot-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "quality": {
+        "score": 1,
+        "sourceCoverage": 1,
+        "hardFailures": []
+      },
+      "reviewState": "confirmed"
+    },
+    {
+      "taskId": "section4-notes",
+      "displayRange": {
+        "kind": "range",
+        "start": 31,
+        "end": 40
+      },
+      "taskType": "note_completion",
+      "instructions": [
+        {
+          "type": "paragraph",
+          "id": "section4-notes-instruction",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "instruction-line"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "section4-notes-instruction-text",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "instruction-line"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Write ONE WORD ONLY."
+            }
+          ]
+        }
+      ],
+      "instructionSignature": {
+        "normalizedText": "Write ONE WORD ONLY.",
+        "taskType": "note_completion",
+        "expectedQuestionNumbers": [
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40
+        ],
+        "expectedSlotCount": 10,
+        "selectionCardinality": {
+          "min": 1,
+          "max": 1,
+          "exact": 1
+        },
+        "answerAssignment": "per_slot",
+        "wordLimit": {
+          "maxWords": 1,
+          "maxNumbers": 0,
+          "wordsAndOrNumber": false
+        },
+        "evidenceAnchors": [
+          {
+            "sourceFileId": "question-paper",
+            "pageIndex": 0,
+            "nodeIds": [
+              "instruction-line"
+            ],
+            "extractionMode": "pdf_native",
+            "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "confidence": 1
+      },
+      "stimulus": [
+        {
+          "type": "paragraph",
+          "id": "section4-notes-notes",
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "form-line-1"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "provenanceStatus": "source",
+          "children": [
+            {
+              "type": "text",
+              "id": "section4-notes-label-31",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 31: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-31",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q31",
+              "displayLabel": "31",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section4-notes-label-32",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 32: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-32",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q32",
+              "displayLabel": "32",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section4-notes-label-33",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 33: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-33",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q33",
+              "displayLabel": "33",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section4-notes-label-34",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 34: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-34",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q34",
+              "displayLabel": "34",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section4-notes-label-35",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 35: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-35",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q35",
+              "displayLabel": "35",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section4-notes-label-36",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 36: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-36",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q36",
+              "displayLabel": "36",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section4-notes-label-37",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 37: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-37",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q37",
+              "displayLabel": "37",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section4-notes-label-38",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 38: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-38",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q38",
+              "displayLabel": "38",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section4-notes-label-39",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 39: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-39",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q39",
+              "displayLabel": "39",
+              "inline": true
+            },
+            {
+              "type": "text",
+              "id": "section4-notes-label-40",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "form-line-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "source",
+              "text": "Note 40: "
+            },
+            {
+              "type": "answer_slot",
+              "id": "section4-notes-slot-node-40",
+              "sourceAnchors": [
+                {
+                  "sourceFileId": "question-paper",
+                  "pageIndex": 0,
+                  "nodeIds": [
+                    "slot-1"
+                  ],
+                  "extractionMode": "pdf_native",
+                  "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "provenanceStatus": "derived",
+              "slotId": "q40",
+              "displayLabel": "40",
+              "inline": true
+            }
+          ]
+        }
+      ],
+      "responseGroups": [
+        {
+          "responseGroupId": "section4-notes-response",
+          "kind": "text_entry",
+          "slotIds": [
+            "q31",
+            "q32",
+            "q33",
+            "q34",
+            "q35",
+            "q36",
+            "q37",
+            "q38",
+            "q39",
+            "q40"
+          ],
+          "cardinality": {
+            "min": 1,
+            "max": 1,
+            "exact": 1
+          },
+          "assignment": "per_slot",
+          "scoringPolicy": "per_slot_binary",
+          "duplicatePolicy": "ignore_duplicates",
+          "allowOptionReuse": false,
+          "sourceAnchors": [
+            {
+              "sourceFileId": "question-paper",
+              "pageIndex": 0,
+              "nodeIds": [
+                "form-line-1",
+                "slot-1"
+              ],
+              "extractionMode": "pdf_native",
+              "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ],
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "instruction-line",
+            "form-line-1",
+            "slot-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "quality": {
+        "score": 1,
+        "sourceCoverage": 1,
+        "hardFailures": []
+      },
+      "reviewState": "confirmed"
+    }
+  ],
+  "answerSlots": {
+    "q1": {
+      "slotId": "q1",
+      "questionNumber": 1,
+      "displayLabel": "1",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q2": {
+      "slotId": "q2",
+      "questionNumber": 2,
+      "displayLabel": "2",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q3": {
+      "slotId": "q3",
+      "questionNumber": 3,
+      "displayLabel": "3",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q4": {
+      "slotId": "q4",
+      "questionNumber": 4,
+      "displayLabel": "4",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q5": {
+      "slotId": "q5",
+      "questionNumber": 5,
+      "displayLabel": "5",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q6": {
+      "slotId": "q6",
+      "questionNumber": 6,
+      "displayLabel": "6",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q7": {
+      "slotId": "q7",
+      "questionNumber": 7,
+      "displayLabel": "7",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q8": {
+      "slotId": "q8",
+      "questionNumber": 8,
+      "displayLabel": "8",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q9": {
+      "slotId": "q9",
+      "questionNumber": 9,
+      "displayLabel": "9",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q10": {
+      "slotId": "q10",
+      "questionNumber": 10,
+      "displayLabel": "10",
+      "hostNodeId": "section1-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q11": {
+      "slotId": "q11",
+      "questionNumber": 11,
+      "displayLabel": "11",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q12": {
+      "slotId": "q12",
+      "questionNumber": 12,
+      "displayLabel": "12",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q13": {
+      "slotId": "q13",
+      "questionNumber": 13,
+      "displayLabel": "13",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q14": {
+      "slotId": "q14",
+      "questionNumber": 14,
+      "displayLabel": "14",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q15": {
+      "slotId": "q15",
+      "questionNumber": 15,
+      "displayLabel": "15",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q16": {
+      "slotId": "q16",
+      "questionNumber": 16,
+      "displayLabel": "16",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q17": {
+      "slotId": "q17",
+      "questionNumber": 17,
+      "displayLabel": "17",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q18": {
+      "slotId": "q18",
+      "questionNumber": 18,
+      "displayLabel": "18",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q19": {
+      "slotId": "q19",
+      "questionNumber": 19,
+      "displayLabel": "19",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q20": {
+      "slotId": "q20",
+      "questionNumber": 20,
+      "displayLabel": "20",
+      "hostNodeId": "section2-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q21": {
+      "slotId": "q21",
+      "questionNumber": 21,
+      "displayLabel": "21",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q22": {
+      "slotId": "q22",
+      "questionNumber": 22,
+      "displayLabel": "22",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q23": {
+      "slotId": "q23",
+      "questionNumber": 23,
+      "displayLabel": "23",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q24": {
+      "slotId": "q24",
+      "questionNumber": 24,
+      "displayLabel": "24",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q25": {
+      "slotId": "q25",
+      "questionNumber": 25,
+      "displayLabel": "25",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q26": {
+      "slotId": "q26",
+      "questionNumber": 26,
+      "displayLabel": "26",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q27": {
+      "slotId": "q27",
+      "questionNumber": 27,
+      "displayLabel": "27",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q28": {
+      "slotId": "q28",
+      "questionNumber": 28,
+      "displayLabel": "28",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q29": {
+      "slotId": "q29",
+      "questionNumber": 29,
+      "displayLabel": "29",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q30": {
+      "slotId": "q30",
+      "questionNumber": 30,
+      "displayLabel": "30",
+      "hostNodeId": "section3-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q31": {
+      "slotId": "q31",
+      "questionNumber": 31,
+      "displayLabel": "31",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q32": {
+      "slotId": "q32",
+      "questionNumber": 32,
+      "displayLabel": "32",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q33": {
+      "slotId": "q33",
+      "questionNumber": 33,
+      "displayLabel": "33",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q34": {
+      "slotId": "q34",
+      "questionNumber": 34,
+      "displayLabel": "34",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q35": {
+      "slotId": "q35",
+      "questionNumber": 35,
+      "displayLabel": "35",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q36": {
+      "slotId": "q36",
+      "questionNumber": 36,
+      "displayLabel": "36",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q37": {
+      "slotId": "q37",
+      "questionNumber": 37,
+      "displayLabel": "37",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q38": {
+      "slotId": "q38",
+      "questionNumber": 38,
+      "displayLabel": "38",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q39": {
+      "slotId": "q39",
+      "questionNumber": 39,
+      "displayLabel": "39",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    },
+    "q40": {
+      "slotId": "q40",
+      "questionNumber": 40,
+      "displayLabel": "40",
+      "hostNodeId": "section4-notes-notes",
+      "hostType": "paragraph",
+      "interaction": "text",
+      "participation": "scoring",
+      "constraints": {
+        "maxWords": 1,
+        "maxNumbers": 0
+      },
+      "sourceAnchors": [
+        {
+          "sourceFileId": "question-paper",
+          "pageIndex": 0,
+          "nodeIds": [
+            "slot-1",
+            "form-line-1"
+          ],
+          "extractionMode": "pdf_native",
+          "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "confidence": 1
+    }
+  },
+  "answerKey": {
+    "q1": {
+      "kind": "text",
+      "values": [
+        "answer1"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q2": {
+      "kind": "text",
+      "values": [
+        "answer2"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q3": {
+      "kind": "text",
+      "values": [
+        "answer3"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q4": {
+      "kind": "text",
+      "values": [
+        "answer4"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q5": {
+      "kind": "text",
+      "values": [
+        "answer5"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q6": {
+      "kind": "text",
+      "values": [
+        "answer6"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q7": {
+      "kind": "text",
+      "values": [
+        "answer7"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q8": {
+      "kind": "text",
+      "values": [
+        "answer8"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q9": {
+      "kind": "text",
+      "values": [
+        "answer9"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q10": {
+      "kind": "text",
+      "values": [
+        "answer10"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q11": {
+      "kind": "text",
+      "values": [
+        "answer11"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q12": {
+      "kind": "text",
+      "values": [
+        "answer12"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q13": {
+      "kind": "text",
+      "values": [
+        "answer13"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q14": {
+      "kind": "text",
+      "values": [
+        "answer14"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q15": {
+      "kind": "text",
+      "values": [
+        "answer15"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q16": {
+      "kind": "text",
+      "values": [
+        "answer16"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q17": {
+      "kind": "text",
+      "values": [
+        "answer17"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q18": {
+      "kind": "text",
+      "values": [
+        "answer18"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q19": {
+      "kind": "text",
+      "values": [
+        "answer19"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q20": {
+      "kind": "text",
+      "values": [
+        "answer20"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q21": {
+      "kind": "text",
+      "values": [
+        "answer21"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q22": {
+      "kind": "text",
+      "values": [
+        "answer22"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q23": {
+      "kind": "text",
+      "values": [
+        "answer23"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q24": {
+      "kind": "text",
+      "values": [
+        "answer24"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q25": {
+      "kind": "text",
+      "values": [
+        "answer25"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q26": {
+      "kind": "text",
+      "values": [
+        "answer26"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q27": {
+      "kind": "text",
+      "values": [
+        "answer27"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q28": {
+      "kind": "text",
+      "values": [
+        "answer28"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q29": {
+      "kind": "text",
+      "values": [
+        "answer29"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q30": {
+      "kind": "text",
+      "values": [
+        "answer30"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q31": {
+      "kind": "text",
+      "values": [
+        "answer31"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q32": {
+      "kind": "text",
+      "values": [
+        "answer32"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q33": {
+      "kind": "text",
+      "values": [
+        "answer33"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q34": {
+      "kind": "text",
+      "values": [
+        "answer34"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q35": {
+      "kind": "text",
+      "values": [
+        "answer35"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q36": {
+      "kind": "text",
+      "values": [
+        "answer36"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q37": {
+      "kind": "text",
+      "values": [
+        "answer37"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q38": {
+      "kind": "text",
+      "values": [
+        "answer38"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q39": {
+      "kind": "text",
+      "values": [
+        "answer39"
+      ],
+      "normalization": "ielts_default"
+    },
+    "q40": {
+      "kind": "text",
+      "values": [
+        "answer40"
+      ],
+      "normalization": "ielts_default"
+    }
+  },
+  "questionOrder": [
+    "q1",
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+    "q6",
+    "q7",
+    "q8",
+    "q9",
+    "q10",
+    "q11",
+    "q12",
+    "q13",
+    "q14",
+    "q15",
+    "q16",
+    "q17",
+    "q18",
+    "q19",
+    "q20",
+    "q21",
+    "q22",
+    "q23",
+    "q24",
+    "q25",
+    "q26",
+    "q27",
+    "q28",
+    "q29",
+    "q30",
+    "q31",
+    "q32",
+    "q33",
+    "q34",
+    "q35",
+    "q36",
+    "q37",
+    "q38",
+    "q39",
+    "q40"
+  ],
+  "questionDisplayMap": {
+    "q1": "1",
+    "q2": "2",
+    "q3": "3",
+    "q4": "4",
+    "q5": "5",
+    "q6": "6",
+    "q7": "7",
+    "q8": "8",
+    "q9": "9",
+    "q10": "10",
+    "q11": "11",
+    "q12": "12",
+    "q13": "13",
+    "q14": "14",
+    "q15": "15",
+    "q16": "16",
+    "q17": "17",
+    "q18": "18",
+    "q19": "19",
+    "q20": "20",
+    "q21": "21",
+    "q22": "22",
+    "q23": "23",
+    "q24": "24",
+    "q25": "25",
+    "q26": "26",
+    "q27": "27",
+    "q28": "28",
+    "q29": "29",
+    "q30": "30",
+    "q31": "31",
+    "q32": "32",
+    "q33": "33",
+    "q34": "34",
+    "q35": "35",
+    "q36": "36",
+    "q37": "37",
+    "q38": "38",
+    "q39": "39",
+    "q40": "40"
+  },
+  "audit": {
+    "sourceSchemaVersion": "IeltsAuthoringIRV2",
+    "sourceDocumentId": "phase7-listening-four-part-document",
+    "sourceRevision": 1,
+    "sourceRevisionKind": "user",
+    "minimumRuntimeVersion": "1.0.0"
+  }
+}
