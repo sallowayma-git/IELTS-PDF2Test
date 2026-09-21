@@ -67,6 +67,7 @@ mod ielts_grammar;
 mod job_commands;
 mod job_store;
 mod library;
+mod listening_audio;
 mod processing;
 mod library_commands;
 mod llm_commands;
@@ -1677,6 +1678,7 @@ pub fn run() {
             apply_recognition_decisions,
             undo_cloud_repair,
             import_files,
+            listening_audio::commands::detect_import_modality,
             publish_items,
             open_source_file,
             cancel_processing,
