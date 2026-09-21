@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 7;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 8;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let transaction = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
@@ -101,6 +101,9 @@ fn migrations() -> Vec<(i64, &'static str)> {
             7,
             "ALTER TABLE recognition_batches_v1 ADD COLUMN repair_json TEXT;",
         ),
+        // Listening managed audio bindings. Self-contained and idempotent (CREATE ... IF NOT
+        // EXISTS), so the step can be renumbered when parallel migrations merge.
+        (8, crate::listening_audio::store::LISTENING_AUDIO_ASSETS_SQL),
     ]
 }
 
