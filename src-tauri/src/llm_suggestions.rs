@@ -159,7 +159,9 @@ pub(crate) fn profile_payload(profile: &Value, profile_id: &str) -> Value {
         "model": profile.get("model").cloned().unwrap_or_else(|| json!("")),
         "temperature": profile.get("temperature").cloned().unwrap_or_else(|| json!(0)),
         "timeoutMs": profile.get("timeoutMs").cloned().unwrap_or_else(|| json!(120000)),
-        "forceJson": profile.get("forceJson").cloned().unwrap_or(Value::Bool(true))
+        "forceJson": profile.get("forceJson").cloned().unwrap_or(Value::Bool(true)),
+        // Optional output-token cap; the gateway falls back to its default when null.
+        "maxOutputTokens": profile.get("maxOutputTokens").cloned().unwrap_or(Value::Null)
     })
 }
 

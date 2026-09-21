@@ -7,6 +7,7 @@ use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use serde_json::{json, Value};
 use std::{
+    cell::RefCell,
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -19,6 +20,59 @@ const MAX_LLM_PDF_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_LLM_INLINE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_LLM_RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_LLM_ATTEMPTS: usize = 3;
+/// Upper bound of the per-call timeout. It matches the Settings page maximum
+/// (600000 ms): a value the user can type must be the value that takes effect,
+/// never a silent clamp.
+const LLM_TIMEOUT_MAX_MS: u64 = 600_000;
+/// Default output-token cap sent as `max_tokens` when the profile does not set
+/// `maxOutputTokens`. An explicit cap makes `finish_reason = length`
+/// interpretable: a truncated reply is reported as `llm_output_truncated`
+/// instead of masquerading as `llm_json_parse_failed`.
+const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 16_384;
+/// Longest error string kept verbatim in a call record.
+const RECORD_ERROR_MAX_CHARS: usize = 8_000;
+
+/// Per-call transport trace. Every gateway call runs synchronously on one
+/// thread, so a thread-local collects what the HTTP layer saw (attempts,
+/// statuses, request size, usage, finish reason, raw reply) without threading
+/// a context argument through every command body. `run_llm_gateway` resets it
+/// before dispatch and drains it into the `llm-calls.jsonl` record afterwards.
+#[derive(Default)]
+struct LlmCallTrace {
+    attempts: Vec<Value>,
+    request_bytes: u64,
+    max_tokens: Option<u64>,
+    pdf_bytes: Option<u64>,
+    image_count: Option<usize>,
+    image_fallback: bool,
+    direct_pdf_error: Option<String>,
+    http_status: Option<u16>,
+    usage: Option<Value>,
+    finish_reason: Option<String>,
+    raw_content: Option<String>,
+}
+
+thread_local! {
+    static LLM_CALL_TRACE: RefCell<LlmCallTrace> = RefCell::new(LlmCallTrace::default());
+}
+
+fn with_trace<F: FnOnce(&mut LlmCallTrace)>(update: F) {
+    LLM_CALL_TRACE.with(|trace| update(&mut trace.borrow_mut()));
+}
+
+fn take_trace() -> LlmCallTrace {
+    LLM_CALL_TRACE.with(|trace| std::mem::take(&mut *trace.borrow_mut()))
+}
+
+fn truncate_for_record(text: &str) -> String {
+    if text.chars().count() <= RECORD_ERROR_MAX_CHARS {
+        text.to_string()
+    } else {
+        let mut kept = text.chars().take(RECORD_ERROR_MAX_CHARS).collect::<String>();
+        kept.push_str("...[truncated]");
+        kept
+    }
+}
 
 pub(crate) fn run_llm_gateway(
     root: &Path,
@@ -32,6 +86,7 @@ pub(crate) fn run_llm_gateway(
     let input_path = cache_dir.join(format!("{}-input-{}.json", command_name, stamp));
     let output_path = cache_dir.join(format!("{}-output-{}.json", command_name, stamp));
     write_json(&input_path, &redact_llm_input_for_cache(input))?;
+    let _stale = take_trace();
     let started = std::time::Instant::now();
     let output = match command_name {
         "classify_group" | "extract_group" | "test_profile" => {
@@ -68,8 +123,30 @@ pub(crate) fn run_llm_gateway(
         _ => Err(format!("unsupported_llm_gateway_command:{}", command_name)),
     };
     // Per-call observability record: every gateway invocation (success or
-    // failure) lands in llm-calls.jsonl with its latency and error class so
-    // failures stay diagnosable after the fact.
+    // failure) lands in llm-calls.jsonl with its latency, transport attempts,
+    // request size, usage, finish reason and the FULL error string, so a
+    // failure stays diagnosable after the fact. A reply that was received but
+    // rejected (unparseable, truncated, or refused by a validator) is also
+    // persisted verbatim as `<command>-rejected-<stamp>.json`.
+    let trace = take_trace();
+    let rejected_path = match (&output, &trace.raw_content) {
+        (Err(error), Some(raw)) => {
+            let path = cache_dir.join(format!("{}-rejected-{}.json", command_name, stamp));
+            let saved = json!({
+                "commandName": command_name,
+                "error": error,
+                "rawContent": raw,
+                "usage": trace.usage.clone().unwrap_or(Value::Null),
+                "finishReason": trace.finish_reason.clone(),
+                "httpStatus": trace.http_status,
+                "recordedAt": Utc::now().to_rfc3339()
+            });
+            write_json(&path, &saved)
+                .ok()
+                .map(|_| path.to_string_lossy().to_string())
+        }
+        _ => None,
+    };
     let call_record = json!({
         "recordType": "llm_call",
         "commandName": command_name,
@@ -81,6 +158,21 @@ pub(crate) fn run_llm_gateway(
             Ok(_) => Value::Null,
             Err(error) => json!(error.split(':').next().unwrap_or("unknown")),
         },
+        "error": match &output {
+            Ok(_) => Value::Null,
+            Err(error) => json!(truncate_for_record(error)),
+        },
+        "attempts": trace.attempts,
+        "requestBytes": trace.request_bytes,
+        "maxTokens": trace.max_tokens,
+        "pdfBytes": trace.pdf_bytes,
+        "imageCount": trace.image_count,
+        "imageFallback": trace.image_fallback,
+        "directPdfError": trace.direct_pdf_error.as_deref().map(truncate_for_record),
+        "httpStatus": trace.http_status,
+        "usage": trace.usage.unwrap_or(Value::Null),
+        "finishReason": trace.finish_reason,
+        "rejectedPath": rejected_path,
         "recordedAt": Utc::now().to_rfc3339()
     });
     let _ = append_llm_call_record(root, job_id, &call_record);
@@ -145,7 +237,7 @@ fn llm_timeout(profile: &Value, default_ms: u64) -> Duration {
             .get("timeoutMs")
             .and_then(Value::as_u64)
             .unwrap_or(default_ms)
-            .clamp(1_000, 300_000),
+            .clamp(1_000, LLM_TIMEOUT_MAX_MS),
     )
 }
 
@@ -210,12 +302,54 @@ fn openai_chat_completions_endpoint(profile: &Value) -> CommandResult<String> {
     Ok(format!("{}/chat/completions", base_url))
 }
 
+/// Output-token cap for a request: the profile's `maxOutputTokens` when set,
+/// otherwise [`DEFAULT_MAX_OUTPUT_TOKENS`].
+fn llm_max_output_tokens(profile: &Value) -> u64 {
+    profile
+        .get("maxOutputTokens")
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS)
+}
+
+/// Extract the assistant content and record usage / finish reason / the raw
+/// reply on the call trace. `finish_reason = length` means the reply was cut
+/// at the output-token cap; it is reported as `llm_output_truncated` because a
+/// truncated JSON object would otherwise surface as `llm_json_parse_failed`
+/// and send diagnosis down the wrong path.
 fn openai_chat_content(payload: &Value) -> CommandResult<String> {
-    payload
+    let usage = payload.get("usage").cloned();
+    let finish_reason = payload
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let content = payload
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
-        .map(ToString::to_string)
-        .ok_or_else(|| "llm_empty_content".to_string())
+        .map(ToString::to_string);
+    let mut max_tokens = None;
+    with_trace(|trace| {
+        trace.usage = usage.clone();
+        trace.finish_reason = finish_reason.clone();
+        trace.raw_content = content.clone();
+        max_tokens = trace.max_tokens;
+    });
+    if finish_reason.as_deref() == Some("length") {
+        return Err(format!(
+            "llm_output_truncated:finish_reason=length:max_tokens={}:completion_tokens={}:content_chars={}",
+            max_tokens
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unset".to_string()),
+            usage
+                .as_ref()
+                .and_then(|usage| usage.get("completion_tokens"))
+                .and_then(Value::as_u64)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            content.as_deref().map(|text| text.chars().count()).unwrap_or(0)
+        ));
+    }
+    content.ok_or_else(|| "llm_empty_content".to_string())
 }
 
 /// Fail-closed confidence normalization. A non-numeric or out-of-range
@@ -308,7 +442,18 @@ fn balanced_json_end(content: &str, start: usize) -> Option<usize> {
     None
 }
 
-fn openai_post(profile: &Value, api_key: Option<&str>, body: Value) -> CommandResult<Value> {
+fn openai_post(profile: &Value, api_key: Option<&str>, mut body: Value) -> CommandResult<Value> {
+    if body.get("max_tokens").is_none() {
+        body["max_tokens"] = json!(llm_max_output_tokens(profile));
+    }
+    let max_tokens = body.get("max_tokens").and_then(Value::as_u64);
+    let body_bytes =
+        serde_json::to_vec(&body).map_err(|error| format!("llm_request_encode_failed:{error}"))?;
+    let request_bytes = body_bytes.len() as u64;
+    with_trace(|trace| {
+        trace.request_bytes = trace.request_bytes.saturating_add(request_bytes);
+        trace.max_tokens = max_tokens;
+    });
     let mut last_error = String::new();
     let deadline = Instant::now() + llm_timeout(profile, 60_000);
     for attempt in 0..MAX_LLM_ATTEMPTS {
@@ -316,7 +461,19 @@ fn openai_post(profile: &Value, api_key: Option<&str>, body: Value) -> CommandRe
         if remaining.is_zero() {
             return Err("llm_timeout_budget_exhausted".to_string());
         }
-        match openai_post_once(profile, api_key, body.clone(), remaining) {
+        let attempt_started = Instant::now();
+        with_trace(|trace| trace.http_status = None);
+        let result = openai_post_once(profile, api_key, &body_bytes, remaining);
+        with_trace(|trace| {
+            trace.attempts.push(json!({
+                "attempt": trace.attempts.len() + 1,
+                "requestBytes": request_bytes,
+                "httpStatus": trace.http_status,
+                "latencyMs": attempt_started.elapsed().as_millis() as u64,
+                "error": result.as_ref().err().map(|error| truncate_for_record(error)),
+            }));
+        });
+        match result {
             Ok(payload) => return Ok(payload),
             Err(error) => {
                 let retryable = is_retryable_llm_http_error(&error);
@@ -393,7 +550,7 @@ fn retry_after_ms_from_header(value: &str) -> u64 {
 fn openai_post_once(
     profile: &Value,
     api_key: Option<&str>,
-    body: Value,
+    body: &[u8],
     timeout: Duration,
 ) -> CommandResult<Value> {
     let endpoint = openai_chat_completions_endpoint(profile)?;
@@ -405,7 +562,7 @@ fn openai_post_once(
     let mut request = client
         .post(endpoint)
         .header("content-type", "application/json")
-        .json(&body);
+        .body(body.to_vec());
     if let Some(secret) = api_key.filter(|value| !value.trim().is_empty()) {
         request = request.bearer_auth(secret);
     }
@@ -419,6 +576,7 @@ fn openai_post_once(
         }
     })?;
     let status = response.status();
+    with_trace(|trace| trace.http_status = Some(status.as_u16()));
     let retry_after = response
         .headers()
         .get("retry-after")
@@ -453,8 +611,14 @@ fn openai_post_once(
             retry_suffix
         ));
     }
-    let payload = serde_json::from_str::<Value>(&text)
-        .map_err(|error| format!("llm_http_json_failed:{}:{}", error, text))?;
+    let payload = match serde_json::from_str::<Value>(&text) {
+        Ok(payload) => payload,
+        Err(error) => {
+            let message = format!("llm_http_json_failed:{}:{}", error, text);
+            with_trace(|trace| trace.raw_content = Some(text));
+            return Err(message);
+        }
+    };
     Ok(payload)
 }
 
@@ -582,6 +746,8 @@ fn data_url_for_pdf(root: &Path, job_id: &str, input: &Value) -> CommandResult<O
         return Ok(None);
     };
     let (_path, bytes) = read_llm_file(root, job_id, raw_path, MAX_LLM_PDF_BYTES, "pdf")?;
+    let pdf_bytes = bytes.len() as u64;
+    with_trace(|trace| trace.pdf_bytes = Some(pdf_bytes));
     let filename = input
         .pointer("/sourceFile/originalName")
         .and_then(Value::as_str)
@@ -634,7 +800,71 @@ fn append_pdf_images_to_content(
             image_count += 1;
         }
     }
+    with_trace(|trace| trace.image_count = Some(image_count));
     Ok(image_count)
+}
+
+/// Whether a failed direct-PDF request is worth a second request that carries
+/// the rendered page images instead.
+///
+/// Only a client-side rejection of the request itself qualifies: a 4xx other
+/// than auth / timeout / rate limit, typically "file parts unsupported" or
+/// "payload too large". A timeout means the server was computing: an image
+/// request would compute again from a fresh budget and time out again — that
+/// is how a 120 s profile produced 134 s / 144 s whole-paper failures.
+/// Connect failures, 5xx and exhausted budgets would equally fail again
+/// against the same server.
+fn direct_pdf_error_permits_image_fallback(error: &str) -> bool {
+    let Some(status) = error
+        .strip_prefix("llm_http_")
+        .and_then(|value| value.split(':').next())
+        .and_then(|value| value.parse::<u16>().ok())
+    else {
+        return false;
+    };
+    (400..500).contains(&status) && !matches!(status, 401 | 403 | 408 | 425 | 429)
+}
+
+/// Send `body`; when it carried the original PDF and the provider rejected the
+/// request itself, retry ONCE with the rendered page images as the evidence.
+///
+/// The direct-PDF error is never swallowed: it is kept on the call trace, as a
+/// warning on success, and appended to the error when the fallback also fails.
+#[allow(clippy::too_many_arguments)]
+fn post_with_pdf_image_fallback(
+    root: &Path,
+    job_id: &str,
+    profile: &Value,
+    api_key: Option<&str>,
+    body: Value,
+    had_pdf: bool,
+    input: &Value,
+    fallback_prompt: String,
+    no_images_error: &str,
+    warnings: &mut Vec<String>,
+) -> CommandResult<Value> {
+    let pdf_error = match openai_post(profile, api_key, body.clone()) {
+        Ok(payload) => return Ok(payload),
+        Err(error) => error,
+    };
+    if !had_pdf || !direct_pdf_error_permits_image_fallback(&pdf_error) {
+        return Err(pdf_error);
+    }
+    with_trace(|trace| trace.direct_pdf_error = Some(pdf_error.clone()));
+    let mut image_content = vec![json!({"type": "text", "text": fallback_prompt})];
+    let image_count = append_pdf_images_to_content(root, job_id, &mut image_content, input)
+        .map_err(|error| format!("{error};direct_pdf_request_failed={pdf_error}"))?;
+    if image_count == 0 {
+        return Err(format!("{no_images_error}:{pdf_error}"));
+    }
+    with_trace(|trace| trace.image_fallback = true);
+    let mut fallback_body = body;
+    fallback_body["messages"][1]["content"] = Value::Array(image_content);
+    let payload = openai_post(profile, api_key, fallback_body).map_err(|fallback_error| {
+        format!("{fallback_error};direct_pdf_request_failed={pdf_error}")
+    })?;
+    warnings.push(format!("direct_pdf_request_failed:{pdf_error}"));
+    Ok(payload)
 }
 
 fn run_openai_compatible_group_llm(
@@ -734,7 +964,9 @@ fn run_openai_compatible_cloud_outline_llm(
     let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
     let mut warnings = Vec::<String>::new();
     let mut content = vec![json!({"type": "text", "text": cloud_outline_prompt(input)})];
-    if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
+    let pdf_part = data_url_for_pdf(root, job_id, input)?;
+    let had_pdf = pdf_part.is_some();
+    if let Some(pdf_part) = pdf_part {
         content.push(pdf_part);
     } else if let Some(source_text) = input
         .get("sourceText")
@@ -766,35 +998,18 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
         body["response_format"] = json!({"type": "json_object"});
     }
 
-    let payload = match openai_post(profile, api_key, body) {
-        Ok(payload) => payload,
-        Err(pdf_error) => {
-            warnings.push(format!("direct_pdf_request_failed:{}", pdf_error));
-            let mut image_content = vec![
-                json!({"type": "text", "text": format!("{}\nThe direct PDF file request failed, so compare using the supplied rendered/extracted page images.", cloud_outline_prompt(input))}),
-            ];
-            let image_count =
-                append_pdf_images_to_content(root, job_id, &mut image_content, input)?;
-            if image_count == 0 {
-                return Err(format!(
-                    "cloud_outline_direct_pdf_failed_and_no_images:{}",
-                    pdf_error
-                ));
-            }
-            let mut fallback_body = json!({
-                "model": llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?,
-                "temperature": llm_temperature(profile),
-                "messages": [
-                    {"role": "system", "content": "Return valid JSON only."},
-                    {"role": "user", "content": image_content}
-                ]
-            });
-            if llm_force_json(profile) {
-                fallback_body["response_format"] = json!({"type": "json_object"});
-            }
-            openai_post(profile, api_key, fallback_body)?
-        }
-    };
+    let payload = post_with_pdf_image_fallback(
+        root,
+        job_id,
+        profile,
+        api_key,
+        body,
+        had_pdf,
+        input,
+        format!("{}\nThe direct PDF file request failed, so compare using the supplied rendered/extracted page images.", cloud_outline_prompt(input)),
+        "cloud_outline_direct_pdf_failed_and_no_images",
+        &mut warnings,
+    )?;
     let content = openai_chat_content(&payload)?;
     let mut parsed = parse_llm_json_content(&content)?;
     validate_cloud_outline_output(&mut parsed, profile, &payload)?;
@@ -864,7 +1079,9 @@ fn run_openai_compatible_authoring_candidate_llm(
     let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
     let mut warnings = Vec::<String>::new();
     let mut content = vec![json!({"type": "text", "text": authoring_candidate_prompt(input)})];
-    if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
+    let pdf_part = data_url_for_pdf(root, job_id, input)?;
+    let had_pdf = pdf_part.is_some();
+    if let Some(pdf_part) = pdf_part {
         content.push(pdf_part);
     } else if let Some(source_text) = input
         .get("sourceText")
@@ -894,34 +1111,18 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
         body["response_format"] = json!({"type": "json_object"});
     }
 
-    let payload = match openai_post(profile, api_key, body) {
-        Ok(payload) => payload,
-        Err(pdf_error) => {
-            warnings.push(format!("direct_pdf_request_failed:{}", pdf_error));
-            let mut image_content = vec![
-                json!({"type": "text", "text": format!("{}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence.", authoring_candidate_prompt(input))}),
-            ];
-            let image_count = append_pdf_images_to_content(root, job_id, &mut image_content, input)?;
-            if image_count == 0 {
-                return Err(format!(
-                    "cloud_authoring_candidate_direct_pdf_failed_and_no_images:{}",
-                    pdf_error
-                ));
-            }
-            let mut fallback_body = json!({
-                "model": llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?,
-                "temperature": llm_temperature(profile),
-                "messages": [
-                    {"role": "system", "content": "Return valid JSON only."},
-                    {"role": "user", "content": image_content}
-                ]
-            });
-            if llm_force_json(profile) {
-                fallback_body["response_format"] = json!({"type": "json_object"});
-            }
-            openai_post(profile, api_key, fallback_body)?
-        }
-    };
+    let payload = post_with_pdf_image_fallback(
+        root,
+        job_id,
+        profile,
+        api_key,
+        body,
+        had_pdf,
+        input,
+        format!("{}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence.", authoring_candidate_prompt(input)),
+        "cloud_authoring_candidate_direct_pdf_failed_and_no_images",
+        &mut warnings,
+    )?;
     let content = openai_chat_content(&payload)?;
     let mut parsed = parse_llm_json_content(&content)?;
     validate_authoring_candidate_output(&mut parsed)?;
@@ -1150,7 +1351,9 @@ fn run_openai_compatible_repair_step_llm(
     let model = llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?;
     let mut warnings = Vec::<String>::new();
     let mut content = vec![json!({"type": "text", "text": repair_step_prompt(input)})];
-    if let Some(pdf_part) = data_url_for_pdf(root, job_id, input)? {
+    let pdf_part = data_url_for_pdf(root, job_id, input)?;
+    let had_pdf = pdf_part.is_some();
+    if let Some(pdf_part) = pdf_part {
         content.push(pdf_part);
     } else if let Some(source_text) = input
         .get("sourceText")
@@ -1180,34 +1383,18 @@ The extracted source text below is the ONLY evidence you may use; do not invent 
         body["response_format"] = json!({"type": "json_object"});
     }
 
-    let payload = match openai_post(profile, api_key, body) {
-        Ok(payload) => payload,
-        Err(pdf_error) => {
-            warnings.push(format!("direct_pdf_request_failed:{}", pdf_error));
-            let mut image_content = vec![
-                json!({"type": "text", "text": format!("{}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence.", repair_step_prompt(input))}),
-            ];
-            let image_count = append_pdf_images_to_content(root, job_id, &mut image_content, input)?;
-            if image_count == 0 {
-                return Err(format!(
-                    "cloud_repair_step_direct_pdf_failed_and_no_images:{}",
-                    pdf_error
-                ));
-            }
-            let mut fallback_body = json!({
-                "model": llm_model(profile).ok_or_else(|| "llm_profile_model_missing".to_string())?,
-                "temperature": llm_temperature(profile),
-                "messages": [
-                    {"role": "system", "content": "Return valid JSON only."},
-                    {"role": "user", "content": image_content}
-                ]
-            });
-            if llm_force_json(profile) {
-                fallback_body["response_format"] = json!({"type": "json_object"});
-            }
-            openai_post(profile, api_key, fallback_body)?
-        }
-    };
+    let payload = post_with_pdf_image_fallback(
+        root,
+        job_id,
+        profile,
+        api_key,
+        body,
+        had_pdf,
+        input,
+        format!("{}\nThe direct PDF file request failed, so use the supplied rendered page images as the only evidence.", repair_step_prompt(input)),
+        "cloud_repair_step_direct_pdf_failed_and_no_images",
+        &mut warnings,
+    )?;
     let content = openai_chat_content(&payload)?;
     let mut parsed = parse_llm_json_content(&content)?;
     validate_repair_step_output(&mut parsed)?;
