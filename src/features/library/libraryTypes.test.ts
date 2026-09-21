@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LibraryItemSummaryV2 } from "../../api/workspaceClient";
-import { buildRow } from "./libraryTypes";
+import { STAGE_LABEL, buildRow, canRetryRow } from "./libraryTypes";
 
 // 证据层级：pure unit（计划 §19.1 层 1）。
 // G1/A4-F03：重启恢复重试耗尽后，UI 必须诚实显示"已达自动恢复上限"，
@@ -78,6 +78,28 @@ describe("buildRow 重试耗尽展示（G1/A4-F03）", () => {
       })
     );
     expect(row.stage).toBe("action_required");
-    expect(row.detail).toBe("有内容需要确认");
+    // 不把质量状态说成门槛：识别完成就是可以打开编辑。
+    expect(row.detail).toBe("可以打开编辑");
+  });
+});
+
+describe("题库行 — 不在十分钟的云端修复里说「正在合并」，失败行可以重试", () => {
+  it("云端自动检查进行中：告诉用户可以先打开编辑", () => {
+    const row = buildRow("item-1", undefined, undefined, {}, v2WithProcessing({ stage: "reconciling", localStatus: "succeeded" }));
+    expect(row.stage).toBe("reconciling");
+    expect(row.detail).toBe("云端正在自动检查，可先打开编辑");
+    expect(row.detail).not.toContain("合并");
+  });
+
+  it("识别完成的行不显示「可发布」这种由质量状态推出来的结论", () => {
+    expect(STAGE_LABEL.ready).not.toBe("可发布");
+    expect(STAGE_LABEL.action_required).toBe(STAGE_LABEL.ready);
+  });
+
+  it("失败（非取消）的行可以重试；取消的行也可以重新开始", () => {
+    const failed = buildRow("item-1", undefined, undefined, {}, v2WithProcessing({ stage: "failed", localStatus: "failed" }));
+    expect(canRetryRow(failed)).toBe(true);
+    const ready = buildRow("item-2", undefined, undefined, {}, v2WithProcessing({ stage: "ready_for_review", localStatus: "succeeded" }));
+    expect(canRetryRow(ready)).toBe(false);
   });
 });

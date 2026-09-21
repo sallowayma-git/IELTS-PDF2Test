@@ -1,4 +1,4 @@
-import { STAGE_LABEL, isProcessingStage, type LibraryRowV1 } from "./libraryTypes";
+import { STAGE_LABEL, canRetryRow, isProcessingStage, type LibraryRowV1 } from "./libraryTypes";
 
 // 普通行不显示 hash、source path、schema、revision 或错误技术码（计划 §10.6 / §3.4）。
 const MODALITY_LABEL = { reading: "Reading", writing: "Writing" } as const;
@@ -21,7 +21,8 @@ export function LibraryItemRow({
   onToggleSelect,
   onOpen,
   onTrash,
-  onRestore
+  onRestore,
+  onRetry
 }: {
   row: LibraryRowV1;
   selected: boolean;
@@ -29,6 +30,7 @@ export function LibraryItemRow({
   onOpen: (id: string) => void;
   onTrash: (id: string) => void;
   onRestore: (id: string) => void;
+  onRetry?: (id: string) => void;
 }) {
   const processing = isProcessingStage(row.stage);
   const meta = [MODALITY_LABEL[row.modality], row.category, relativeTime(row.updatedAt)].filter(Boolean).join(" · ");
@@ -55,9 +57,6 @@ export function LibraryItemRow({
 
       <div className="library-row-state">
         <span className={`stage-pill stage-${row.stage}`}>{STAGE_LABEL[row.stage]}</span>
-        {row.actionableCount > 0 && !row.inTrash ? (
-          <span className="issue-count" data-testid="library-row-issues">需要检查 {row.actionableCount}</span>
-        ) : null}
         {row.detail ? <small className="library-row-detail">{row.detail}</small> : null}
         {processing && row.progressPercent !== undefined ? (
           <span className="progress-track" role="progressbar" aria-valuenow={row.progressPercent} aria-valuemin={0} aria-valuemax={100}>
@@ -71,7 +70,11 @@ export function LibraryItemRow({
           <button className="ghost small" onClick={() => onRestore(row.id)}>恢复</button>
         ) : (
           <>
-            <button className="ghost small" onClick={() => onOpen(row.id)}>打开</button>
+            {canRetryRow(row) && onRetry ? (
+              <button className="primary small" data-testid="library-row-retry" onClick={() => onRetry(row.id)}>重试</button>
+            ) : (
+              <button className="ghost small" onClick={() => onOpen(row.id)}>打开</button>
+            )}
             <button className="danger small" onClick={() => onTrash(row.id)}>删除</button>
           </>
         )}

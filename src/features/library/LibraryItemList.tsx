@@ -9,7 +9,8 @@ export function LibraryItemList({
   onToggleSelect,
   onOpen,
   onTrash,
-  onRestore
+  onRestore,
+  onRetry
 }: {
   rows: LibraryRowV1[];
   loading: boolean;
@@ -19,6 +20,7 @@ export function LibraryItemList({
   onOpen: (id: string) => void;
   onTrash: (id: string) => void;
   onRestore: (id: string) => void;
+  onRetry: (id: string) => void;
 }) {
   if (loading && !rows.length) return <p className="empty">加载中…</p>;
   if (!rows.length) {
@@ -39,6 +41,7 @@ export function LibraryItemList({
           onOpen={onOpen}
           onTrash={onTrash}
           onRestore={onRestore}
+          onRetry={onRetry}
         />
       ))}
     </div>

@@ -23,7 +23,9 @@ import { RecognitionPanel } from "./RecognitionPanel";
 import { useCanonicalEditor } from "./useCanonicalEditor";
 import { describeDeferredRemoteRefresh } from "./remoteVersion";
 import { toUserFacingError } from "../../utils/userFacingError";
-import { getPublishPreflight, type PublishCheckResultV1 } from "../../api/workspaceClient";
+import { getPublishPreflight, listLibraryItems, type PublishCheckResultV1 } from "../../api/workspaceClient";
+import type { ProcessingState } from "../../api/processingClient";
+import { processingNoteOf } from "./workspaceStatus";
 import { answerPageStatusOf, describeAnswerPageRetry } from "./answerPageStatus";
 
 // 题目工作区（计划 §16.6 / §9.10）。
@@ -90,6 +92,16 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   useEffect(() => {
     getJob(itemId).then(setDetail).catch(() => setDetail(undefined));
   }, [itemId]);
+
+  // 处理任务的真实阶段（标题下那行进度小字的依据），每收到一次处理事件就重读。
+  const [processingState, setProcessingState] = useState<ProcessingState | null | undefined>();
+  useEffect(() => {
+    let cancelled = false;
+    listLibraryItems(false)
+      .then((items) => { if (!cancelled) setProcessingState(items.find((item) => item.id === itemId)?.processing ?? null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [itemId, processingTick]);
 
   useEffect(() => {
     let stopped = false;
@@ -311,7 +323,8 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }
 
   const title = editor.draft?.exam.title ?? detail?.job.title ?? itemId;
-  const processingNote = detail?.job.currentStep === "LlmReview" ? "本地已完成 · 云端识别中" : undefined;
+  // 以处理任务的真实阶段为准（`job.currentStep` 在本地识别结束后就停在 Authoring，不能用）。
+  const processingNote = processingNoteOf(processingState);
 
   return (
     <section
