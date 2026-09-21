@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use crate::CommandResult;
 
 /// 当前 V2 schema 版本。每次追加 DDL 时 +1，并在 [`migrations`] 增加对应步骤。
-pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 8;
+pub(crate) const LIBRARY_V2_SCHEMA_VERSION: i64 = 9;
 
 pub(crate) fn ensure_v2_schema(conn: &Connection) -> CommandResult<()> {
     let transaction = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
@@ -310,6 +310,7 @@ mod tests {
             "recognition_batches_v1",
             "recognition_decisions_v1",
             "recognition_decision_journal_v1",
+            "listening_audio_assets_v1",
             "publish_records_v2",
             "library_final_versions_v2",
         ] {
