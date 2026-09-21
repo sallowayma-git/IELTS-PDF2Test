@@ -4188,4 +4188,140 @@ mod cloud_authoring_tests {
             "差异清单不得依赖 passage"
         );
     }
+
+    // ── S3：候选分块 + 合并 ───────────────────────────────────────────────
+
+    fn chunk(numbers: &[u32]) -> CandidateChunk {
+        CandidateChunk::new(numbers.to_vec())
+    }
+
+    /// 分块计划来自**原文件自己声明的题号**（含 no-space 与 glyph-spaced 写法），
+    /// 按 passage 级声明切块。
+    #[test]
+    fn chunk_plan_follows_the_passage_declarations_of_the_original_file() {
+        let text = "READING PASSAGE 1\n\
+You should spend about 20 minutes on Questions 1-13, which are based on Reading Passage 1.\n\
+Questions 1-5\nDo the following statements agree...\n\
+Questions6-13\nComplete the notes.\n\
+READING PASSAGE 2\n\
+You should spend about 20 minutes on Questions 14-26\n\
+Questions 14-20\nQuestions 21-26\n\
+You should spend about 20 minutes on Questions 2 7 – 4 0\n\
+Questions 2 7 – 3 1\nQuestions 32-40\n";
+        let plan = plan_candidate_chunks(text);
+        let ranges: Vec<Vec<u32>> = plan.iter().map(|chunk| chunk.question_numbers.clone()).collect();
+        assert_eq!(
+            ranges,
+            vec![(1..=13).collect::<Vec<u32>>(), (14..=26).collect(), (27..=40).collect()]
+        );
+        assert_eq!(plan[2].label, "Questions 27-40");
+    }
+
+    /// 没有 passage 级声明时，相邻题组声明合并到一块不超过上限；只剩一块 ⇒ 空计划
+    /// （调用方回到一次整卷请求）。没有任何声明 ⇒ 空计划。
+    #[test]
+    fn chunk_plan_packs_small_groups_and_falls_back_to_one_request() {
+        assert!(plan_candidate_chunks("Questions 1-5\nQuestions 6-9\nQuestions 10-13\n").is_empty());
+        assert!(plan_candidate_chunks("A passage with no question declarations.").is_empty());
+        let plan = plan_candidate_chunks(
+            "Questions 1-7\nQuestions 8-13\nQuestions 14-20\nQuestions 21-26\n",
+        );
+        let ranges: Vec<Vec<u32>> = plan.iter().map(|chunk| chunk.question_numbers.clone()).collect();
+        assert_eq!(ranges, vec![(1..=13).collect::<Vec<u32>>(), (14..=26).collect()]);
+    }
+
+    /// 两块都用 `cloud-tg-1` / `cloud-rg-1` / `cloud-ob-1` 这类临时 id：不加命名空间直接合并，
+    /// 两个题组会共用同一组 id（引用重写必然冲突或张冠李戴）。合并后必须无冲突地标准化，
+    /// 并按 (题型, 题号) 映射到权威稿的对应题组。
+    #[test]
+    fn chunks_reusing_the_same_temporary_ids_merge_and_map_onto_canonical_groups() {
+        let canonical = golden_authoring();
+        let first = cloud_draft(&[14, 15], "cloud");
+        let second = cloud_draft(&[16, 17], "cloud");
+        assert_eq!(first["taskGroups"][0]["taskId"], second["taskGroups"][0]["taskId"], "测试前提：临时 id 相撞");
+
+        let merged = merge_candidate_chunks(vec![
+            (chunk(&[14, 15]), Ok(first)),
+            (chunk(&[16, 17]), Ok(second)),
+        ])
+        .expect("两块都成功必须能合并");
+        let task_ids: Vec<&str> = merged["taskGroups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|group| group["taskId"].as_str())
+            .collect();
+        assert_eq!(task_ids.len(), 2);
+        assert_ne!(task_ids[0], task_ids[1], "合并后临时 id 必须带块命名空间");
+
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &merged).expect("合并稿必须能标准化");
+        assert_eq!(normalized.status, ChainStatusV1::Succeeded, "{:?}", normalized.unresolved_references);
+        assert!(normalized.uncovered_question_numbers.is_empty());
+        let candidate =
+            cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("必须可装配");
+        let groups = &candidate.authoring.task_groups;
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].task_id, "early-approaches-q14-15", "14-15 必须接到权威稿题组");
+        assert_eq!(groups[1].task_id, "cloud-tg-16-17", "16-17 是新题组，由后端分配身份");
+        assert_ne!(
+            groups[0].response_groups[0].response_group_id,
+            groups[1].response_groups[0].response_group_id
+        );
+        for key in ["q14", "q15", "q16", "q17"] {
+            assert!(candidate.authoring.answer_slots.contains_key(key), "缺 {key}");
+        }
+        assert_eq!(
+            candidate.authoring.answer_slots["q16"].host_node_id.as_deref(),
+            groups[1].response_groups[0]
+                .prompt
+                .as_ref()
+                .and_then(|prompt| serde_json::to_value(&prompt[0]).ok())
+                .and_then(|node| node["id"].as_str().map(str::to_string))
+                .as_deref(),
+            "第二块的 hostNodeId 必须指向第二块自己的提示节点"
+        );
+    }
+
+    /// 一块失败：候选是 Partial，未覆盖的题号如实列出，并成为用户可见的覆盖说明——
+    /// 不是整份失败，也不是假装覆盖了。
+    #[test]
+    fn one_failing_chunk_yields_a_partial_candidate_with_uncovered_numbers() {
+        let canonical = golden_authoring();
+        let merged = merge_candidate_chunks(vec![
+            (chunk(&[14, 15]), Ok(cloud_draft(&[14, 15], "cloud"))),
+            (chunk(&[16, 17]), Err("llm_timeout_budget_exhausted:llm_http_timeout".to_string())),
+        ])
+        .expect("只要有一块成功就不是整份失败");
+        let normalized =
+            normalize_cloud_authoring(&identity(), Some(&canonical), &merged).expect("必须能标准化");
+        assert_eq!(normalized.status, ChainStatusV1::Partial);
+        assert_eq!(normalized.uncovered_question_numbers, vec![16, 17]);
+        assert_eq!(
+            normalized.reason_code.as_deref(),
+            Some("cloud_authoring_candidate_chunks_failed")
+        );
+        assert!(
+            normalized
+                .source_coverage_notes
+                .iter()
+                .any(|note| note.contains("16") && note.contains("17")),
+            "未覆盖题号必须成为覆盖说明：{:?}",
+            normalized.source_coverage_notes
+        );
+        assert!(normalized
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("llm_timeout_budget_exhausted")));
+        let candidate =
+            cloud_authoring_candidate_from_normalized(&identity(), normalized).expect("部分候选仍可装配");
+        assert_eq!(candidate.status, ChainStatusV1::Partial);
+
+        let all_failed = merge_candidate_chunks(vec![
+            (chunk(&[14, 15]), Err("llm_http_500:a".to_string())),
+            (chunk(&[16, 17]), Err("llm_http_500:b".to_string())),
+        ]);
+        let error = all_failed.expect_err("全部失败必须如实失败");
+        assert!(error.contains("llm_http_500:a") && error.contains("llm_http_500:b"), "{error}");
+    }
 }

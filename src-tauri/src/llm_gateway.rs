@@ -3575,4 +3575,25 @@ mod tests {
             "校验器不强制证据，prompt 不能谎称必填"
         );
     }
+
+    // ── S3：分块请求 ──────────────────────────────────────────────────────
+
+    /// 分块请求的 prompt 必须把范围说清楚，校验器必须拒绝范围外的题号——
+    /// 否则两块各自「顺手」识别了对方的题，合并时同一道题出现两次。
+    #[test]
+    fn a_chunk_request_is_scoped_to_its_questions_and_validated_against_them() {
+        let input = json!({"modality": "reading", "chunk": {"label": "Questions 14-26", "questionNumbers": (14..=26).collect::<Vec<u32>>()}});
+        let prompt = authoring_candidate_prompt(&input);
+        assert!(prompt.contains("ONLY") && prompt.contains("Questions 14-26"), "{prompt}");
+
+        let shape = crate::llm_suggestions::authoring_candidate_output_contract("reading")["shape"].clone();
+        // 形状示例是第 1 题：对 14-26 这一块来说在范围外。
+        let mut outside = shape.clone();
+        let error = validate_authoring_candidate_output_for_chunk(&mut outside, "reading", Some(&input["chunk"]))
+            .expect_err("范围外的题号必须被拒");
+        assert!(error.starts_with("cloud_authoring_output_slot_outside_chunk"), "{error}");
+        let mut unscoped = shape;
+        validate_authoring_candidate_output_for_chunk(&mut unscoped, "reading", None)
+            .expect("不分块时不做范围限制");
+    }
 }
