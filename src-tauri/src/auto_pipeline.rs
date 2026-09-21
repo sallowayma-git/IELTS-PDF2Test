@@ -2831,6 +2831,16 @@ pub(crate) fn repair_authoring_step_through_gateway(
         observations,
         &modality,
     );
+    // 受约束重试：循环把上一次被校验器拒绝的原因作为最后一条观察的 `repairNote` 带来，
+    // 这里把它交给 prompt 的专门段落（「你上一次的回复被拒，原因是……」）。
+    if let Some(note) = observations
+        .last()
+        .and_then(|observation| observation.get("repairNote"))
+        .and_then(Value::as_str)
+        .filter(|note| !note.trim().is_empty())
+    {
+        input["repairNote"] = json!(note);
+    }
     if !is_pdf {
         if let Some(object) = input.as_object_mut() {
             object.remove("pdfPath");

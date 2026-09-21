@@ -1730,6 +1730,17 @@ fn remaining_tasks(
     Ok(tasks)
 }
 
+/// 网关错误里，哪些是「回复收到了、但被校验器拒绝」——值得带着原因再问一次。
+///
+/// 传输类错误（超时、限流耗尽、5xx、连不上）不在其中：服务端没给出可纠正的回复，
+/// 重问同一句话只会再烧一次预算。
+fn is_constrained_retry_rejection(error: &str) -> bool {
+    error.starts_with("cloud_repair_step_")
+        || error.starts_with("llm_json_parse_failed")
+        || error.starts_with("llm_output_truncated")
+        || error.starts_with("llm_empty_content")
+}
+
 /// 修复循环的编排。
 ///
 /// `step` 是**注入的**网关调用：`(context, observations) -> 模型原始 JSON`。
@@ -1828,6 +1839,30 @@ where
         rounds += 1;
         let raw = match step(&context, &observations) {
             Ok(raw) => raw,
+            // 回复**收到了**但被校验器拒绝（未知工具、坏 JSON、截断）：同一回合内给模型
+            // **一次**带原因的受约束重试。原因以 `repairNote` 放进观察，网关据此把它写进
+            // prompt。传输类错误（超时、5xx、连不上）不重试——重问同一句话没有意义。
+            Err(error)
+                if is_constrained_retry_rejection(&error)
+                    && Instant::now() < request.deadline
+                    && !(request.cancelled)() =>
+            {
+                observations.push(json!({
+                    "schemaVersion": "CloudRepairToolResultV1",
+                    "callId": Value::Null,
+                    "status": "rejected",
+                    "errors": [error.clone()],
+                    "repairNote": error.clone(),
+                }));
+                match step(&context, &observations) {
+                    Ok(raw) => raw,
+                    Err(second) => {
+                        last_error = Some(format!("{second};first_rejection={error}"));
+                        status = REPAIR_STATUS_UNAVAILABLE;
+                        break;
+                    }
+                }
+            }
             Err(error) => {
                 last_error = Some(error);
                 status = REPAIR_STATUS_UNAVAILABLE;
