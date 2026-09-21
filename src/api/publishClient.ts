@@ -39,6 +39,19 @@ export function describePublishOutcome(outcome: PublishItemOutcome): string {
   return outcome.studentLoadable === false ? PUBLISHED_NOT_LOADABLE_NOTICE : PUBLISHED_NOTICE;
 }
 
+/**
+ * 发布结果的**机器可读**分类，只挂在 DOM 的 `data-publish-outcome` 上供验收脚本读取，
+ * 不渲染成文字（产品决策：不向用户展示放行与否）。脚本据此区分干净发布与放行发布，
+ * 而不是去匹配提示文案。
+ */
+export type PublishOutcomeKind = "published" | "published_forced" | "published_forced_not_loadable" | "failed";
+
+export function publishOutcomeKind(outcome: PublishItemOutcome): PublishOutcomeKind {
+  if (!outcome.ok) return "failed";
+  if (outcome.studentLoadable === false) return "published_forced_not_loadable";
+  return outcome.forced ? "published_forced" : "published";
+}
+
 export function describeBatchPublishOutcome(outcome: PublishBatchOutcome): string {
   const parts = [`已发布 ${outcome.succeeded.length} 题`];
   const notLoadable = outcome.succeeded.filter((item) => item.studentLoadable === false).length;

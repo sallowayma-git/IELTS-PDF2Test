@@ -3,7 +3,7 @@ import { ArrowLeft, Undo2, Redo2, MoreHorizontal, FileSearch, X } from "lucide-r
 import { command, getJob } from "../../api/tauriCommands";
 import { retryProcessing, cancelProcessing, subscribeProcessing } from "../../api/processingClient";
 import { chooseExportDirectory } from "../../api/desktopDialogs";
-import { describePublishOutcome, publishItem } from "../../api/publishClient";
+import { describePublishOutcome, publishItem, publishOutcomeKind, type PublishOutcomeKind } from "../../api/publishClient";
 import { getWorkspaceItem } from "../../api/workspaceClient";
 import { SOURCE_PURGED_EXPLANATION, saveToLibrary, sourceActionsAvailable } from "./finalVersion";
 import { go, libraryPath, type LibraryIntent } from "../../app/router";
@@ -67,6 +67,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   const [busyAction, setBusyAction] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
   const [noticeDetail, setNoticeDetail] = useState<string | undefined>();
+  // 仅供验收脚本读取（`data-publish-outcome`），不渲染成文字。
+  // 绑定到当时那条提示文字：提示被别的消息替换后，这个值自动失效，不会残留。
+  const [publishOutcome, setPublishOutcome] = useState<{ text: string; kind: PublishOutcomeKind } | undefined>();
   const [titleEditing, setTitleEditing] = useState(false);
   const [preflight, setPreflight] = useState<PublishCheckResultV1 | undefined>();
   // 预检拉取失败必须让用户看见：`mergePublishGateIssues` 在 preflight 为 undefined 时
@@ -290,6 +293,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
   }
   function clearNotice() {
     setNotice(undefined);
+    setPublishOutcome(undefined);
     setNoticeDetail(undefined);
   }
 
@@ -324,7 +328,9 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       }
       // 一次点击即发布：不预检、不列阻断、不二次确认。点击本身就是确认。
       const outcome = await publishItem(itemId, destination);
-      setNotice(describePublishOutcome(outcome));
+      const publishNotice = describePublishOutcome(outcome);
+      setNotice(publishNotice);
+      setPublishOutcome({ text: publishNotice, kind: publishOutcomeKind(outcome) });
       // 发布提交后原文件会被删除：刷新「原文件是否还在」，并重读题稿（状态与质量块已变）。
       refreshSourcePurged();
       if (outcome.ok) editor.reload();
@@ -481,7 +487,7 @@ export function ExamWorkspacePage({ itemId, intent }: { itemId: string; intent?:
       </div>
 
       {notice ? (
-        <p className="workspace-notice" role="status">
+        <p className="workspace-notice" role="status" data-publish-outcome={publishOutcome && publishOutcome.text === notice ? publishOutcome.kind : undefined}>
           {notice}
           {noticeDetail && noticeDetail !== notice && readAppSettings().developerMode ? (
             <small className="workspace-notice-detail">技术详情：{noticeDetail}</small>

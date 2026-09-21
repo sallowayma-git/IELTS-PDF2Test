@@ -4,6 +4,7 @@ import {
   describePublishOutcome,
   publishItem,
   publishItems,
+  publishOutcomeKind,
   type PublishItemOutcome
 } from "./publishClient";
 
@@ -98,5 +99,26 @@ describe("发布提示文案", () => {
     expect(describePublishOutcome({ itemId: "a", ok: false, message: "目标目录不可写，请检查权限。" })).toBe(
       "目标目录不可写，请检查权限。"
     );
+  });
+});
+
+describe("publishOutcomeKind — 只给验收脚本读的机器分类", () => {
+  const base: PublishItemOutcome = { itemId: "item-1", ok: true };
+
+  it("干净发布与放行发布在界面上同一句「已发布」，但分类不同", () => {
+    const clean = { ...base, forced: false, studentLoadable: true };
+    const forced = { ...base, forced: true, studentLoadable: true };
+    expect(describePublishOutcome(clean)).toBe(describePublishOutcome(forced));
+    expect(publishOutcomeKind(clean)).toBe("published");
+    expect(publishOutcomeKind(forced)).toBe("published_forced");
+  });
+
+  it("学生端打不开的放行发布单独归类", () => {
+    expect(publishOutcomeKind({ ...base, forced: true, studentLoadable: false }))
+      .toBe("published_forced_not_loadable");
+  });
+
+  it("失败就是失败，不被任何字段改判成已发布", () => {
+    expect(publishOutcomeKind({ ...base, ok: false, forced: false, studentLoadable: true })).toBe("failed");
   });
 });
