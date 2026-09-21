@@ -298,7 +298,7 @@ fn push_difference(out: &mut Vec<Value>, target_type: &str, target_id: &str, fie
     out.push(json!({
         "targetType": target_type,
         "targetId": target_id,
-        "field": field,
+        "field": field.clone(),
         "canonical": current,
         "candidate": candidate,
     }));
@@ -1321,7 +1321,7 @@ fn execute_tool(
                 recorded.push(json!({
                     "targetType": target_type,
                     "targetId": target_id,
-                    "field": field,
+                    "field": field.clone(),
                     "ruling": ruling,
                     "reason": entry.get("reason").cloned().unwrap_or(Value::Null),
                     "evidence": entry.get("evidence").cloned().unwrap_or_else(|| json!([])),
@@ -1612,6 +1612,10 @@ fn remaining_tasks(
                                 ),
                                 "action": "review_difference",
                                 "blocking": false,
+                                // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
+                                "field": field.clone(),
+                                "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
+                                "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
                                 "evidence": ruling.get("evidence").cloned().unwrap_or_else(|| json!([])),
                                 "repairFamily": repair_family_for_difference_field(&field),
                             }),
@@ -1628,6 +1632,10 @@ fn remaining_tasks(
                                 "message": describe_difference(&difference),
                                 "action": "review_difference",
                                 "blocking": false,
+                                // 当前值与云端值一并给前端：任务里要能直接看到「现在是什么、云端读到的是什么」。
+                                "field": field.clone(),
+                                "currentValue": difference.get("canonical").cloned().unwrap_or(Value::Null),
+                                "cloudValue": difference.get("candidate").cloned().unwrap_or(Value::Null),
                                 "repairFamily": repair_family_for_difference_field(&field),
                             }),
                         );

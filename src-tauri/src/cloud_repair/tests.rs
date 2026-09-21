@@ -2929,3 +2929,21 @@ fn workspace_item_reports_recent_edit_origins_for_conflict_rebase() {
     assert_eq!(origin_at(base + 1).as_deref(), Some("human"), "{workspace}");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 差异任务必须带上「现在是什么、云端读到的是什么」，否则用户只看到「不一致」却无从判断。
+#[test]
+fn a_difference_task_carries_the_current_and_the_cloud_value() {
+    let root = temp_root();
+    seed_item(&root, &golden_authoring());
+    store_candidate(&root, "A");
+    let tasks = remaining_tasks(&root, ITEM_ID, ITEM_ID, BATCH_ID, &[], &[]).expect("重算剩余任务");
+    let diff = tasks
+        .iter()
+        .find(|task| task["userTaskId"] == "cloud-diff:slot:q14:answer")
+        .unwrap_or_else(|| panic!("夹具必须产生 q14 的答案差异：{tasks:?}"));
+    assert!(!diff["currentValue"].is_null(), "{diff}");
+    assert!(!diff["cloudValue"].is_null(), "{diff}");
+    assert_ne!(diff["currentValue"], diff["cloudValue"]);
+    assert_eq!(diff["field"], "answer");
+    let _ = std::fs::remove_dir_all(&root);
+}
